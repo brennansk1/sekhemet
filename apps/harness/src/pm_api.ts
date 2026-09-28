@@ -24,6 +24,7 @@ import { sharedModelAccess } from "./model_access.js";
 import { ProposalError, applyProposal } from "./pm/apply.js";
 import { type Audience, soloAudience } from "./pm/audience.js";
 import { capabilityReport } from "./pm/capability.js";
+import { recordSprintClose } from "./pm/judgement.js";
 import { burnupMetrics, flowMetrics, pmQuality } from "./pm/metrics.js";
 import type { ProjectChoices } from "./pm/pipeline.js";
 import { DEFAULT_PM_MODEL, answerQueued, pmModelFor, runnerLease } from "./pm/service.js";
@@ -33,6 +34,7 @@ import {
   applySuggestion,
   dismissSuggestion,
   suggestionsOn,
+  undoSuggestion,
 } from "./pm/suggest.js";
 import { PM_EVENTS, type PmMessage, type PmStatus } from "./pm/types.js";
 import { draftWeeklyUpdate, postWeeklyUpdate } from "./pm/weekly.js";
@@ -41,6 +43,9 @@ import { oneShotResearcher } from "./research/service.js";
 import { quickAnswererFor } from "./smart_swap.js";
 import { statusFacts } from "./status_api.js";
 import { modelRegistry, ruleGateVerdict } from "./wave2.js";
+
+/** How often a focused dashboard's presence is recorded (PM-P6-10; the notifier's window is 5 minutes). */
+const FOCUS_RECORD_MS = 60_000;
 
 export interface PmApiContext {
   repoPath: string;
@@ -110,6 +115,8 @@ export function createPmApi(ctx: PmApiContext) {
   const audience = (): Audience => ctx.audience?.() ?? soloAudience();
   const personOf = (req: IncomingMessage): string =>
     ctx.principalOf?.(req) ?? ctx.log.localPrincipal();
+  /** When each person's board focus was last recorded (PM-P6-10). */
+  const focusRecorded = new Map<string, number>();
   /**
    * PM-N9-8: in the Team setup a person reads their own part of Seshat's
    * thread — their messages and the replies to them — and a reply to no one
@@ -235,6 +242,28 @@ export function createPmApi(ctx: PmApiContext) {
         status: await pmStore.status(),
         model: lease?.pmModel ?? pmModel,
       });
+      return true;
+    }
+
+    // PM-P6-10: the dashboard is in focus for this person, so Seshat's
+    // unsolicited items go to the panel instead of a notice. Recorded at
+    // most once a minute per person.
+    if (url === "/api/pm/focus" && req.method === "POST") {
+      if (!ctx.isTrustedMutation(req)) {
+        ctx.json(res, 403, { error: "Actions must come from the dashboard itself" });
+        return true;
+      }
+      const person = personOf(req);
+      const at = Date.now();
+      if ((focusRecorded.get(person) ?? 0) <= at - FOCUS_RECORD_MS) {
+        focusRecorded.set(person, at);
+        await ctx.log.append({
+          actor: "harness",
+          type: PM_EVENTS.boardFocus,
+          payload: { principal: person },
+        });
+      }
+      ctx.json(res, 200, { ok: true });
       return true;
     }
 
@@ -393,7 +422,10 @@ export function createPmApi(ctx: PmApiContext) {
       ctx.json(res, 200, { suggestions: await suggestionsOn(ctx.cardStore, id, audience()) });
       return true;
     }
-    const suggestionAct = /^\/api\/suggestions\/(sug_[A-Za-z0-9_-]+)\/(apply|dismiss)$/.exec(url);
+    // TEAM-41: what an Admin's auto-apply rule applied is undone in one action.
+    const suggestionAct = /^\/api\/suggestions\/(sug_[A-Za-z0-9_-]+)\/(apply|dismiss|undo)$/.exec(
+      url,
+    );
     if (suggestionAct && req.method === "POST") {
       const cardStore = mutationGuard(req, res);
       if (!cardStore) return true;
@@ -411,6 +443,9 @@ export function createPmApi(ctx: PmApiContext) {
         if (verb === "apply") {
           const r = await applySuggestion(id, sctx);
           ctx.json(res, 200, { suggestion: { ...r.suggestion, state: "applied" }, cards: r.cards });
+        } else if (verb === "undo") {
+          const r = await undoSuggestion(id, sctx);
+          ctx.json(res, 200, { suggestion: { ...r.suggestion, state: "undone" }, cards: r.cards });
         } else {
           await dismissSuggestion(id, sctx);
           ctx.json(res, 200, { suggestion: { id, state: "dismissed" } });
@@ -526,9 +561,18 @@ export function createPmApi(ctx: PmApiContext) {
       if (b.state === "planned" || b.state === "active" || b.state === "closed") {
         patch.state = b.state;
       }
-      const updated = await pmStore.updateCycle(cycleMatch[1] as string, patch);
-      if (!updated) ctx.json(res, 404, { error: "No such sprint" });
-      else ctx.json(res, 200, { cycle: updated });
+      const id = cycleMatch[1] as string;
+      const was = (await pmStore.cycles()).find((c) => c.id === id);
+      const updated = await pmStore.updateCycle(id, patch);
+      if (!updated) {
+        ctx.json(res, 404, { error: "No such sprint" });
+        return true;
+      }
+      // PM-P6-12: a sprint that closes has Seshat's measures recorded.
+      if (updated.state === "closed" && was?.state !== "closed" && ctx.cardStore) {
+        await recordSprintClose({ cardStore: ctx.cardStore, log: ctx.log }, updated);
+      }
+      ctx.json(res, 200, { cycle: updated });
       return true;
     }
 

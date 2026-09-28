@@ -59,6 +59,12 @@ export interface PmCite {
   cardId?: string;
   runId?: string;
   evidenceId?: string;
+  /** A goal the reply answers from (PM-P6-1). */
+  goalId?: string;
+  /** A logged assumption the reply answers from (PM-P6-1). */
+  assumptionId?: string;
+  /** An AI review finding: its dossier entry id (PM-P6-2). */
+  findingId?: string;
   /** A research source: a URL when there is one, and what it is. */
   url?: string;
   label?: string;
@@ -76,6 +82,8 @@ export interface PmMessage {
   cites?: PmCite[];
   /** Who wrote a user message; for a reply, who it answers (Team setup, PM-N9-8). */
   principal?: string;
+  /** For a reply: the senior-PM skill's version it was written under (PM-P6-4). */
+  skillVersion?: string;
 }
 
 export type PmPhase = "idle" | "waiting_for_step" | "loading_pm" | "thinking" | "resuming_worker";
@@ -110,6 +118,10 @@ export const PM_EVENTS = {
   notify: "pm/notify",
   /** A notice past the day's budget, held for the next standup (INT-20a). */
   noticeHeld: "pm/notice_held",
+  /** A notice shown in Seshat's panel instead, the board being in focus (PM-P6-10). */
+  noticeShown: "pm/notice_shown",
+  /** The dashboard was in focus for this person (PM-P6-10); recorded at most once a minute. */
+  boardFocus: "pm/board_focus",
   /**
    * A notifier's claim on a send, by an id derived from the notice (or the
    * channel's standup and attempt), before anything is sent: of two notifiers

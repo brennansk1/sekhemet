@@ -1,4 +1,4 @@
-import { remedyFor } from "@sekhemet/gates";
+import { DEFAULT_BUILTIN_GATES, remedyFor } from "@sekhemet/gates";
 import { type AttemptOutcome, type CardRecord, cardKind } from "@sekhemet/kernel";
 import type { CardRunResult } from "@sekhemet/loop";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
@@ -105,18 +105,86 @@ export async function learnFromAttempt(
 }
 
 /** A human's send-back note is both a rule candidate and evidence about the user. */
+/**
+ * The checks a note may name (the rungs and the built-in gates, gates rule 9).
+ * A name that is only a check's name counts alone; a name that is also an
+ * everyday word (*the tests don't cover it*, *the types feel off*) counts
+ * only as a check — followed by *check*, *gate* or *rung*, or said to fail,
+ * pass or break.
+ */
+const CHECK_ONLY_NAMES = [
+  "typecheck",
+  "tsc",
+  "lint",
+  "biome",
+  "eslint",
+  "vitest",
+  "osv",
+  "semgrep",
+];
+const CHECK_WORDS = [
+  "types",
+  "test",
+  "tests",
+  "build",
+  "format",
+  "coverage",
+  "mutation",
+  "architecture",
+  "visual",
+  ...DEFAULT_BUILTIN_GATES.filter((g) => !CHECK_ONLY_NAMES.includes(g)),
+];
+
+/**
+ * Whether a send-back note names something a rule can be keyed on
+ * (review-git RG-P8-15): a file, a symbol, a check or an error pattern. A
+ * note that names none ("not quite what I wanted") stays a dossier note for
+ * the next attempt and is never proposed as a playbook rule.
+ */
+export function namesAnchor(note: string): boolean {
+  const file =
+    /[\w@-]\.(?:[cm]?[jt]sx?|json|md|py|rs|go|java|kt|rb|php|cs|c|h|cpp|hpp|swift|css|scss|html|vue|svelte|sql|sh|toml|ya?ml)\b/i;
+  const symbol = /`[^`\s][^`]*`|\b[a-z]+[A-Z]\w*\b|\b[a-z]+_[a-z0-9_]+\b|\b\w+\(\)/;
+  const error = /\b(?:TS\d{4,5}|E[A-Z]{3,}|[A-Z]\w*Error|lint\/[\w/]+|exit code \d+)\b/;
+  const checkOnly = new RegExp(`\\b(?:${CHECK_ONLY_NAMES.join("|")})\\b`, "i");
+  const asCheck = new RegExp(
+    `\\b(?:${CHECK_WORDS.join("|")})\\s+(?:check|gate|rung|fails?|failed|failing|pass(?:es|ed)?|breaks?|broke|errors?)\\b`,
+    "i",
+  );
+  return (
+    file.test(note) ||
+    symbol.test(note) ||
+    error.test(note) ||
+    checkOnly.test(note) ||
+    asCheck.test(note)
+  );
+}
+
+/**
+ * Whether a send-back note becomes a playbook candidate (RG-P8-15): a code
+ * note that names a file, symbol, check or error pattern (the Worker's
+ * playbook is keyed on those, context rule 24), or a planning note, which
+ * is Seshat's PM rule keyed on the card's kind (context rule 24d, CX-N4-5).
+ */
+export function isPlaybookCandidate(note: string): boolean {
+  return namesAnchor(note) || isPlanningNote(note);
+}
+
 export async function learnFromSendBack(
   store: LearningStore,
   card: CardRecord,
   note: string,
 ): Promise<void> {
-  await store.propose({
-    role: isPlanningNote(note) ? "manager" : "worker",
-    text: note,
-    scope: scopeOf(card),
-    source: "send_back",
-    evidence: [{ cardId: card.id, note: `sent back: "${note}"` }],
-  });
+  // RG-P8-15: a rule needs something to key on; a vague note stays a note
+  // (and still counts as what this person said about the work).
+  if (isPlaybookCandidate(note))
+    await store.propose({
+      role: isPlanningNote(note) ? "manager" : "worker",
+      text: note,
+      scope: scopeOf(card),
+      source: "send_back",
+      evidence: [{ cardId: card.id, note: `sent back: "${note}"` }],
+    });
   await store.observe({
     statement: note,
     category: /name|style|format|comment|import|export|type|test/i.test(note)

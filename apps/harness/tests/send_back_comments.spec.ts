@@ -51,6 +51,38 @@ describe("a send-back with comments on diff lines (WL-N10-4)", () => {
     expect(lines).toContain("Sent back by the reviewer: src/total.ts:30 — this branch is dead");
   });
 
+  it("gives a retry only the AI review's cited unmet and unclear findings (review-git RG-P8-9)", async () => {
+    await store.createCard({ id: "r", tier: "story", title: "R", scopeFiles: ["src/**"] });
+    const review = (verdict: string, text: string) =>
+      store.recordDossierEntry({ cardId: "r", kind: "review", actor: "reviewer", verdict, text });
+    await review("met", "append adds one entry (src/a.ts:2)");
+    await review("unmet", "list keeps order — list reverses the entries. (src/a.ts:3)");
+    await review(
+      "unclear",
+      "totals round — AI review cited no changed line that decides this criterion.",
+    );
+    await review(
+      "unmet",
+      "no test: list keeps order — No staged test case names this criterion, so no check exercises it. (src/a.ts:3)",
+    );
+    await review(
+      "coverage",
+      "AI review read 1 of 1 file; 0 of 2 changed lines are cited by no finding.",
+    );
+    await review(
+      "not_reviewed",
+      "No AI review: no Review model outside the Coding model's family is configured.",
+    );
+    await review("likely_send_back", "- [likely_send_back] an older review's note");
+    const lines = dossierPromptLines(await store.getDossier("r")).filter((l) =>
+      l.startsWith("Review finding"),
+    );
+    expect(lines).toEqual([
+      "Review finding (unmet): list keeps order — list reverses the entries. (src/a.ts:3)",
+      "Review finding (likely_send_back): - [likely_send_back] an older review's note",
+    ]);
+  });
+
   it("refuses a comment with no file or line", async () => {
     await store.createCard({ id: "d", tier: "story", title: "D", scopeFiles: ["src/**"] });
     await store.updateCardStatus("d", "review", "setup", "harness", { override: true });

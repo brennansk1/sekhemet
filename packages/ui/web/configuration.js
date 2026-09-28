@@ -4,7 +4,8 @@
 // opens Benchmark and `#/settings` opens Preferences (DB-N6-1; DEC-31 names
 // the section *Preferences*, never "This browser"). It replaces the Registry
 // and Settings views. Preferences holds the theme, Tips and the first-run
-// role (this browser's, §2.9.1, §2.2.5) and the project's Estimation (DB-N7-2: off, or story points), kept per project.
+// role (this browser's, §2.9.1, §2.2.5) and the project's Estimation (DB-N7-2: off, or story points), kept per project,
+// and which of Seshat's suggestions an Admin lets apply automatically (planner-pm PM-N9-2).
 // Review capacity and Project configuration are NEW-dashboard-4's (DB-N4-1..3):
 // the project's minutes a day with the In review limit they give, disabled
 // with its reason for a person who may not change them, and every effective
@@ -15,6 +16,7 @@ import { FIRST_RUN, readRole, writeRole } from "./lib/learn.js";
 import { ESTIMATION_LABELS } from "./lib/pm.js";
 import {
   DENSITY_CHOICES,
+  autoApplyView,
   configRows,
   readDensity,
   reviewCapacityView,
@@ -107,7 +109,46 @@ function preferencesHtml() {
     (c) =>
       `<option value="${c.value}"${density === c.value ? " selected" : ""}>${esc(c.label)}</option>`,
   ).join("");
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-preferences"><h3 id="cfg-h-preferences">Preferences</h3><div class="row"><label for="cfg-theme">Theme</label><select id="cfg-theme" data-theme-select>${opt("system", "Match the system")}${opt("dark", "Basalt (dark)")}${opt("light", "Sand (light)")}</select></div><div class="row"><label for="cfg-density">Density</label><select id="cfg-density" data-density-select aria-describedby="cfg-density-why">${dens}</select></div><p class="sec" id="cfg-density-why">Comfortable board cards add the plan's first line and the token and time bars. The theme and density apply to this browser only and need no permission.</p>${tipsHtml()}${estimationHtml()}</section>`;
+  return `<section class="cfg-sec" aria-labelledby="cfg-h-preferences"><h3 id="cfg-h-preferences">Preferences</h3><div class="row"><label for="cfg-theme">Theme</label><select id="cfg-theme" data-theme-select>${opt("system", "Match the system")}${opt("dark", "Basalt (dark)")}${opt("light", "Sand (light)")}</select></div><div class="row"><label for="cfg-density">Density</label><select id="cfg-density" data-density-select aria-describedby="cfg-density-why">${dens}</select></div><p class="sec" id="cfg-density-why">Comfortable board cards add the plan's first line and the token and time bars. The theme and density apply to this browser only and need no permission.</p>${tipsHtml()}${estimationHtml()}<div data-auto-apply></div></section>`;
+}
+
+/**
+ * Preferences → Apply Seshat's suggestions automatically (planner-pm
+ * PM-N9-2, teams TEAM-18, -41): the project's, an Admin's to change; never
+ * the assignee or health.
+ */
+async function renderAutoApply() {
+  const host = ui.root?.querySelector("[data-auto-apply]");
+  const project = store.state.project;
+  if (!host) return;
+  const head = '<h4 id="cfg-h-auto">Apply Seshat\'s suggestions automatically</h4>';
+  if (!project?.id) {
+    host.innerHTML = `${head}<p class="sec">Choose a project in the sidebar to set it.</p>`;
+    return;
+  }
+  const r = await getJSON(`/api/projects/${encodeURIComponent(project.id)}/settings`).catch(() => ({
+    ok: false,
+    data: null,
+  }));
+  const view = autoApplyView(r.ok ? (r.data?.settings ?? {}) : {}, readOnlyReason());
+  const rows = view.rows
+    .map(
+      (row) =>
+        `<div class="row"><label><input type="checkbox" data-auto-apply-prop="${esc(row.property)}"${row.on ? " checked" : ""}${row.disabled ? " disabled" : ""}> ${esc(row.label)}</label></div>`,
+    )
+    .join("");
+  host.innerHTML = `${head}<fieldset aria-describedby="cfg-auto-why"><legend class="sec">For ${esc(project.name ?? project.id)}</legend>${rows}</fieldset><p class="sec" id="cfg-auto-why">${esc(view.note)}</p><p class="why" role="status" data-auto-apply-note></p>`;
+}
+
+async function saveAutoApply(property, on) {
+  const project = store.state.project?.id;
+  const note = ui.root?.querySelector("[data-auto-apply-note]");
+  if (!project) return;
+  const r = await sendJSON("PATCH", `/api/projects/${encodeURIComponent(project)}/settings`, {
+    auto_apply: { [property]: on },
+  });
+  if (note) note.textContent = r.ok ? "Saved." : (r.data?.error ?? "Not saved.");
+  if (!r.ok) await renderAutoApply();
 }
 
 /** Tips and the first-run role: this browser's, like the theme (§2.9.1, §2.2.5). */
@@ -187,6 +228,7 @@ async function renderSection() {
     ui.child = await mountBenchmark(host);
   } else if (ui.section === "preferences") {
     host.innerHTML = preferencesHtml();
+    renderAutoApply();
   } else {
     host.innerHTML = '<div class="sk" style="height:120px"></div>';
     const project = store.state.project?.id;
@@ -242,6 +284,9 @@ function onChange(e) {
     writeRole(storage(), t.value);
   if (t instanceof HTMLSelectElement && t.hasAttribute("data-estimation-select")) {
     saveEstimation(t.value === "points" ? "points" : "off");
+  }
+  if (t instanceof HTMLInputElement && t.dataset.autoApplyProp) {
+    saveAutoApply(t.dataset.autoApplyProp, t.checked);
   }
 }
 

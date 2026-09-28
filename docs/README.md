@@ -72,6 +72,7 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) | Mixed human and AI teams, erasure in a hash-chained log, backups, change and release, project documents in the repository, and review ergonomics for AI-written code. |
 | [DESIGN_RESEARCH_TEAM_SERVER.md](research/DESIGN_RESEARCH_TEAM_SERVER.md) | Multi-user local inference on a team server, fair scheduling, qualification per engine, packaging and upgrades. |
 | [DESIGN_RESEARCH_COLLABORATION.md](research/DESIGN_RESEARCH_COLLABORATION.md) | Access levels, the AI as a teammate that proposes, collaboration mechanics, sign-in on a team's own hardware, sharing one model fairly, and status for stakeholders and engineers. |
+| [CAPSTONE_SELECTION_2026-09.md](research/CAPSTONE_SELECTION_2026-09.md) | The showcase capstone (a timesheet and overtime-rules app, plus one Web-Bench project), why, and the protocol for comparing it against Claude models. |
 | [SANDBOX_REUSE.md](research/SANDBOX_REUSE.md) | Reusing an existing sandbox engine: Anthropic's sandbox-runtime against our Seatbelt, bubblewrap and egress code, criterion by criterion (DEC-39) |
 | [PROMPT_RESEARCH.md](research/PROMPT_RESEARCH.md) | How to write and compress prompts: structure, techniques with evidence, small-model sensitivity, compression options, measuring prompt changes; leads for later development (DEC-41) |
 

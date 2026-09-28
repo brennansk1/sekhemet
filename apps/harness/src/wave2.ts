@@ -109,6 +109,7 @@ import {
   setupFor,
 } from "./planner_live.js";
 import { settledSourcesFor } from "./pm/pipeline.js";
+import type { AutoApplyRule } from "./pm/suggest.js";
 import {
   type CombinationDeps,
   qualificationCombination,
@@ -539,6 +540,8 @@ export async function queuePrelude(
     now?: Date;
     /** Solo or Team (`[team] mode`); read from the config when absent (PM-N9-9). */
     setup?: Setup;
+    /** An Admin's auto-apply rule for the signals' suggestions (PM-N9-2, TEAM-41). */
+    autoApply?: AutoApplyRule;
   } = {},
 ): Promise<{ ordered: CardRecord[]; lines: string[] }> {
   const lines: string[] = [];
@@ -595,7 +598,12 @@ export async function queuePrelude(
   }
   // Every response is carried out, as a proposal where a person owns the
   // field (NEW-planner-pm-2, -5); held cards sit out this pass.
-  const signalled = await respondToSignals(k, fired, { setup, now, say }).catch((err) => {
+  const signalled = await respondToSignals(k, fired, {
+    setup,
+    now,
+    say,
+    ...(options.autoApply ? { autoApply: options.autoApply } : {}),
+  }).catch((err) => {
     say(`Signal responses not carried out: ${err instanceof Error ? err.message : String(err)}`);
     return { held: new Set<string>() };
   });
@@ -641,18 +649,52 @@ export async function queuePrelude(
     (c) => !signalled.held.has(c.id) && !(doneness?.held.has(c.id) ?? false),
   );
 
-  const ordering = orderReadyCards(schedulable, loadPrioritizationConfig(k.repoPath), now);
+  const goal = top
+    ? ((await new GoalStore(ledger).get(top.goalId)) as { strategy: string })
+    : undefined;
+  const { ordered, model } = orderForQueue(
+    k.repoPath,
+    schedulable,
+    goal?.strategy.split("@")[0],
+    now,
+  );
+  if (model !== "unconfigured") say(`Ready ordered by ${model.toUpperCase()}.`);
+  return { ordered, lines };
+}
+
+/**
+ * The order the queue takes Ready cards in: the configured prioritisation
+ * model, batched by model swaps with prerequisites first, then the top
+ * goal's epic ahead of the rest. One function, so the standup's *Next up*
+ * lists the cards in the order the queue will take them (PM-P6-3).
+ */
+export function orderForQueue(
+  repoPath: string,
+  ready: readonly CardRecord[],
+  topGoalEpic: string | undefined,
+  now: Date = new Date(),
+): { ordered: CardRecord[]; model: string } {
+  const ordering = orderReadyCards(ready, loadPrioritizationConfig(repoPath), now);
   let ordered = batchBySwaps(ordering.cards, now);
-  if (ordering.model !== "unconfigured") say(`Ready ordered by ${ordering.model.toUpperCase()}.`);
-  if (top) {
-    const goal = (await new GoalStore(ledger).get(top.goalId)) as { strategy: string };
-    const epic = goal.strategy.split("@")[0];
+  if (topGoalEpic) {
     ordered = [
-      ...ordered.filter((c) => c.parentId === epic),
-      ...ordered.filter((c) => c.parentId !== epic),
+      ...ordered.filter((c) => c.parentId === topGoalEpic),
+      ...ordered.filter((c) => c.parentId !== topGoalEpic),
     ];
   }
-  return { ordered, lines };
+  return { ordered, model: ordering.model };
+}
+
+/** The top-ranked active goal's epic, which the queue works first. */
+export async function topGoalEpic(
+  ledger: PlannerLedger,
+  cards: readonly CardRecord[],
+): Promise<string | undefined> {
+  const store = new GoalStore(ledger);
+  const top = rankGoals(await store.all(), cards)[0];
+  if (!top) return undefined;
+  const goal = (await store.get(top.goalId)) as { strategy: string } | undefined;
+  return goal?.strategy.split("@")[0];
 }
 
 /** P6: the role a card's first attempt runs on, from the planner's route. */
@@ -1692,26 +1734,6 @@ export async function recordBakeOff(
 }
 
 // ------------------------------------------------------------ Seshat (P13)
-
-/**
- * The planner's half of a standup (P13): decisions waiting on the human
- * with their wait times, and the next window's cards with each estimate's
- * range and basis. Appended to Seshat's ledger standup.
- */
-export async function plannerStandupSection(cardStore: CardStore, log: EventLog): Promise<string> {
-  const { standupReport } = await import("@sekhemet/planner");
-  const r = await standupReport({ store: cardStore, log });
-  const lines: string[] = [];
-  if (r.decisionsWaiting.length) {
-    lines.push(
-      `Decisions waiting on you: ${r.decisionsWaiting.map((d) => `${d.question} (${d.id}${d.cardId ? `, ${d.cardId}` : ""}, ${d.waitingHours} h)`).join("; ")}.`,
-    );
-  }
-  if (r.nextWindow.length) {
-    lines.push(`Next window: ${r.nextWindow.map((n) => `${n.title} (${n.estimate})`).join("; ")}.`);
-  }
-  return lines.join("\n");
-}
 
 // ---------------------------------------------------- Replan on rung 3 (P12)
 

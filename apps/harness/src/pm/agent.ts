@@ -16,22 +16,36 @@ import {
   stripReasoning,
 } from "@sekhemet/models";
 import { type StoryMap, guardCompletionClaim } from "@sekhemet/planner";
+import { columnLabel, gateLabel, stopReasonLabel } from "@sekhemet/ui";
 import { researchCopy } from "../research/research_copy.js";
 import type { ResearchAnswer } from "../research/researcher.js";
 import { ResearchHostAwaitsYes } from "../research_consent.js";
 import type { TakeoverPromptContext } from "../takeover_brief.js";
+import {
+  type FailureFacts,
+  type SnapshotAssumption,
+  type SnapshotFinding,
+  type SnapshotGoal,
+  isWhyFailedQuestion,
+} from "./knowledge.js";
 import { type LibrarySearch, formatHits } from "./libraries.js";
 import type { ProjectGroup } from "./pipeline.js";
 import {
   DUPLICATE_OF_DESCRIPTION,
+  PM_TOOL_COPY,
   PROPOSE_SPLIT_CARD_DESCRIPTION,
+  SESHAT_DATA,
+  SESHAT_FACTS,
+  SESHAT_TAGS,
   START_PROJECT_DESCRIPTION,
   START_PROJECT_SENTENCE_DESCRIPTION,
-  TAKEOVER_SECTION_HEADING,
   pmSystemPromptText,
+  seshatPart,
   splitSuggestedSummary,
   startProjectSummary,
 } from "./pm_copy.js";
+import { SESHAT_SKILL_VERSION } from "./seshat_skill.js";
+import { type StandupFacts, boardOnlyFacts, standupLines } from "./standup.js";
 import type { Cycle, PmCite, PmMessage, PmProposal } from "./types.js";
 
 /** What the PM can see when it answers. Built by the caller from the live board. */
@@ -77,6 +91,18 @@ export interface PmSnapshot {
    * claim inside the untrusted tags.
    */
   takeover?: TakeoverPromptContext;
+  /** The goals the asker can see, each with its id (PM-P6-1). */
+  goals?: SnapshotGoal[];
+  /** The planner's logged assumptions and the risk register they make (PM-P6-1). */
+  assumptions?: SnapshotAssumption[];
+  /** The latest AI review's findings per issue, each with its entry id (PM-P6-2). */
+  findings?: SnapshotFinding[];
+  /** The failure evidence of the issues the person is asking about (PM-P6-6). */
+  failures?: FailureFacts[];
+  /** The project's brief, file text (untrusted, PROMPT_STANDARD rule 16). */
+  brief?: string;
+  /** The standup's facts for the asker, when the ledger gave them (PM-P6-3). */
+  standup?: StandupFacts;
   today: string;
 }
 
@@ -90,6 +116,8 @@ export interface PmAnswer {
   promptSections?: SectionTokens[];
   /** The budget it was fitted to: the role and the Planner's configured context. */
   promptBudget?: { role: "seshat"; windowTokens: number; budgetTokens: number; usedTokens: number };
+  /** The senior-PM skill the answer was made under (PM-P6-4). */
+  skillVersion?: string;
 }
 
 const PRIORITY = ["No priority", "Urgent", "High", "Medium", "Low"];
@@ -124,7 +152,8 @@ function cardLine(c: CardRecord): string {
     c.labels && c.labels.length > 0 ? `labels ${c.labels.join(",")}` : undefined,
     c.dependsOn && c.dependsOn.length > 0 ? `waits on ${c.dependsOn.join(",")}` : undefined,
     c.stepsUsed ? `${c.stepsUsed}/${c.stepBudget} steps` : undefined,
-    c.stopReason ? `stopped: ${c.stopReason}` : undefined,
+    // DEC-31: the column and the stop reason in the words a person reads.
+    c.stopReason ? `stopped: ${stopReasonLabel(c.stopReason).short}` : undefined,
     c.blockedReason ? `blocked: ${c.blockedReason}` : undefined,
   ].filter(Boolean);
   return `- ${bits.join(" · ")}`;
@@ -142,7 +171,7 @@ export function boardDigest(s: PmSnapshot, maxChars = 9000): string {
   for (const status of STATUS_ORDER) {
     const list = byStatus.get(status);
     if (!list || list.length === 0) continue;
-    sections.push(`${status} (${list.length}):\n${list.map(cardLine).join("\n")}`);
+    sections.push(`${columnLabel(status)} (${list.length}):\n${list.map(cardLine).join("\n")}`);
   }
   let digest = sections.join("\n\n");
   if (digest.length > maxChars) digest = `${digest.slice(0, maxChars)}\n… (board truncated)`;
@@ -176,10 +205,10 @@ export function conversationDigest(
   maxChars = 3500,
   summary?: { upToSeq: number; text: string },
 ): string {
-  const lines: string[] = summary ? [`(Summary of the earlier conversation) ${summary.text}`] : [];
+  const lines: string[] = summary ? [`${SESHAT_DATA.earlierSummary} ${summary.text}`] : [];
   const recent = summary ? history.filter((m) => m.seq > summary.upToSeq) : history;
   for (const m of recent.slice(-10)) {
-    const who = m.role === "user" ? "Human" : "You";
+    const who = m.role === "user" ? SESHAT_DATA.person : SESHAT_DATA.you;
     lines.push(`${who}: ${m.text.replace(/\s+/g, " ").slice(0, 600)}`);
   }
   const text = lines.join("\n");
@@ -192,8 +221,7 @@ const num = { type: "number" } as const;
 /** Offered only when a Researcher model is configured. */
 export const ASK_RESEARCHER_TOOL: ToolDefinition = {
   name: "ask_researcher",
-  description:
-    "Delegate a question that needs evidence (a library's API or licence, how a module really works, a security advisory, what research says, what the project did before) to the Researcher. Its answer cites sources and states its confidence. depth 'deep' runs a team of sub-researchers and a verifier: for decisions (choosing a technology, planning a feature), not for single facts.",
+  description: PM_TOOL_COPY.askResearcher,
   parameters: {
     type: "object",
     properties: {
@@ -207,12 +235,11 @@ export const ASK_RESEARCHER_TOOL: ToolDefinition = {
 export const PM_TOOLS: ToolDefinition[] = [
   {
     name: "find_library",
-    description:
-      "Search the npm or PyPI registry for an existing, permissively licensed package before proposing a card that would build the thing from scratch. Results include the licence and whether it is safe to use.",
+    description: PM_TOOL_COPY.findLibrary,
     parameters: {
       type: "object",
       properties: {
-        query: { type: "string", description: "What the package should do, or its name" },
+        query: { type: "string", description: PM_TOOL_COPY.libraryQuery },
         ecosystem: { type: "string", enum: ["npm", "pypi"] },
       },
       required: ["query"],
@@ -220,21 +247,20 @@ export const PM_TOOLS: ToolDefinition[] = [
   },
   {
     name: "propose_update_card",
-    description:
-      "Propose changing fields on an existing card. The human approves it. Only include fields that change.",
+    description: PM_TOOL_COPY.updateIssue,
     parameters: {
       type: "object",
       properties: {
         card_id: str,
         title: str,
         spec: str,
-        priority: { type: "number", description: "1 urgent, 2 high, 3 medium, 4 low, 0 none" },
-        estimate: { type: "number", description: "points: 1, 2, 3, 5 or 8" },
+        priority: { type: "number", description: PM_TOOL_COPY.priority },
+        estimate: { type: "number", description: PM_TOOL_COPY.estimate },
         labels: { type: "array", items: str },
         cycle_id: str,
         assignee: str,
         duplicate_of: { type: "string", description: DUPLICATE_OF_DESCRIPTION },
-        due_date: { type: "string", description: "YYYY-MM-DD" },
+        due_date: { type: "string", description: PM_TOOL_COPY.day },
         reason: str,
       },
       required: ["card_id", "reason"],
@@ -242,7 +268,7 @@ export const PM_TOOLS: ToolDefinition[] = [
   },
   {
     name: "propose_create_card",
-    description: "Propose a new card. Keep it to at most 3 files and 200 lines of change.",
+    description: PM_TOOL_COPY.createIssue,
     parameters: {
       type: "object",
       properties: {
@@ -300,7 +326,7 @@ export const PM_TOOLS: ToolDefinition[] = [
   },
   {
     name: "propose_move_card",
-    description: "Propose moving a card to ready, backlog or parked.",
+    description: PM_TOOL_COPY.moveIssue,
     parameters: {
       type: "object",
       properties: {
@@ -313,13 +339,13 @@ export const PM_TOOLS: ToolDefinition[] = [
   },
   {
     name: "propose_create_cycle",
-    description: "Propose a cycle (sprint) with a goal, and optionally the cards planned into it.",
+    description: PM_TOOL_COPY.createSprint,
     parameters: {
       type: "object",
       properties: {
         name: str,
-        starts_on: { type: "string", description: "YYYY-MM-DD" },
-        ends_on: { type: "string", description: "YYYY-MM-DD" },
+        starts_on: { type: "string", description: PM_TOOL_COPY.day },
+        ends_on: { type: "string", description: PM_TOOL_COPY.day },
         goal: str,
         card_ids: { type: "array", items: str },
         reason: str,
@@ -576,8 +602,17 @@ function cleanCard(fields: Record<string, unknown>): Record<string, unknown> {
   );
 }
 
-/** Card ids the reply mentions in backticks, so the UI can link them. */
-export function citesFrom(text: string, cards: CardRecord[]): PmCite[] {
+/**
+ * What the reply cites, so the UI can link it: the card ids it mentions in
+ * backticks, and — from the snapshot it was answered from — the goals,
+ * assumptions, review findings and evidence bundles it names by id
+ * (PM-P6-1, -2, -6). An id the snapshot does not hold is never cited.
+ */
+export function citesFrom(
+  text: string,
+  cards: CardRecord[],
+  known: Pick<PmSnapshot, "goals" | "assumptions" | "findings" | "failures"> = {},
+): PmCite[] {
   const ids = new Set(cards.map((c) => c.id));
   const seen = new Set<string>();
   const out: PmCite[] = [];
@@ -588,6 +623,22 @@ export function citesFrom(text: string, cards: CardRecord[]): PmCite[] {
       out.push({ cardId: id });
     }
   }
+  const named = (id: string): boolean => {
+    if (!text.includes(id) || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  };
+  for (const g of known.goals ?? [])
+    if (named(g.id)) out.push({ goalId: g.id, label: `Goal ${g.id}` });
+  for (const a of known.assumptions ?? [])
+    if (named(a.id))
+      out.push({ assumptionId: a.id, cardId: a.cardId, label: `Assumption ${a.id}` });
+  for (const f of known.findings ?? [])
+    if (named(f.entryId))
+      out.push({ findingId: f.entryId, cardId: f.cardId, label: `AI review of ${f.cardId}` });
+  for (const f of known.failures ?? [])
+    if (named(f.evidenceId))
+      out.push({ evidenceId: f.evidenceId, cardId: f.cardId, label: `Evidence ${f.evidenceId}` });
   return out;
 }
 
@@ -623,6 +674,13 @@ function shrinkTail(text: string, maxTokens: number): string | undefined {
  * the PM, the profile, the conversation and the dossier each carry a
  * priority; the person's newest messages are required. The system text is
  * sent apart and counted as overhead, never cut.
+ *
+ * Each part is wrapped in its registered tag (PROMPT_STANDARD rule 5). What
+ * is stable for a project comes first — the approved PM rules and the
+ * person's profile, ranked above the board so a larger board never cuts them
+ * — and the board digest starts everything that changes with the board, so
+ * two prompts for one project are byte-identical up to `<board>` (PM-P6-11,
+ * rule 21). The date is task data, after the board.
  */
 export function seshatSections(
   s: PmSnapshot,
@@ -631,11 +689,12 @@ export function seshatSections(
   summary?: { upToSeq: number; text: string },
   extra?: { lookups?: string },
 ): ContextSection[] {
+  const T = SESHAT_TAGS;
   const questions = queued
-    .map((m) => {
-      const ctx = m.context?.cardId ? ` [looking at \`${m.context.cardId}\`]` : "";
-      return `Human${ctx}: ${m.text}`;
-    })
+    .map(
+      (m) =>
+        `${SESHAT_DATA.person}${m.context?.cardId ? SESHAT_DATA.lookingAt(m.context.cardId) : ""}: ${m.text}`,
+    )
     .join("\n");
   let order = 0;
   const section = (
@@ -645,117 +704,138 @@ export function seshatSections(
     priority: number,
     more: Partial<ContextSection> = {},
   ): ContextSection => ({ id, kind, text, priority, placement: "static", order: order++, ...more });
+  const bullets = (xs: readonly string[] | undefined) => (xs ?? []).map((x) => `- ${x}`).join("\n");
   const byStatus = new Map<string, CardRecord[]>();
   for (const c of s.cards) byStatus.set(c.status, [...(byStatus.get(c.status) ?? []), c]);
   const board = STATUS_ORDER.flatMap((status) => {
     const list = byStatus.get(status);
-    return list?.length ? [`${status} (${list.length}):\n${list.map(cardLine).join("\n")}`] : [];
+    return list?.length
+      ? [`${columnLabel(status)} (${list.length}):\n${list.map(cardLine).join("\n")}`]
+      : [];
   }).join("\n\n");
-  const cycles = s.cycles.length
-    ? s.cycles
-        .map(
-          (c) =>
-            `- \`${c.id}\` ${c.name} ${c.startsOn}..${c.endsOn} (${c.state})${c.goal ? `: ${c.goal}` : ""}`,
-        )
-        .join("\n")
-    : "none";
+  const cycles = s.cycles
+    .map(
+      (c) =>
+        `- \`${c.id}\` ${c.name} ${c.startsOn}..${c.endsOn} (${c.state})${c.goal ? `: ${c.goal}` : ""}`,
+    )
+    .join("\n");
   const conversation =
-    conversationDigest(history, Number.POSITIVE_INFINITY, summary) || "(new conversation)";
-  const out: ContextSection[] = [
-    section("today", "notice", `Today: ${s.today}`, 100, { required: true }),
-    section(
-      "pm_rules",
-      "rules",
-      s.pmRules?.length
-        ? `RULES FOR THE PM (approved)\n${s.pmRules.map((r) => `- ${r}`).join("\n")}`
-        : "",
-      89,
-    ),
-    section(
-      "profile",
-      "conventions",
-      s.preferences?.length
-        ? `WHAT THE HUMAN PREFERS (learned; adapt to it)\n${s.preferences.map((p) => `- ${p}`).join("\n")}`
-        : "",
-      70,
-    ),
-    section(
-      "forecast",
-      "notice",
-      s.forecast ? `FORECAST (Monte Carlo from real throughput)\n${s.forecast}` : "",
-      40,
-    ),
-    section("team", "team", s.team ? `YOUR TEAM\n${s.team}` : "", 60),
-    section("board", "contract", `BOARD\n${board || "(empty)"}`, 88, {
-      shrink: (t, max) => shrinkHead(t, max),
+    conversationDigest(history, Number.POSITIVE_INFINITY, summary) || SESHAT_DATA.newConversation;
+  const failures = (s.failures ?? [])
+    .map((f) => SESHAT_FACTS.failure(f, failureWords(f)))
+    .join("\n");
+  // Tag, open and close each counted inside the section, so what is cut is said.
+  const shrinkBody = (tag: string) => (t: string, max: number) => {
+    const open = t.indexOf("\n");
+    const close = `\n</${tag}>`;
+    const head = t.slice(0, open + 1);
+    const body = t.endsWith(close) ? t.slice(open + 1, -close.length) : t.slice(open + 1);
+    const cut = shrinkHead(body, Math.max(1, max - estimatePromptTokens(head + close)));
+    return cut === undefined ? undefined : `${head}${cut}${close}`;
+  };
+  return [
+    // The stable head (PM-P6-11): the same for every prompt of this project and person.
+    section("pm_rules", "rules", seshatPart(T.playbook, bullets(s.pmRules)), 89),
+    section("profile", "conventions", seshatPart(T.preferences, bullets(s.preferences)), 89),
+    // Everything from here changes with the board.
+    section("board", "contract", seshatPart(T.board, board || SESHAT_DATA.emptyBoard), 88, {
+      shrink: shrinkBody(T.board),
       minTokens: 200,
     }),
-    section("cycles", "notice", `CYCLES\n${cycles}`, 35),
+    section("today", "notice", SESHAT_DATA.today(s.today), 100, { required: true }),
+    section("failures", "failure", seshatPart(T.failure, failures), 86),
     section(
-      "decisions",
+      "findings",
       "notice",
-      s.decisions?.length
-        ? `DECISIONS WAITING\n${s.decisions.map((d) => `- ${d}`).join("\n")}`
-        : "",
-      62,
+      seshatPart(T.findings, (s.findings ?? []).map(SESHAT_FACTS.finding).join("\n")),
+      74,
+      { shrink: shrinkBody(T.findings), minTokens: 80 },
     ),
     section(
-      "takeover",
-      "notice",
-      s.takeover?.blocks.length
-        ? `${TAKEOVER_SECTION_HEADING}\n${s.takeover.contract}\n${s.takeover.blocks.join("\n")}`
-        : "",
-      55,
-      { shrink: (t, max) => shrinkHead(t, max), minTokens: 120 },
+      "goals",
+      "goal",
+      seshatPart(T.goals, (s.goals ?? []).map(SESHAT_FACTS.goal).join("\n")),
+      72,
     ),
     section(
-      "runs",
-      "history_old",
-      `RECENT WORKER ATTEMPTS\n${s.recentRuns.length ? s.recentRuns.slice(-12).join("\n") : "none"}`,
-      45,
+      "assumptions",
+      "notice",
+      seshatPart(T.assumptions, (s.assumptions ?? []).map(SESHAT_FACTS.assumption).join("\n")),
+      64,
+      { shrink: shrinkBody(T.assumptions), minTokens: 80 },
     ),
     section(
       "capability",
       "notice",
-      `WORKER CAPABILITY\n${s.worker ? `${s.worker.model}: ${s.worker.record}` : "no runs yet"}`,
+      seshatPart(T.agent, s.worker ? SESHAT_DATA.agentRecord(s.worker.model, s.worker.record) : ""),
       65,
     ),
+    section("decisions", "notice", seshatPart(T.decisions, bullets(s.decisions)), 62),
+    section("team", "team", seshatPart(T.team, s.team ?? ""), 60),
+    section(
+      "takeover",
+      "notice",
+      s.takeover?.blocks.length
+        ? seshatPart(T.asFound, `${s.takeover.contract}\n${s.takeover.blocks.join("\n")}`)
+        : "",
+      55,
+      { shrink: shrinkBody(T.asFound), minTokens: 120 },
+    ),
+    section("runs", "history_old", seshatPart(T.attempts, s.recentRuns.slice(-12).join("\n")), 45),
+    section("forecast", "notice", seshatPart(T.forecast, s.forecast ?? ""), 40),
+    section("cycles", "notice", seshatPart(T.sprints, cycles), 35),
     section(
       "dossier",
       "dossier",
       s.dossier?.lines.length
-        ? `DOSSIER OF \`${s.dossier.cardId}\`\n${s.dossier.lines.join("\n")}`
+        ? seshatPart(T.dossier, s.dossier.lines.join("\n"), ` issue="${s.dossier.cardId}"`)
         : "",
       75,
     ),
-    section("conversation", "history_recent", `CONVERSATION SO FAR\n${conversation}`, 80, {
-      shrink: (t, max) => shrinkTail(t, max),
+    section("conversation", "history_recent", seshatPart(T.conversation, conversation), 80, {
+      shrink: (t, max) => {
+        const open = `<${T.conversation}>\n`;
+        const close = `\n</${T.conversation}>`;
+        const body = t.slice(open.length, t.length - close.length);
+        const cut = shrinkTail(body, Math.max(1, max - estimatePromptTokens(open + close)));
+        return cut === undefined ? undefined : `${open}${cut}${close}`;
+      },
       minTokens: 120,
     }),
-    section(
-      "lookups",
-      "failure",
-      extra?.lookups ? `LIBRARY SEARCH RESULTS\n${extra.lookups}` : "",
-      90,
-      {
-        shrink: (t, max) => shrinkHead(t, max),
-        minTokens: 150,
-      },
-    ),
-    section("newest", "goal", `NEW MESSAGE${queued.length > 1 ? "S" : ""}\n${questions}`, 1000, {
-      required: true,
+    section("lookups", "failure", seshatPart(T.lookups, extra?.lookups ?? ""), 90, {
+      shrink: shrinkBody(T.lookups),
+      minTokens: 150,
     }),
+    // PROMPT_STANDARD rule 31: the brief goes last among the data, before the
+    // message and the ask (it is volatile across projects, never in the head).
+    section(
+      "brief",
+      "notice",
+      s.brief
+        ? seshatPart(
+            T.brief,
+            `<untrusted_content source="brief">\n${s.brief}\n</untrusted_content>`,
+          )
+        : "",
+      50,
+    ),
+    section("newest", "goal", seshatPart(T.message, questions), 1000, { required: true }),
     section(
       "instruction",
       "goal",
-      extra?.lookups
-        ? "Now reply to the human."
-        : "Reply to the human now. Use propose_* tools only for changes you recommend.",
+      extra?.lookups ? SESHAT_DATA.replyAfterLookups : SESHAT_DATA.replyNow,
       1000,
       { required: true },
     ),
   ];
-  return out;
+}
+
+/** A failure's stop reason and check in the words a person reads (DEC-31). */
+export function failureWords(f: FailureFacts): { stop: string; gate?: string | undefined } {
+  return {
+    stop: stopReasonLabel(f.stopReason, f.step !== undefined ? { step: f.step } : {}).short,
+    gate: f.gate ? gateLabel(f.gate) : undefined,
+  };
 }
 
 /**
@@ -922,6 +1002,16 @@ export async function answer(
         ? `I have ${proposals.length} proposed change${proposals.length > 1 ? "s" : ""} for you to review.`
         : "I could not produce an answer to that. Could you rephrase it or point me at an issue?";
   }
+  // PM-P6-6: asked why an issue failed, the reply names the evidence's
+  // facts and cites its id — the harness adds them from the bundle when the
+  // model's text leaves the id out, so the facts never rest on the model.
+  const asked = queued.some((m) => isWhyFailedQuestion(m.text));
+  const facts = asked ? (snapshot.failures ?? []) : [];
+  for (const f of facts) {
+    if (!text.includes(f.evidenceId)) {
+      text = `${text}\n\n${SESHAT_FACTS.failure(f, failureWords(f))}`;
+    }
+  }
   // PM-N9-4: said, not silently dropped.
   if (unreasoned > 0) {
     text = `${text}\n\n${unreasoned === 1 ? "One proposed change was left out because it gave no reason." : `${unreasoned} proposed changes were left out because they gave no reason.`}`;
@@ -936,7 +1026,8 @@ export async function answer(
   return {
     text,
     proposals,
-    cites: [...citesFrom(text, snapshot.cards), ...sources],
+    cites: [...citesFrom(text, snapshot.cards, snapshot), ...sources],
+    skillVersion: SESHAT_SKILL_VERSION,
     promptSections: fitted.allocation.sectionTokens,
     promptBudget: {
       role: "seshat",
@@ -983,53 +1074,44 @@ export function isStatusQuestion(text: string): boolean {
   );
 }
 
+/** The chat's footer on an answer made from the ledger. */
+export const LEDGER_FOOTER =
+  "\n\n_Answered from the ledger without loading a model. Ask a specific question for my judgement._";
+
 /**
- * A standup built from the board and run data without loading any model.
- * Loading the 27B for a status question costs 40-120 s of swap on this host;
- * the facts are already on the ledger.
+ * The standup, built from the board and run data without loading any model
+ * (loading the Planner costs 40-120 s of swap on this host; the facts are
+ * already on the ledger). One builder for the chat, the notifier and the CLI
+ * (PM-P6-3, `standupLines`): the snapshot's `standup` facts when the ledger
+ * gave them, else the board's columns alone.
  */
 export function ledgerStandup(s: PmSnapshot): string {
-  const by = (status: string) => s.cards.filter((c) => c.status === status);
-  const name = (c: CardRecord) => `${c.title.replace(/\s*\(SPIDR:[^)]*\)\s*$/, "")} (\`${c.id}\`)`;
-  const lines: string[] = [];
-  const working = [...by("in_progress"), ...by("verify")];
-  lines.push(
-    working.length ? `Working: ${working.map(name).join(", ")}.` : "Nothing is running right now.",
-  );
-  const review = by("review");
-  if (review.length) lines.push(`Waiting for your review: ${review.map(name).join(", ")}.`);
-  const failed = s.cards.filter(
-    (c) => c.stopReason && c.stopReason !== "gate_passed" && c.status !== "done",
-  );
-  if (failed.length) {
-    lines.push(
-      `At risk: ${failed.map((c) => `${name(c)} stopped on ${c.stopReason}`).join("; ")}.`,
-    );
-  }
-  const ready = [...by("ready")].sort((a, b) => (a.priority || 9) - (b.priority || 9));
-  if (ready.length) lines.push(`Next up: ${ready.slice(0, 3).map(name).join(", ")}.`);
-  lines.push(`Done: ${by("done").length} of ${s.cards.length} issues.`);
+  return `${standupBody(s)}${LEDGER_FOOTER}`;
+}
+
+/** The standup's text with no footer: what a channel posts. */
+export function standupBody(s: PmSnapshot): string {
+  const extra: string[] = [];
   // PM-P13-3, -8: the must-haves proven and the unplanned ones, from the ledger.
   const map = s.storyMap;
   if (map && map.slices.length > 0) {
-    lines.push(
+    extra.push(
       `${map.provenLine}.${map.unplanned.length ? ` Unplanned: ${map.unplanned.map((r) => r.id).join(", ")}.` : ""}${map.projectDone ? " The project is done: a person accepted its last release." : ""}`,
     );
     const waiting = map.slices.filter((x) => x.state === "proven");
     if (waiting.length) {
-      lines.push(
+      extra.push(
         `Requirements done, waiting for your acceptance: ${waiting.map((x) => x.id).join(", ")}.`,
       );
     }
   }
-  if (s.forecast) lines.push(`Forecast: ${s.forecast}`);
-  if (s.worker) lines.push(`Coding model record: ${s.worker.record}`);
+  if (s.forecast) extra.push(`Forecast: ${s.forecast}`);
   // GT-N1-1: an invariant no gate checks is said, never silently assumed to hold.
   const loose = s.unenforcedInvariants ?? [];
   if (loose.length) {
-    lines.push(
+    extra.push(
       `Not enforced (restate as ${loose[0]?.restate.join(" or ")} for the architecture check to enforce it): ${loose.map((l) => `"${l.line}"`).join("; ")}.`,
     );
   }
-  return `${lines.join("\n")}\n\n_Answered from the ledger without loading a model. Ask a specific question for my judgement._`;
+  return standupLines(s.standup ?? boardOnlyFacts(s.cards), extra).join("\n");
 }

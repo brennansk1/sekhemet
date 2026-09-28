@@ -27,11 +27,11 @@ import {
   executeCard,
   liveTokenPath,
   nextAttemptNumber,
-  recordReview,
   releaseHeldCards,
   unlessPlaybookCovers,
 } from "../src/execute.js";
 import { LearningStore } from "../src/learning/store.js";
+import { recordReview } from "../src/review_flow.js";
 import { trustFiles } from "../src/workspace_trust.js";
 
 /** Replies with each scripted turn in order, then `finish_card`; records every request. */
@@ -715,17 +715,43 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
 
   it("records a review in the dossier, which the Review surface reads as findings", async () => {
     const card = await newCard("card_rev");
-    await recordReview(cardStore, card.id, [
-      { severity: "consider", note: "name the handler after the route" },
-      { severity: "likely_send_back", note: "src/a.ts uses a default export" },
-    ]);
+    await recordReview({ repoPath: repo, cardStore }, card.id, {
+      modelId: "gemma-4-26b",
+      findings: [
+        { criterion: "a is one", verdict: "met", evidence: "src/a.ts:1", note: "" },
+        {
+          criterion: "preference: named exports",
+          verdict: "unmet",
+          evidence: "src/a.ts:1",
+          note: "src/a.ts uses a default export.",
+        },
+      ],
+      cited: [true, true],
+      filesChanged: ["src/a.ts"],
+      filesRead: ["src/a.ts"],
+      notRead: [],
+      coverage: "AI review read 1 of 1 file; 0 of 1 changed line is cited by no finding.",
+      uncited: [],
+      requests: 1,
+    });
     const dossier = await cardStore.getDossier(card.id);
-    expect(dossier.reviews[0]?.verdict).toBe("likely_send_back");
-    const events = (await log.getEventsByCard(card.id)).filter((e) => e.type === "card/review");
-    const review = latestReview(events);
-    expect(review?.findings).toEqual([
-      { severity: "consider", note: "name the handler after the route" },
-      { severity: "likely_send_back", note: "src/a.ts uses a default export" },
+    expect(dossier.reviews.map((e) => [e.verdict, e.text, e.modelId, e.sources])).toEqual([
+      ["met", "a is one (src/a.ts:1)", "gemma-4-26b", ["src/a.ts"]],
+      [
+        "unmet",
+        "preference: named exports — src/a.ts uses a default export. (src/a.ts:1)",
+        "gemma-4-26b",
+        ["src/a.ts"],
+      ],
+      [
+        "coverage",
+        "AI review read 1 of 1 file; 0 of 1 changed line is cited by no finding.",
+        "gemma-4-26b",
+        ["src/a.ts"],
+      ],
     ]);
+    // The legacy "- [severity] note" reader finds none: these are the Review desk's findings.
+    const events = (await log.getEventsByCard(card.id)).filter((e) => e.type === "card/review");
+    expect(latestReview(events)).toBeNull();
   });
 });

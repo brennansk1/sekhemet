@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { BoardService } from "@sekhemet/board";
 import { type CardRecord, measuresModel } from "@sekhemet/kernel";
 import {
   DecisionStore,
@@ -31,6 +32,7 @@ import { resolveConfig } from "./config.js";
 import { ledgerOutcomes } from "./pm/capability.js";
 import { stepBudgetSummary } from "./pm/pm_copy.js";
 import { PmStore } from "./pm/store.js";
+import { type AutoApplyRule, autoApplySuggestion } from "./pm/suggest.js";
 import type { Kernel } from "./wave2.js";
 
 /**
@@ -535,11 +537,28 @@ export function degradationRisk(repoPath: string): string | undefined {
 export async function respondToSignals(
   k: Kernel,
   fired: readonly SignalReading[],
-  options: { setup: Setup; now: Date; say: (line: string) => void },
+  options: {
+    setup: Setup;
+    now: Date;
+    say: (line: string) => void;
+    /** An Admin's auto-apply rule, per project and property (PM-N9-2, TEAM-41). */
+    autoApply?: AutoApplyRule;
+  },
 ): Promise<{ held: Set<string> }> {
   const held = new Set<string>();
   const ledger = ledgerOf(k);
   const pm = new PmStore(k.log);
+  // PM-N9-2: a priority or a re-split under an Admin's rule is applied now, that Admin its principal.
+  const byRule = async (id: string) =>
+    options.autoApply
+      ? autoApplySuggestion(id, {
+          cardStore: k.cardStore,
+          pmStore: pm,
+          repoPath: k.repoPath,
+          ...(k.boardService ? { boardService: k.boardService as BoardService } : {}),
+          autoApply: options.autoApply,
+        })
+      : undefined;
   for (const s of fired) {
     const targets = s.response?.targets ?? [];
     switch (s.response?.action) {
@@ -553,7 +572,9 @@ export async function respondToSignals(
             value: 1,
             why: `Blocked for over ${s.threshold ?? "the bound's"} hours${card.blockedReason ? `: ${card.blockedReason}` : ""}.`,
           });
-          if (sug)
+          if (sug && (await byRule(sug)))
+            options.say(`Applied Urgent for ${id} by an Admin's rule (blocked ${s.value} h).`);
+          else if (sug)
             options.say(`Suggested Urgent for ${id} (blocked ${s.value} h); a person decides.`);
         }
         break;
@@ -566,7 +587,10 @@ export async function respondToSignals(
             value: ["interface", "data"],
             why: `${s.detail}: re-split along Interface or Data so each part fails alone.`,
           });
-          if (sug) options.say(`Suggested a re-split of ${id} (${s.detail}); it keeps running.`);
+          if (sug && (await byRule(sug)))
+            options.say(`Re-split ${id} by an Admin's rule (${s.detail}).`);
+          else if (sug)
+            options.say(`Suggested a re-split of ${id} (${s.detail}); it keeps running.`);
         }
         break;
       }

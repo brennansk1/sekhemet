@@ -2185,12 +2185,15 @@ export function startDashboardServer(
         dashboard: `http://127.0.0.1:${boundPort}`,
         ...(standupStore
           ? {
-              standup: () =>
+              standup: (person: string) =>
                 dailyStandup({
                   repoPath,
                   cardStore: standupStore,
                   pmStore: new PmStore(options.log),
                   ...(options.pmModel ? { pmModel: options.pmModel } : {}),
+                  person,
+                  // PM-N9-8: only what the recipient can see.
+                  audience: audienceFromAccess(() => access, options.db),
                 }),
             }
           : {}),

@@ -1,0 +1,1048 @@
+[
+  {
+    "id": "onyx-vault-project-case",
+    "fixture": "onyx",
+    "card": "card_onyx_4_vault",
+    "file": "src/vault.ts",
+    "edits": [
+      {
+        "find": "const PROJECT = /^[a-z0-9][a-z0-9-]*$/;",
+        "replace": "const PROJECT = /^[a-z0-9][a-z0-9-]*$/i;"
+      }
+    ],
+    "violates": "a project must match /^[a-z0-9][a-z0-9-]*$/",
+    "defect": "The project pattern is matched case-insensitively, so an upper-case project such as API is accepted.",
+    "witness": "witness/onyx-vault-project-case.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/vault.spec.ts",
+        "exitCode": 0,
+        "passed": 10,
+        "total": 10
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx-vault-key-lower-tail",
+    "fixture": "onyx",
+    "card": "card_onyx_4_vault",
+    "file": "src/vault.ts",
+    "edits": [
+      {
+        "find": "const KEY = /^[A-Z_][A-Z0-9_]*$/;",
+        "replace": "const KEY = /^[A-Z_][A-Za-z0-9_]*$/;"
+      }
+    ],
+    "violates": "a key must match /^[A-Z_][A-Z0-9_]*$/",
+    "defect": "The key pattern admits lower-case letters after the first character, so API_key is accepted.",
+    "witness": "witness/onyx-vault-key-lower-tail.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/vault.spec.ts",
+        "exitCode": 0,
+        "passed": 10,
+        "total": 10
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx-vault-get-audit-missing",
+    "fixture": "onyx",
+    "card": "card_onyx_4_vault",
+    "file": "src/vault.ts",
+    "edits": [
+      {
+        "find": "    this.audit(\"get\", project, key);\n    const row = this.db\n      .prepare(\n        \"SELECT s.envelope_json AS e FROM secrets s JOIN projects p ON p.id = s.project_id WHERE p.name = ? AND s.key = ?\",\n      )\n      .get(project, key) as { e: string } | undefined;\n    if (!row) return undefined;\n",
+        "replace": "    const row = this.db\n      .prepare(\n        \"SELECT s.envelope_json AS e FROM secrets s JOIN projects p ON p.id = s.project_id WHERE p.name = ? AND s.key = ?\",\n      )\n      .get(project, key) as { e: string } | undefined;\n    if (!row) return undefined;\n    this.audit(\"get\", project, key);\n"
+      }
+    ],
+    "violates": "Every set, get, list and delete call inserts one audit_events row",
+    "defect": "get returns before writing its audit row when the key is missing, so a get of a missing key leaves no audit event.",
+    "witness": "witness/onyx-vault-get-audit-missing.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/vault.spec.ts",
+        "exitCode": 0,
+        "passed": 10,
+        "total": 10
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx-vault-delete-audit-missing",
+    "fixture": "onyx",
+    "card": "card_onyx_4_vault",
+    "file": "src/vault.ts",
+    "edits": [
+      {
+        "find": "    this.audit(\"delete\", project, key);\n    const result = this.db\n      .prepare(\n        \"DELETE FROM secrets WHERE key = ? AND project_id = (SELECT id FROM projects WHERE name = ?)\",\n      )\n      .run(key, project);\n    return Number(result.changes) > 0;\n",
+        "replace": "    const result = this.db\n      .prepare(\n        \"DELETE FROM secrets WHERE key = ? AND project_id = (SELECT id FROM projects WHERE name = ?)\",\n      )\n      .run(key, project);\n    const deleted = Number(result.changes) > 0;\n    if (deleted) this.audit(\"delete\", project, key);\n    return deleted;\n"
+      }
+    ],
+    "violates": "Every set, get, list and delete call inserts one audit_events row",
+    "defect": "delete writes its audit row only when a row was deleted, so deleting a missing key leaves no audit event.",
+    "witness": "witness/onyx-vault-delete-audit-missing.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/vault.spec.ts",
+        "exitCode": 0,
+        "passed": 10,
+        "total": 10
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx-scanner-first-token-only",
+    "fixture": "onyx",
+    "card": "card_onyx_5_scanner",
+    "file": "src/scanner.ts",
+    "edits": [
+      {
+        "find": "  for (const match of line.matchAll(/[A-Za-z0-9+/_-]{20,}/g)) {\n    if (shannonEntropy(match[0]) >= ENTROPY_THRESHOLD) {\n      return { rule: \"high-entropy\", excerpt: match[0] };\n    }\n  }\n",
+        "replace": "  const token = /[A-Za-z0-9+/_-]{20,}/.exec(line);\n  if (token && shannonEntropy(token[0]) >= ENTROPY_THRESHOLD) {\n    return { rule: \"high-entropy\", excerpt: token[0] };\n  }\n"
+      }
+    ],
+    "violates": "returns rule \"high-entropy\" for the first token whose shannonEntropy is >= ENTROPY_THRESHOLD",
+    "defect": "Only the first long token on a line is tested for entropy, so a random secret after a long ordinary identifier is missed.",
+    "witness": "witness/onyx-scanner-first-token-only.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/scanner.spec.ts",
+        "exitCode": 0,
+        "passed": 18,
+        "total": 18
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx-scanner-signature-order",
+    "fixture": "onyx",
+    "card": "card_onyx_5_scanner",
+    "file": "src/scanner.ts",
+    "edits": [
+      {
+        "find": "  [\"aws-access-key\", /\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b/],\n  [\"github-pat\", /\\bghp_[A-Za-z0-9]{36}\\b/],\n",
+        "replace": "  [\"github-pat\", /\\bghp_[A-Za-z0-9]{36}\\b/],\n  [\"aws-access-key\", /\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b/],\n"
+      }
+    ],
+    "violates": "checks, in this order, and returns the FIRST hit",
+    "defect": "The GitHub token rule is checked before the AWS key rule, so a line holding both reports github-pat instead of aws-access-key.",
+    "witness": "witness/onyx-scanner-signature-order.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/scanner.spec.ts",
+        "exitCode": 0,
+        "passed": 18,
+        "total": 18
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx-scanner-private-key-kinds",
+    "fixture": "onyx",
+    "card": "card_onyx_5_scanner",
+    "file": "src/scanner.ts",
+    "edits": [
+      {
+        "find": "  [\"private-key\", /-----BEGIN [A-Z ]*PRIVATE KEY-----/],",
+        "replace": "  [\"private-key\", /-----BEGIN (?:RSA )?PRIVATE KEY-----/],"
+      }
+    ],
+    "violates": "rule \"private-key\" for /-----BEGIN [A-Z ]*PRIVATE KEY-----/",
+    "defect": "The private-key pattern only allows an optional RSA label, so OpenSSH and EC private key headers are missed.",
+    "witness": "witness/onyx-scanner-private-key-kinds.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/scanner.spec.ts",
+        "exitCode": 0,
+        "passed": 18,
+        "total": 18
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx-scanner-asia-prefix",
+    "fixture": "onyx",
+    "card": "card_onyx_5_scanner",
+    "file": "src/scanner.ts",
+    "edits": [
+      {
+        "find": "  [\"aws-access-key\", /\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b/],",
+        "replace": "  [\"aws-access-key\", /\\bAKIA[0-9A-Z]{16}\\b/],"
+      }
+    ],
+    "violates": "rule \"aws-access-key\" for /\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b/",
+    "defect": "The AWS pattern drops the ASIA prefix, so temporary (STS) access key ids are missed.",
+    "witness": "witness/onyx-scanner-asia-prefix.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/scanner.spec.ts",
+        "exitCode": 0,
+        "passed": 18,
+        "total": 18
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx-injector-timeout-zero",
+    "fixture": "onyx",
+    "card": "card_onyx_6_injector",
+    "file": "src/injector.ts",
+    "edits": [
+      {
+        "find": "    const timer =\n      options.timeoutMs !== undefined\n        ? setTimeout(() => child.kill(\"SIGTERM\"), options.timeoutMs)\n        : undefined;\n",
+        "replace": "    const timer = options.timeoutMs\n      ? setTimeout(() => child.kill(\"SIGTERM\"), options.timeoutMs)\n      : undefined;\n"
+      }
+    ],
+    "violates": "when options.timeoutMs is set kills the child with child.kill(\"SIGTERM\") after that many milliseconds",
+    "defect": "The timeout is tested for truthiness, so timeoutMs 0 sets no timer and the child is never killed.",
+    "witness": "witness/onyx-injector-timeout-zero.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/injector.spec.ts",
+        "exitCode": 0,
+        "passed": 11,
+        "total": 11
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx-injector-empty-value",
+    "fixture": "onyx",
+    "card": "card_onyx_6_injector",
+    "file": "src/injector.ts",
+    "edits": [
+      {
+        "find": "    if (value !== undefined) env[name] = value;",
+        "replace": "    if (value) env[name] = value;"
+      }
+    ],
+    "violates": "every base entry whose value is not undefined",
+    "defect": "Base entries are kept only when truthy, so a variable set to the empty string is dropped from the child's environment.",
+    "witness": "witness/onyx-injector-empty-value.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/injector.spec.ts",
+        "exitCode": 0,
+        "passed": 11,
+        "total": 11
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "vanguard-hmac-last-v1",
+    "fixture": "vanguard",
+    "card": "card_vang_2_hmac",
+    "file": "src/hmac.ts",
+    "edits": [
+      {
+        "find": "  const v1: string[] = [];",
+        "replace": "  let v1: string | undefined;"
+      },
+      {
+        "find": "    else if (key === \"v1\") v1.push(value);",
+        "replace": "    else if (key === \"v1\") v1 = value;"
+      },
+      {
+        "find": "  if (t === undefined || !/^\\d+$/.test(t) || v1.length === 0) {",
+        "replace": "  if (t === undefined || !/^\\d+$/.test(t) || v1 === undefined) {"
+      },
+      {
+        "find": "  if (v1.some((candidate) => safeEqualHex(expected, candidate))) {",
+        "replace": "  if (safeEqualHex(expected, v1)) {"
+      }
+    ],
+    "violates": "if safeEqualHex(expected, v1) for ANY v1",
+    "defect": "Only the last v1 signature in the header is kept, so a header whose valid signature is followed by another v1 fails.",
+    "witness": "witness/vanguard-hmac-last-v1.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/hmac.spec.ts",
+        "exitCode": 0,
+        "passed": 18,
+        "total": 18
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "vanguard-hmac-timestamp-digits",
+    "fixture": "vanguard",
+    "card": "card_vang_2_hmac",
+    "file": "src/hmac.ts",
+    "edits": [
+      {
+        "find": "!/^\\d+$/.test(t)",
+        "replace": "!/\\d+/.test(t)"
+      }
+    ],
+    "violates": "t not all digits",
+    "defect": "The timestamp check is unanchored, so a t such as 1700000000x passes as well-formed and fails later as a signature mismatch.",
+    "witness": "witness/vanguard-hmac-timestamp-digits.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/hmac.spec.ts",
+        "exitCode": 0,
+        "passed": 18,
+        "total": 18
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "vanguard-hmac-github-prefix-case",
+    "fixture": "vanguard",
+    "card": "card_vang_2_hmac",
+    "file": "src/hmac.ts",
+    "edits": [
+      {
+        "find": "  if (!header.startsWith(\"sha256=\")) return failed(\"github\", \"malformed signature header\");",
+        "replace": "  if (!header.toLowerCase().startsWith(\"sha256=\"))\n    return failed(\"github\", \"malformed signature header\");"
+      }
+    ],
+    "violates": "not starting with \"sha256=\" -> \"malformed signature header\"",
+    "defect": "The sha256= prefix is compared case-insensitively, so a SHA256= header verifies instead of being malformed.",
+    "witness": "witness/vanguard-hmac-github-prefix-case.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/hmac.spec.ts",
+        "exitCode": 0,
+        "passed": 18,
+        "total": 18
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "vanguard-replay-hop-case",
+    "fixture": "vanguard",
+    "card": "card_vang_5_replay",
+    "file": "src/replay.ts",
+    "edits": [
+      {
+        "find": "    if (!HOP_BY_HOP_HEADERS.includes(lower)) headers[lower] = value;",
+        "replace": "    if (!HOP_BY_HOP_HEADERS.includes(name)) headers[lower] = value;"
+      }
+    ],
+    "violates": "every stored header with a lower-cased name except those in HOP_BY_HOP_HEADERS",
+    "defect": "Hop-by-hop headers are matched on the stored name before lower-casing, so Host or Content-Length stored with capitals are replayed.",
+    "witness": "witness/vanguard-replay-hop-case.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/replay.spec.ts",
+        "exitCode": 0,
+        "passed": 10,
+        "total": 10
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "vanguard-store-limit-integer",
+    "fixture": "vanguard",
+    "card": "card_vang_3_store",
+    "file": "src/store.ts",
+    "edits": [
+      {
+        "find": "    if (!Number.isInteger(limit) || limit < 1) throw new RangeError(\"limit must be >= 1\");",
+        "replace": "    if (limit < 1) throw new RangeError(\"limit must be >= 1\");"
+      }
+    ],
+    "violates": "throwing new RangeError(\"limit must be >= 1\") when limit is not an integer >= 1",
+    "defect": "A fractional limit is not refused with the RangeError, so list({ limit: 1.5 }) reaches SQLite.",
+    "witness": "witness/vanguard-store-limit-integer.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/store.spec.ts",
+        "exitCode": 0,
+        "passed": 11,
+        "total": 11
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "vanguard-ingest-source-length",
+    "fixture": "vanguard",
+    "card": "card_vang_4_ingest",
+    "file": "src/ingest.ts",
+    "edits": [
+      {
+        "find": "/^\\/ingest\\/([a-z0-9-]{1,32})$/",
+        "replace": "/^\\/ingest\\/([a-z0-9-]+)$/"
+      }
+    ],
+    "violates": "it must match /^\\/ingest\\/([a-z0-9-]{1,32})$/",
+    "defect": "The source name has no 32-character limit, so a 33-character source is accepted and stored instead of answered 404.",
+    "witness": "witness/vanguard-ingest-source-length.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/ingest.spec.ts",
+        "exitCode": 0,
+        "passed": 12,
+        "total": 12
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "vanguard-ingest-round-seconds",
+    "fixture": "vanguard",
+    "card": "card_vang_4_ingest",
+    "file": "src/ingest.ts",
+    "edits": [
+      {
+        "find": "        Math.floor(receivedAt / 1000),",
+        "replace": "        Math.round(receivedAt / 1000),"
+      }
+    ],
+    "violates": "call verifyForSource with Math.floor(receivedAt / 1000)",
+    "defect": "The receive time is rounded instead of floored to seconds, so a request 300.6 s after its signature falls outside the inclusive tolerance.",
+    "witness": "witness/vanguard-ingest-round-seconds.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/ingest.spec.ts",
+        "exitCode": 0,
+        "passed": 12,
+        "total": 12
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "basalt-dag-unknown-order",
+    "fixture": "basalt-canvas",
+    "card": "card_canvas_5_dag_layout",
+    "file": "src/dag_layout.ts",
+    "edits": [
+      {
+        "find": "    if (!known.has(edge.from)) throw new Error(`unknown node: ${edge.from}`);\n    if (!known.has(edge.to)) throw new Error(`unknown node: ${edge.to}`);\n",
+        "replace": "    if (!known.has(edge.to)) throw new Error(`unknown node: ${edge.to}`);\n    if (!known.has(edge.from)) throw new Error(`unknown node: ${edge.from}`);\n"
+      }
+    ],
+    "violates": "(check from before to)",
+    "defect": "The edge's target is checked before its source, so an edge with two unknown ends names the target instead of the source.",
+    "witness": "witness/basalt-dag-unknown-order.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/dag_layout.spec.ts",
+        "exitCode": 0,
+        "passed": 13,
+        "total": 13
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "basalt-dag-edge-height",
+    "fixture": "basalt-canvas",
+    "card": "card_canvas_5_dag_layout",
+    "file": "src/dag_layout.ts",
+    "edits": [
+      {
+        "find": "      path: bezierPath(from.x + nodeWidth, from.y + nodeHeight / 2, to.x, to.y + nodeHeight / 2),",
+        "replace": "      path: bezierPath(from.x + nodeWidth, from.y + 20, to.x, to.y + 20),"
+      }
+    ],
+    "violates": "path = bezierPath(from.x + nodeWidth, from.y + nodeHeight / 2, to.x, to.y + nodeHeight / 2)",
+    "defect": "Edge paths use a fixed 20 px offset instead of half the node height, so a custom nodeHeight draws edges off the nodes' middles.",
+    "witness": "witness/basalt-dag-edge-height.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/dag_layout.spec.ts",
+        "exitCode": 0,
+        "passed": 13,
+        "total": 13
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "basalt-store-initial-copy",
+    "fixture": "basalt-canvas",
+    "card": "card_canvas_2_store",
+    "file": "src/store.ts",
+    "edits": [
+      {
+        "find": "    cards: [...cards],",
+        "replace": "    cards,"
+      }
+    ],
+    "violates": "returning { cards: a copy of cards",
+    "defect": "The initial state keeps the caller's array instead of a copy, so pushing to that array later changes the state.",
+    "witness": "witness/basalt-store-initial-copy.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/store.spec.ts",
+        "exitCode": 0,
+        "passed": 16,
+        "total": 16
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "basalt-store-gate-noop",
+    "fixture": "basalt-canvas",
+    "card": "card_canvas_2_store",
+    "file": "src/store.ts",
+    "edits": [
+      {
+        "find": "      if (card.gates[action.gate] === action.state) return state;\n",
+        "replace": ""
+      }
+    ],
+    "violates": "return state unchanged when the status/gate already has that value",
+    "defect": "updateGate always returns a new state, even when the gate already has that value, so subscribers are notified of a no-op.",
+    "witness": "witness/basalt-store-gate-noop.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/store.spec.ts",
+        "exitCode": 0,
+        "passed": 16,
+        "total": 16
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "basalt-store-gate-mutates",
+    "fixture": "basalt-canvas",
+    "card": "card_canvas_2_store",
+    "file": "src/store.ts",
+    "edits": [
+      {
+        "find": "      return replaceCard(state, at, {\n        ...card,\n        gates: { ...card.gates, [action.gate]: action.state },\n      });\n",
+        "replace": "      const gates = card.gates;\n      gates[action.gate] = action.state;\n      return replaceCard(state, at, { ...card, gates });\n"
+      }
+    ],
+    "violates": "a pure function that never mutates its input",
+    "defect": "updateGate writes the new gate state into the existing card's gates object, mutating the previous state.",
+    "witness": "witness/basalt-store-gate-mutates.spec.ts",
+    "verification": {
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "frozenTests": {
+        "command": "vitest run tests/store.spec.ts",
+        "exitCode": 0,
+        "passed": 16,
+        "total": 16
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      },
+      "witnessOnDefect": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 1
+      },
+      "witnessOnReference": {
+        "exitCode": 0,
+        "passed": 1,
+        "total": 1
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  }
+]

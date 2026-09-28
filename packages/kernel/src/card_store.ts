@@ -116,6 +116,7 @@ interface DossierPayload {
   inReplyTo?: string;
   sources?: string[];
   verdict?: string;
+  modelId?: string;
 }
 
 export interface CreateCardInput {
@@ -1560,6 +1561,9 @@ export class CardStore {
     if (input.inReplyTo !== undefined && input.kind !== "answer") {
       throw new Error("Only an answer may name the question it replies to");
     }
+    if (input.modelId !== undefined && input.kind !== "review") {
+      throw new Error("Only a review entry names its model");
+    }
     if (!(await this.getCard(input.cardId))) {
       throw new Error(`Card not found: ${input.cardId}`);
     }
@@ -1574,6 +1578,7 @@ export class CardStore {
       ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}),
       ...(input.sources?.length ? { sources: [...input.sources] } : {}),
       ...(input.verdict ? { verdict: input.verdict } : {}),
+      ...(input.modelId ? { modelId: input.modelId } : {}),
     };
     const event = await this.eventLog.append({
       actor: input.actor ?? DOSSIER_DEFAULT_ACTORS[input.kind],
@@ -1611,6 +1616,7 @@ export class CardStore {
       ...(p.inReplyTo ? { inReplyTo: p.inReplyTo } : {}),
       ...(p.sources?.length ? { sources: p.sources } : {}),
       ...(p.verdict ? { verdict: p.verdict } : {}),
+      ...(p.modelId ? { modelId: p.modelId } : {}),
     };
   }
 

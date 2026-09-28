@@ -24,6 +24,7 @@ export * from "./strip.js";
 export * from "./settings.js";
 export * from "./integrations_view.js";
 export * from "./machine_tier.js";
+export * from "./playbook.js";
 
 /**
  * The dashboard's static ES modules and stylesheets (`packages/ui/web`).
@@ -59,4 +60,5 @@ export const UI_LIB_MODULES = [
   "settings.js",
   "integrations_view.js",
   "machine_tier.js",
+  "playbook.js",
 ] as const;

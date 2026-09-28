@@ -779,7 +779,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:466 | HD:1187 | Session Retrospective: end of sprint or every N cards | carried | carried | planner-pm §2.7.8 (`retroEveryCards`) |
 | HD1:467 | HD:1188 | Session Replan: rung-3 failure, scope change, capacity change; diff vs previous plan | carried | carried | planner-pm §2.7.8 |
 | HD1:468 | HD:1192 | Status derived from gates and log, never freehand | carried | carried | planner-pm §2.8.14 |
-| HD1:469 | HD:1192 | Standup lists cards by state, decisions waiting, then the machine's plan for the next window | carried-weaker | gap | planner-pm §2.7.8, P6 |
+| HD1:469 | HD:1192 | Standup lists cards by state, decisions waiting, then the machine's plan for the next window | carried-weaker | carried | planner-pm §2.7.8, P6 (PM-P6-3; built B4.8, 2026-09-28: one builder, `pm/standup.ts` — done since the last standup, in flight, needs you with each decision's wait, then *Next up* in the queue's order with each estimate's range and basis; `seshat_judgement.spec.ts`) |
 | HD1:470 | HD:1192 | Estimates always show range and basis | carried | carried | planner-pm §2.6.3 |
 | HD1:471 | HD:1196 | Escalate on capability_ceiling, external dependency, gate failing for credentials/env drift, budget forecast over cap;… | carried | carried | planner-pm §2.5 |
 | HD1:472 | HD:1202 | Human cmd: Accept, Return with reason, Split | carried | carried | planner-pm §2.14 |
@@ -911,14 +911,14 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:598 | HD:1631 | Exemplars: 1–2 from own history; no generic examples | carried | carried | context rule 25 |
 | HD1:599 | HD:1635 | Offline optimiser in idle hours with planner as reflection engine; keep only if clears threshold; drop if <5% | later | later | context §7 |
 | HD1:600 | HD:1639 | Prompts, playbooks, tool schemas versioned together; change invalidates qualification and triggers a re-run | carried-weaker | gap | context rule 27, NEW-context-6; DEC-28 (playbook rules deliberately outside the context version) (corrected 2026-09-25) |
-| HD1:601 | HD:1643 | Reviewer answers "does this change do what the card asked?" | carried | gap | review-git §2.3.1; §4 "Reviewer judges criteria with citations…" not-built, P8 (corrected 2026-09-25) |
-| HD1:602 | HD:1647 | Trigger: every card entering Review with a diff; research/no-diff skip | carried | gap | review-git §2.3.2; §4 "Reviewer runs before Review and before auto-accept" not-built, P8 (corrected 2026-09-25) |
-| HD1:603 | HD:1649 | Inputs: spec, criteria, diff, gate results; not the transcript | carried | gap | review-git §2.3.3; §4 "Reviewer judges criteria…" not-built, P8 (corrected 2026-09-25) |
-| HD1:604 | HD:1651 | Procedure: per criterion met/unmet with hunk; three failure modes gates miss | carried | gap | review-git §2.3.4; §4 "Reviewer judges criteria…" not-built, P8 (corrected 2026-09-25) |
-| HD1:605 | HD:1656 | ReviewFinding shape | carried | gap | review-git §2.3.5; §4 "Reviewer judges criteria…" not-built, P8 (corrected 2026-09-25) |
+| HD1:601 | HD:1643 | Reviewer answers "does this change do what the card asked?" | carried | carried | review-git §2.3.1; §4 "Reviewer judges criteria with citations…" built, P8 (B4.8, 2026-09-28) |
+| HD1:602 | HD:1647 | Trigger: every card entering Review with a diff; research/no-diff skip | carried | gap | review-git §2.3.2; §4 "Reviewer runs before Review and before auto-accept" partial (B4.8, 2026-09-28): built for every run's passing card and the no-diff skip; a card released from Verify's back-pressure still skips it, P8 |
+| HD1:603 | HD:1649 | Inputs: spec, criteria, diff, gate results; not the transcript | carried | carried | review-git §2.3.3; §4 "Reviewer judges criteria…" built, P8 (B4.8, 2026-09-28; RG-P8-11) |
+| HD1:604 | HD:1651 | Procedure: per criterion met/unmet with hunk; three failure modes gates miss | carried | carried | review-git §2.3.4; §4 "Reviewer judges criteria…" built, P8 (B4.8, 2026-09-28; its recall is RG-P8-13's measure) |
+| HD1:605 | HD:1656 | ReviewFinding shape | carried | carried | review-git §2.3.5; one declaration in `learning/review.ts`, built, P8 (B4.8, 2026-09-28) |
 | HD1:606 | HD:1664 | Authority none | carried | carried | review-git §2.3.6 |
 | HD1:607 | HD:1666 | Different family enforced; unfilled role said in Review | carried | gap | review-git §2.3.7, P8 (corrected 2026-09-25) |
-| HD1:608 | HD:1668 | Acceptance: flags more seeded defects than empty list; FP low enough that a human reads by card 20 | carried | gap | review-git P8, §8 Q2 (corrected 2026-09-25) |
+| HD1:608 | HD:1668 | Acceptance: flags more seeded defects than empty list; FP low enough that a human reads by card 20 | carried | gap | review-git P8 (RG-P8-13: recall ≥ 0.3 against an empty reviewer's 0, at most 1 false positive per issue), §8 Q2 (corrected 2026-09-25); the seeded-defect set (22 executed defects, registered), its scorer and `sekhemet measure reviewer` built in B4.8 (2026-09-28), gap until run live |
 | HD1:609 | HD:1676 | Frozen suite 20–40 tasks, versioned; no edits to improve results; hash recorded with every result | carried | carried | measurement rules 1–2 |
 | HD1:610 | HD:1678 | One number (tasks passed) with cost (wall-clock, tokens, repair-rung cards); non-improving change is not an improvement | carried | gap | measurement rule 4; §4 "Paired comparison…" not-built (M12, T7) and "Admission requires a significant gain" not-built (T8) (corrected 2026-09-25) |
 | HD1:611 | HD:1680 | Suite doesn't measure planning; planning measure beside it (fail-before/pass-after reference; end-to-end share) | carried | gap | measurement rule 14, T7 (corrected 2026-09-25) |
@@ -1142,7 +1142,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:180 | HD:2260 | Interactive terminals: a persistent shell with its transcript logged as observations, same permissions as `run` | carried | carried | runtime.md §2.16 |
 | HD2:181 | HD:2264 | Push to self-hosted ntfy or Gotify when a card reaches Review, parks, exceeds a budget or needs a decision | carried | carried | integrations.md §2.20-21 |
 | HD2:182 | HD:2264 | Approving or parking from a phone needs nothing cloud-hosted | carried | carried | integrations.md §2.23 |
-| HD2:183 | HD:2264 | (new-doc consistency) Budget on unsolicited notifications | contradicted | gap | planner-pm §2.8.15, integrations §2.23a (now 3/5 in both, R8); P6, P9 |
+| HD2:183 | HD:2264 | (new-doc consistency) Budget on unsolicited notifications | contradicted | carried | planner-pm §2.8.15, integrations §2.23a (now 3/5 in both, R8); P6 (PM-P6-10; built B4.8, 2026-09-28: 3 a day, an Urgent issue's notice up to 5, never a 6th; the board in focus in the last 5 minutes puts the item in Seshat's panel, `notify.ts`), P9 |
 | HD2:184 | HD:2268 | Outside declared hours the scheduler works the backlog in project batches | gap | gap | models rule 20, NEW-models-3 |
 | HD2:185 | HD:2268 | Outside declared hours the scheduler keeps caches warm | missing | gap | runtime rule 17, NEW-runtime-5 (RUN-18a) |
 | HD2:186 | HD:2268 | Nightly gate jobs: full mutation and a full vulnerability scan | gap | gap | runtime rule 20, NEW-runtime-5 |
@@ -1442,10 +1442,10 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:475 | IR:123-126 | B3: helpful/harmful counters credit every rule in the prompt, so they track the overall pass rate;… | carried-weaker | gap | measurement rule 16b (rotation, paired credit), T8; context rule 24e, NEW-context-4 |
 | HD2:476 | IR:128-131 | B4: three outcome stores disagree; evidence hard-codes `attempt: 1` and no model filter, inflating the capability model… | carried-weaker | gap | worker-loop rule 39, NEW-worker-loop-5 |
 | HD2:477 | IR:134 | B5: the Worker's `note("Assumed: …")` lives only in memory; "so the reviewer sees it" is false | missing | carried | worker-loop rule 5a (built) |
-| HD2:478 | IR:135 | B5: Reviewer findings reach only the dashboard, not Seshat's snapshot, a retry or learning | missing | gap | review-git §2.3.5, P8 (RG-P8-9 findings to the dossier and Seshat's snapshot) |
+| HD2:478 | IR:135 | B5: Reviewer findings reach only the dashboard, not Seshat's snapshot, a retry or learning | missing | carried | review-git §2.3.5, P8 (RG-P8-9 findings to the dossier, which Seshat's snapshot and a retry read; built B4.8, 2026-09-28); planner-pm PM-P6-2: Seshat's snapshot renders each issue's latest AI review, each finding cited by its entry id (`snapshotFindings`, built B4.8, 2026-09-28) |
 | HD2:479 | IR:136 | B5: a send-back note is not seen by the returned card's next attempt | carried | carried | review-git.md §2.4 ("it is what the Worker is told next (dossier)") |
 | HD2:480 | IR:137 | B5: `manager` rules: the role exists in the type, but nothing produces or reads them | missing | gap | context rule 24d, NEW-context-4 |
-| HD2:481 | IR:138 | B5: user-profile decay is specified in PM_CONTRACT §6 and not implemented | carried | gap | planner-pm §2.13.3, §4 (after a "Profile statements decay" row is added), P6 (after PM-P6 criterion is added) (corrected 2026-09-25) |
+| HD2:481 | IR:138 | B5: user-profile decay is specified in PM_CONTRACT §6 and not implemented | carried | carried | planner-pm §2.13.3, §4 "Profile statements decay" built, P6 (PM-P6-15; built B4.8, 2026-09-28: `LearningStore.profile(now)`, `profileInForce`, `seshat_p6.spec.ts`) (corrected 2026-09-25) |
 | HD2:482 | IR:139 | B5: `lessonsByCard` lives in memory and is lost when the queue restarts | missing | carried | kernel rule 20 (`card/lesson` on the ledger, built) |
 | HD2:483 | IR:142-144 | B6: the Researcher gets only the error text and a hard-coded "TypeScript project"; it runs after the repair plans; its… | missing | gap | design-stage NEW-design-stage-5 |
 | HD2:484 | IR:148-151 | C1: `askResearcher` swaps researcher ↔ manager per question: 10 evictions where 4 are needed, at 40–120 s each (4–12 mi… | missing | gap | models rule 20a (per-role queues, swaps ordered by the residency plan), NEW-models-9 |
@@ -1483,7 +1483,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:516 | IR:229 | Suggestion 11: shared helpers: a `kind` field on CardRecord, `errorCode()`, `extractJson()`, one `verify()`, one simila… | carried-weaker | gap | stored kind NEW-kernel-9 (models rule 31); errorCode and similarity NEW-context-4; extractJson NEW-models-4 (MD-N4-8); one verify T3 |
 | HD2:517 | IR:230 | Suggestion 12: one resolved `RunProfile` (config, then flags); `--profile benchmark` turns on explore, escalation, the… | contradicted | gap | surface rule 14, NEW-surface-5 (one recorded RunProfile; --settings allowed, --profile refused per R13); measurement M9; roster from the registry (models rule 26) |
 | HD2:518 | IR:231 | Suggestion 13: delete or merge dead code (`pressure.ts` into the allocator, `RulePerformance` into the attempt record,… | carried-weaker | gap | context CX-M1-8 (DefaultContextEngine cut, M1), rule 24e (RulePerformance derived); JSONL sink S5/S7; pressure.ts kept dormant |
-| HD2:519 | IR:232 | Suggestion 14: an adversarial Reviewer: check the diff against the spec and criteria, list untested behaviour, read the… | carried-weaker | gap | review-git §2.3.3–5, P8 (RG-P8-8 assumptions, RG-P8-9 dossier); the likely_send_back retry later §7 with its reason |
+| HD2:519 | IR:232 | Suggestion 14: an adversarial Reviewer: check the diff against the spec and criteria, list untested behaviour, read the… | carried-weaker | carried | review-git §2.3.3–5, P8 (RG-P8-7 untested criteria, RG-P8-8 assumptions, RG-P8-9 dossier; built B4.8, 2026-09-28); the likely_send_back retry later §7 with its reason |
 | HD2:520 | IR:234-239 | Batch sequence on 24 GB: Worker pass → Researcher (every unexplained struggle, with card and code) → Seshat (plans usin… | contradicted | deliberate | review-git §2.3.2, §9 (Reviewer once per queue pass, after retries, before Review); swap order models rule 20a |
 | HD2:521 | IR:245-252 | Target: one card dossier, with the ledger as the only channel; every role writes typed events (Worker lessons/notes/que… | missing | gap | kernel rule 20 (built); kernel §4 "Ledger as the only durable channel" partial, S7 (K-S7-6, K-S7-7) (corrected 2026-09-25) |
 | HD2:522 | IR:253 | Target: the PM chat becomes a view showing the human conversation plus Worker questions labelled as the Worker's | carried-weaker | carried | dashboard §2.7.3; kernel rule 19 |
@@ -1538,7 +1538,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:31 | PM:39 | Aging WIP is the first chart | carried | carried | dash §2.10.2 ("first") |
 | PMFE:32 | PM:40 | Cycle planning asks appetite (points to bet), not capacity to the brim | carried | carried | ppm §2.7.7 |
 | PMFE:33 | PM:40 | Leave 15–20% of a cycle unplanned by default | carried | carried | ppm §2.7.3, §2.7.7 |
-| PMFE:34 | PM:41 | Standup: Done since yesterday · In flight · Needs you, each line a card chip | carried | gap | ppm §2.7.8 table; P6 (PM-P6-3) (corrected 2026-09-25) |
+| PMFE:34 | PM:41 | Standup: Done since yesterday · In flight · Needs you, each line a card chip | carried | carried | ppm §2.7.8 table; P6 (PM-P6-3; built B4.8, 2026-09-28: the chat's standup cites each issue it names, which the panel links) (corrected 2026-09-25) |
 | PMFE:35 | PM:41 | Standup posted to Slack when connected | carried | carried | ppm §2.7.8; int INT-18 |
 | PMFE:36 | PM:47 | PM is a named team member with an avatar and a presence line | carried-weaker | carried | dashboard §2.7.2 |
 | PMFE:37 | PM:47 | PM messages cite cards and runs | carried | carried | dash §2.7.4 |
@@ -2296,7 +2296,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:P10 | FI:318 / R2:301 | `safe_default` / `default_deny` | carried | carried | planner §2.10.3, built — agree |
 | INV:P11 | FI:319 / R2:302 | Pause & persist, VRAM released, rehydrate | contradicted | deliberate | planner-pm §2.10.2–3, §9; DEC-24 |
 | INV:P12 | FI:320 / R2:303 | Six planner sessions | carried | carried | planner §2.7.8 table — agree (standup builders P6) |
-| INV:P13 | FI:321 / R2:304 | Status from gate results with ranges | carried | gap | planner-pm §2.6.3, §2.7.8 (Standup row), §4 "Plain-language standup; … the next window's plan" partial, P6 (PM-P6-3) (corrected 2026-09-25) |
+| INV:P13 | FI:321 / R2:304 | Status from gate results with ranges | carried | carried | planner-pm §2.6.3, §2.7.8 (Standup row), §4 "Plain-language standup; … the next window's plan" built, P6 (PM-P6-3; B4.8, 2026-09-28) (corrected 2026-09-25) |
 | INV:P14 | FI:322 / R2:305 | Escalation diagnostics, smallest human action | carried | carried | planner §2.5 — agree |
 | INV:P15 | FI:323 / R2:306 | Trust calibration 15% | carried | carried | planner §2.10.4, §4 built — R2 DEAD; DISAGREE, code has `sekhemet assume` (`wave2.ts:665`): spec right |
 | INV:P16 | FI:324 / R2:307 | Process profiles | carried-weaker | gap | planner-pm §2.7.3–4, §2.7.8 Retrospective row (after restoration: a §4 row and PM-P6-16) (corrected 2026-09-25) |

@@ -22,6 +22,8 @@ export interface FindingEntry {
   text: string;
   /** The files the Reviewer read, when it recorded them (the entry's `sources`). */
   filesRead?: string[];
+  /** The Review model that wrote the finding (review-git RG-P8-12). */
+  modelId?: string;
 }
 
 export type FindingVerdict = "unmet" | "unclear" | "met";
@@ -45,6 +47,11 @@ export interface FindingRow {
 /** Every word of the Review surface's team and forcing parts. */
 export const REVIEW_DESK_COPY = {
   heading: "AI review",
+  /** RG-P8-10: the Review role is unfilled, recorded on the issue in place of findings. */
+  noReviewer: "No AI review: no Review model outside the Coding model's family is configured.",
+  /** Models rule 23: the review could not run; the issue reaches Review unreviewed and says so. */
+  reviewFailed: (why: string) =>
+    `AI review could not run (${why}). The checks passed; the change reaches you unreviewed.`,
   why: "The review model checked the diff against the issue's criteria. It's advice, not a check: Accept is yours.",
   verdict: { unmet: "Unmet", unclear: "Unclear", met: "Met" } as Record<FindingVerdict, string>,
   acknowledge: "Acknowledge",
@@ -132,13 +139,25 @@ export function reviewerFindings(
   const parts = (["unmet", "unclear"] as const)
     .filter((v) => count(v) > 0)
     .map((v) => `${count(v)} ${v}`);
-  const title = `${REVIEW_DESK_COPY.heading} · ${parts.length ? parts.join(", ") : `${count("met")} met`}`;
+  // RG-P8-12: attributed to AI review and the model that wrote the latest finding.
+  const model = [...entries].reverse().find((e) => verdictOf(e.verdict) && e.modelId)?.modelId;
+  const title = `${REVIEW_DESK_COPY.heading}${model ? ` · ${model}` : ""} · ${parts.length ? parts.join(", ") : `${count("met")} met`}`;
   return {
     title,
     rows,
     open: rows.filter((r) => r.needsAck && !r.acknowledged).map((r) => r.id),
     met: count("met"),
   };
+}
+
+/**
+ * RG-P8-10 and models rule 23: why no AI review ran on this change — the
+ * `not_reviewed` note recorded in place of findings — or undefined when
+ * findings exist or nothing was recorded.
+ */
+export function reviewerAbsence(entries: readonly FindingEntry[]): string | undefined {
+  if (entries.some((e) => verdictOf(e.verdict))) return undefined;
+  return [...entries].reverse().find((e) => e.verdict === "not_reviewed")?.text;
 }
 
 /**

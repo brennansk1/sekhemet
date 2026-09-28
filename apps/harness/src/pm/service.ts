@@ -1,5 +1,4 @@
 import { basename, join } from "node:path";
-import { morningReport } from "@sekhemet/eval";
 import {
   type AttemptOutcome,
   type CardRecord,
@@ -7,7 +6,6 @@ import {
   firstModelAttempts,
 } from "@sekhemet/kernel";
 import type { ModelHold, ModelRegistry } from "@sekhemet/models";
-import { standupReport } from "@sekhemet/planner";
 import { unenforcedInvariants } from "../architecture_gate.js";
 import { LearningStore } from "../learning/store.js";
 import { type SwapLedger, sharedQueue } from "../model_access.js";
@@ -19,20 +17,32 @@ import {
   answer,
   ledgerStandup,
   seshatThreadId,
+  standupBody,
   summarizeConversation,
 } from "./agent.js";
 import { type Audience, nameFor, soloAudience } from "./audience.js";
 import { capabilityReport, capabilitySummary } from "./capability.js";
 import { namedDecisions } from "./decisions.js";
+import { guardProposals, judgementAnswer, judgementQuestion } from "./judgement.js";
+import {
+  briefText,
+  cardsNamed,
+  failureFacts,
+  snapshotAssumptions,
+  snapshotFindings,
+  snapshotGoals,
+} from "./knowledge.js";
 import { flowMetrics, monteCarloForecast } from "./metrics.js";
 import { draftProjectGroup } from "./pipeline.js";
 import { parseSlash, resolveCard, runSlash } from "./slash.js";
+import { recordStandupGiven, standupCardIds, standupFacts } from "./standup.js";
 import type { PmStore } from "./store.js";
 import { postSuggestions, suggestedText } from "./suggest.js";
 import { PM_EVENTS, type PmMessage, type PmProposal } from "./types.js";
 import {
   type SeshatWait,
   ledgerAnswer,
+  ledgerCites,
   ledgerQuestion,
   quickAnswer,
   waitInWords,
@@ -167,6 +177,19 @@ export async function buildSnapshot(
     !partial && (await cardStore.takeover.briefAsFound())
       ? await takeoverPromptContext(cardStore).catch(() => undefined)
       : undefined;
+  // planner-pm §2.8.5, P6: the goals, the logged assumptions (and the risk
+  // register they make), the Reviewer's findings and the brief, each over
+  // what the asker can see (PM-N9-8) and with the id Seshat cites it by.
+  const canSeeProject = (projectId: string | undefined) =>
+    !scope?.asker || scope.audience.canSee(scope.asker, projectId);
+  const knownCtx = { cardStore, log: pmStore.log };
+  const goals = await snapshotGoals(knownCtx, canSeeProject).catch(() => []);
+  const assumptions = await snapshotAssumptions(knownCtx, (id) => visibleIds.has(id)).catch(
+    () => [],
+  );
+  const findings = await snapshotFindings(pmStore.log, (id) => visibleIds.has(id)).catch(() => []);
+  const brief = partial ? undefined : briefText(repoPath);
+  const learning = new LearningStore(pmStore.log);
   return {
     project: basename(repoPath),
     ...(forecast ? { forecast } : {}),
@@ -176,12 +199,14 @@ export async function buildSnapshot(
     recentRuns,
     ...(worker ? { worker } : {}),
     pmModel,
-    preferences: (await new LearningStore(pmStore.log).profile())
-      .filter((p) => p.status === "active")
-      .slice(0, 6)
-      .map((p) => p.statement),
+    // PM-P6-15: statements in force, their strength decayed without new evidence.
+    preferences: (await learning.profileInForce()).slice(0, 6).map((p) => p.statement),
     // CX-N4-5, CX-N3-7: the approved PM rules, for Seshat alone.
-    pmRules: await new LearningStore(pmStore.log).seshatRules().catch(() => []),
+    pmRules: await learning.seshatRules().catch(() => []),
+    ...(goals.length ? { goals } : {}),
+    ...(assumptions.length ? { assumptions } : {}),
+    ...(findings.length ? { findings } : {}),
+    ...(brief ? { brief } : {}),
     ...(loose.length > 0 ? { unenforcedInvariants: loose } : {}),
     // planner-pm §2.15: what is proven and unplanned, for the status and the claim guard.
     ...(storyMap ? { storyMap } : {}),
@@ -195,10 +220,16 @@ export async function buildSnapshot(
 /** The event recording how Seshat's prompt was fitted (CX-N3-7). */
 export const PM_PROMPT_FITTED = "pm/prompt_fitted";
 
-/** A card's dossier as Seshat reads it: one line per entry, oldest first. */
-async function dossierLines(cardStore: CardStore, cardId: string): Promise<string[]> {
+/**
+ * A card's dossier as Seshat reads it: one line per entry, oldest first. An
+ * AI review finding carries its verdict and model (review-git RG-P8-9, -12).
+ */
+export async function dossierLines(cardStore: CardStore, cardId: string): Promise<string[]> {
   const dossier = await cardStore.getDossier(cardId).catch(() => undefined);
-  return (dossier?.entries ?? []).map((e) => `- ${e.kind} (${e.actor}): ${e.text}`);
+  return (dossier?.entries ?? []).map(
+    (e) =>
+      `- ${e.kind}${e.kind === "review" && e.verdict ? ` ${e.verdict}` : ""} (${e.actor}${e.modelId ? `, ${e.modelId}` : ""}): ${e.text}`,
+  );
 }
 
 export interface AnswerDeps {
@@ -251,71 +282,84 @@ export interface AnswerDeps {
  * than a thrown exception: the human is waiting on the thread, and a silent
  * failure there looks exactly like a PM that is still thinking.
  */
-/** Seshat's standup plus the planner's decisions waiting and next window (P13). */
-async function withPlannerStandup(
-  text: string,
-  deps: Pick<AnswerDeps, "cardStore" | "pmStore">,
+/**
+ * A snapshot with the standup's facts for the person it is for (PM-P6-3):
+ * the one standup builder reads them, over what that person can see.
+ */
+async function standupSnapshot(
+  deps: Pick<AnswerDeps, "repoPath" | "cardStore" | "pmStore" | "pmModel">,
   scope?: SnapshotScope,
-): Promise<string> {
-  const extra = await plannerSection(deps, scope).catch(() => "");
-  if (!extra) return text;
-  const marker = "\n\n_Answered from the ledger";
-  const at = text.indexOf(marker);
-  return at === -1 ? `${text}\n${extra}` : `${text.slice(0, at)}\n${extra}${text.slice(at)}`;
+  person?: string,
+): Promise<PmSnapshot> {
+  const snapshot = await buildSnapshot(
+    deps.repoPath,
+    deps.cardStore,
+    deps.pmStore,
+    deps.pmModel,
+    scope,
+  );
+  const all = scope?.asker ? (await deps.cardStore.listCards()).length : snapshot.cards.length;
+  const facts = await standupFacts({
+    repoPath: deps.repoPath,
+    cardStore: deps.cardStore,
+    log: deps.pmStore.log,
+    cards: snapshot.cards,
+    cycles: snapshot.cycles,
+    audience: scope?.audience ?? soloAudience(),
+    person: person ?? scope?.asker ?? deps.cardStore.localPrincipal(),
+    asker: scope?.asker,
+    whole: all === snapshot.cards.length,
+  });
+  return { ...snapshot, standup: facts };
 }
 
-/**
- * The decisions waiting — each naming its person, its default and deadline
- * (PM-N9-5) — and the next window, over what the asker can see (PM-N9-8).
- */
-async function plannerSection(
-  deps: Pick<AnswerDeps, "cardStore" | "pmStore">,
-  scope?: SnapshotScope,
-): Promise<string> {
-  const audience = scope?.audience ?? soloAudience();
-  const lines = await namedDecisions(
-    { cardStore: deps.cardStore, log: deps.pmStore.log },
-    audience,
-    scope?.asker,
-  );
-  const r = await standupReport({ store: deps.cardStore, log: deps.pmStore.log });
-  const visible = new Set(
-    (await deps.cardStore.listCards())
-      .filter((c) => !scope?.asker || audience.canSee(scope.asker, c.projectId))
-      .map((c) => c.id),
-  );
-  const next = r.nextWindow.filter((n) => visible.has(n.id));
-  if (next.length) {
-    lines.push(`Next window: ${next.map((n) => `${n.title} (${n.estimate})`).join("; ")}.`);
-  }
-  return lines.join("\n");
+/** A standup answered in the chat: the one builder's text, its issues cited, recorded as given. */
+async function chatStandup(
+  deps: AnswerDeps,
+  scope: SnapshotScope,
+  replyTo: string[],
+  to: { to?: string },
+): Promise<void> {
+  const person = scope.asker ?? deps.cardStore.localPrincipal();
+  const snapshot = await standupSnapshot(deps, scope, person);
+  const ids = snapshot.standup ? standupCardIds(snapshot.standup) : [];
+  await deps.pmStore.appendReply({
+    replyTo,
+    text: ledgerStandup(snapshot),
+    ...(ids.length ? { cites: ids.map((cardId) => ({ cardId })) } : {}),
+    model: "ledger",
+    ...to,
+  });
+  await recordStandupGiven(deps.pmStore.log, person);
 }
 
 /**
  * Seshat's daily standup for the notifier (integrations item 21, INT-18):
- * the same ledger standup `/standup` answers, with the planner's decisions
- * waiting, built without loading a model.
+ * the same one builder `/standup` answers from (PM-P6-3), for the person the
+ * notifier addresses, with an overnight benchmark finished since their last
+ * standup in plain words (PM-P6-14), built without loading a model. The
+ * notifier's `pm/notify` record of a sent standup marks it as given.
  */
 export async function dailyStandup(deps: {
   repoPath: string;
   cardStore: CardStore;
   pmStore: PmStore;
   pmModel?: string;
+  /** The person it is for; the install's person by default. */
+  person?: string;
+  /**
+   * Who can see what (PM-N9-8): the standup names only the projects and
+   * issues its recipient can see, as the chat's does. Solo when omitted.
+   */
+  audience?: Audience;
 }): Promise<string> {
-  const snapshot = await buildSnapshot(
-    deps.repoPath,
-    deps.cardStore,
-    deps.pmStore,
-    deps.pmModel ?? DEFAULT_PM_MODEL,
+  const person = deps.person ?? deps.cardStore.localPrincipal();
+  const snapshot = await standupSnapshot(
+    { ...deps, pmModel: deps.pmModel ?? DEFAULT_PM_MODEL },
+    { audience: deps.audience ?? soloAudience(), asker: person },
+    person,
   );
-  const text = await withPlannerStandup(ledgerStandup(snapshot), deps);
-  const marker = text.indexOf("\n\n_Answered from the ledger");
-  const standup = marker === -1 ? text : text.slice(0, marker);
-  // MS-N5-11: the overnight benchmark's morning report, from the last day.
-  const report = await morningReport(deps.pmStore.log, {
-    since: Date.now() - 24 * 3_600_000,
-  }).catch(() => "");
-  return report ? `${standup}\n\n${report}` : standup;
+  return standupBody(snapshot);
 }
 
 /** Whether a reply by `model` came after message `seq` (a note is said once per new message). */
@@ -521,13 +565,7 @@ async function answerFor(
       continue;
     }
     if (cmd.name === "status" || cmd.name === "standup") {
-      const snapshot = await snap();
-      await deps.pmStore.appendReply({
-        replyTo: [m.id],
-        text: await withPlannerStandup(ledgerStandup(snapshot), deps, scope),
-        model: "ledger",
-        ...to,
-      });
+      await chatStandup(deps, scope, [m.id], to);
       continue;
     }
     // TEAM-40: a command that changes the board is checked as its endpoint is
@@ -616,20 +654,65 @@ async function answerFor(
       toAnswer.push(m);
       continue;
     }
+    if (kind === "status") {
+      await chatStandup(deps, scope, [m.id], to);
+      continue;
+    }
     if (kind === "wait") wait ??= await deps.predictWait?.();
     const snapshot = await snap();
+    const cites = ledgerCites(kind, snapshot);
     await deps.pmStore.appendReply({
       replyTo: [m.id],
-      text:
-        kind === "status"
-          ? await withPlannerStandup(ledgerStandup(snapshot), deps, scope)
-          : ledgerAnswer(kind, snapshot, wait),
+      text: ledgerAnswer(kind, snapshot, wait),
+      ...(cites.length ? { cites } : {}),
       model: "ledger",
       ...to,
     });
   }
   if (toAnswer.length === 0) return true;
   queued.splice(0, queued.length, ...toAnswer);
+
+  // P6 (PM-P6-7, -8, -9, -14): what is at risk, the next sprint's bet, a
+  // split instead of a retry over the size horizon and how a benchmark's
+  // result is applied are judged by code from the ledger, whatever the small
+  // local model would write; a retry within the horizon goes on to it.
+  const toJudge: typeof queued = [];
+  for (const m of queued) {
+    const kind = judgementQuestion(m.text);
+    const snapshot = kind ? await snap() : undefined;
+    const judged =
+      kind && snapshot
+        ? await judgementAnswer(
+            kind,
+            { repoPath: deps.repoPath, cardStore: deps.cardStore, log: deps.pmStore.log },
+            { cards: snapshot.cards, cycles: snapshot.cycles },
+            { text: m.text, cardId: m.context?.cardId },
+          )
+        : undefined;
+    if (!judged) {
+      toJudge.push(m);
+      continue;
+    }
+    const posted = await postSuggestions(judged.proposals, {
+      cardStore: deps.cardStore,
+      cards: snapshot?.cards ?? [],
+      audience: scope.audience,
+      asker: scope.asker,
+      // PM-N9-2: what an Admin's auto-apply rule needs to make the change.
+      pmStore: deps.pmStore,
+      repoPath: deps.repoPath,
+    });
+    await deps.pmStore.appendReply({
+      replyTo: [m.id],
+      text: posted.notes.length ? `${judged.text}\n\n${posted.notes.join(" ")}` : judged.text,
+      proposals: posted.drafts,
+      ...(judged.cites.length ? { cites: judged.cites } : {}),
+      model: "ledger",
+      ...to,
+    });
+  }
+  if (toJudge.length === 0) return true;
+  queued.splice(0, queued.length, ...toJudge);
 
   // Rule 20f (b), (c): when the full answer would break the Worker's floor
   // (C5), a quick answer if one is admitted, the predicted wait in words,
@@ -696,10 +779,22 @@ async function answerFor(
       .reverse()
       .find((m) => m.context?.cardId && seen.has(m.context.cardId))?.context?.cardId;
     const dossier = inView ? await dossierLines(deps.cardStore, inView) : undefined;
+    // PM-P6-6: the failure evidence of the issues the person is asking about
+    // (the one in view, and any the messages name), at most three.
+    const asked = [
+      ...new Set([
+        ...(inView ? [inView] : []),
+        ...queued.flatMap((m) => cardsNamed(m.text, base.cards).map((c) => c.id)),
+      ]),
+    ].slice(0, 3);
+    const failures = (
+      await Promise.all(asked.map((id) => failureFacts(deps.cardStore, deps.repoPath, id)))
+    ).filter((f) => f !== undefined);
     const snapshot = {
       ...base,
       ...(deps.team ? { team: deps.team } : {}),
       ...(inView && dossier?.length ? { dossier: { cardId: inView, lines: dossier } } : {}),
+      ...(failures.length ? { failures } : {}),
     };
     const result = await answer(
       model,
@@ -721,18 +816,29 @@ async function answerFor(
           deps.planner ? { adapter: model } : {},
         ),
     );
+    // PM-P6-8, -9: the sprint bet and split-not-retry hold whatever the model wrote.
+    const guarded = await guardProposals(
+      result.proposals,
+      { cardStore: deps.cardStore, log: deps.pmStore.log },
+      { cards: snapshot.cards, cycles: snapshot.cycles },
+    );
     // PM-N9-1, -9; TEAM-19, -40: triage changes become suggestions on the
     // issue, a change to someone else's issue is marked for its owner, a
     // Viewer is offered none.
-    const posted = await postSuggestions(result.proposals, {
+    const posted = await postSuggestions(guarded.proposals, {
       cardStore: deps.cardStore,
       cards: snapshot.cards,
       audience: scope.audience,
       asker: scope.asker,
+      // PM-N9-2: under an Admin's auto-apply rule the change is made now.
+      pmStore: deps.pmStore,
+      repoPath: deps.repoPath,
     });
     const reply = await deps.pmStore.appendReply({
       replyTo: queued.map((m) => m.id),
-      text: posted.notes.length ? `${result.text}\n\n${posted.notes.join(" ")}` : result.text,
+      text: [result.text, guarded.notes.join(" "), posted.notes.join(" ")]
+        .filter(Boolean)
+        .join("\n\n"),
       proposals: posted.drafts,
       cites: result.cites,
       model: deps.pmModel,

@@ -817,24 +817,19 @@ const pct = (x: number) => `${Math.round(x * 100)}%`;
 const pFmt = (p: number) => (p < 0.001 ? "p < 0.001" : `p = ${p.toFixed(3)}`);
 
 /**
- * The morning report (MS-N5-11): the latest overnight night's ranking with
- * intervals, which differences it resolved and which are still
- * indistinguishable, per pair and per role, with the smallest difference
- * detectable at 80% power; it assigns nothing. Empty when there is none, or
- * none newer than `since` (ms).
+ * The latest overnight night the ledger records (optionally one run's, and
+ * none older than `since`): its stop, the combinations' names and models,
+ * and one row per combination benchmarked, best Worker pass rate first.
  */
-export async function morningReport(
-  log: EventLog,
-  o: { runId?: string; since?: number } = {},
-): Promise<string> {
+async function lastNight(log: EventLog, o: { runId?: string; since?: number }) {
   const records = await runRecords(log);
   const stops = [...records.values()]
     .flatMap((r) => r.stops)
     .filter((s) => s.payload.tier === "overnight" && (!o.runId || s.payload.runId === o.runId))
     .sort((a, b) => a.seq - b.seq);
   const stop = stops.at(-1);
-  if (!stop) return "";
-  if (o.since !== undefined && Date.parse(stop.createdAt) < o.since) return "";
+  if (!stop) return undefined;
+  if (o.since !== undefined && Date.parse(stop.createdAt) < o.since) return undefined;
   const record = records.get(stop.payload.runId) as RunRecord;
   const nightStart =
     [...record.started].reverse().find((s) => s.seq < stop.seq && s.payload.state === "running")
@@ -842,7 +837,7 @@ export async function morningReport(
   const events = (await log.getEventsByTypes([MEASURE_BENCHMARKED], nightStart)).filter(
     (e) => e.seq < stop.seq && (e.payload as OvernightPayload).tier === "overnight",
   );
-  if (!events.length) return "";
+  if (!events.length) return undefined;
   const def = record.started[0]?.payload;
   const names = new Map(
     (def?.combinations ?? []).map((c) => [c.id, describeCombination(c.models)]),
@@ -857,9 +852,87 @@ export async function morningReport(
       (i) => i.payload.combinationId === id && i.payload.role === "worker",
     );
     const passes = runsOf.reduce((sum, i) => sum + i.payload.score, 0);
-    return { p, worker, name: describeCombination(p.combination), passes, n: runsOf.length };
+    return {
+      id,
+      p,
+      worker,
+      name: describeCombination(p.combination),
+      passes,
+      n: runsOf.length,
+    };
   });
   rows.sort((a, b) => (b.worker?.score ?? -1) - (a.worker?.score ?? -1));
+  return { stop, names, modelsById, rows };
+}
+
+/** The overnight benchmark's outcome for a standup (planner-pm PM-P6-14). */
+export interface OvernightVerdict {
+  runId: string;
+  /** When the night stopped. */
+  at: string;
+  reason: StopReason;
+  /**
+   * `best`: the leading combination is resolved better than every other on
+   * the Worker's cards; `no_clear_difference`: it is not (a tie or too few
+   * runs to tell them apart); `only_one`: one combination was measured, so
+   * there was nothing to compare.
+   */
+  outcome: "best" | "no_clear_difference" | "only_one";
+  /** The best combination's models by role, or the leading ones'. */
+  leading: Record<string, string>[];
+}
+
+/**
+ * The latest overnight night as a verdict, not a table (PM-P6-14): the
+ * combination whose Worker pass rate the night resolved better than every
+ * other one's, or the leading combinations when it could not tell them
+ * apart. It assigns nothing. Undefined when there is no night newer than
+ * `since` (ms).
+ */
+export async function overnightVerdict(
+  log: EventLog,
+  o: { runId?: string; since?: number } = {},
+): Promise<OvernightVerdict | undefined> {
+  const night = await lastNight(log, o);
+  if (!night) return undefined;
+  const measured = night.rows.filter((r) => typeof r.worker?.score === "number" && r.n > 0);
+  const top = measured[0];
+  if (!top) return undefined;
+  const beats = new Set<string>();
+  for (const { p } of night.rows) {
+    for (const r of p.resolved ?? []) {
+      if ((r.role ?? "worker") === "worker" && r.better === top.id) beats.add(r.worse);
+    }
+  }
+  const others = measured.slice(1);
+  const best = others.length > 0 && others.every((r) => beats.has(r.id));
+  const modelsOf = (r: (typeof measured)[number]) =>
+    night.modelsById.get(r.id) ?? (r.p.combination as Record<string, string>) ?? {};
+  // The leaders: the top, and every combination not resolved worse than it.
+  const leading = best ? [top] : [top, ...others.filter((r) => !beats.has(r.id))];
+  return {
+    runId: night.stop.payload.runId,
+    at: night.stop.createdAt,
+    reason: night.stop.payload.reason,
+    outcome: others.length === 0 ? "only_one" : best ? "best" : "no_clear_difference",
+    leading: leading.map(modelsOf),
+  };
+}
+
+/**
+ * The morning report (MS-N5-11): the latest overnight night's ranking with
+ * intervals, which differences it resolved and which are still
+ * indistinguishable, per pair and per role, with the smallest difference
+ * detectable at 80% power; it assigns nothing. Empty when there is none, or
+ * none newer than `since` (ms).
+ */
+export async function morningReport(
+  log: EventLog,
+  o: { runId?: string; since?: number } = {},
+): Promise<string> {
+  const night = await lastNight(log, o);
+  if (!night) return "";
+  const { stop, names, modelsById, rows } = night;
   const s = stop.payload;
   const lines = [
     `**Overnight benchmark** — ${

@@ -7,6 +7,7 @@ import {
   filesShownSinceEvidence,
   implementationFiles,
   ledgerBundle,
+  reviewEntriesSinceEvidence,
 } from "./accept.js";
 
 /**
@@ -18,7 +19,13 @@ import {
  */
 export interface ReviewDesk {
   /** Every Reviewer entry of the card's dossier, oldest first (DB-N5-2, DB-N5-3). */
-  findings: { id: string; verdict?: string; text: string; filesRead?: string[] }[];
+  findings: {
+    id: string;
+    verdict?: string;
+    text: string;
+    filesRead?: string[];
+    modelId?: string;
+  }[];
   /** The files Accept requires shown: what the card changed, less its tests. */
   implementationFiles: string[];
   /** The files recorded as shown since the latest evidence, by anyone. */
@@ -66,15 +73,14 @@ export async function reviewDesk(
     return name ? { principal, name } : { principal };
   };
 
-  const dossier = await store.getDossier(card.id);
-  const findings = dossier.entries
-    .filter((e) => e.kind === "review")
-    .map((e) => ({
-      id: e.entryId,
-      ...(e.verdict ? { verdict: e.verdict } : {}),
-      text: e.text,
-      ...(e.sources?.length ? { filesRead: [...e.sources] } : {}),
-    }));
+  // RG-P8-9, -12: the AI review of the change under review, with its model.
+  const findings = (await reviewEntriesSinceEvidence(store, card.id)).map((e) => ({
+    id: e.entryId,
+    ...(e.verdict ? { verdict: e.verdict } : {}),
+    text: e.text,
+    ...(e.sources?.length ? { filesRead: [...e.sources] } : {}),
+    ...(e.modelId ? { modelId: e.modelId } : {}),
+  }));
 
   const ev = await ledgerBundle(ctx, card.id);
   const verdict = await accepterVerdict(store, card.id, viewer, opts.acceptHolders);

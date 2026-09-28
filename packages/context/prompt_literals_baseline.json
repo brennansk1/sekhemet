@@ -72,24 +72,9 @@
       "text": "You are Seshat, the project manager. You turn what went wrong on cards into short, reusable rules fo"
     },
     {
-      "file": "apps/harness/src/learning/review.ts",
-      "hash": "b5bb2dea429eae8d",
-      "text": "You are Seshat, reviewing a teammate's change before the human lead sees it. The tests and type chec"
-    },
-    {
-      "file": "apps/harness/src/learning/review.ts",
-      "hash": "fa704d91fb109be6",
-      "text": "Card: ${}\n\nTHE LEAD'S PREFERENCES\n${}\n\nTEAM RULES\n${}\n\nDIFF\n${}\n\nList only concrete violations you c"
-    },
-    {
       "file": "apps/harness/src/onboard.ts",
       "hash": "903bac06b27c089b",
       "text": "Open ${} so we can see how it is written."
-    },
-    {
-      "file": "apps/harness/src/pm/agent.ts",
-      "hash": "0cb7448e421462f0",
-      "text": "Propose a new card. Keep it to at most 3 files and 200 lines of change."
     },
     {
       "file": "apps/harness/src/pm/agent.ts",
@@ -98,48 +83,13 @@
     },
     {
       "file": "apps/harness/src/pm/agent.ts",
-      "hash": "136f142beb9b95b1",
-      "text": "Propose changing fields on an existing card. The human approves it. Only include fields that change."
-    },
-    {
-      "file": "apps/harness/src/pm/agent.ts",
-      "hash": "43550833a47b5573",
-      "text": "Propose a cycle (sprint) with a goal, and optionally the cards planned into it."
-    },
-    {
-      "file": "apps/harness/src/pm/agent.ts",
-      "hash": "5066242012ef2bb9",
-      "text": "Propose moving a card to ready, backlog or parked."
-    },
-    {
-      "file": "apps/harness/src/pm/agent.ts",
-      "hash": "54811ea5c312a794",
-      "text": "Delegate a question that needs evidence (a library's API or licence, how a module really works, a se"
-    },
-    {
-      "file": "apps/harness/src/pm/agent.ts",
       "hash": "644b635b01baa894",
       "text": "You compress a project manager's conversation with the human who leads the project. Keep decisions, "
     },
     {
       "file": "apps/harness/src/pm/agent.ts",
-      "hash": "7c396f0700d206a1",
-      "text": "What the package should do, or its name"
-    },
-    {
-      "file": "apps/harness/src/pm/agent.ts",
-      "hash": "a55d65e6f8bc6f86",
-      "text": "1 urgent, 2 high, 3 medium, 4 low, 0 none"
-    },
-    {
-      "file": "apps/harness/src/pm/agent.ts",
       "hash": "ae6d10b8ce984e8d",
       "text": "Summary so far: ${}\n\n"
-    },
-    {
-      "file": "apps/harness/src/pm/agent.ts",
-      "hash": "ced672e2dfc93918",
-      "text": "Search the npm or PyPI registry for an existing, permissively licensed package before proposing a ca"
     },
     {
       "file": "apps/harness/src/pm/agent.ts",

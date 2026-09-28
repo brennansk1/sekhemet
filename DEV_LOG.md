@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 55 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 56 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,74 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 56 — 2026-09-28 (B4.8 done in code: the Reviewer rebuilt, the senior-PM skill, how Seshat speaks and proposes; their live admissions queued)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. One workflow at 5% of the 5-hour window: five builders one at a time (R1 the Reviewer, S1 what Seshat knows, S2 Seshat's judgement, S3 how Seshat speaks and proposes, E1 the evaluations), a sweep, one independent review and a fixer (8 agents, 2.67M tokens). Every brief carried the compliance sources: DEC-31/34/36/37/41/45, PROMPT_STANDARD, the PM, collaboration, test-strength and prompt research, RESEARCH_REGISTER R8, the Phase A reviews 07, 02/09, 05/10 and 13, the integration review, and the PM and Reviewer trace rows. It ran beside Sprint 3's model runs.
+
+- **The Reviewer (P8):**
+  - One finding per acceptance criterion, with a verdict and a checked `file:line`; a skipped or mis-cited criterion is *unclear*, never *met*.
+  - It runs before Review, and before the merge under `--auto-accept`, which now refuses a change whose review failed.
+  - Passing issues wait in Verify for Smart Swap's tours.
+  - Whole files are read within a budget taken from the context allocator; a file larger than one request is read in parts, and anything unread is named.
+  - A coverage line; a finding for each criterion no staged test exercises; the Worker's assumptions checked.
+  - Findings go to the dossier and beside the evidence, and Seshat sees them.
+  - A same-family model leaves the role unfilled, with the reason on Review.
+  - No transcript, and no stated confidence.
+  - Send-back notes without an anchor stay notes.
+  - NEW-dashboard-5's acknowledgement is now live.
+- **Seshat (P6):**
+  - A versioned senior-PM skill (a registered copy module) with §2.8.17's exchanges as few-shots.
+  - Goals, assumptions, findings and failure evidence in its snapshot, cited.
+  - A prompt prefix stable up to the board.
+  - Profile decay.
+  - One standup builder.
+  - At-risk lists with a basis, and one item not at risk.
+  - A sprint bet capped at 85% of recent throughput.
+  - Split, not retry, above the size horizon.
+  - The unsolicited-message budget.
+  - Sprint-close quality metrics.
+  - Overnight benchmark results in the standup.
+- **How Seshat speaks and proposes (NEW-planner-pm-9):**
+  - Suggestions with *Suggested / Why / Apply / Dismiss*, undoable, with Admin auto-apply per property.
+  - Requests to assign people, edit others' issues or set health are refused, naming who can.
+  - A voice guard on every reply.
+  - Decisions name who takes them, the default and the deadline.
+  - Neutral reminders.
+  - The five-part weekly draft wired into *Write update*.
+  - Team scoping of context, standups and suggestions.
+  - Planner changes to an owned issue become suggestions.
+- **Evaluations (built, proven offline, not yet run live):**
+  - `sekhemet measure reviewer` (RG-P8-13: a registered 22-defect seeded set; recall of at least 0.3 and at most 1 false positive per issue);
+  - `measure send-backs` (RG-P8-14);
+  - `measure seshat` and `seshat-compare` (PM-P6-13: 20 scripted conversations, a rubric, paired comparison).
+- **Review:** 0 blockers and 6 majors, all fixed, plus 12 minors:
+  - a same-family Review model got through in `queue`;
+  - the Reviewer's budget bypassed the allocator;
+  - RG-P8-14 counted the harness's own findings;
+  - external review cards ran a same-family review;
+  - `--auto-accept` merged after a failed review;
+  - two rubric items passed by construction.
+- **Departures recorded in the specs:**
+  - The skill is a TypeScript copy module, not a `.md`.
+  - PM_TOOLS' descriptions keep their old words until their own A/B.
+  - The decay rate (0.1 a week) has no measured basis.
+  - PM-P6-10's "urgent" means Linear priority 1.
+  - Within one tour, each issue moves to Review when its own review is done.
+  - A card released from Verify's back-pressure still goes to Review unreviewed (partial).
+  - Hiding projects from members is teams' work, not built.
+  - Several tests were written alongside the code rather than strictly first, and each was seen failing against the committed tree.
+- **Also in this commit:** the capstone decision (docs/research/CAPSTONE_SELECTION_2026-09.md): a timesheet and overtime-rules app, plus one Web-Bench project, compared against Claude models (owner, 2026-09-28).
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1453 files), vitest 626 files, 4,845 passed, 37 skipped (single worker, beside Sprint 3's model run).
+- **Where the cards stop:**
+  - B4.8 is done in code, and its rows stay partial until the live admissions run.
+  - **Queued for Sprint 3:**
+    - `measure reviewer` on a Review model outside the Coding model's Qwen family (the Planning model is Qwen too; GLM-4.7-Flash is the qualified candidate);
+    - `measure seshat` old against new on the Planning model, after the owner confirms the 20 scripted conversations (about 30–45 minutes of reading);
+    - the reuse-query admission on the Planning model;
+    - the step-replay screen for Seshat's tools.
+  - **Open:** index.ts's `teamNote` and Seshat's team line describe the old Reviewer (model-facing; with Seshat's A/B); a Planner under about 6k of context leaves little room for the board.
+  - **Next:** B4.11.
 
 ### Entry 55 — 2026-09-28 (compliance fixes: the Phase B audit's majors, against the research and the reviews)
 

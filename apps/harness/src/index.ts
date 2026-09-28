@@ -111,12 +111,11 @@ import {
   recordQueueProgress,
   recordQueueReport,
   recordQueueStarted,
-  recordReview,
   requestAbort,
   rewindCard,
   runLspPool,
 } from "./execute.js";
-import { reviewPosterFromEnv, runExternalReviews } from "./external_review.js";
+import { externalReviewerFor, reviewPosterFromEnv, runExternalReviews } from "./external_review.js";
 import { homeDestination, roleWeightsFinder, runFirstRun } from "./first_run.js";
 import {
   COMMANDS,
@@ -130,7 +129,6 @@ import { notifySlack } from "./integrations.js";
 import { readSettings } from "./integrations.js";
 import { applyExploration, exploreProject } from "./learning/explore.js";
 import { consolidateWithManager, reflectWithManager } from "./learning/reflect.js";
-import { reviewCard } from "./learning/review.js";
 import { LearningStore } from "./learning/store.js";
 import {
   LEDGER_COMMANDS,
@@ -160,12 +158,13 @@ import {
 } from "./model_access.js";
 import { sendPush, startNotifier } from "./notify.js";
 import { nightModelServer, runOvernight } from "./overnight.js";
+import { setupFor } from "./planner_live.js";
+import { audienceFromAccess } from "./pm/audience.js";
 import { DEFAULT_PM_MODEL, answerQueued, dailyStandup, pmModelFor } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { seshatWait } from "./pm/while_worker.js";
 import { runPromptScreen } from "./prompt_screen_cmd.js";
 import { applyWorkerOverride, gateWorker } from "./qualify.js";
-import { QueuedReviews } from "./queued_reviews.js";
 import { diffTrajectories, formatDiff, formatTrajectory, trajectories } from "./replay.js";
 import { isResearchCard, runResearchCard } from "./research/cards.js";
 import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
@@ -182,6 +181,17 @@ import {
   reserveMachine,
   unattendedStartRefusal,
 } from "./reservation.js";
+import {
+  REVIEW_WAIT,
+  ReviewFlow,
+  acceptAfterReview,
+  familyOf,
+  learnedFrom,
+  recordNotReviewed,
+  releaseUnreviewed,
+  resolveReviewerRole,
+  reviewAndRelease,
+} from "./review_flow.js";
 import { candidateRuleFromEnv, researchRuleScope } from "./rule_scopes.js";
 import {
   LEASE_TOKEN_ENV,
@@ -206,6 +216,7 @@ import {
 } from "./smart_swap.js";
 import { bakeOffOnSuitePath } from "./suite_path.js";
 import { describeSupervisorStart, removeWorktreesOnClose, supervisorStart } from "./supervisor.js";
+import { Access } from "./team/access.js";
 import { fairOrder } from "./team/fair_queue.js";
 import { newSetupTokenCommand, recordSwitchToSolo } from "./team/serve.js";
 import { terminalBoardLines } from "./terminal_board.js";
@@ -2015,6 +2026,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     );
     const model = access.adapterFor("worker");
     console.log(`Coding model: ${model.modelId}`);
+    // review-git RG-P8-1, -10: the AI review reads the change before Review,
+    // on a Review model outside the Coding model's family, or says why not.
+    const runReviewer = resolveReviewerRole({
+      reviewer: roleModelName("reviewer", undefined, { registry }),
+      planner: roleModelName("planner", undefined, { registry }),
+      worker: model.modelId,
+      familyOf: (m) => familyOf(m, registry),
+    });
     // MD-N8-1: the Worker runs cards only once its exact combination (engine,
     // model build, host, settings) has qualified on this host. Nothing loads.
     // Rule 27, MD-N4-4: a person's override runs the failed combination, and
@@ -2087,6 +2106,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         ...(runCap ? { maxSteps: runCap } : {}),
         // Models rule 20e: each step is a step boundary on the scheduler.
         beginStep: () => access.beginStep("worker"),
+        reviewFirst: async (id) => {
+          if (runReviewer.state === "filled") return REVIEW_WAIT;
+          await recordNotReviewed(ctx, id, runReviewer.reason).catch(() => undefined);
+          return undefined;
+        },
       });
     } finally {
       process.off("SIGINT", onSigint);
@@ -2096,6 +2120,43 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       // ran out of memory overnight.
       await access.releaseAll();
       releaseRunLease();
+    }
+
+    // RG-P8-1: the Coding model has left; the Review model reads the change,
+    // then the issue moves to Review. `run` owns this scheduler, so it loads
+    // the Review model directly (`use`), as it loaded the Coding model.
+    const waiting = await cardStore.getCard(cardId);
+    if (
+      runReviewer.state === "filled" &&
+      waiting?.status === "verify" &&
+      waiting.blockedReason === REVIEW_WAIT
+    ) {
+      console.log(`AI review on ${runReviewer.model}...`);
+      access.ensureQueue({
+        queue: runReviewer.queue,
+        role: runReviewer.queue === "reviewer" ? "reviewer" : "planner",
+        name: runReviewer.model,
+      });
+      try {
+        await access.measure();
+        const reviewer = await access.use(runReviewer.queue);
+        const review = await reviewAndRelease(
+          ctx,
+          cardId,
+          reviewer,
+          await learnedFrom(new LearningStore(log)),
+        );
+        if (review) console.log(`${review.coverage}`);
+      } catch (err) {
+        await releaseUnreviewed(ctx, cardId, err);
+      } finally {
+        await access.releaseAll();
+      }
+      if (result.passed)
+        result = {
+          ...result,
+          finalStatus: (await cardStore.getCard(cardId))?.status ?? result.finalStatus,
+        };
     }
 
     console.log(`\n${summarizeEvidence(result.evidence)}\n`);
@@ -2255,10 +2316,17 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       const gate = gateWorker(registry, workerProbe, workerName);
       workerOverride = gate.override;
       if (!gate.refusal) qualifiedSlots = gate.combination.settings.parallelSlots;
+      // PM-N9-2, TEAM-41: a signal's suggestion under an Admin's auto-apply rule is applied now.
+      const team = new Access({
+        db,
+        setup: setupFor(config.repoPath),
+        localPrincipal: () => log.localPrincipal(),
+      });
       ({ ordered: ready } = await queuePrelude(
         { repoPath: config.repoPath, cardStore, log },
         readyRaw,
         {
+          autoApply: (project, kind) => team.autoApplier(project, kind),
           workerRefusal: gate.refusal,
           workerModelId: workerModel ?? defaultWorkerName(),
           reviewWip: (await boardService.getBoardState()).wipLimits.review,
@@ -2284,6 +2352,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // memory and every eviction proven. The registry pins chat templates and
     // supplies measured tool arms (M11).
     const pmModelName = managerModel ?? DEFAULT_PM_MODEL;
+    // review-git §2.3.7, RG-P8-10: the Review model, never of the Coding
+    // model's family; unfilled, each passing issue says why in Review.
+    const reviewerRole = resolveReviewerRole({
+      reviewer: reviewerModel,
+      planner: pmModelName,
+      worker: workerModel ?? defaultWorkerName(),
+      familyOf: (m) => familyOf(m, modelRegistry()),
+    });
     /** Every adapter the scheduler built, for the watchdog's actions. */
     const loaded = new Set<UnloadableAdapter>();
     // Prefill/decode speed per model and the Worker's prefix-cache hit rate (M3, M18).
@@ -2302,9 +2378,9 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         ...(researcherModel
           ? [{ queue: "researcher", role: "researcher" as const, name: researcherModel }]
           : []),
-        // A different model family for Seshat's review (--reviewer <model>).
-        ...(reviewerModel
-          ? [{ queue: "reviewer", role: "reviewer" as const, name: reviewerModel }]
+        // The Review model, of another family than the Coding model's (--reviewer <model>).
+        ...(reviewerRole.state === "filled" && reviewerRole.queue === "reviewer"
+          ? [{ queue: "reviewer", role: "reviewer" as const, name: reviewerRole.model }]
           : []),
       ],
       {
@@ -2404,8 +2480,23 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const pmStore = new PmStore(log);
     // H20, INT-17 to INT-20a: the one notifier (push and Slack, budgeted, and
     // Seshat's daily standup) while the queue runs.
+    const standupAccess = new Access({
+      db,
+      setup: setupFor(config.repoPath),
+      localPrincipal: () => log.localPrincipal(),
+    });
+    const standupAudience = audienceFromAccess(() => standupAccess, db);
     const notifier = await startNotifier(log, config.repoPath, {
-      standup: () => dailyStandup({ repoPath: config.repoPath, cardStore, pmStore, pmModel }),
+      // PM-N9-8: each recipient's standup names only what they can see.
+      standup: (person) =>
+        dailyStandup({
+          repoPath: config.repoPath,
+          cardStore,
+          pmStore,
+          pmModel,
+          person,
+          audience: standupAudience,
+        }),
     });
     // Tells the dashboard this process holds the Worker, so PM messages are
     // answered here, between steps, instead of loading a second large model.
@@ -2624,14 +2715,15 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // procedure on a checkout (never an edit) and do not reach the Worker.
     // Models rule 20e (C6): the external reviews are one queued review request,
     // held for the batch and released after it.
-    const externalReviewer = router.queuedModel(reviewerModel ? "reviewer" : "manager", {
-      review: true,
-    });
+    // RG-P8-10: the run's Review role, never the Coding model's family; unfilled,
+    // each review records why and none runs on Seshat's weights.
+    const externalReviewer = externalReviewerFor(reviewerRole, router);
     ready = await runExternalReviews(config.repoPath, ready, {
       store: cardStore,
       board: boardService,
       learning: ctx.learning,
-      reviewer: externalReviewer.model,
+      ...(externalReviewer.reviewer ? { reviewer: externalReviewer.reviewer } : {}),
+      ...(externalReviewer.notReviewed ? { notReviewed: externalReviewer.notReviewed } : {}),
       ...(() => {
         const poster = reviewPosterFromEnv(config.repoPath, cardStore);
         return poster ? { github: poster } : {};
@@ -2703,47 +2795,26 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const maxTurns =
       maxTurnsIdx !== -1 ? Number(argv[maxTurnsIdx + 1]) : appliedStepBudget(config.repoPath);
     const passedResults: { card: CardRecord; diff: string }[] = [];
-    const reviewAll = argv.includes("--review");
     /**
-     * Seshat reviews passing cards against the user's learned preferences
-     * (AutoDev's AI Reviewer). Advice only, recorded on the ledger; it runs
-     * while Seshat's model is resident, so it never forces an extra swap
-     * unless --review asked for it.
+     * The AI review (review-git §2.3, P8): each passing card waits in Verify
+     * while its review is queued on the Review model's queue, and Smart
+     * Swap's `decide()` chooses when the Review model visits — one tour for
+     * every review due, never more round trips than the storm cap — while the
+     * Worker keeps working (models rule 20e, C2, C4, C6, C7; RG-P8-3). The
+     * review records its findings, then moves the card to Review (RG-P8-1).
+     * It runs with or without learned preferences (RG-P8-4).
      */
-    const reviewOne = async (
-      model: UnloadableAdapter,
-      { card, diff }: { card: CardRecord; diff: string },
-    ) => {
-      const preferences = (await ctx.learning.profile())
-        .filter((p) => p.status === "active" && p.category === "code_style")
-        .map((p) => p.statement);
-      const rules = (await ctx.learning.rules())
-        .filter((r) => r.status === "active" && r.role === "worker")
-        .map((r) => r.text);
-      const findings = await reviewCard(model, { card, diff, preferences, rules }).catch(() => []);
-      if (findings.length === 0) return;
-      console.log(`   Seshat's review of ${card.id}: ${findings.length} note(s)`);
-      // Into the card's dossier: the Review surface shows it, and a
-      // returned card's next attempt reads it.
-      await recordReview(
-        cardStore,
-        card.id,
-        findings,
-        reviewerModel ? "reviewer" : "manager",
-      ).catch(() => undefined);
-    };
-    /**
-     * Models rule 20e (C2, C4, C6, C7): each passing card's review is queued
-     * as it passes and `decide()` chooses when the Reviewer visits — one tour
-     * for every review due, never more round trips than the storm cap — while
-     * the Worker keeps working; the run drains the rest at its end.
-     */
-    const reviews = new QueuedReviews<{ card: CardRecord; diff: string }>({
+    const reviewFlow = new ReviewFlow({
+      ctx: { repoPath: config.repoPath, cardStore, boardService },
+      role: reviewerRole,
       access: router,
-      queue: reviewerModel ? "reviewer" : "manager",
-      review: reviewOne,
+      learned: () => learnedFrom(ctx.learning),
       log: (line) => console.log(`   ${line}`),
     });
+    if (reviewerRole.state === "unfilled") console.log(`   ${reviewerRole.reason}`);
+    // Cards a stopped run left waiting for their review are reviewed in this one.
+    for (const id of await reviewFlow.resume().catch(() => []))
+      console.log(`   ${id} is waiting for its AI review`);
     const attempt = async (
       rawCard: CardRecord,
       n: number,
@@ -2815,13 +2886,15 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         ...(serverSlot !== undefined ? { serverSlot } : {}),
         // Models rule 20e, C8: each step is admitted at the drain barrier.
         beginStep: () => router.beginStep(role),
+        // RG-P8-1: a passing card waits in Verify for its AI review.
+        reviewFirst: (id) => reviewFlow.decide(id),
       });
       await refreshPlan(router, cardStore).catch(() => undefined);
       if (result.passed) {
         const passedCard = { card, diff: result.evidence.diff ?? "" };
         passedResults.push(passedCard);
-        // Rule 20e (C6): its review is queued now; `decide()` batches the Reviewer's visits.
-        if (reviewerModel || reviewAll) reviews.add(passedCard);
+        // Rule 20e (C6): its review is queued now; `decide()` batches the Review model's visits.
+        await reviewFlow.afterRun(card.id);
       }
       for (const st of result.lessons.struggles) {
         const code = /\b(TS\d{4}|lint\/[\w/]+)\b/.exec(st.text)?.[1];
@@ -2831,19 +2904,25 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
 
       let accepted = false;
       if (result.passed && autoAccept && !result.held) {
-        const reviewed = await cardStore.getCard(card.id);
-        if (reviewed?.status === "review") {
-          // --auto-accept is the harness's verdict, not a person's: the ledger
-          // must not credit a human with a merge nobody reviewed.
-          const sha = await acceptCard(
+        // RG-P8-2: the AI review runs before the merge, and its findings stay
+        // on the card when it merges. --auto-accept is the harness's verdict,
+        // not a person's: the ledger must not credit a human with the merge.
+        // While it waits the Worker has no card (C5): the tour may come now.
+        if (reviewFlow.role.state === "filled") router.setHomeBacklog(undefined);
+        const sha = await acceptAfterReview(reviewFlow, { cardStore }, card.id, (reviewed) =>
+          acceptCard(
             // DS-N3-1: the project documents follow the accept.
             { ...ctx, eventLog: log },
             reviewed,
             "harness",
             autoRun ? { autoRun } : {},
-          );
+          ),
+        );
+        if (sha) {
           accepted = true;
           console.log(`   accepted -> main ${sha.slice(0, 10)}`);
+        } else if (reviewFlow.reviewFailed(card.id)) {
+          console.log("   not merged: its AI review could not run, so it waits in Review for you");
         }
       }
 
@@ -3282,7 +3361,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         // The reviews queued as cards passed (C6): the rest are served now,
         // when `decide()` next lets the Reviewer visit (C7 may make them wait).
         // A halted run (memory pressure, a stop) does not wait for them.
-        if (!halted) await reviews.drain();
+        if (!halted) await reviewFlow.drain();
         // The human's messages are answered before the run ends; queued Worker
         // questions too when Seshat is already resident (no extra swap).
         await answerPm(undefined, router.isResident("manager")).catch(() => undefined);

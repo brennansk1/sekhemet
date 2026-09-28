@@ -2,7 +2,8 @@ import type { CardRecord } from "@sekhemet/kernel";
 import { type LocalInferenceAdapter, plannerCopy } from "@sekhemet/models";
 import { guardCompletionClaim } from "@sekhemet/planner";
 import { type PmSnapshot, isStatusQuestion, ledgerStandup, stripThinking } from "./agent.js";
-import type { PmMessage } from "./types.js";
+import { SESHAT_FACTS, SESHAT_LEDGER_ANSWERS } from "./pm_copy.js";
+import type { PmCite, PmMessage } from "./types.js";
 
 /**
  * Seshat while the Worker runs (models rule 20f, MD-N14-27–29). A person who
@@ -20,12 +21,26 @@ import type { PmMessage } from "./types.js";
  *   predicted wait in words (`waitInWords`) and a hold for the thread.
  */
 
-export type LedgerQuestion = "status" | "stops" | "waiting" | "wait";
+export type LedgerQuestion = "status" | "stops" | "waiting" | "wait" | "goal" | "assumed";
 
 /** A question the ledger and the board answer with no model, or undefined. */
 export function ledgerQuestion(text: string): LedgerQuestion | undefined {
   if (isStatusQuestion(text)) return "status";
   const t = text.trim();
+  // PM-P6-1: the goal and the assumptions are facts the ledger holds.
+  if (
+    /\bwhat(?:'s|’s| is| are)\b[^?]*\b(?:our|the|my)\s+(?:project(?:'s|’s)?\s+)?goals?\b/i.test(
+      t,
+    ) ||
+    /^goals?\s*\??$/i.test(t)
+  )
+    return "goal";
+  if (
+    /\bwhat\b[^?]*\b(?:did|have|has)\s+(?:you|seshat|the planner)\b[^?]*\bassum/i.test(t) ||
+    /\b(?:which|what)\s+assumptions?\b/i.test(t) ||
+    /^assumptions?\s*\??$/i.test(t)
+  )
+    return "assumed";
   if (/\bwhere\b.*\bcards?\b.*\bstop/i.test(t) || /\bwhere\b.*\b(stuck|blocked)\b/i.test(t))
     return "stops";
   if (/\b(what|anything)\b.*\b(wait(s|ing)?|need(s|ed)?|blocked)\b.*\b(on|for|from) me\b/i.test(t))
@@ -94,8 +109,56 @@ export function ledgerAnswer(
       : "Nothing is waiting on you.";
     return `${text}${FROM_LEDGER}`;
   }
+  if (kind === "goal") {
+    const goals = snapshot.goals ?? [];
+    const text = goals.length
+      ? [
+          SESHAT_LEDGER_ANSWERS.goalHead(goals.length),
+          ...goals.map(SESHAT_FACTS.goal),
+          SESHAT_LEDGER_ANSWERS.basedOn(goals.map((g) => `goal ${g.id}`).join(" · ")),
+        ].join("\n")
+      : SESHAT_LEDGER_ANSWERS.noGoal;
+    return `${text}${FROM_LEDGER}`;
+  }
+  if (kind === "assumed") {
+    const all = snapshot.assumptions ?? [];
+    const onGoals = (snapshot.goals ?? []).filter((g) => g.assumptions.length);
+    const text =
+      all.length || onGoals.length
+        ? [
+            SESHAT_LEDGER_ANSWERS.assumedHead(all.length + onGoals.length),
+            ...all.map(SESHAT_FACTS.assumption),
+            ...onGoals.map((g) => `- Goal \`${g.id}\` assumes: ${g.assumptions.join("; ")}`),
+            SESHAT_LEDGER_ANSWERS.basedOn(
+              [
+                ...all.map((a) => `assumption log ${a.id}`),
+                ...onGoals.map((g) => `goal ${g.id}`),
+              ].join(" · "),
+            ),
+          ].join("\n")
+        : SESHAT_LEDGER_ANSWERS.noAssumption;
+    return `${text}${FROM_LEDGER}`;
+  }
   const text = wait ? waitInWords(wait) : "I can answer now: no model needs switching in.";
   return `${text}${FROM_LEDGER}`;
+}
+
+/** What a ledger answer cites (PM-P6-1): the goals and assumptions it names. */
+export function ledgerCites(kind: LedgerQuestion, snapshot: PmSnapshot): PmCite[] {
+  if (kind === "goal")
+    return (snapshot.goals ?? []).map((g) => ({ goalId: g.id, label: `Goal ${g.id}` }));
+  if (kind === "assumed")
+    return [
+      ...(snapshot.assumptions ?? []).map((a) => ({
+        assumptionId: a.id,
+        cardId: a.cardId,
+        label: `Assumption ${a.id}`,
+      })),
+      ...(snapshot.goals ?? [])
+        .filter((g) => g.assumptions.length)
+        .map((g) => ({ goalId: g.id, label: `Goal ${g.id}` })),
+    ];
+  return [];
 }
 
 /**

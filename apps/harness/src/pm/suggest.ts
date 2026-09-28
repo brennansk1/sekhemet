@@ -1,11 +1,13 @@
 import { type BoardService, BoardServiceImpl } from "@sekhemet/board";
-import type {
-  CardRecord,
-  CardStatus,
-  CardStore,
-  Suggestion,
-  SuggestionKind,
-  SuggestionValue,
+import {
+  AUTO_APPLICABLE_KINDS,
+  type CardRecord,
+  type CardStatus,
+  type CardStore,
+  type Suggestion,
+  type SuggestionBefore,
+  type SuggestionKind,
+  type SuggestionValue,
 } from "@sekhemet/kernel";
 import { waitingReason } from "@sekhemet/planner";
 import type { ProposalDraft } from "./agent.js";
@@ -23,8 +25,17 @@ import { voiceGuard } from "./voice.js";
  * suggestion, and nothing changes until a person applies it — here, where
  * Apply performs the change under that person's principal. A planner's own
  * hold or removal of someone else's issue is a suggestion of the same kind
- * (§2.18.6, PM-N9-9).
+ * (§2.18.6, PM-N9-9). Where an Admin turned auto-apply on for the property
+ * on the issue's project, the suggestion is applied at once under that
+ * Admin's rule, shown *Applied by <Admin>'s rule*, and undone in one action
+ * (PM-N9-2, TEAM-41).
  */
+
+/** The Admin whose rule applies a suggestion of this kind on this project, if one is on (PM-N9-2). */
+export type AutoApplyRule = (
+  project: string | undefined,
+  kind: SuggestionKind,
+) => string | undefined;
 
 export class SuggestionError extends Error {
   constructor(
@@ -114,6 +125,14 @@ export async function postSuggestions(
     cards: CardRecord[];
     audience: Audience;
     asker?: string | undefined;
+    /**
+     * What an Admin's auto-apply rule needs to make the change (PM-N9-2): the
+     * PM store and the repository a split is planned in. Without it every
+     * suggestion waits for a person.
+     */
+    pmStore?: PmStore;
+    repoPath?: string;
+    boardService?: BoardService;
   },
 ): Promise<{ drafts: ProposalDraft[]; notes: string[] }> {
   const { audience, asker } = ctx;
@@ -125,13 +144,17 @@ export async function postSuggestions(
   for (const draft of drafts) {
     const card = draft.cardId ? byId.get(draft.cardId) : undefined;
     let next: ProposalDraft = draft;
+    // Said once per issue, unless an Admin's rule applied the change instead.
+    let ownerNote: (() => void) | undefined;
     if (card && audience.setup === "team" && card.owner && card.owner !== asker) {
-      next = { ...next, forOwner: card.owner };
-      if (!noted.has(card.id)) {
+      const owner = card.owner;
+      next = { ...next, forOwner: owner };
+      ownerNote = () => {
+        if (noted.has(card.id)) return;
         noted.add(card.id);
-        const who = nameFor(audience, card.owner);
+        const who = nameFor(audience, owner);
         notes.push(`${who} owns ${card.title}: the change is posted there for ${who} to apply.`);
-      }
+      };
     }
     const s = card ? suggestionOf(draft) : undefined;
     if (card && s) {
@@ -142,12 +165,43 @@ export async function postSuggestions(
         "planner",
       );
       // TEAM-19: dismissed before on this issue — not raised again, and no one is asked why.
-      if (!id) continue;
+      if (!id) {
+        ownerNote?.();
+        continue;
+      }
+      // PM-N9-2: under an Admin's rule it is applied now, and the chat offers nothing to apply.
+      const rule = audience.autoApplier;
+      if (rule && ctx.pmStore) {
+        const auto = await autoApplySuggestion(id, {
+          cardStore: ctx.cardStore,
+          pmStore: ctx.pmStore,
+          ...(ctx.boardService ? { boardService: ctx.boardService } : {}),
+          ...(ctx.repoPath ? { repoPath: ctx.repoPath } : {}),
+          audience,
+        });
+        if (auto) {
+          notes.push(`${auto.line} Undo is on the issue.`);
+          continue;
+        }
+      }
       next = { ...next, suggestionId: id };
     }
+    ownerNote?.();
     out.push(next);
   }
   return { drafts: out, notes };
+}
+
+/** "Applied by Ada's rule: priority Urgent for Api." (TEAM-41), as the issue shows it. */
+export function ruleLine(
+  s: { kind: SuggestionKind; value: SuggestionValue },
+  title: string,
+  admin: string,
+  audience?: Audience,
+): string {
+  const nameOf = (p: string) => (audience ? nameFor(audience, p) : p);
+  const who = audience?.nameOf(admin) ?? "an Admin";
+  return `Applied by ${who === "an Admin" ? who : `${who}'s`} rule: ${suggestedText(s, title, nameOf)}.`;
 }
 
 const SLICE_OF_AXIS: Record<string, string> = {
@@ -326,17 +380,157 @@ export async function dismissSuggestion(id: string, ctx: SuggestionContext): Pro
   if (linked) await ctx.pmStore.setProposalState(linked.id, "discarded");
 }
 
-/** The issue's open suggestions as it shows them: *Suggested: …*, *Why: …*. */
+/**
+ * Apply a suggestion under an Admin's auto-apply rule (PM-N9-2, TEAM-18,
+ * -41), when one is on for its property on its issue's project: the change
+ * is made with that Admin as principal, and the issue as it was is recorded
+ * so one action undoes it. Returns undefined — the suggestion waiting for a
+ * person, as without a rule — when no rule applies, the kind is never
+ * auto-applied (the assignee, a hold, a removal), or the change cannot be
+ * made now (a split the planner refuses).
+ */
+export async function autoApplySuggestion(
+  id: string,
+  ctx: Omit<SuggestionContext, "principal"> & { autoApply?: AutoApplyRule },
+): Promise<{ by: string; line: string; cards: CardRecord[] } | undefined> {
+  const s = await ctx.cardStore.suggestions.get(id);
+  if (!s || s.state !== "open" || !AUTO_APPLICABLE_KINDS.includes(s.kind)) return undefined;
+  const card = await ctx.cardStore.getCard(s.cardId);
+  if (!card) return undefined;
+  const rule: AutoApplyRule | undefined =
+    ctx.autoApply ??
+    (ctx.audience?.autoApplier
+      ? (project, kind) => ctx.audience?.autoApplier?.(project, kind)
+      : undefined);
+  const by = rule?.(card.projectId, s.kind);
+  if (!by) return undefined;
+  const before: SuggestionBefore = {
+    status: card.status,
+    labels: [...(card.labels ?? [])],
+    priority: card.priority ?? 0,
+    ...(card.blockedReason ? { blockedReason: card.blockedReason } : {}),
+  };
+  let cards: CardRecord[];
+  try {
+    // An automation rule's change: the machine acts, the Admin is the principal (kernel rule 19).
+    cards = await perform({ ...ctx, actor: "system" }, s, card, by);
+  } catch (err) {
+    if (err instanceof SuggestionError) return undefined;
+    throw err;
+  }
+  if (s.kind === "split") before.made = cards.map((c) => c.id).filter((c) => c !== card.id);
+  await ctx.cardStore.suggestions.apply(id, by, { auto: true, before });
+  return { by, line: ruleLine(s, card.title, by, ctx.audience), cards };
+}
+
+/** Statuses a split's part may still be withdrawn from: it has not started. */
+const NOT_STARTED: CardStatus[] = ["backlog", "ready", "planning"];
+
+/** Bring an issue back from Won't do to where it was, by the board's legal edges. */
+async function restoreFrom(ctx: SuggestionContext, card: CardRecord, to: string | undefined) {
+  if (card.status !== "rejected") return;
+  const target = (to ?? "backlog") as CardStatus;
+  const first: CardStatus = target === "backlog" ? "backlog" : "ready";
+  await move(ctx, card, first, "Undo: the rule's change was undone");
+  if (target !== first && ["planning", "parked"].includes(target)) {
+    const now = await ctx.cardStore.getCard(card.id);
+    if (now) await move(ctx, now, target, "Undo: the rule's change was undone");
+  }
+}
+
+/**
+ * Undo what an Admin's rule applied, in one action (TEAM-41): the issue goes
+ * back as it was — its labels, its priority, back from Won't do for a
+ * duplicate, and for a split the parts withdrawn and the issue restored,
+ * refused once a part has started. The person may be the issue's owner (or
+ * anyone who may apply it) or the Admin whose rule it was. The same change
+ * is not raised again.
+ */
+export async function undoSuggestion(
+  id: string,
+  ctx: SuggestionContext,
+): Promise<{ suggestion: Suggestion; cards: CardRecord[] }> {
+  const s = await ctx.cardStore.suggestions.get(id);
+  if (!s) throw new SuggestionError(`No suggestion ${id}.`, 404);
+  if (s.state === "undone") throw new SuggestionError("This change was already undone.", 409);
+  if (s.state !== "applied" || !s.rule) {
+    throw new SuggestionError("Only a change an Admin's rule applied is undone here.", 409);
+  }
+  const [applied] = await ctx.cardStore.suggestions
+    .appliedByRule(s.cardId)
+    .then((all) => all.filter((a) => a.id === id));
+  const card = await ctx.cardStore.getCard(s.cardId);
+  if (!applied || !card) throw new SuggestionError(`Issue ${s.cardId} no longer exists.`, 409);
+  const principal = ctx.principal ?? ctx.cardStore.localPrincipal();
+  const refusal = principal === s.rule ? undefined : ownerRefusal(card, principal, ctx.audience);
+  if (refusal) throw new SuggestionError(refusal, 403);
+  const actor = ctx.actor ?? "human";
+  const who = { principal };
+  const before = applied.before;
+  switch (s.kind) {
+    case "label":
+      await ctx.cardStore.updateCard(card.id, { labels: before.labels ?? [] }, actor, who);
+      break;
+    case "priority":
+      await ctx.cardStore.updateCard(card.id, { priority: before.priority ?? 0 }, actor, who);
+      break;
+    case "duplicate":
+    case "split": {
+      const parts = await Promise.all((before.made ?? []).map((c) => ctx.cardStore.getCard(c)));
+      const started = parts.find((p) => p && !NOT_STARTED.includes(p.status));
+      if (started) {
+        throw new SuggestionError(
+          `${started.title} has started; the split is not undone. Move its parts on the board instead.`,
+          409,
+        );
+      }
+      for (const part of parts) {
+        if (part && part.status !== "rejected") {
+          await move(ctx, part, "rejected", "Undo: the split was undone");
+        }
+      }
+      await restoreFrom(ctx, card, before.status);
+      await ctx.cardStore.updateCard(
+        card.id,
+        { blockedReason: before.blockedReason ?? null },
+        actor,
+        who,
+      );
+      break;
+    }
+    default:
+      throw new SuggestionError(`An ${s.kind} change is never applied by a rule.`, 409);
+  }
+  await ctx.cardStore.suggestions.undo(id, principal);
+  const now = await ctx.cardStore.getCard(card.id);
+  return { suggestion: s, cards: now ? [now] : [] };
+}
+
+/**
+ * The issue's suggestions as it shows them: each open one as *Suggested: …*,
+ * *Why: …*, and each an Admin's rule applied that no one has undone as
+ * *Applied by <Admin>'s rule: …*, with Undo (PM-N9-1, -2; TEAM-41).
+ */
 export async function suggestionsOn(
   cardStore: CardStore,
   cardId: string,
   audience?: Audience,
-): Promise<(Suggestion & { suggested: string })[]> {
+): Promise<(Suggestion & { suggested: string; state: "open" | "applied"; rule?: string })[]> {
   const card = await cardStore.getCard(cardId);
   if (!card) return [];
   const nameOf = (p: string) => (audience ? nameFor(audience, p) : p);
-  return (await cardStore.suggestions.open(cardId)).map((s) => ({
+  const open = (await cardStore.suggestions.open(cardId)).map((s) => ({
     ...s,
+    state: "open" as const,
     suggested: `Suggested: ${suggestedText(s, card.title, nameOf)}.`,
   }));
+  const ruled = (await cardStore.suggestions.appliedByRule(cardId)).map(
+    ({ by, before: _before, appliedAt: _at, ...s }) => ({
+      ...s,
+      state: "applied" as const,
+      rule: by,
+      suggested: ruleLine(s, card.title, by, audience),
+    }),
+  );
+  return [...ruled, ...open];
 }

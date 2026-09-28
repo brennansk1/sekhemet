@@ -1,5 +1,5 @@
 {
-  "about": "Evaluation assets (measurement.md rule 29, T11): each is versioned, hashed and listed here with its size, who labelled it and the criteria that use it. An item is never edited to improve a result; a change is a new version, and the earlier hash is kept. Labels are a person's or executed, never a model's. Nothing is scored against an asset that is not listed. B2.4's reference solutions are labelled by execution (each passed its card's frozen tests; scripts/verify_reference_solutions.mjs records and registers them); its golden briefs and held-out acceptance suite wait for a person's labels and are not registered yet. B4.4's research golden set (25 questions, fixtures/research_golden/drafts) is drafted by an agent and waits for a person to check and label every answer; it is not registered yet, so the Researcher bake-off and the Researcher's screen do not run.",
+  "about": "Evaluation assets (measurement.md rule 29, T11): each is versioned, hashed and listed here with its size, who labelled it and the criteria that use it. An item is never edited to improve a result; a change is a new version, and the earlier hash is kept. Labels are a person's or executed, never a model's. Nothing is scored against an asset that is not listed. B2.4's reference solutions are labelled by execution (each passed its card's frozen tests; scripts/verify_reference_solutions.mjs records and registers them); its golden briefs and held-out acceptance suite wait for a person's labels and are not registered yet. B4.4's research golden set (25 questions, fixtures/research_golden/drafts) is drafted by an agent and waits for a person to check and label every answer; it is not registered yet, so the Researcher bake-off and the Researcher's screen do not run. B4.8's reviewer seeded defects are labelled by execution (scripts/verify_seeded_defects.mjs: each defect passes its issue's frozen tests, typecheck and lint and fails a witness test that passes on the reference solution); its PM conversations (fixtures/pm_conversations/drafts) wait for a person's labels and are not registered.",
   "assets": [
     {
       "name": "reference-solutions",
@@ -23,6 +23,18 @@
           "items": 30
         }
       ]
+    },
+    {
+      "name": "reviewer-seeded-defects",
+      "version": "1",
+      "hash": "649f03dda459ffc2c9bb2afea51d019b48d9ba547ed47ff8c806b50474846dce",
+      "items": 22,
+      "labelledBy": "frozen tests (each defect passes its card's frozen tests, typecheck and lint, and fails a witness test that passes on the reference solution)",
+      "provenance": "seeded by an agent (claude-opus-5-5) into the verified reference solutions; each defect executed against its card's frozen tests and its witness test",
+      "usedBy": ["P8"],
+      "builtIn": "B4.8",
+      "path": "fixtures/seeded_defects",
+      "versions": []
     }
   ]
 }

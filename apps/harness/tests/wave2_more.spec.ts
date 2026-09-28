@@ -9,13 +9,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { parseModelList, runCalibrate } from "../src/calibrate_cmd.js";
 import { runDoctor } from "../src/doctor.js";
 import { LearningStore } from "../src/learning/store.js";
+import { dailyStandup } from "../src/pm/service.js";
+import { PmStore } from "../src/pm/store.js";
 import { parseHours } from "../src/scheduler.js";
 import {
   type Kernel,
   batchBySwaps,
   gateRuleOnFixtures,
   overnightPlanLine,
-  plannerStandupSection,
   replanOnRung3,
   ruleGateVerdict,
 } from "../src/wave2.js";
@@ -84,9 +85,16 @@ describe("P13: Seshat's standup carries decisions waiting and the next window", 
       category: "storage",
       createdAt: "",
     });
-    const text = await plannerStandupSection(k.cardStore, k.log);
-    expect(text).toMatch(/Decisions waiting on you: Which database\?/);
-    expect(text).toMatch(/Next window: Ready one \(/);
+    // PM-P6-3: the one standup builder carries the planner's half, in plain words.
+    const text = await dailyStandup({
+      repoPath: k.repoPath,
+      cardStore: k.cardStore,
+      pmStore: new PmStore(k.log),
+    });
+    expect(text).toMatch(
+      /Needs a decision from you: Which database\? \(c\) No default[^;]* Waiting \d/,
+    );
+    expect(text).toMatch(/Next up: (?:.*, then )?Ready one \(\d+-\d+ min, /);
   });
 });
 

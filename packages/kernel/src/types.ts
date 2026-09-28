@@ -466,6 +466,8 @@ export interface DossierEntryInput {
   sources?: string[];
   /** Review verdict, for example "likely_send_back". */
   verdict?: string;
+  /** The model that wrote a review entry (review-git RG-P8-12); only a review entry names one. */
+  modelId?: string;
 }
 
 export interface DossierEntry {
@@ -481,6 +483,7 @@ export interface DossierEntry {
   inReplyTo?: string;
   sources?: string[];
   verdict?: string;
+  modelId?: string;
 }
 
 /** A question with the answers addressed to it (by `inReplyTo`). */

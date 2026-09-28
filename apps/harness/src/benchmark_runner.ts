@@ -425,13 +425,14 @@ export function suiteScreenRunner(deps: SuiteRunnerDeps): ScreenRunner {
           } catch {
             // No worktree left: the Reviewer reads the card without its diff.
           }
-          const findings = await reviewCard(reviewer, {
+          // Judged against the card's criteria (RG-P8-1): an unmet finding sends it back.
+          const review = await reviewCard(reviewer, {
             card: record,
             diff,
             preferences: [],
-            rules: record.acceptanceCriteria ?? [],
-          }).catch(() => []);
-          sentBack = findings.some((f) => f.severity === "likely_send_back");
+            rules: [],
+          }).catch(() => undefined);
+          sentBack = review?.findings.some((f) => f.verdict === "unmet") ?? false;
         }
         return {
           passed: r.passed && !sentBack,

@@ -83,14 +83,44 @@ export interface RuleEvidence {
 
 export type ProfileCategory = "code_style" | "planning" | "communication" | "priorities";
 
+/**
+ * Where a profile statement applies, and how fast it fades (planner-pm
+ * §2.13.3, PM-P6-15): its reach — this project or all projects — narrowed to
+ * a repository or a card kind, and the Erev–Roth forgetting rate it records,
+ * the share of its strength lost per week without new evidence.
+ */
+export interface ProfileScope {
+  reach: "project" | "all";
+  repository?: string;
+  kind?: string;
+  decayPerWeek: number;
+}
+
+/**
+ * A statement's scope when it records none: this project, fading by the
+ * forgetting rate of PM_CONTRACT §6's rule value (0.1), applied per week.
+ */
+export const DEFAULT_PROFILE_SCOPE: ProfileScope = { reach: "project", decayPerWeek: 0.1 };
+
+/** Below this strength a statement is not used until new evidence raises it (PM-P6-15). */
+export const PROFILE_IN_FORCE = 0.2;
+
 export interface ProfileEntry {
   id: string;
   statement: string;
   category: ProfileCategory;
+  /**
+   * 0..1. As `profile()` returns it, the strength now: the strength recorded
+   * at the last evidence, decayed by the scope's rate for each week since.
+   */
   strength: number;
+  /** The strength as recorded at the last evidence, before decay (read-only view). */
+  recordedStrength?: number;
   evidence: { note: string; at: string }[];
   status: "active" | "dismissed";
   source: "send_back" | "proposal_choices" | "edits" | "reflection";
+  /** Where it applies and how fast it fades; `DEFAULT_PROFILE_SCOPE` when absent. */
+  scope?: ProfileScope;
 }
 
 const DECAY = 0.1;
@@ -497,13 +527,38 @@ export class LearningStore {
 
   // --- Profile -----------------------------------------------------------------
 
-  public async profile(): Promise<ProfileEntry[]> {
+  /** Each statement as last recorded, its strength undecayed. */
+  private async recordedProfile(): Promise<ProfileEntry[]> {
     const byId = new Map<string, ProfileEntry>();
     for (const e of await this.log.getEventsByTypes([EVENTS.profile])) {
       const p = e.payload as Partial<ProfileEntry> & { id: string };
-      byId.set(p.id, { ...(byId.get(p.id) ?? ({} as ProfileEntry)), ...p } as ProfileEntry);
+      const { recordedStrength: _view, ...recorded } = p;
+      byId.set(p.id, { ...(byId.get(p.id) ?? ({} as ProfileEntry)), ...recorded } as ProfileEntry);
     }
-    return [...byId.values()].sort((a, b) => b.strength - a.strength);
+    return [...byId.values()];
+  }
+
+  /**
+   * Every statement about the person, strongest first, each with its strength
+   * now (PM-P6-15): the recorded strength times (1 − the scope's weekly rate)
+   * for each week since its latest evidence — Erev–Roth forgetting, computed
+   * from the ledger on each read, so nothing is written for time passing.
+   */
+  public async profile(now = Date.now()): Promise<ProfileEntry[]> {
+    return (await this.recordedProfile())
+      .map((p) => ({ ...p, recordedStrength: p.strength, strength: decayedStrength(p, now) }))
+      .sort((a, b) => b.strength - a.strength);
+  }
+
+  /**
+   * The statements Seshat uses (PM-P6-15, O24's default): active, and at a
+   * strength of at least `PROFILE_IN_FORCE` now. A faded one returns when new
+   * evidence raises it.
+   */
+  public async profileInForce(now = Date.now()): Promise<ProfileEntry[]> {
+    return (await this.profile(now)).filter(
+      (p) => p.status === "active" && p.strength >= PROFILE_IN_FORCE,
+    );
   }
 
   /**
@@ -511,23 +566,27 @@ export class LearningStore {
    * toward 1 with diminishing returns; nothing is ever written as certain.
    */
   public async observe(
-    entry: Omit<ProfileEntry, "id" | "status" | "strength" | "evidence"> & {
+    entry: Omit<ProfileEntry, "id" | "status" | "strength" | "evidence" | "recordedStrength"> & {
       evidence: string;
       key?: string;
     },
+    now = Date.now(),
   ): Promise<ProfileEntry> {
-    const all = await this.profile();
+    // Reinforcement starts from the strength now, decayed since the last evidence.
+    const all = await this.profile(now);
     const id = entry.key ? `pref_${entry.key}` : undefined;
     const existing = all.find((p) =>
       id ? p.id === id : p.status === "active" && similarity(p.statement, entry.statement) >= 0.7,
     );
-    const at = new Date().toISOString();
+    const at = new Date(now).toISOString();
+    const { recordedStrength: _view, ...current } = existing ?? ({} as ProfileEntry);
     const next: ProfileEntry = existing
       ? {
-          ...existing,
+          ...current,
           statement: entry.statement,
           strength: round(existing.strength + (1 - existing.strength) * 0.3),
           evidence: [...existing.evidence, { note: entry.evidence, at }].slice(-8),
+          ...(entry.scope ? { scope: entry.scope } : {}),
         }
       : {
           id: id ?? `pref_${randomUUID().slice(0, 8)}`,
@@ -537,6 +596,7 @@ export class LearningStore {
           strength: 0.3,
           evidence: [{ note: entry.evidence, at }],
           status: "active",
+          ...(entry.scope ? { scope: entry.scope } : {}),
         };
     await this.log.append({ actor: "planner", type: EVENTS.profile, payload: next });
     return next;
@@ -546,7 +606,8 @@ export class LearningStore {
     id: string,
     change: { status?: "active" | "dismissed"; statement?: string },
   ): Promise<ProfileEntry | undefined> {
-    const entry = (await this.profile()).find((p) => p.id === id);
+    // The recorded entry, so a person's edit never writes a decayed strength as new evidence.
+    const entry = (await this.recordedProfile()).find((p) => p.id === id);
     if (!entry) return undefined;
     const next = { ...entry, ...change };
     await this.log.append({ actor: "human", type: EVENTS.profile, payload: next });
@@ -556,4 +617,20 @@ export class LearningStore {
 
 function round(n: number): number {
   return Math.round(n * 1000) / 1000;
+}
+
+const WEEK_MS = 7 * 24 * 3_600_000;
+
+/**
+ * A statement's strength at `now` (PM-P6-15): its recorded strength times
+ * (1 − φ) per week since its latest evidence, φ its scope's `decayPerWeek`.
+ */
+export function decayedStrength(
+  p: Pick<ProfileEntry, "strength" | "evidence" | "scope">,
+  now = Date.now(),
+): number {
+  const last = Math.max(...(p.evidence ?? []).map((e) => Date.parse(e.at)).filter(Number.isFinite));
+  if (!Number.isFinite(last) || now <= last) return p.strength;
+  const rate = Math.min(1, Math.max(0, (p.scope ?? DEFAULT_PROFILE_SCOPE).decayPerWeek));
+  return round(p.strength * (1 - rate) ** ((now - last) / WEEK_MS));
 }

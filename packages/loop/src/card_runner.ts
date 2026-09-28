@@ -96,6 +96,13 @@ export interface CardLifecycle {
    * `blockedReason` through `store`.
    */
   hold?(cardId: string, reason: string, awaiting: CardStatus): Promise<void>;
+  /**
+   * Asked once a card passes, with its attempt closed and its evidence
+   * recorded, before it moves to Review (review-git RG-P8-1): a reason means
+   * the card waits in Verify for the AI review, which moves it on, and the
+   * reason is its `blockedReason`; undefined moves it to Review now.
+   */
+  awaitReview?(cardId: string): Promise<string | undefined>;
 }
 
 /**
@@ -429,17 +436,34 @@ const DOSSIER_LINE_CHARS = 400;
 const DOSSIER_MAX_LINES = 12;
 
 /** Render the dossier as prompt lines, the directives that matter most first. */
+/**
+ * Which AI review entries a retry reads (review-git RG-P8-9): the model's own
+ * `unmet` and `unclear` findings that cite a checked `(file:line)`. The
+ * `met` findings, the coverage line, a `not_reviewed` reason, a skipped
+ * criterion's uncited entry and the fail-only `no test:` check (the
+ * acceptance tests are protected: the Agent cannot act on it) stay on the
+ * card for Review and Seshat, not in the Coding model's context. An older
+ * review's entry (another verdict) is kept as it always was.
+ */
+function reviewForRetry(e: { verdict?: string | undefined; text: string }): boolean {
+  if (e.verdict === "unmet" || e.verdict === "unclear")
+    return /\((?:[\w@.-]+\/)*[\w@.-]+:\d+\)\s*$/.test(e.text) && !/^no test:/i.test(e.text.trim());
+  return e.verdict !== "met" && e.verdict !== "coverage" && e.verdict !== "not_reviewed";
+}
+
 export function dossierPromptLines(dossier: CardDossier): string[] {
   const clip = (t: string) =>
     t.length > DOSSIER_LINE_CHARS ? `${t.slice(0, DOSSIER_LINE_CHARS)}…` : t;
   const lines: { seq: number; text: string }[] = [];
   for (const e of dossier.sendBacks)
     lines.push({ seq: e.seq, text: `Sent back by the reviewer: ${clip(e.text)}` });
-  for (const e of dossier.reviews)
+  for (const e of dossier.reviews) {
+    if (!reviewForRetry(e)) continue;
     lines.push({
       seq: e.seq,
       text: `Review finding${e.verdict ? ` (${e.verdict})` : ""}: ${clip(e.text)}`,
     });
+  }
   for (const t of dossier.questions) {
     for (const a of t.answers)
       lines.push({
@@ -2628,6 +2652,7 @@ export class CardRunner {
     let parked = params.parkWith;
     let replan: ReplanRequest | undefined;
     let regression: string | undefined;
+    let reviewWait: string | undefined;
 
     if (params.heldBeforeStart) {
       held = { reason: params.heldBeforeStart, wanted: "in_progress" };
@@ -2711,9 +2736,13 @@ export class CardRunner {
             if (moved.ok) finalStatus = "planning";
             else held = { reason: moved.reason, wanted: "planning" };
           } else if (passed) {
-            const toReview = await this.move("review");
-            if (toReview.ok) finalStatus = "review";
-            else held = { reason: toReview.reason, wanted: "review" };
+            // RG-P8-1: the AI review reads the change before a person sees it.
+            reviewWait = await lifecycle?.awaitReview?.(card.id);
+            if (!reviewWait) {
+              const toReview = await this.move("review");
+              if (toReview.ok) finalStatus = "review";
+              else held = { reason: toReview.reason, wanted: "review" };
+            }
           } else if (params.lastGateResult) {
             // B2: the state machine's `Verify --> Planning: gate fail, replan`.
             // A card whose gates ran and failed needs a new plan, and Verify is
@@ -2760,7 +2789,7 @@ export class CardRunner {
               ? `regression: ${regression}`
               : this.rebaseFailure
                 ? `rebase conflict: ${this.rebaseFailure}`
-                : null;
+                : (reviewWait ?? null);
       try {
         await store.updateCard(
           card.id,

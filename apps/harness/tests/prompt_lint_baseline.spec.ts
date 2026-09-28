@@ -86,9 +86,9 @@ const REMEASURE = process.env.SEKHEMET_PROMPT_BASELINE_REMEASURE;
  */
 const RECORDED_TOTALS = {
   templates: 126,
-  capitalWords: 635,
-  negations: 443,
-  longToolDescriptions: 7,
+  capitalWords: 581,
+  negations: 427,
+  longToolDescriptions: 5,
 };
 const TODAY = "2026-09-24";
 const usage = { promptTokens: 1, completionTokens: 1, durationMs: 1 };
@@ -693,10 +693,25 @@ async function renderTemplates(): Promise<Template[]> {
   });
 
   // --- Reviewer ---
+  // review-git P8: one request over a line-numbered diff, with the staged
+  // cases per criterion, the checks and the Worker's recorded assumptions.
   const review = await capture((m) =>
     reviewCard(m, {
-      card: card(9),
-      diff: "+export function append(entry) {}\n",
+      card: { ...card(9), criterionIds: ["AC-1", "AC-2"] },
+      diff: [
+        "diff --git a/src/ledger.ts b/src/ledger.ts",
+        "--- a/src/ledger.ts",
+        "+++ b/src/ledger.ts",
+        "@@ -1,1 +1,2 @@",
+        " const rows = [];",
+        "+export function append(entry) { rows.push(entry); }",
+        "",
+      ].join("\n"),
+      stagedTests: [
+        { path: "tests/ledger.spec.ts", cases: [{ name: "appends", criterionId: "AC-1" }] },
+      ],
+      checks: [{ gate: "test", passed: true }],
+      assumptions: ["Assumed: entries are strings"],
       preferences: ["Small functions"],
       rules: ["Use the built-in node:sqlite module."],
     }),

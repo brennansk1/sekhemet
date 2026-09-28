@@ -45,7 +45,18 @@ describe("triage from the command line", () => {
   it("sends a card back with its reason, which becomes a playbook candidate", async () => {
     const repo = await withCard();
     await main(["park", "card_t", "--repo", repo]);
-    await main(["send-back", "card_t", "use", "the", "shared", "parser", "--repo", repo]);
+    // RG-P8-15: a note naming a file (a symbol, a check or an error) is a candidate.
+    await main([
+      "send-back",
+      "card_t",
+      "use",
+      "the",
+      "parser",
+      "in",
+      "src/parse.ts",
+      "--repo",
+      repo,
+    ]);
     expect(await status(repo)).toBe("ready");
     // K-S7-6: the candidate is a ledger event, and no side file is written.
     expect(existsSync(join(repo, ".sekhemet", "playbook_candidates.jsonl"))).toBe(false);
@@ -54,7 +65,9 @@ describe("triage from the command line", () => {
     db.close();
     // The note is free text: the private part, not the hashed payload (K-S7-9).
     expect(candidates.map((e) => e.payload)).toEqual([{ cardId: "card_t" }]);
-    expect(candidates.map((e) => e.private)).toEqual([{ reason: "use the shared parser" }]);
+    expect(candidates.map((e) => e.private)).toEqual([
+      { reason: "use the parser in src/parse.ts" },
+    ]);
   });
 
   it("K-S4-7: every state has a command-line exit to Ready — unpark for Parked, reopen for Rejected", async () => {

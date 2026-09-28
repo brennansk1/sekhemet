@@ -7,7 +7,7 @@ import type { CardRecord, CardStatus, CardStore, EventLog } from "@sekhemet/kern
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { annotationsFromFailures } from "@sekhemet/sync";
-import { recordReview } from "./execute.js";
+import { REVIEW_DESK_COPY } from "@sekhemet/ui";
 import {
   appClientFromEnv,
   decideEgress,
@@ -20,12 +20,13 @@ import {
 import { reviewCard } from "./learning/review.js";
 import { recordLedgerRun } from "./ledger_evidence.js";
 import type { ResearchBoard } from "./research/cards.js";
+import { type ReviewerRole, recordNotReviewed, recordReview } from "./review_flow.js";
 
 /**
  * External review cards (X15, design "External review cards"): a review
  * card targets a pull request the harness did not create. It checks the
- * PR head out in a throwaway worktree, runs the gates and Seshat's review
- * there, writes an evidence bundle, and never edits: anything a gate wrote
+ * PR head out in a throwaway worktree, runs the gates and the AI review
+ * there (the run's Review model, RG-P8-10), writes an evidence bundle, and never edits: anything a gate wrote
  * into the checkout is discarded and noted. With the GitHub App configured
  * the findings post as one review with line comments.
  */
@@ -85,8 +86,13 @@ export interface ExternalReviewOptions {
   board: ResearchBoard;
   /** The gates in a checkout; default: the repository's gates.toml rungs. */
   runGates?: (cwd: string) => Promise<GateResult>;
-  /** Seshat's model, loaded only when there is something to review against. */
+  /**
+   * The run's Review model (RG-P8-10: never of the Coding model's family),
+   * from `externalReviewerFor`; absent, no AI review runs.
+   */
   reviewer?: () => Promise<LocalInferenceAdapter>;
+  /** Why no AI review runs (the Review role unfilled), recorded on the issue. */
+  notReviewed?: string;
   preferences?: string[];
   rules?: string[];
   /** Post the review through the App (a GitHubClient or anything with `rest`). */
@@ -248,11 +254,40 @@ export async function runExternalReview(
     }
     const preferences = options.preferences ?? [];
     const rules = options.rules ?? [];
-    if (options.reviewer && (preferences.length || rules.length)) {
-      const model = await options.reviewer();
-      const notes = await reviewCard(model, { card, diff, preferences, rules }).catch(() => []);
-      await recordReview(options.store, card.id, notes, "reviewer");
-      for (const n of notes) result.findings.push({ source: "reviewer", ...n });
+    // The Reviewer reads the pull request against the card's criteria and the
+    // preferences, learned or not (review-git §2.3, RG-P8-4); its unmet and
+    // unclear findings post with their lines, and all go to the dossier.
+    if (options.reviewer) {
+      // A Review model that cannot load or answer is not a verdict on the
+      // pull request: the reason is on the issue, which goes on (models rule 23).
+      const review = await options
+        .reviewer()
+        .then((model) => reviewCard(model, { card, diff, preferences, rules }))
+        .catch(async (err: unknown) => {
+          await recordNotReviewed(
+            { cardStore: options.store },
+            card.id,
+            REVIEW_DESK_COPY.reviewFailed(err instanceof Error ? err.message : String(err)),
+          ).catch(() => undefined);
+          return undefined;
+        });
+      if (review) {
+        await recordReview({ repoPath: repo, cardStore: options.store }, card.id, review);
+        review.findings.forEach((f, i) => {
+          if (f.verdict === "met") return;
+          // Only a location the model gave and the harness checked is a line
+          // comment; a skipped criterion's fallback location cites nothing.
+          const m = review.cited[i] === true ? /^(.*):(\d+)$/.exec(f.evidence) : null;
+          result.findings.push({
+            source: "reviewer",
+            severity: f.verdict === "unmet" ? "likely_send_back" : "consider",
+            note: [f.criterion, f.note].filter(Boolean).join(": "),
+            ...(m && Number(m[2]) > 0 ? { path: m[1] as string, line: Number(m[2]) } : {}),
+          });
+        });
+      }
+    } else if (options.notReviewed) {
+      await recordNotReviewed({ cardStore: options.store }, card.id, options.notReviewed);
     }
     mkdirSync(join(repo, ".sekhemet", "evidence"), { recursive: true });
     const body = JSON.stringify(
@@ -368,6 +403,30 @@ function reviewBody(r: ExternalReviewResult): string {
 }
 
 /**
+ * The external reviews' Review model, from the run's Review role (RG-P8-10):
+ * filled, its queue as one queued review request (models rule 20e, C6), held
+ * for the batch and released after it; unfilled, no model and the reason
+ * each review records.
+ */
+export function externalReviewerFor(
+  role: ReviewerRole,
+  access: {
+    queuedModel(
+      queue: string,
+      opts: { review?: boolean },
+    ): { model: () => Promise<LocalInferenceAdapter>; release: () => Promise<void> };
+  },
+): {
+  reviewer?: () => Promise<LocalInferenceAdapter>;
+  notReviewed?: string;
+  release: () => Promise<void>;
+} {
+  if (role.state === "unfilled") return { notReviewed: role.reason, release: async () => {} };
+  const held = access.queuedModel(role.queue, { review: true });
+  return { reviewer: held.model, release: held.release };
+}
+
+/**
  * The queue's hook: external review cards run here, before the Worker pass,
  * and never reach the Worker. Returns the cards left for the Worker.
  */
@@ -382,6 +441,7 @@ export async function runExternalReviews(
       rules: () => Promise<{ status: string; role: string; text: string }[]>;
     };
     reviewer?: () => Promise<LocalInferenceAdapter>;
+    notReviewed?: string;
     github?: ExternalReviewOptions["github"];
     say?: (line: string) => void;
   },
@@ -405,6 +465,7 @@ export async function runExternalReviews(
       preferences,
       rules,
       ...(deps.reviewer ? { reviewer: deps.reviewer } : {}),
+      ...(deps.notReviewed ? { notReviewed: deps.notReviewed } : {}),
       ...(deps.github ? { github: deps.github } : {}),
     });
     deps.say?.(

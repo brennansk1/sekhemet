@@ -19,6 +19,7 @@
 import {
   BOARD_COLUMNS,
   type EventLike,
+  actorLabel,
   boardColumnOf,
   columnLabel,
   eventSentence,
@@ -391,7 +392,48 @@ const BRIEF = new Set([
   "card/review",
   "decision/answered",
   "decision/default_applied",
+  // planner-pm PM-N9-1, -2; teams TEAM-41: Seshat's suggestions, applied or undone.
+  "suggestion/applied",
+  "suggestion/dismissed",
+  "suggestion/undone",
 ]);
+
+/** A suggestion's property as Activity names it (PM-N9-1): never its id. */
+const SUGGESTION_PROPERTY: Record<string, string> = {
+  assignee: "assignee",
+  label: "labels",
+  priority: "priority",
+  duplicate: "duplicate link",
+  split: "split",
+  hold: "hold",
+  remove: "removal",
+};
+
+/** Activity's line for a suggestion event (PM-N9-2, TEAM-41), or undefined for another event. */
+function suggestionLine(
+  e: ActivityEvent,
+  p: Record<string, unknown>,
+): { who: string; ai: boolean; text: string } | undefined {
+  if (!e.type.startsWith("suggestion/")) return undefined;
+  const what = SUGGESTION_PROPERTY[String(p.kind ?? "")];
+  const person = actorLabel(e.actor);
+  if (e.type === "suggestion/applied") {
+    return p.auto === true
+      ? {
+          who: "Seshat",
+          ai: true,
+          text: `applied its ${what ? `${what} ` : ""}suggestion under an Admin's auto-apply rule`,
+        }
+      : { who: person, ai: false, text: `applied Seshat's ${what ? `${what} ` : ""}suggestion` };
+  }
+  if (e.type === "suggestion/undone") {
+    return { who: person, ai: false, text: `undid Seshat's ${what ? `${what} ` : ""}change` };
+  }
+  if (e.type === "suggestion/dismissed") {
+    return { who: person, ai: false, text: "dismissed a suggestion from Seshat" };
+  }
+  return undefined;
+}
 
 interface StepPayload {
   turn?: number;
@@ -521,6 +563,11 @@ export function activityItems(input: {
         text: "took the issue over",
         tone: "neutral",
       });
+      continue;
+    }
+    const sug = suggestionLine(e, p);
+    if (sug) {
+      push({ key, at, kind: "event", ...sug, tone: "neutral" });
       continue;
     }
     const s = eventSentence(e);

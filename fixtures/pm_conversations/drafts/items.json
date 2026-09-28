@@ -1,0 +1,476 @@
+[
+  {
+    "id": "standup",
+    "title": "The daily standup",
+    "board": "chronicle",
+    "turns": ["standup"],
+    "expect": {
+      "mentions": ["CHR-3", "CHR-5"]
+    },
+    "exemplar": [
+      {
+        "text": "Since yesterday: 2 issues done, 1 waiting on you, 1 stuck. Done: Event types (`CHR-1`) and Canonical form (`CHR-2`). In flight: Hasher (`CHR-3`) is on step 5 of 40. Needs you: HTTP read API (`CHR-5`) is in Review, and Tamper check (`CHR-6`) is paused for memory. Sprint 12 has 13 of 21 points done with 4 days left. Based on: the board at 09:00."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "why-failed",
+    "title": "Why an issue failed, from its evidence",
+    "board": "chronicle",
+    "turns": ["why did the ledger issue fail?"],
+    "expect": {
+      "failure": {
+        "stop": "looping",
+        "step": 8,
+        "gate": "types|typecheck",
+        "at": "tests/hasher.spec.ts:25",
+        "evidence": "ev_7f3a"
+      },
+      "proposals": "some"
+    },
+    "exemplar": [
+      {
+        "text": "Ledger (`CHR-7`) stopped on Looping at step 8 of attempt 2. The first failing check was Types, with TS2353 at tests/hasher.spec.ts:25, a protected acceptance test, so the fix belongs in the hasher rather than the test. I've proposed splitting out the canonical form. Based on: evidence `ev_7f3a`.",
+        "calls": [
+          {
+            "name": "propose_split_card",
+            "arguments": {
+              "card_id": "CHR-7",
+              "reason": "it looped on a check another issue owns",
+              "parts": [
+                {
+                  "title": "Append events to the ledger",
+                  "spec": "The ledger appends an event and links it to the previous event's hash.",
+                  "scope_files": ["src/ledger.ts"],
+                  "acceptance_criteria": [
+                    "Given an empty ledger, when one event is appended, then the ledger holds 1 event whose prev is null."
+                  ],
+                  "estimate": 3
+                },
+                {
+                  "title": "Verify the ledger chain",
+                  "spec": "The ledger verifies that each event's prev equals the previous event's hash.",
+                  "scope_files": ["src/ledger.ts"],
+                  "acceptance_criteria": [
+                    "Given a ledger of 3 events with one prev altered, when it is verified, then verify returns false."
+                  ],
+                  "estimate": 2
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "split",
+    "title": "Split an issue over the bound",
+    "board": "chronicle",
+    "turns": ["split CHR-4"],
+    "expect": {
+      "splitOf": "CHR-4"
+    },
+    "exemplar": [
+      {
+        "text": "HTTP routes (`CHR-4`) is 8 points and touches 5 files, over the 3-file bound, so the Agent would stop on Size before it finishes. I've proposed splitting it along its routes, one issue per route. Why: each route is one behaviour a person can see.",
+        "calls": [
+          {
+            "name": "propose_split_card",
+            "arguments": {
+              "card_id": "CHR-4",
+              "reason": "it touches 5 files, over the 3-file bound",
+              "parts": [
+                {
+                  "title": "Read routes",
+                  "spec": "GET /events and GET /events/:id read events from the ledger.",
+                  "scope_files": ["src/server.ts", "src/routes/read.ts"],
+                  "acceptance_criteria": [
+                    "Given a ledger with 2 events, when GET /events is called, then it returns 2 events in order."
+                  ],
+                  "estimate": 3
+                },
+                {
+                  "title": "Write route with validation",
+                  "spec": "POST /events validates the body and appends one event.",
+                  "scope_files": ["src/routes/write.ts", "src/validate.ts"],
+                  "acceptance_criteria": [
+                    "Given a body without a type, when POST /events is called, then it responds 400 and the ledger still holds 0 events."
+                  ],
+                  "estimate": 3
+                },
+                {
+                  "title": "Error envelope",
+                  "spec": "Every HTTP error answers with one JSON error envelope.",
+                  "scope_files": ["src/errors.ts"],
+                  "acceptance_criteria": [
+                    "Given an unknown event id, when GET /events/:id is called, then it responds 404 with an error envelope whose code is \"not_found\"."
+                  ],
+                  "estimate": 2
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "plan-sprint",
+    "title": "Plan the next sprint with slack",
+    "board": "chronicle",
+    "turns": ["plan the next sprint"],
+    "expect": {
+      "maxBet": 18
+    },
+    "exemplar": [
+      {
+        "text": "For Sprint 13 I suggest 18 points, below the 22 points you have averaged over the last three sprints. Two of those sprints carried work over, so the bet keeps slack. In: `CHR-4` (8), `CHR-8` (5), `CHR-6` (3), `CHR-9` (2). Out, deliberately: `CHR-10` waits on the HTTP routes. How much do you want to bet on `CHR-8`? It is the least-known issue here.",
+        "calls": [
+          {
+            "name": "propose_create_cycle",
+            "arguments": {
+              "name": "Sprint 13",
+              "starts_on": "2026-10-02",
+              "ends_on": "2026-10-13",
+              "goal": "Chronicle is usable over HTTP",
+              "card_ids": ["CHR-4", "CHR-8", "CHR-6", "CHR-9"],
+              "reason": "18 points is 85% of the last three sprints' mean"
+            }
+          }
+        ]
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "at-risk",
+    "title": "What is at risk, and what is not",
+    "board": "chronicle",
+    "turns": ["what's at risk?"],
+    "expect": {
+      "notAtRisk": true
+    },
+    "exemplar": [
+      {
+        "text": "Two things. 1. Hasher (`CHR-3`) has been in progress since 27 September, longer than the 85th-percentile cycle time of finished issues. 2. The read API (`CHR-5`) has an unmet AI review finding (`e-311`): the handler ignores since. Not at risk: Tamper check (`CHR-6`) is paused for memory, not for a defect. Based on: the board at 09:00."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "start-calculator",
+    "title": "A small tool is planned at once",
+    "board": "empty",
+    "turns": [
+      "start a new project: a command-line calculator that adds, subtracts, multiplies and divides two numbers"
+    ],
+    "expect": {
+      "zeroQuestions": true,
+      "cite": false,
+      "proposals": "some"
+    },
+    "exemplar": [
+      {
+        "text": "I've proposed starting it as one small project: a calculator needs no brief and no questions. The plan has one release with the four operations and division by zero refused.",
+        "calls": [
+          {
+            "name": "start_project",
+            "arguments": {
+              "brief": "A command-line calculator that adds, subtracts, multiplies and divides two numbers, and refuses division by zero.",
+              "reason": "a small tool is planned at once"
+            }
+          }
+        ]
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "start-billing",
+    "title": "A billing service starts from a brief",
+    "board": "empty",
+    "turns": ["start a new project: a billing service that charges our customers every month"],
+    "expect": {
+      "brief": true,
+      "cite": false
+    },
+    "exemplar": [
+      {
+        "text": "Billing holds money and customer data, so it starts from a brief before any issue. I've proposed starting the project with a brief to confirm. Which payment provider do you use, and who can issue a refund?",
+        "calls": [
+          {
+            "name": "start_project",
+            "arguments": {
+              "brief": "A billing service that charges each customer every month through the payment provider, records every charge, and lets a named person issue refunds.",
+              "reason": "a service that holds money starts from a brief"
+            }
+          }
+        ]
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "goal",
+    "title": "What the goal is, from the goal store",
+    "board": "chronicle",
+    "turns": ["what's our goal?"],
+    "expect": {
+      "mentions": ["G-1"],
+      "proposals": "none"
+    },
+    "exemplar": [
+      {
+        "text": "Our goal is that Chronicle is usable over HTTP (`G-1`), and 1 of its 3 criteria is met so far. It rests on assumption `A-2`: the read API needs no authentication in release 1."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "assumed",
+    "title": "What was assumed, from the assumption log",
+    "board": "chronicle",
+    "turns": ["what did you assume?"],
+    "expect": {
+      "mentions": ["A-1", "A-2"],
+      "proposals": "none"
+    },
+    "exemplar": [
+      {
+        "text": "Two assumptions are recorded. `A-1`: hashes use SHA-256 over the canonical form, because the brief names SHA-256. `A-2`: the read API needs no authentication in release 1, because the brief has no user accounts; it has gone unverified for 30 hours of the risk register's bound."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "review-findings",
+    "title": "What the AI review found",
+    "board": "chronicle",
+    "turns": ["what did the AI review say about the read API?"],
+    "expect": {
+      "mentions": ["e-311"],
+      "proposals": "none"
+    },
+    "exemplar": [
+      {
+        "text": "The AI review found one criterion unmet on HTTP read API (`CHR-5`): GET /events?since= should return only events after the cursor, and the handler ignores since at src/server.ts:41 (`e-311`). The other criterion is met (`e-312`)."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "forecast",
+    "title": "When the release lands, as a range",
+    "board": "chronicle",
+    "turns": ["when will release 1 be done?"],
+    "expect": {
+      "answer": "50%|85%|between"
+    },
+    "exemplar": [
+      {
+        "text": "Release 1 is 50% likely by 6 October and 85% likely by 10 October, from 1,000 simulations over the last 6 weeks of throughput. The range narrows once Hasher (`CHR-3`) lands."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "plain-status",
+    "title": "A non-developer asks how it is going",
+    "board": "chronicle",
+    "turns": ["I'm not technical. Is the project going well?"],
+    "expect": {
+      "plain": true,
+      "cite": false,
+      "proposals": "none"
+    },
+    "exemplar": [
+      {
+        "text": "Mostly yes. Two parts of the first release are finished and the rest are being built. One piece is waiting for a person to look at it, and one is paused until the computer has more free memory. The team expects the release between 6 and 10 October, based on the pace of the last 6 weeks."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "retry",
+    "title": "A retry request becomes a split",
+    "board": "chronicle",
+    "turns": ["just retry the ledger issue"],
+    "expect": {
+      "splitOf": "CHR-7"
+    },
+    "exemplar": [
+      {
+        "text": "A retry would loop again: Ledger (`CHR-7`) stopped on Looping at step 8, and its kind passes rarely for the Agent. I've proposed splitting it instead. Based on: evidence `ev_7f3a`.",
+        "calls": [
+          {
+            "name": "propose_split_card",
+            "arguments": {
+              "card_id": "CHR-7",
+              "reason": "it looped at step 8, so a retry would repeat it",
+              "parts": [
+                {
+                  "title": "Append events to the ledger",
+                  "spec": "The ledger appends an event and links it to the previous event's hash.",
+                  "scope_files": ["src/ledger.ts"],
+                  "acceptance_criteria": [
+                    "Given an empty ledger, when one event is appended, then the ledger holds 1 event whose prev is null."
+                  ],
+                  "estimate": 3
+                },
+                {
+                  "title": "Verify the ledger chain",
+                  "spec": "The ledger verifies that each event's prev equals the previous event's hash.",
+                  "scope_files": ["src/ledger.ts"],
+                  "acceptance_criteria": [
+                    "Given a ledger of 3 events with one prev altered, when it is verified, then verify returns false."
+                  ],
+                  "estimate": 2
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "drop-from-sprint",
+    "title": "A change is proposed with its reason",
+    "board": "chronicle",
+    "turns": ["Priya thinks we should drop Auth from the sprint"],
+    "expect": {
+      "proposals": "some"
+    },
+    "exemplar": [
+      {
+        "text": "I've proposed moving Auth (`CHR-8`) to the backlog, as Priya suggests. It is the least-known issue, and Sprint 12 has 8 of 21 points still open with 4 days left. Your call: apply or dismiss it.",
+        "calls": [
+          {
+            "name": "propose_move_card",
+            "arguments": {
+              "card_id": "CHR-8",
+              "to": "backlog",
+              "reason": "Priya asked, and it is the least-known issue"
+            }
+          }
+        ]
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "new-issue",
+    "title": "A new issue passes the criterion lint",
+    "board": "chronicle",
+    "turns": ["add an issue to export the ledger as CSV"],
+    "expect": {
+      "proposals": "some"
+    },
+    "exemplar": [
+      {
+        "text": "I've proposed one issue, Export the ledger as CSV, at 3 points, the prior for a small issue. It waits on HTTP routes (`CHR-4`), like Export (`CHR-10`).",
+        "calls": [
+          {
+            "name": "propose_create_card",
+            "arguments": {
+              "title": "Export the ledger as CSV",
+              "spec": "The ledger exports every event as one CSV row with its seq, type and hash.",
+              "scope_files": ["src/export_csv.ts"],
+              "acceptance_criteria": [
+                "Given a ledger with 2 events, when it is exported, then the CSV holds a header row and 2 event rows."
+              ],
+              "estimate": 3,
+              "depends_on": ["CHR-4"],
+              "reason": "a person asked for a CSV export"
+            }
+          }
+        ]
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "review-queue",
+    "title": "Two turns about Review",
+    "board": "chronicle",
+    "turns": ["what's waiting in review?", "which one first?"],
+    "expect": {
+      "mentions": ["CHR-5"]
+    },
+    "exemplar": [
+      {
+        "text": "One issue: HTTP read API (`CHR-5`) is in Review, and all of its checks passed."
+      },
+      {
+        "text": "HTTP read API (`CHR-5`) first: it is the only issue in Review, and the AI review marked 1 of its 2 criteria unmet (`e-311`)."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "ageing",
+    "title": "Why an issue is slow, against the 85th percentile",
+    "board": "chronicle",
+    "turns": ["why is the hasher taking so long?"],
+    "expect": {
+      "mentions": ["CHR-3"]
+    },
+    "exemplar": [
+      {
+        "text": "Hasher (`CHR-3`) has been in progress since 27 September, past the 85th-percentile cycle time of finished issues. It is on step 5 of 40, so it has not looped; it rests on assumption `A-1` about SHA-256."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "missing-evidence",
+    "title": "Says what evidence is missing",
+    "board": "chronicle",
+    "turns": ["why did the retention policy issue fail?"],
+    "expect": {
+      "saysMissing": true
+    },
+    "exemplar": [
+      {
+        "text": "Retention policy (`CHR-12`) stopped after its repairs ran out, but there is no evidence recorded for that attempt, so I can't see which check failed or where. Its next attempt's evidence will show the failing check."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "agent-record",
+    "title": "The Agent's record as a range",
+    "board": "chronicle",
+    "turns": ["how good is the agent at Rules issues?"],
+    "expect": {
+      "answer": "rough|range|of 7|3 of"
+    },
+    "exemplar": [
+      {
+        "text": "Rules issues are a weak spot: the Agent passed 3 of 7 on the first attempt, a rough range of 10-82% because it has fewer than 10 attempts. Across all kinds it passed 18 of 26 first attempts. Based on: the Agent's record on this project."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "decision",
+    "title": "Names who decides, with the default",
+    "board": "chronicle",
+    "turns": ["what decisions are waiting?"],
+    "expect": {
+      "mentions": ["Priya"],
+      "proposals": "none"
+    },
+    "exemplar": [
+      {
+        "text": "One decision waits on Priya, whether to keep the old export format. The default after 30 September is to keep it, as Priya's call. Based on: the decisions waiting."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  }
+]

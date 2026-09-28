@@ -136,3 +136,46 @@ export function configRows(
   ];
   return rows.map(([key, label, value]) => ({ key, label, value, source: source(key) }));
 }
+
+// ---------------------------------------------------------------------------
+// Apply Seshat's suggestions automatically (planner-pm PM-N9-2; teams item 20,
+// TEAM-18, -41): per project and per property, an Admin's choice.
+// ---------------------------------------------------------------------------
+
+/** The properties an Admin may let Seshat's suggestions apply automatically: never the assignee or health. */
+export const AUTO_APPLY_CHOICES: readonly {
+  property: "label" | "priority" | "duplicate" | "split";
+  label: string;
+}[] = [
+  { property: "label", label: "Labels" },
+  { property: "priority", label: "Priority" },
+  { property: "duplicate", label: "Duplicate link" },
+  { property: "split", label: "Split into smaller issues" },
+];
+
+/**
+ * Preferences' auto-apply rows for one project: each property on or off,
+ * disabled with the reason for a person who is not an Admin.
+ */
+export function autoApplyView(
+  settings: { auto_apply?: Record<string, boolean> },
+  readOnly: string,
+): {
+  rows: { property: string; label: string; on: boolean; disabled: boolean }[];
+  note: string;
+} {
+  return {
+    rows: AUTO_APPLY_CHOICES.map((c) => ({
+      property: c.property,
+      label: c.label,
+      on: settings.auto_apply?.[c.property] === true,
+      disabled: readOnly !== "",
+    })),
+    note: [
+      "When one is on, Seshat's suggestion for it on this project's issues is applied at once, shows on the issue as applied by the rule of the Admin who turned it on, and can be undone there in one action. The assignee and health are always a person's.",
+      readOnly,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  };
+}

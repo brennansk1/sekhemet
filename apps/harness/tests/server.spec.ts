@@ -327,7 +327,7 @@ describe("@sekhemet/harness Dashboard Server", () => {
 
   it("returns a card to Ready and records the reason as a playbook candidate", async () => {
     const res = await post("/api/cards/card_triage/return", {
-      reason: "Handle the empty-chain case explicitly",
+      reason: "Handle the empty-chain case in verifyChain() explicitly",
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, status: "ready" });
@@ -338,20 +338,22 @@ describe("@sekhemet/harness Dashboard Server", () => {
     const [candidate] = await log.getEventsByTypes(["playbook/candidate"]);
     // The note is free text: in the private part, not the hashed payload (K-S7-9).
     expect(candidate?.payload).toEqual({ cardId: "card_triage" });
-    expect(candidate?.private).toEqual({ reason: "Handle the empty-chain case explicitly" });
+    expect(candidate?.private).toEqual({
+      reason: "Handle the empty-chain case in verifyChain() explicitly",
+    });
     const playbook = await (
       await fetch(`http://127.0.0.1:${serverInstance.port}/api/playbook`)
     ).json();
     expect(playbook.candidates).toEqual([
       expect.objectContaining({
         cardId: "card_triage",
-        reason: "Handle the empty-chain case explicitly",
+        reason: "Handle the empty-chain case in verifyChain() explicitly",
       }),
     ]);
     // The reason is the next attempt's directive: it is in the card's dossier.
     const dossier = await cardStore.getDossier("card_triage");
     expect(dossier.sendBacks.map((e) => e.text)).toEqual([
-      "Handle the empty-chain case explicitly",
+      "Handle the empty-chain case in verifyChain() explicitly",
     ]);
     expect(dossier.sendBacks[0]?.actor).toBe("human");
   });
@@ -761,7 +763,9 @@ describe("@sekhemet/harness Dashboard Server", () => {
     const rules = pb.body.rules as { id: string; instruction: string }[];
     expect(rules.map((r) => r.id)).toEqual(["rule_a"]);
     const cands = pb.body.candidates as { cardId: string; reason: string }[];
-    expect(cands.some((c) => c.reason === "Handle the empty-chain case explicitly")).toBe(true);
+    expect(
+      cands.some((c) => c.reason === "Handle the empty-chain case in verifyChain() explicitly"),
+    ).toBe(true);
   });
 
   it("shows the accept sha on a Done card from the card/accepted ledger event", async () => {

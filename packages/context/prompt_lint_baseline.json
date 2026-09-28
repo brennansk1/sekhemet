@@ -547,7 +547,7 @@
       "ruleCountMethod": "legacy_directives"
     },
     "reviewer.review_card.prompt": {
-      "capitalWords": 6,
+      "capitalWords": 0,
       "imperativeRules": null,
       "negations": 1,
       "longToolDescriptions": 0,
@@ -555,52 +555,52 @@
     },
     "reviewer.review_card.system": {
       "capitalWords": 0,
-      "imperativeRules": null,
+      "imperativeRules": 9,
       "negations": 1,
       "longToolDescriptions": 0,
-      "ruleCountMethod": "legacy_directives"
+      "ruleCountMethod": "rule_sections"
     },
     "seshat.answer.prompt": {
-      "capitalWords": 12,
+      "capitalWords": 0,
       "imperativeRules": null,
-      "negations": 1,
+      "negations": 0,
       "longToolDescriptions": 0,
       "ruleCountMethod": "legacy_directives"
     },
     "seshat.answer.r1.prompt": {
-      "capitalWords": 15,
+      "capitalWords": 0,
       "imperativeRules": null,
-      "negations": 2,
+      "negations": 1,
       "longToolDescriptions": 0,
       "ruleCountMethod": "legacy_directives"
     },
     "seshat.answer.r1.system": {
-      "capitalWords": 2,
-      "imperativeRules": null,
-      "negations": 8,
+      "capitalWords": 0,
+      "imperativeRules": 12,
+      "negations": 4,
       "longToolDescriptions": 0,
-      "ruleCountMethod": "legacy_directives"
+      "ruleCountMethod": "rule_sections"
     },
     "seshat.answer.r2.prompt": {
-      "capitalWords": 15,
+      "capitalWords": 0,
       "imperativeRules": null,
-      "negations": 2,
+      "negations": 1,
       "longToolDescriptions": 0,
       "ruleCountMethod": "legacy_directives"
     },
     "seshat.answer.r2.system": {
-      "capitalWords": 2,
-      "imperativeRules": null,
-      "negations": 8,
+      "capitalWords": 0,
+      "imperativeRules": 12,
+      "negations": 4,
       "longToolDescriptions": 0,
-      "ruleCountMethod": "legacy_directives"
+      "ruleCountMethod": "rule_sections"
     },
     "seshat.answer.system": {
-      "capitalWords": 2,
-      "imperativeRules": null,
-      "negations": 8,
+      "capitalWords": 0,
+      "imperativeRules": 12,
+      "negations": 4,
       "longToolDescriptions": 0,
-      "ruleCountMethod": "legacy_directives"
+      "ruleCountMethod": "rule_sections"
     },
     "seshat.ask_team.static_index_ts": {
       "capitalWords": 0,
@@ -668,8 +668,8 @@
     "seshat.tool_descriptions": {
       "capitalWords": 0,
       "imperativeRules": null,
-      "negations": 2,
-      "longToolDescriptions": 2,
+      "negations": 1,
+      "longToolDescriptions": 0,
       "ruleCountMethod": "legacy_directives"
     },
     "vision.describe_attachments.prompt": {

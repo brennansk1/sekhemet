@@ -24,6 +24,30 @@ export const REGISTERED_PROMPT_TAGS: readonly string[] = [
   "source",
   "content",
   "untrusted_content",
+  // The Reviewer's task (review-git P8): its reference data and the diff it reads.
+  "preferences",
+  "checks",
+  "assumptions",
+  "diff",
+  // Seshat's task data (planner-pm P6, PM-P6-11): each part of its snapshot,
+  // the stable head (playbook, preferences) before the board.
+  "playbook",
+  "board",
+  "goals",
+  "brief",
+  "review_findings",
+  "failure_evidence",
+  "decisions",
+  "forecast",
+  "team",
+  "sprints",
+  "project_as_found",
+  "recent_attempts",
+  "agent_record",
+  "dossier",
+  "conversation",
+  "search_results",
+  "message",
 ];
 
 /** Acronyms and identifiers a model needs in capitals (rule 10). */
@@ -70,10 +94,13 @@ export const COPY_MODULES: Readonly<Record<string, string>> = {
   design: "packages/planner/src/design_copy.ts",
   gates: "packages/gates/src/copy.ts",
   pm: "apps/harness/src/pm/pm_copy.ts",
+  // Seshat's versioned senior-PM skill (planner-pm §2.8.8, P6).
+  pm_skill: "apps/harness/src/pm/seshat_skill.ts",
   planner: "packages/models/src/planner_copy.ts",
   qualification: "packages/models/src/qualification_copy.ts",
   replan: "packages/loop/src/replan_copy.ts",
   research: "apps/harness/src/research/research_copy.ts",
+  review: "apps/harness/src/learning/review_copy.ts",
   sandbox: "packages/sandbox/src/copy.ts",
   worker: "packages/context/src/worker_copy.ts",
 };

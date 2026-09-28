@@ -9,6 +9,8 @@ import {
 import { egressRecorder, integrationFetch } from "./github_transport.js";
 import { readSettings, writeSettings } from "./integrations.js";
 import { setupFor } from "./planner_live.js";
+import { plainTitle } from "./pm/standup.js";
+import { PmStore } from "./pm/store.js";
 import { PM_EVENTS } from "./pm/types.js";
 import { readSlack, sendSlack } from "./slack.js";
 
@@ -67,6 +69,18 @@ export const ALL_EVENTS: NotifyEvent[] = [
  */
 export const DEFAULT_DAILY_BUDGET = 3;
 export const MAX_DAILY_BUDGET = 5;
+
+/**
+ * PM-P6-10: a notice about an Urgent issue may use the day's whole ceiling
+ * (5, never a 6th); every other one stops at the channel's budget (3 unless
+ * configured). A channel set to 0 sends none.
+ */
+function limitFor(c: { limit: number }, urgent: boolean): number {
+  return urgent && c.limit > 0 ? MAX_DAILY_BUDGET : c.limit;
+}
+
+/** How recently the board was in focus for a notice to go to the panel instead (PM-P6-10). */
+export const BOARD_FOCUS_MS = 5 * 60_000;
 
 /** A channel's daily limit: its configured budget, clamped to 0..5. */
 export function dailyLimit(configured?: number): number {
@@ -371,6 +385,10 @@ interface LedgerCard {
   since?: number;
   owner?: string | null;
   projectId?: string | null;
+  /** Its title, for a standup's plain words (PM-P6-3). */
+  title?: string;
+  /** Linear's scale: 1 is Urgent (planner-pm rule 1), which a notice may interrupt for. */
+  priority?: number;
 }
 
 /**
@@ -383,6 +401,7 @@ async function cardsOnLedger(log: EventLog): Promise<Map<string, LedgerCard>> {
     "card/created",
     "card/status_changed",
     "card/owner_changed",
+    "card/updated",
   ])) {
     const p = (e.payload ?? {}) as Record<string, unknown>;
     const id = String(p.id ?? e.cardId ?? "");
@@ -393,6 +412,12 @@ async function cardsOnLedger(log: EventLog): Promise<Map<string, LedgerCard>> {
       c.since = Date.parse(e.createdAt);
       c.owner = (p.owner as string | null | undefined) ?? null;
       c.projectId = (p.projectId as string | null | undefined) ?? null;
+      if (typeof p.title === "string") c.title = p.title;
+      if (typeof p.priority === "number") c.priority = p.priority;
+    } else if (e.type === "card/updated") {
+      const patch = (p.patch ?? {}) as Record<string, unknown>;
+      if (typeof patch.title === "string") c.title = patch.title;
+      if (typeof patch.priority === "number") c.priority = patch.priority;
     } else if (e.type === "card/status_changed") {
       c.status = String(p.toStatus ?? c.status);
       c.since = Date.parse(e.createdAt);
@@ -477,13 +502,17 @@ const HELD_LABEL: Partial<Record<NotifyEvent, string>> = {
   reminder: "has a reminder",
 };
 
-/** The standup's `needs_you` summary of the notices held for it (item 23a). */
-function heldSummary(held: EventRecord[]): string {
+/**
+ * The standup's `needs_you` summary of the notices held for it (item 23a),
+ * each issue by its title, in the standup's plain words (PM-P6-3).
+ */
+function heldSummary(held: EventRecord[], cards: Map<string, LedgerCard>): string {
   if (held.length === 0) return "";
   const lines = held.map((e) => {
     const kind = String((e.payload as { kind?: string }).kind ?? "needs_you") as NotifyEvent;
     const what = HELD_LABEL[kind] ?? "needs you";
-    return `- ${e.cardId ?? "an issue"} ${what}`;
+    const title = e.cardId ? cards.get(e.cardId)?.title : undefined;
+    return `- ${title ? plainTitle({ title }) : "an issue"} ${what}`;
   });
   return `Needs you (held for this standup, past the day's notice budget):\n${lines.join("\n")}`;
 }
@@ -492,8 +521,11 @@ export interface NotifierOptions {
   intervalMs?: number;
   dashboard?: string;
   fetch?: typeof fetch;
-  /** Seshat's standup text; without it no standup is sent (INT-18). */
-  standup?: () => Promise<string>;
+  /**
+   * Seshat's standup text for the person it is sent to; without it no
+   * standup is sent (INT-18). One builder with the chat's (PM-P6-3).
+   */
+  standup?: (person: string) => Promise<string>;
   /** When the standup is due, local `HH:MM`; the settings' `standupAt`, else 09:00. */
   standupAt?: string;
   /** How long a channel may take before a send counts as failed. */
@@ -586,7 +618,12 @@ export async function startNotifier(
     const tried = new Set<string>();
     const held = new Set<string>();
     const claimed = new Set<string>();
-    const types = [PM_EVENTS.notify, PM_EVENTS.noticeHeld, PM_EVENTS.notifyClaimed];
+    const types = [
+      PM_EVENTS.notify,
+      PM_EVENTS.noticeHeld,
+      PM_EVENTS.noticeShown,
+      PM_EVENTS.notifyClaimed,
+    ];
     for (const e of await log.getEventsByTypes(types)) {
       const p = e.payload as NoticeRecord & { kind?: NotifyEvent; ok?: boolean };
       if (!p.kind || !UNSOLICITED.has(p.kind) || !mine(e, day)) continue;
@@ -594,13 +631,52 @@ export async function startNotifier(
       if (e.type === PM_EVENTS.notify) {
         tried.add(id);
         if (p.ok) ok.add(id);
-      } else if (e.type === PM_EVENTS.noticeHeld) held.add(id);
-      else if (e.seq < beforeSeq) claimed.add(id);
+      } else if (e.type === PM_EVENTS.noticeHeld || e.type === PM_EVENTS.noticeShown) {
+        // Held for the standup, or shown in the panel (PM-P6-10): no interruption.
+        held.add(id);
+      } else if (e.seq < beforeSeq) claimed.add(id);
     }
     const used = new Set(ok);
     for (const id of claimed) if (!tried.has(id) && !held.has(id)) used.add(id);
     used.delete(except);
     return used.size;
+  };
+
+  /**
+   * PM-P6-10: whether the person had the board in focus in the last five
+   * minutes (`pm/board_focus`, recorded while the dashboard is focused),
+   * folded from the ledger as it grows.
+   */
+  let focusSeq = 0;
+  let focusedAt = Number.NEGATIVE_INFINITY;
+  const boardInFocus = async (): Promise<boolean> => {
+    for (;;) {
+      const page = await log.getEventsByTypes([PM_EVENTS.boardFocus], focusSeq + 1, 10_000);
+      for (const e of page) {
+        focusSeq = e.seq;
+        const who = (e.payload as { principal?: string }).principal ?? e.principal;
+        if (who === person) focusedAt = Math.max(focusedAt, Date.parse(e.createdAt));
+      }
+      if (page.length < 10_000) break;
+    }
+    return focusedAt >= now().getTime() - BOARD_FOCUS_MS;
+  };
+
+  /** The item in Seshat's panel instead of a notice (PM-P6-10); it interrupts no one. */
+  const pm = new PmStore(log);
+  const showInPanel = async (n: Notice, record: NoticeRecord): Promise<void> => {
+    await pm.appendReply({
+      replyTo: [],
+      text: `${n.title}: ${n.message}`,
+      model: "notifier",
+      ...(record.to ? { to: record.to } : {}),
+    });
+    await log.append({
+      actor: "harness",
+      type: PM_EVENTS.noticeShown,
+      ...(n.cardId ? { cardId: n.cardId } : {}),
+      payload: { kind: n.event, ...record },
+    });
   };
 
   const tick = async (): Promise<number> => {
@@ -637,8 +713,15 @@ export async function startNotifier(
       );
       if (!claimed) continue;
       const budgeted = UNSOLICITED.has(n.event);
+      // PM-P6-10: at the board, an offer in the panel beats a ping.
+      if (budgeted && (await boardInFocus())) {
+        await showInPanel(n, record);
+        continue;
+      }
       const used = budgeted ? await budgetUsed(claimed.seq, e.id) : 0;
-      const open = budgeted ? accepting.filter((c) => used < c.limit) : accepting;
+      if (budgeted && n.cardId) owners ??= await cardsOnLedger(log);
+      const urgent = budgeted && !!n.cardId && owners?.get(n.cardId)?.priority === 1;
+      const open = budgeted ? accepting.filter((c) => used < limitFor(c, urgent)) : accepting;
       if (open.length === 0) {
         // INT-20a: past the budget, held for the next standup; nothing is sent.
         await log.append({
@@ -677,6 +760,10 @@ export async function startNotifier(
       const record = { to: person, notice: n.key, day };
       const claimed = await claim(`notify:${person}:${n.key}`, { kind: "reminder", ...record });
       if (!claimed) continue;
+      if (await boardInFocus()) {
+        await showInPanel(n, record);
+        continue;
+      }
       const used = await budgetUsed(claimed.seq, n.key);
       const open = accepting.filter((c) => used < c.limit);
       if (open.length === 0) {
@@ -735,7 +822,9 @@ export async function startNotifier(
     const held = (await log.getEventsByTypes([PM_EVENTS.noticeHeld], lastStandupSeq + 1)).filter(
       (e) => (e.payload as { to?: string }).to === person,
     );
-    const body = [await opts.standup(), heldSummary(held)].filter(Boolean).join("\n\n");
+    const body = [await opts.standup(person), heldSummary(held, await cardsOnLedger(log))]
+      .filter(Boolean)
+      .join("\n\n");
     const n: Notice = {
       event: "standup",
       title: "Standup",

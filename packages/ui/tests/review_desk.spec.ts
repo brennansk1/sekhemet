@@ -9,6 +9,7 @@ import {
   citationsOf,
   orderImplementationFiles,
   reviewCoverage,
+  reviewerAbsence,
   reviewerFindings,
   supersessionRows,
   testApprovalRows,
@@ -59,6 +60,28 @@ describe("the Reviewer's findings (dashboard §2.5.3 4a)", () => {
 
   it("ignores entries without a met, unmet or unclear verdict (Seshat's preference notes)", () => {
     expect(reviewerFindings([entries[3] as (typeof entries)[0]], new Set()).rows).toEqual([]);
+  });
+
+  it("RG-P8-12: names the Review model that wrote the findings, and no confidence", () => {
+    const m = reviewerFindings(
+      entries.slice(0, 3).map((e) => ({ ...e, modelId: "gemma-4-26b" })),
+      new Set(),
+    );
+    expect(m.title).toBe("AI review · gemma-4-26b · 1 unmet, 1 unclear");
+    expect(JSON.stringify(m)).not.toMatch(/confiden/i);
+  });
+
+  it("RG-P8-10: with no findings, says why no AI review ran; findings replace the note", () => {
+    const note = { id: "n1", verdict: "not_reviewed", text: REVIEW_DESK_COPY.noReviewer };
+    expect(reviewerAbsence([note])).toBe(
+      "No AI review: no Review model outside the Coding model's family is configured.",
+    );
+    expect(reviewerFindings([note], new Set()).rows).toEqual([]);
+    expect(reviewerAbsence([note, entries[0] as (typeof entries)[0]])).toBeUndefined();
+    expect(reviewerAbsence([])).toBeUndefined();
+    expect(REVIEW_DESK_COPY.reviewFailed("the model timed out")).toBe(
+      "AI review could not run (the model timed out). The checks passed; the change reaches you unreviewed.",
+    );
   });
 });
 

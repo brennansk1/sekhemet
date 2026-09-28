@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { EventLog, EventRecord } from "@sekhemet/kernel";
+import { SESHAT_SKILL_VERSION } from "./seshat_skill.js";
 import {
   type Cycle,
   PM_EVENTS,
@@ -30,6 +31,12 @@ interface ReplyPayload {
   model?: string;
   /** Who it answers (Team setup, PM-N9-8); a broadcast has none. */
   to?: string;
+  /**
+   * The senior-PM skill's version in force when the reply was written
+   * (PM-P6-4): on every reply, a model's or the ledger's, so a change to the
+   * skill file shows in the thread's record from the next reply on.
+   */
+  skillVersion: string;
 }
 
 interface ProposalStatePayload {
@@ -118,6 +125,7 @@ export class PmStore {
       ...(input.error ? { error: true } : {}),
       ...(input.model ? { model: input.model } : {}),
       ...(input.to ? { to: input.to } : {}),
+      skillVersion: SESHAT_SKILL_VERSION,
     };
     const event = await this.log.append({ actor: "planner", type: PM_EVENTS.reply, payload });
     return this.replyToMessage(payload, event.seq, new Map());
@@ -173,6 +181,9 @@ export class PmStore {
         : {}),
       ...(p.cites ? { cites: p.cites } : {}),
       ...(p.to ? { principal: p.to } : {}),
+      ...(p.skillVersion ? { skillVersion: p.skillVersion } : {}),
+      // Who wrote it: the Planning model, the ledger or the notifier (PM-N9-6).
+      ...(p.model ? { model: p.model } : {}),
     };
   }
 

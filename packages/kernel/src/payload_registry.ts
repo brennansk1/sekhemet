@@ -708,8 +708,26 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     value: s(v.union([v.string(), v.number(), v.array(v.string())])),
     why: priv("free_text", TEXT),
   },
-  "suggestion/applied": { id: s(ID), auto: s(v.boolean()) },
+  // TEAM-41: applied by an Admin's rule, it records the issue as it was
+  // (status, labels, priority, a split's parts; the parked reason is text,
+  // private) so one action undoes it; `suggestion/undone` records that act.
+  "suggestion/applied": {
+    id: s(ID),
+    auto: s(v.boolean()),
+    kind: s(SUGGESTION_KIND, true),
+    before: s(
+      v.strictObject({
+        status: v.optional(STATUS),
+        labels: v.optional(v.array(v.string())),
+        priority: v.optional(v.number()),
+        made: v.optional(v.array(ID)),
+      }),
+      true,
+    ),
+    blockedReason: priv("free_text", TEXT),
+  },
   "suggestion/dismissed": { id: s(ID) },
+  "suggestion/undone": { id: s(ID), kind: s(SUGGESTION_KIND) },
   // teams item 29, planner-pm PM-N9-7: a person posted a project's update;
   // Seshat only drafts it. The text is personal free text, private.
   "project/update_posted": { project: s(ID), text: priv("free_text", TEXT) },
@@ -730,6 +748,18 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     notice: s(ID),
     day: s(DAY, true),
   },
+  // planner-pm PM-P6-10: a notice shown in Seshat's panel instead of sent,
+  // the person having had the board in focus in the last five minutes.
+  "pm/notice_shown": {
+    kind: s(NOTICE_KIND),
+    to: s(PRINCIPAL, true),
+    notice: s(ID),
+    day: s(DAY, true),
+  },
+  // PM-P6-10: the dashboard was in focus for this person.
+  "pm/board_focus": { principal: s(PRINCIPAL) },
+  // PM-P6-3: a standup given to this person in the chat; the next starts after it.
+  "pm/standup_given": { to: s(PRINCIPAL) },
   // A notifier's claim on a send, recorded under an id derived from the
   // notice — or the channel's standup and its attempt — before it is sent,
   // so of two notifiers on one ledger only one sends it (B4.9 part 2, B2).
@@ -1196,6 +1226,44 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     modelQueries: s(v.strictObject({ p1: SCORE, silence: SCORE, measured: COUNT })),
     fromModel: s(COUNT),
     admitted: s(v.boolean()),
+  },
+  // planner-pm PM-P6-13, PM-N9-4 (B4.8): one run of Seshat's scripted
+  // conversations — the asset's hash, the skill's version, the PM model, and
+  // per conversation and run whether it met every rubric item and which it
+  // missed (the rubric's own item names). The replies stay in the result file.
+  "measure/seshat_evaluated": {
+    assetHash: s(SHA256),
+    assetVersion: s(ID),
+    skillVersion: s(ID),
+    model: s(ID),
+    runs: s(v.array(v.strictObject({ run: COUNT, met: COUNT, total: COUNT }))),
+    items: s(
+      v.array(v.strictObject({ run: COUNT, id: ID, met: v.boolean(), failed: v.array(ID) })),
+    ),
+    passes: s(v.boolean()),
+    partial: s(v.boolean()),
+  },
+  // review-git RG-P8-13 (B4.8): the Reviewer on the seeded-defect set —
+  // recall, and each item's catch and false positives.
+  "measure/reviewer_seeded": {
+    assetHash: s(SHA256),
+    assetVersion: s(ID),
+    model: s(ID),
+    items: s(COUNT),
+    caught: s(COUNT),
+    recall: s(SCORE),
+    perItem: s(v.array(v.strictObject({ id: ID, caught: v.boolean(), falsePositives: COUNT }))),
+    passes: s(v.boolean()),
+    partial: s(v.boolean()),
+  },
+  // review-git RG-P8-14 (B4.8): the share of send-back reasons the AI review
+  // caught before a person opened the issue, against R8's one in five.
+  "measure/send_backs_caught": {
+    total: s(COUNT),
+    caught: s(COUNT),
+    unanchored: s(COUNT),
+    share: s(SCORE),
+    verdict: s(v.picklist(["meets", "below", "too_few"])),
   },
   // models MD-N11-1..3, design-stage DS-N2-9: one research golden-set run —
   // per model and pipeline its measures and grades, the pipeline verdicts and

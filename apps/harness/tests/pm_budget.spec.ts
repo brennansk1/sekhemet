@@ -68,7 +68,9 @@ describe("CX-N3-7: Seshat's prompt fits the Planner's context", () => {
   });
 
   it("cuts by priority, never the system text or the newest message, and records each section", async () => {
-    const { model, seen } = fakePlanner(4096);
+    // 6,144: the senior-PM skill's standing text (examples and the five
+    // sample exchanges, PM-P6-5) is about 2,000 tokens of the overhead.
+    const { model, seen } = fakePlanner(6144);
     const history = Array.from({ length: 30 }, (_, i) =>
       msg(i + 1, i % 2 ? "pm" : "user", `message ${i} ${"words ".repeat(90)}`),
     );
@@ -83,15 +85,17 @@ describe("CX-N3-7: Seshat's prompt fits the Planner's context", () => {
       [{ content: req.systemPrompt ?? "" }, { content: req.prompt }],
       req.tools,
     );
-    expect(counted).toBeLessThanOrEqual(4096 - 1200);
+    expect(counted).toBeLessThanOrEqual(6144 - 1200);
     // The board was cut, and it says so; the PM's rules and the dossier are there.
     expect(req.prompt).not.toContain("card_399");
     expect(req.prompt).toContain("Split any card that touches more than three files.");
     const ids = result.promptSections?.map((s) => s.id) ?? [];
     expect(ids).toEqual(expect.arrayContaining(["newest", "board"]));
     const newestTokens = result.promptSections?.find((s) => s.id === "newest")?.tokens;
-    expect(newestTokens).toBe(estimatePromptTokens(`NEW MESSAGE\nHuman: ${newest.text}`));
-    expect(result.promptBudget).toMatchObject({ role: "seshat", windowTokens: 4096 });
+    expect(newestTokens).toBe(
+      estimatePromptTokens(`<message>\nPerson: ${newest.text}\n</message>`),
+    );
+    expect(result.promptBudget).toMatchObject({ role: "seshat", windowTokens: 6144 });
   });
 
   it("with room to spare, sends the whole board", async () => {
@@ -156,7 +160,7 @@ describe("CX-N3-7 in the product: the PM service fills the snapshot and records 
         scopeFiles: [],
       });
       expect(JSON.stringify(workerRules)).not.toContain("Split any card");
-      expect(prompt).toContain("DOSSIER OF `card_x`");
+      expect(prompt).toContain('<dossier issue="card_x">');
       expect(prompt).toContain("The ledger keeps its hash chain.");
       const fitted = (await log.getEventsByTypes(["pm/prompt_fitted"])).at(-1)?.payload as
         | { role: string; windowTokens: number; sections: { id: string; tokens: number }[] }

@@ -27,18 +27,21 @@ export class QueuedReviews<T> {
     },
   ) {}
 
-  /** Queue one card's review; it runs when `decide()` has the Reviewer resident. */
-  public add(item: T): void {
-    this.pending.push(
-      this.opts.access
-        .submit(this.opts.queue, (model) => this.opts.review(model, item), {
-          review: true,
-          serviceMs: REVIEW_SERVICE_MS,
-        })
-        .catch((err: unknown) => {
-          this.opts.log?.(`review failed: ${err instanceof Error ? err.message : String(err)}`);
-        }),
-    );
+  /**
+   * Queue one card's review; it runs when `decide()` has the Reviewer
+   * resident. The promise settles when it has run (or failed, logged).
+   */
+  public add(item: T): Promise<void> {
+    const done = this.opts.access
+      .submit(this.opts.queue, (model) => this.opts.review(model, item), {
+        review: true,
+        serviceMs: REVIEW_SERVICE_MS,
+      })
+      .catch((err: unknown) => {
+        this.opts.log?.(`review failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    this.pending.push(done);
+    return done;
   }
 
   /** Reviews queued and not finished. */

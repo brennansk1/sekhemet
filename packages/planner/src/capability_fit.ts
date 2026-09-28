@@ -341,6 +341,11 @@ export interface CapabilityVerdict {
   reason?: string;
   predicted?: number;
   lines: number;
+  /**
+   * The kind's 80% size horizon at this card's difficulty, in changed lines,
+   * when its fit is limited by size (Seshat's split-not-retry, PM-P6-9).
+   */
+  horizon?: number;
   /** What the card's notes say about the Worker's record of its kind. */
   note: string;
 }
@@ -396,6 +401,7 @@ export function capabilityVerdict(
       : {}),
     predicted: round(predicted),
     lines,
+    ...(horizon !== undefined ? { horizon } : {}),
     note,
   };
 }

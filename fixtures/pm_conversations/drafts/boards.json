@@ -1,0 +1,206 @@
+{
+  "chronicle": {
+    "project": "chronicle",
+    "today": "2026-09-28",
+    "cards": [
+      {
+        "id": "CHR-1",
+        "title": "Event types and interface",
+        "status": "done",
+        "estimate": 2,
+        "cycleId": "S-12",
+        "updatedAt": "2026-09-27T16:00:00.000Z"
+      },
+      {
+        "id": "CHR-2",
+        "title": "Canonical form for the hash input",
+        "status": "done",
+        "estimate": 3,
+        "cycleId": "S-12",
+        "updatedAt": "2026-09-27T18:30:00.000Z"
+      },
+      {
+        "id": "CHR-3",
+        "title": "Hasher",
+        "status": "in_progress",
+        "estimate": 5,
+        "cycleId": "S-12",
+        "priority": 3,
+        "stepsUsed": 5,
+        "stepBudget": 40,
+        "scopeFiles": ["src/hasher.ts"],
+        "createdAt": "2026-09-27T11:00:00.000Z",
+        "updatedAt": "2026-09-28T08:40:00.000Z"
+      },
+      {
+        "id": "CHR-4",
+        "title": "HTTP routes",
+        "status": "backlog",
+        "estimate": 8,
+        "priority": 3,
+        "scopeFiles": [
+          "src/server.ts",
+          "src/routes/read.ts",
+          "src/routes/write.ts",
+          "src/errors.ts",
+          "src/validate.ts"
+        ],
+        "spec": "Serve the ledger over HTTP: GET /events and GET /events/:id read events, POST /events appends one after validating it, and every error answers with one JSON error envelope."
+      },
+      {
+        "id": "CHR-5",
+        "title": "HTTP read API",
+        "status": "review",
+        "estimate": 3,
+        "cycleId": "S-12",
+        "updatedAt": "2026-09-28T05:50:00.000Z"
+      },
+      {
+        "id": "CHR-6",
+        "title": "Tamper check",
+        "status": "parked",
+        "estimate": 3,
+        "cycleId": "S-12",
+        "blockedReason": "Paused for memory at 94%"
+      },
+      {
+        "id": "CHR-7",
+        "title": "Ledger",
+        "status": "ready",
+        "estimate": 5,
+        "cycleId": "S-12",
+        "stopReason": "oscillation_detected",
+        "stepsUsed": 8,
+        "scopeFiles": ["src/ledger.ts"]
+      },
+      {
+        "id": "CHR-8",
+        "title": "Auth",
+        "status": "backlog",
+        "estimate": 5
+      },
+      {
+        "id": "CHR-9",
+        "title": "Docs",
+        "status": "backlog",
+        "estimate": 2
+      },
+      {
+        "id": "CHR-10",
+        "title": "Export",
+        "status": "backlog",
+        "estimate": 3,
+        "dependsOn": ["CHR-4"]
+      },
+      {
+        "id": "CHR-11",
+        "title": "Bench",
+        "status": "backlog",
+        "estimate": 2,
+        "labels": ["research"]
+      },
+      {
+        "id": "CHR-12",
+        "title": "Retention policy",
+        "status": "ready",
+        "estimate": 3,
+        "stopReason": "repair_exhausted"
+      }
+    ],
+    "cycles": [
+      {
+        "id": "S-10",
+        "name": "Sprint 10",
+        "startsOn": "2026-09-01",
+        "endsOn": "2026-09-11",
+        "state": "closed"
+      },
+      {
+        "id": "S-11",
+        "name": "Sprint 11",
+        "startsOn": "2026-09-11",
+        "endsOn": "2026-09-22",
+        "state": "closed"
+      },
+      {
+        "id": "S-12",
+        "name": "Sprint 12",
+        "startsOn": "2026-09-22",
+        "endsOn": "2026-10-02",
+        "state": "active",
+        "goal": "Chronicle is usable over HTTP"
+      }
+    ],
+    "recentRuns": [
+      "Sprint 10: 20 points done of 24 planned",
+      "Sprint 11: 24 points done of 24 planned",
+      "Sprint 12 so far: 13 of 21 points done, 4 days left",
+      "CHR-7 Ledger: attempt 2 stopped on Looping at step 8",
+      "CHR-2 Canonical form: passed in 6 steps"
+    ],
+    "worker": {
+      "model": "coding-model",
+      "record": "First attempts: 18 of 26 passed (69%). Rules issues: 3 of 7 passed, a rough range of 10-82%. It passes 80% of issues up to about 120 changed lines."
+    },
+    "forecast": "Release 1: 50% by 2026-10-06 and 85% by 2026-10-10, from 1,000 simulations over the last 6 weeks of throughput",
+    "decisions": ["Priya: keep the old export format? Default after 2026-09-30: keep it."],
+    "goals": [
+      {
+        "id": "G-1",
+        "statement": "Chronicle is usable over HTTP",
+        "state": "active",
+        "met": 1,
+        "total": 3,
+        "assumptions": ["A-2"]
+      }
+    ],
+    "assumptions": [
+      {
+        "id": "A-1",
+        "cardId": "CHR-3",
+        "statement": "Hashes use SHA-256 over the canonical JSON form",
+        "basis": "the brief names SHA-256"
+      },
+      {
+        "id": "A-2",
+        "cardId": "CHR-4",
+        "statement": "The read API needs no authentication in release 1",
+        "basis": "the brief has no user accounts",
+        "riskHours": 30
+      }
+    ],
+    "findings": [
+      {
+        "cardId": "CHR-5",
+        "entryId": "e-311",
+        "verdict": "unmet",
+        "text": "2. GET /events?since= returns only events after the cursor — the handler ignores since (src/server.ts:41)",
+        "modelId": "review-model"
+      },
+      {
+        "cardId": "CHR-5",
+        "entryId": "e-312",
+        "verdict": "met",
+        "text": "1. GET /events returns every event in order (src/server.ts:30)",
+        "modelId": "review-model"
+      }
+    ],
+    "failures": [
+      {
+        "cardId": "CHR-7",
+        "evidenceId": "ev_7f3a",
+        "attempt": 2,
+        "stopReason": "oscillation_detected",
+        "step": 8,
+        "gate": "typecheck",
+        "at": "tests/hasher.spec.ts:25",
+        "excerpt": "TS2353: Object literal may only specify known properties"
+      }
+    ]
+  },
+  "empty": {
+    "project": "new",
+    "today": "2026-09-28",
+    "cards": []
+  }
+}

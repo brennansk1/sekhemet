@@ -336,6 +336,8 @@ export interface PmQuality {
   /** How often the human corrected the profile (edits and dismissals). */
   profileCorrections: number;
   forecast?: { remaining: number; p50Days: number; p85Days: number; samples: number };
+  /** Each closed sprint's recorded measures, oldest first (PM-P6-12, `pm/sprint_measured`). */
+  sprints: Record<string, unknown>[];
 }
 
 /**
@@ -397,5 +399,8 @@ export async function pmQuality(
     plannedCards: { cards: planned.length, passedFirstTry: planned.filter(Boolean).length },
     profileCorrections: corrections,
     ...(forecast ? { forecast: { remaining, ...forecast } } : {}),
+    sprints: (await log.getEventsByTypes(["pm/sprint_measured"])).map(
+      (e) => e.payload as Record<string, unknown>,
+    ),
   };
 }

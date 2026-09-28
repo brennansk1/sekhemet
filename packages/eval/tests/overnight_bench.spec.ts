@@ -15,6 +15,7 @@ import {
   defaultOvernightPicks,
   estimateNight,
   morningReport,
+  overnightVerdict,
   planBlocks,
   runOvernightBench,
   scheduleOvernight,
@@ -414,5 +415,60 @@ describe("the morning report and the bake-off (MS-N5-11, MD-N10-1)", () => {
         } as never,
       ),
     ).toThrow(/quick-benchmark score does not satisfy it/);
+  });
+});
+
+describe("the overnight verdict a standup states (planner-pm PM-P6-14)", () => {
+  /** Twelve Worker cards: enough paired cards for the exact test to resolve a sweep. */
+  const TWELVE: OvernightSets = {
+    roles: {
+      ...SETS.roles,
+      worker: {
+        state: "ready",
+        runs: 2,
+        cards: Array.from({ length: 12 }, (_, i) => ({ id: `t${i}`, role: "worker" as const })),
+      },
+    },
+  };
+
+  it("names the best combination when the night resolved it better than every other", async () => {
+    const log = ledger();
+    const clock = { t: 0 };
+    const { runId } = await schedule(log, [A, C]);
+    const runner: OvernightRunner = {
+      async swapTo() {
+        clock.t += 60_000;
+      },
+      async runCard({ combination }) {
+        clock.t += 600_000;
+        return { passed: combination.worker === "wa", seconds: 600 };
+      },
+    };
+    await runOvernightBench(night(log, runId, runner, clock, { sets: TWELVE }));
+    const v = await overnightVerdict(log);
+    expect(v).toMatchObject({ runId, outcome: "best", reason: "done" });
+    expect(v?.leading).toEqual([{ worker: "wa", planner: "p" }]);
+    expect(await log.getEventsByTypes(["models/assigned"])).toHaveLength(0);
+  });
+
+  it("says there is no clear difference when the leaders could not be told apart", async () => {
+    const log = ledger();
+    const clock = { t: 0 };
+    const { runId } = await schedule(log, [A, B, C]);
+    await runOvernightBench(night(log, runId, fakeRunner(clock, { swaps: [], cards: [] }), clock));
+    const v = await overnightVerdict(log);
+    expect(v?.outcome).toBe("no_clear_difference");
+    expect(v?.leading[0]).toEqual({ worker: "wa", planner: "p" });
+    expect(v?.leading.length).toBeGreaterThan(1);
+  });
+
+  it("is undefined when no night finished since the given time, and one combination has nothing to compare", async () => {
+    const log = ledger();
+    const clock = { t: 0 };
+    expect(await overnightVerdict(log)).toBeUndefined();
+    const { runId } = await schedule(log, [A]);
+    await runOvernightBench(night(log, runId, fakeRunner(clock, { swaps: [], cards: [] }), clock));
+    expect((await overnightVerdict(log))?.outcome).toBe("only_one");
+    expect(await overnightVerdict(log, { since: Date.now() + 60_000 })).toBeUndefined();
   });
 });

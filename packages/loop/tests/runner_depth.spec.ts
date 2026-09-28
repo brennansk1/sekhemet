@@ -215,6 +215,40 @@ describe("card actuals, attempts and checkpoints (defects 2 and 8, K28, Y3)", ()
     expect(again.finalStatus).toBe("review");
   });
 
+  it("RG-P8-1: a passing card the AI review has not read waits in Verify, saying so", async () => {
+    const card = await newCard();
+    const { adapter } = scripted((t) => (t === 1 ? [write(1)] : [finish]));
+    const { lc, moves } = lifecycle();
+    const asked: string[] = [];
+    const result = await runner(card, {
+      modelAdapter: adapter,
+      lifecycle: {
+        ...lc,
+        awaitReview: async (id) => {
+          asked.push(id);
+          // The attempt is closed and its evidence recorded before the review is asked for.
+          expect(await store.cardEvents(id, ["evidence/recorded"])).toHaveLength(1);
+          return "Waiting for AI review";
+        },
+      },
+    }).run();
+    expect(result.stopReason).toBe("gate_passed");
+    expect(asked).toEqual([card.id]);
+    expect(moves).toEqual(["in_progress", "verify"]);
+    expect(result.finalStatus).toBe("verify");
+    expect(await store.getCard(card.id)).toMatchObject({
+      status: "verify",
+      blockedReason: "Waiting for AI review",
+    });
+    // No wait asked for: the card moves on to Review as before.
+    const again = await runner((await store.getCard(card.id)) as CardRecord, {
+      lifecycle: { ...lifecycle().lc, awaitReview: async () => undefined },
+      useExistingWorktree: true,
+      attempt: 2,
+    }).run();
+    expect(again.finalStatus).toBe("review");
+  });
+
   it("stamps the attempt into the evidence, so a retry never overwrites attempt 1", async () => {
     const card = await newCard();
     const first = await runner(card, { attempt: 1 }).run();

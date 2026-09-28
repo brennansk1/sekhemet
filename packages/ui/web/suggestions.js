@@ -1,6 +1,8 @@
 // Seshat's suggestions on an issue (planner-pm §2.18.2, PM-N9-1; teams item
 // 20): "Suggested: …", "Why: …", Apply and Dismiss, each one action. Nothing
 // changes until a person applies one; a dismissed one is not raised again.
+// One an Admin's auto-apply rule applied reads "Applied by <Admin>'s rule: …"
+// with Undo, one action (PM-N9-2, TEAM-41).
 import { esc, getJSON, postJSON } from "./dom.js";
 import { toast } from "./toast.js";
 
@@ -18,11 +20,15 @@ export async function renderSuggestions(host, cardId, { onChange } = {}) {
           (s) =>
             `<li class="sug" data-sug="${esc(s.id)}"><div class="sug-t"><b>${esc(s.suggested)}</b>${
               s.why ? `<span class="sug-why">Why: ${esc(s.why)}</span>` : ""
-            }</div><div class="sug-acts"><button type="button" class="btn sm" data-sug-apply="${esc(
-              s.id,
-            )}">Apply</button><button type="button" class="btn sm ghost" data-sug-dismiss="${esc(
-              s.id,
-            )}">Dismiss</button></div></li>`,
+            }</div><div class="sug-acts">${
+              s.state === "applied"
+                ? `<button type="button" class="btn sm ghost" data-sug-undo="${esc(s.id)}">Undo</button>`
+                : `<button type="button" class="btn sm" data-sug-apply="${esc(
+                    s.id,
+                  )}">Apply</button><button type="button" class="btn sm ghost" data-sug-dismiss="${esc(
+                    s.id,
+                  )}">Dismiss</button>`
+            }</div></li>`,
         )
         .join("")}</ul>`
     : "";
@@ -30,16 +36,22 @@ export async function renderSuggestions(host, cardId, { onChange } = {}) {
     const t = e.target instanceof Element ? e.target : null;
     const apply = t?.closest("[data-sug-apply]");
     const dismiss = t?.closest("[data-sug-dismiss]");
-    const id = apply?.dataset.sugApply ?? dismiss?.dataset.sugDismiss;
+    const undo = t?.closest("[data-sug-undo]");
+    const id = apply?.dataset.sugApply ?? dismiss?.dataset.sugDismiss ?? undo?.dataset.sugUndo;
     if (!id) return;
-    const verb = apply ? "apply" : "dismiss";
+    const verb = apply ? "apply" : undo ? "undo" : "dismiss";
     for (const b of host.querySelectorAll(`[data-sug="${CSS.escape(id)}"] button`))
       b.disabled = true;
     const res = await postJSON(`/api/suggestions/${encodeURIComponent(id)}/${verb}`);
     if (!res.ok) {
       toast({
         tone: "fail",
-        text: verb === "apply" ? "Couldn't apply the suggestion." : "Couldn't dismiss it.",
+        text:
+          verb === "apply"
+            ? "Couldn't apply the suggestion."
+            : verb === "undo"
+              ? "Couldn't undo it."
+              : "Couldn't dismiss it.",
         detail: res.data?.error ?? `The server returned ${res.status || "no response"}.`,
       });
     }

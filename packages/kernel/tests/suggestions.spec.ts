@@ -38,7 +38,8 @@ describe("suggestions (PM-N9-1, TEAM-18, TEAM-19)", () => {
     await expect(s.apply(id as string, "")).rejects.toThrow(/principal/);
     await s.apply(id as string, "p_admin", { auto: true });
     const [applied] = await log.getEventsByTypes(["suggestion/applied"]);
-    expect(applied?.payload).toEqual({ id, auto: true });
+    // TEAM-41: an application by an Admin's rule keeps the issue as it was, for Undo.
+    expect(applied?.payload).toEqual({ id, auto: true, kind: "priority", before: {} });
     expect(applied?.principal).toBe("p_admin");
     expect(await s.open("c")).toEqual([]);
     await expect(s.dismiss(id as string, "p_admin")).rejects.toThrow(/applied/);
@@ -90,5 +91,58 @@ describe("suggestions (PM-N9-1, TEAM-18, TEAM-19)", () => {
     await s.apply(remove as string, "p_owner");
     expect(await s.get(remove as string)).toMatchObject({ state: "applied" });
     expect(await s.get("sug_none")).toBeUndefined();
+  });
+
+  it("TEAM-41: what a rule applied is undone once by a person, and not raised again", async () => {
+    const s = store.suggestions;
+    const id = (await s.propose({
+      cardId: "c",
+      kind: "label",
+      value: ["bug"],
+      why: "A crash",
+    })) as string;
+    // A person's own application is not undone here: they change the issue back themselves.
+    const mine = (await s.propose({
+      cardId: "c",
+      kind: "priority",
+      value: 1,
+      why: "Urgent",
+    })) as string;
+    await s.apply(mine, "p_owner");
+    await expect(s.undo(mine, "p_owner")).rejects.toThrow(/rule/);
+    await s.apply(id, "p_admin", {
+      auto: true,
+      before: { status: "ready", labels: ["web"], blockedReason: "waits on the API" },
+    });
+    const [applied] = (await log.getEventsByTypes(["suggestion/applied"])).slice(-1);
+    expect(applied?.payload).toEqual({
+      id,
+      auto: true,
+      kind: "label",
+      before: { status: "ready", labels: ["web"] },
+    });
+    // The parked reason is free text: private.
+    expect(applied?.private).toEqual({ blockedReason: "waits on the API" });
+    expect(await s.appliedByRule("c")).toEqual([
+      expect.objectContaining({
+        id,
+        by: "p_admin",
+        why: "A crash",
+        before: { status: "ready", labels: ["web"], blockedReason: "waits on the API" },
+      }),
+    ]);
+    expect(await s.get(id)).toMatchObject({ state: "applied", rule: "p_admin" });
+    await expect(s.undo(id, "")).rejects.toThrow(/principal/);
+    await s.undo(id, "p_amy");
+    const [undone] = await log.getEventsByTypes(["suggestion/undone"]);
+    expect(undone?.payload).toEqual({ id, kind: "label" });
+    expect(undone?.principal).toBe("p_amy");
+    expect(await s.get(id)).toMatchObject({ state: "undone" });
+    expect(await s.appliedByRule("c")).toEqual([]);
+    await expect(s.undo(id, "p_amy")).rejects.toThrow(/already undone/);
+    // Undone, the same change is not raised again (as TEAM-19 for a dismissal).
+    expect(
+      await s.propose({ cardId: "c", kind: "label", value: ["bug"], why: "Again" }),
+    ).toBeNull();
   });
 });

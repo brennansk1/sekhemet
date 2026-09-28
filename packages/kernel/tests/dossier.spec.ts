@@ -171,6 +171,22 @@ describe("@sekhemet/kernel card dossier", () => {
     expect(text.endsWith("[50 chars cut]")).toBe(true);
   });
 
+  it("RG-P8-12: a review entry carries the model that wrote it, and only a review entry may", async () => {
+    await store.recordDossierEntry({
+      cardId: "c_a",
+      kind: "review",
+      text: "append adds one entry (src/a.ts:3)",
+      verdict: "met",
+      sources: ["src/a.ts"],
+      modelId: "gemma-4-26b",
+    });
+    const [entry] = (await store.getDossier("c_a")).reviews;
+    expect(entry).toMatchObject({ verdict: "met", modelId: "gemma-4-26b", actor: "reviewer" });
+    await expect(
+      store.recordDossierEntry({ cardId: "c_a", kind: "note", text: "x", modelId: "m" }),
+    ).rejects.toThrow(/Only a review entry names its model/);
+  });
+
   it("DS-N5-3: keeps a long research answer whole, cutting only past its own far larger bound", async () => {
     const answer = "y".repeat(MAX_DOSSIER_TEXT * 4);
     await store.recordDossierEntry({ cardId: "c_a", kind: "research", text: answer });

@@ -2,7 +2,14 @@
 // waiting procedure, the context chip and the composer. Mounted twice: in the
 // right-side panel and in the full #/pm view. Both render the one thread.
 import { $, esc, icon, isTyping, kbd, teammateName } from "./dom.js";
-import { formatClock, pmSteps, renderPmMarkdown, sourceCites, statusEtaSeconds } from "./lib/pm.js";
+import {
+  formatClock,
+  pendingView,
+  renderPmMarkdown,
+  sourceCites,
+  statusEtaSeconds,
+  threadNotice,
+} from "./lib/pm.js";
 import { composerCostLine, composerHint, composerStarters } from "./lib/seshat.js";
 import { columnLabel } from "./lib/vocabulary.js";
 import { cardChip } from "./marks.js";
@@ -87,6 +94,9 @@ function runLabel(id) {
 
 function messageHtml(m) {
   if (m.role === "system") return `<p class="msg sys">${esc(m.text)}</p>`;
+  // PM-N9-6, PM-P6-10: the product's notice, kept apart from Seshat's voice.
+  const notice = threadNotice(m);
+  if (notice !== undefined) return `<p class="msg sys notice">${esc(notice)}</p>`;
   if (m.role === "user") {
     const note =
       m.state === "queued" && pendingMessage() !== m
@@ -116,12 +126,19 @@ function pendingHtml(user) {
   const pm = store.state.pm;
   const status = pm.status ?? { phase: "idle" };
   const started = Date.parse(user.createdAt) || pm.phaseSeenAt.queued || Date.now();
-  if (status.phase === "idle") {
-    return `<div class="msg pm pending" aria-busy="true">${avatar()}<div class="pend"><header>${teammateName(PM_NAME, "seshat")}<span class="clock tnum" data-since="${started}"></span></header><p class="note">Queued. ${PM_NAME} starts as soon as the server picks it up.</p></div></div>`;
-  }
-  const rows = pmSteps(status, { workerInvolved: pm.workerInvolved, step: pm.step });
-  const eta = statusEtaSeconds(status);
   const seen = pm.phaseSeenAt;
+  // DB-N2-8: the rows and the note are the model's (`pendingView`, lib/pm.js).
+  const view = pendingView(status, {
+    name: PM_NAME,
+    workerInvolved: pm.workerInvolved,
+    step: pm.step,
+    elapsedMs: Date.now() - (seen[status.phase] ?? Date.now()),
+  });
+  if (status.phase === "idle") {
+    return `<div class="msg pm pending" aria-busy="true">${avatar()}<div class="pend"><header>${teammateName(PM_NAME, "seshat")}<span class="clock tnum" data-since="${started}"></span></header><p class="note">${esc(view.note)}</p></div></div>`;
+  }
+  const rows = view.rows;
+  const eta = statusEtaSeconds(status);
   const items = rows
     .map((r, i) => {
       let right = "";
@@ -139,26 +156,7 @@ function pendingHtml(user) {
       return `<li class="is-${r.state}"${r.state === "current" ? ' aria-current="step"' : ""}>${STATE_ICON[r.state]()}<span class="l">${esc(r.label)}</span>${bar}${right}</li>`;
     })
     .join("");
-  const step = pm.step;
-  const next = step ? `step ${step + 1}` : "its next step";
-  let note = "";
-  switch (status.phase) {
-    case "waiting_for_step":
-      note = `Waiting for ${step ? `step ${step}` : "the current step"} to finish. The agent is never stopped mid-edit.`;
-      break;
-    case "loading_pm":
-      note = pm.workerInvolved
-        ? `Only one model fits in memory, so the agent waits at a safe step boundary and continues from ${next} once ${PM_NAME} has replied. You can keep working; the reply lands here.`
-        : `${PM_NAME} runs on this machine. You can keep working; the reply lands here.`;
-      break;
-    case "thinking":
-      note = "Reading the board, the runs and the ledger.";
-      break;
-    case "resuming_worker":
-      note = `Reloading the agent; ${next} starts next.`;
-      break;
-  }
-  return `<div class="msg pm pending" aria-busy="true" data-phase="${esc(status.phase)}" data-phase-since="${seen[status.phase] ?? Date.now()}">${avatar()}<div class="pend"><header>${teammateName(PM_NAME, "seshat")}<span class="clock tnum" data-since="${started}"></span></header><ol class="steps-pm">${items}</ol><p class="note" data-note>${esc(note)}</p></div></div>`;
+  return `<div class="msg pm pending" aria-busy="true" data-phase="${esc(status.phase)}" data-phase-since="${seen[status.phase] ?? Date.now()}">${avatar()}<div class="pend"><header>${teammateName(PM_NAME, "seshat")}<span class="clock tnum" data-since="${started}"></span></header><ol class="steps-pm">${items}</ol><p class="note" data-note>${esc(view.note)}</p></div></div>`;
 }
 
 /** Once a second: clocks, the ETA bar and the over-time notes. Text changes; nothing moves. */
@@ -176,18 +174,16 @@ function tick(root) {
   }
   const pend = root.querySelector(".pending[data-phase]");
   if (pend) {
-    const elapsed = now - Number(pend.dataset.phaseSince);
-    const phase = pend.dataset.phase;
+    const pm = store.state.pm;
     const note = pend.querySelector("[data-note]");
-    const eta = statusEtaSeconds(store.state.pm.status) ?? 40;
-    if (phase === "loading_pm" && elapsed > eta * 1000 && !note.dataset.late) {
-      note.dataset.late = "1";
-      note.textContent = `Taking longer than usual. The model is still loading. ${note.textContent}`;
-    }
-    if (phase === "thinking" && elapsed > 90_000 && !note.dataset.late) {
-      note.dataset.late = "1";
-      note.textContent = "Long answers can take up to two minutes on this machine.";
-    }
+    // The over-time notes come from the same model as the block (DB-N2-8).
+    const text = pendingView(pm.status ?? { phase: "idle" }, {
+      name: PM_NAME,
+      workerInvolved: pm.workerInvolved,
+      step: pm.step,
+      elapsedMs: now - Number(pend.dataset.phaseSince),
+    }).note;
+    if (note && note.textContent !== text) note.textContent = text;
   }
 }
 

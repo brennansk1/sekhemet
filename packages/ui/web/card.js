@@ -14,6 +14,7 @@ import { mountIssue } from "./issue_view.js";
 import { tip as learnTip } from "./learn.js";
 import { ISSUE_COPY, ISSUE_TABS, issueEventsUrl, issueTab, oldestFirst } from "./lib/issue.js";
 import { kindTip } from "./lib/learn.js";
+import { reviewerFindings } from "./lib/review_desk.js";
 import { stateBadge } from "./lib/strip.js";
 import { boardColumnLabel } from "./lib/vocabulary.js";
 import { renderPlan } from "./plan.js";
@@ -66,7 +67,10 @@ function tabCounts(card) {
   return {
     checks: failedGates || "",
     changes: ev ? `+${ev.linesAdded ?? 0} −${ev.linesRemoved ?? 0}` : "",
-    ai_review: ui.detail?.review?.findings?.length || "",
+    ai_review:
+      reviewerFindings(ui.detail?.desk?.findings ?? [], new Set()).rows.length ||
+      ui.detail?.review?.findings?.length ||
+      "",
     steps:
       card.status === "in_progress"
         ? Number.parseInt(card.display?.budgetText ?? "", 10) || ""

@@ -200,6 +200,20 @@ export async function discardAll(proposals) {
   toast({ text: `Discarded ${open.length} ${open.length === 1 ? "change" : "changes"}` });
 }
 
+/**
+ * PM-P6-10: while this page is visible and focused, tell the server once a
+ * minute, so Seshat's unsolicited items come to the panel instead of a
+ * notification ("an offer in the panel beats a ping").
+ */
+function reportFocus() {
+  if (document.visibilityState !== "visible" || !document.hasFocus()) return;
+  postJSON("/api/pm/focus", {}).catch(() => {});
+}
+
 export function initPm() {
   loadThread();
+  reportFocus();
+  window.addEventListener("focus", reportFocus);
+  document.addEventListener("visibilitychange", reportFocus);
+  setInterval(reportFocus, 60_000);
 }

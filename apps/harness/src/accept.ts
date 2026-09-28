@@ -3,7 +3,13 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { BoardServiceImpl } from "@sekhemet/board";
-import { type CardRecord, type CardStore, ERASED_MARKER, type EventLog } from "@sekhemet/kernel";
+import {
+  type CardRecord,
+  type CardStore,
+  type DossierEntry,
+  ERASED_MARKER,
+  type EventLog,
+} from "@sekhemet/kernel";
 import { MergeConflictError, NodeGitSyncAdapter, groupByIntent } from "@sekhemet/sync";
 import { ownersOf } from "./codeowners.js";
 import { effectiveConfig } from "./config_apply.js";
@@ -291,15 +297,29 @@ export async function acceptFriction(
   ev: AcceptedEvidence,
   acknowledged: readonly string[],
 ): Promise<{ findings: string[]; files: string[] }> {
-  const dossier = await store.getDossier(cardId);
-  const open = dossier.entries.filter(
-    (e) => e.kind === "review" && (e.verdict === "unmet" || e.verdict === "unclear"),
+  const open = (await reviewEntriesSinceEvidence(store, cardId)).filter(
+    (e) => e.verdict === "unmet" || e.verdict === "unclear",
   );
   const ack = new Set(acknowledged);
   const findings = open.filter((e) => !ack.has(e.entryId)).map((e) => e.entryId);
   const shown = new Set(await filesShownSinceEvidence(store, cardId));
   const files = implementationFiles(ev).filter((f) => !shown.has(f));
   return { findings, files };
+}
+
+/**
+ * The AI review's dossier entries about the change under review: those
+ * recorded since the card's latest evidence, so a finding on an earlier
+ * attempt is neither shown nor asked to be acknowledged again (RG-P8-9).
+ */
+export async function reviewEntriesSinceEvidence(
+  store: CardStore,
+  cardId: string,
+): Promise<DossierEntry[]> {
+  const since = (await store.cardEvents(cardId, ["evidence/recorded"])).at(-1)?.seq ?? 0;
+  return (await store.getDossier(cardId)).entries.filter(
+    (e) => e.kind === "review" && e.seq > since,
+  );
 }
 
 /**

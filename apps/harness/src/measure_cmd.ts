@@ -31,6 +31,7 @@ import { TOOL_CATALOG, cardClassFor, toolsForClass } from "@sekhemet/loop";
 import { effectiveConfig } from "./config_apply.js";
 import { abVerdictLine, contextVersionGate } from "./context_gate.js";
 import { workerContextVersion } from "./qualify.js";
+import { ROLE_EVAL_SUBCOMMANDS, type RoleEvalDeps, runRoleEvalCommand } from "./role_eval_cmd.js";
 import type { Kernel } from "./wave2.js";
 
 /**
@@ -45,6 +46,7 @@ import type { Kernel } from "./wave2.js";
  *   sekhemet measure rescore <result.json> --work <dir> [--out <file>]
  *   sekhemet measure promote <generated-test card> [--because <change>]
  *   sekhemet measure rule-credit <rule-id>
+ *   sekhemet measure seshat | seshat-compare | reviewer | send-backs   (role_eval_cmd.ts, B4.8)
  *
  * A harness change's footprint is computed from the build, never entered:
  * one footprint file per commit, each stamped with that commit, compared
@@ -461,8 +463,20 @@ export async function runMeasureCommand(
   args: string[],
   k: Kernel,
   print: (line: string) => void = (l) => console.log(l),
+  /** The role evaluations' model and asset root, when a caller supplies them (tests). */
+  evalDeps: Partial<Pick<RoleEvalDeps, "acquire" | "harnessRoot" | "registry" | "now">> = {},
 ): Promise<number> {
   const [sub] = args;
+  // B4.8: the measurements that admit Seshat's and the Reviewer's prompts
+  // (PM-P6-13, RG-P8-13, RG-P8-14).
+  if (sub && ROLE_EVAL_SUBCOMMANDS.includes(sub)) {
+    return runRoleEvalCommand(
+      sub,
+      args.slice(1),
+      { repoPath: k.repoPath, log: k.log, cardStore: k.cardStore, ...evalDeps },
+      print,
+    );
+  }
   try {
     if (sub === "footprint") {
       // The harness's own source, not the project the command runs in. The

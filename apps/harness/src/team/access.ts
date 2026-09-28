@@ -120,6 +120,11 @@ export interface ProjectSettings {
 export interface TeamProjection {
   members: Map<string, MemberRecord>;
   projects: Map<string, ProjectSettings>;
+  /**
+   * Who turned each auto-apply property on, by project (TEAM-41): the
+   * principal of the change that last switched it from off to on.
+   */
+  autoApplyBy: Map<string, Record<string, string>>;
 }
 
 const ACCESS_TYPES = ["member/level_changed", "member/label_changed", "project/settings_changed"];
@@ -137,11 +142,12 @@ export function projectTeam(db: DatabaseSync): TeamProjection {
     });
   }
   const projects = new Map<string, ProjectSettings>();
+  const autoApplyBy = new Map<string, Record<string, string>>();
   const rows = db
     .prepare(
-      `SELECT type, payload FROM events WHERE type IN (${ACCESS_TYPES.map(() => "?").join(",")}) ORDER BY seq`,
+      `SELECT type, payload, principal FROM events WHERE type IN (${ACCESS_TYPES.map(() => "?").join(",")}) ORDER BY seq`,
     )
-    .all(...ACCESS_TYPES) as { type: string; payload: string }[];
+    .all(...ACCESS_TYPES) as { type: string; payload: string; principal: string | null }[];
   for (const row of rows) {
     const p = JSON.parse(row.payload) as Record<string, unknown>;
     if (row.type === "project/settings_changed") {
@@ -149,6 +155,16 @@ export function projectTeam(db: DatabaseSync): TeamProjection {
       if (!id) continue;
       const current = projects.get(id) ?? {};
       const { project: _project, ...changes } = p;
+      // TEAM-41: a property switched on is that person's rule; switched off, no one's.
+      const auto = (changes as ProjectSettings).auto_apply;
+      if (auto) {
+        const by = { ...(autoApplyBy.get(id) ?? {}) };
+        for (const [k, on] of Object.entries(auto)) {
+          if (!on) delete by[k];
+          else if (!current.auto_apply?.[k] && row.principal) by[k] = row.principal;
+        }
+        autoApplyBy.set(id, by);
+      }
       projects.set(id, { ...current, ...(changes as ProjectSettings) });
       continue;
     }
@@ -161,7 +177,7 @@ export function projectTeam(db: DatabaseSync): TeamProjection {
       else member.label = undefined;
     }
   }
-  return { members, projects };
+  return { members, projects, autoApplyBy };
 }
 
 export interface AccessOptions {
@@ -224,6 +240,20 @@ export class Access {
 
   public settings(project: string | undefined): ProjectSettings {
     return (project && this.projection().projects.get(project)) || {};
+  }
+
+  /**
+   * The Admin whose auto-apply rule applies Seshat's suggestion of this kind
+   * on this project's issues (planner-pm PM-N9-2, TEAM-18, -41): the one who
+   * turned the property on, while it is on and they are still an Admin
+   * there. Never for the assignee, health, a hold or a removal, nor for an
+   * issue with no project.
+   */
+  public autoApplier(project: string | undefined, kind: string): string | undefined {
+    if (!project || !(AUTO_APPLY_PROPERTIES as readonly string[]).includes(kind)) return undefined;
+    if (this.settings(project).auto_apply?.[kind] !== true) return undefined;
+    const by = this.projection().autoApplyBy.get(project)?.[kind];
+    return by && this.level(by, project) === "admin" ? by : undefined;
   }
 
   /** The Admins now (approved, not removed): the workspace's default accepters (DEC-42). */
@@ -853,7 +883,7 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
   ],
   [
     ["POST"],
-    /^\/api\/suggestions\/([\w.-]+)\/(?:apply|dismiss)$/,
+    /^\/api\/suggestions\/([\w.-]+)\/(?:apply|dismiss|undo)$/,
     (m) => ({ permissions: ["proposal.apply"], suggestionId: m[1] }),
   ],
   // PM_CONTRACT: the weekly update is posted by the project's lead or an Admin.

@@ -46,10 +46,33 @@ describe("the registered vocabulary and allowlist (rules 5 and 10)", () => {
       "source",
       "content",
       "untrusted_content",
+      // The Reviewer's task (review-git P8), registered with its template.
+      "preferences",
+      "checks",
+      "assumptions",
+      "diff",
+      // Seshat's task data (planner-pm P6), registered with its template.
+      "playbook",
+      "board",
+      "goals",
+      "brief",
+      "review_findings",
+      "failure_evidence",
+      "decisions",
+      "forecast",
+      "team",
+      "sprints",
+      "project_as_found",
+      "recent_attempts",
+      "agent_record",
+      "dossier",
+      "conversation",
+      "search_results",
+      "message",
     ]) {
       expect(isRegisteredPromptTag(tag)).toBe(true);
     }
-    expect(REGISTERED_PROMPT_TAGS).toHaveLength(13);
+    expect(REGISTERED_PROMPT_TAGS).toHaveLength(34);
     expect(isRegisteredPromptTag("path")).toBe(false);
   });
 
@@ -72,6 +95,8 @@ describe("copy modules (rule 13, CX-M1-13)", () => {
   it("exempts only a registered copy module, by role", () => {
     expect(COPY_MODULES.gates).toBe("packages/gates/src/copy.ts");
     expect(COPY_MODULES.worker).toBe("packages/context/src/worker_copy.ts");
+    expect(COPY_MODULES.review).toBe("apps/harness/src/learning/review_copy.ts");
+    expect(COPY_MODULES.pm_skill).toBe("apps/harness/src/pm/seshat_skill.ts");
     expect(isCopyModulePath("packages/gates/src/copy.ts")).toBe(true);
     expect(isCopyModulePath("packages/loop/src/worker_copy.ts")).toBe(false);
     expect(isCopyModulePath("packages/loop/src/copy.ts")).toBe(false);

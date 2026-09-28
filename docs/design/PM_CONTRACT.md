@@ -76,6 +76,12 @@ and are refused in read-only mode.
   `{ messages: PmMessage[], status: PmStatus }`.
 - `POST /api/pm/messages` with `{ text, context?: { cardId?, view? } }`
   returns `{ message: PmMessage }` (role `user`, state `queued`).
+- `POST /api/pm/focus` (no body) says the dashboard is visible and focused
+  for the person; the client sends it on focus and once a minute while
+  focused. It records `pm/board_focus {principal}` at most once a minute a
+  person and returns `{ ok: true }`. For five minutes after, the notifier
+  puts Seshat's unsolicited items in the panel — a reply by `notifier` —
+  instead of a notification (`pm/notice_shown`; planner-pm PM-P6-10).
 - `POST /api/pm/create-card` with `{ title, description?, epicId?,
   projectId? }` (quick create from the board, dashboard DB-P3-12; `projectId`
   the project the board is scoped to) appends a reply to the person carrying
@@ -107,7 +113,10 @@ interface PmMessage {
   context?: { cardId?: string; view?: string };
   principal?: string;           // who wrote a user message; for a reply, who it answers (Team setup)
   proposals?: PmProposal[];     // changes the PM wants to make
-  cites?: { cardId?: string; runId?: string; evidenceId?: string; url?: string; label?: string }[];   // url + label: a research source, rendered in the Sources list (http/https only)
+  cites?: { cardId?: string; runId?: string; evidenceId?: string; url?: string; label?: string;
+             goalId?: string; assumptionId?: string; findingId?: string }[];   // url + label: a research source, rendered in the Sources list (http/https only); goalId, assumptionId, findingId (an AI review's dossier entry) and evidenceId: what a reply answered from (planner-pm PM-P6-1, -2, -6)
+  skillVersion?: string;        // a reply's: the senior-PM skill it was written under, on every reply (PM-P6-4)
+  model?: string;               // a reply's author: the Planning model's id, "ledger" (a standup from the ledger) or "notifier" (a notice shown in the panel, PM-P6-10), which the panel renders as the product's notice, not in Seshat's voice (PM-N9-6)
 }
 interface PmStatus {
   phase: "idle" | "waiting_for_step" | "loading_pm" | "thinking" | "resuming_worker";
@@ -237,13 +246,17 @@ Review writes beside Accept what Accept itself would refuse (review-git
 `accepterVerdict`, `implementationFiles`, `filesShownSinceEvidence`).
 
 - `GET /api/cards/:id/review` returns `{ findings: { id, verdict?, text,
-  filesRead? }[], implementationFiles: string[], filesShown: string[], accept,
+  filesRead?, modelId? }[], implementationFiles: string[], filesShown: string[], accept,
   builtBy?, testApprovals, review, escalation?, suggestedAccepters }`
   (`review`, `escalation` and `suggestedAccepters` are the route's earlier
   fields, kept: the review brief P12, a stopped card's diagnosis P14 and
-  the CODEOWNERS suggestion RG-N5-3, `wave2_server.ts` `reviewBrief`): every Reviewer entry of the card's dossier
-  (`card/review`; `id` is what Accept's `acknowledgedFindings` names,
-  `filesRead` the entry's `sources`); the files Accept requires shown (what
+  the CODEOWNERS suggestion RG-N5-3, `wave2_server.ts` `reviewBrief`): every AI review entry of the card's dossier
+  recorded since its latest evidence (`card/review`, review-git P8; `id` is what Accept's `acknowledgedFindings` names,
+  `filesRead` the entry's `sources`, `modelId` the Review model that wrote it;
+  `verdict` is `met`, `unmet` or `unclear` for a finding, `coverage` for the
+  review's coverage line, and `not_reviewed` for why no AI review ran —
+  the Review role unfilled or the review failed, its `text` the reason; older
+  entries may carry Seshat's `consider` or `likely_send_back`); the files Accept requires shown (what
   the latest evidence changed, less tests) and those a `review/opened`
   recorded since that evidence; `accept` for the viewer — `{ may: true }`,
   `{ may: false, code: "not_permitted", who }`, `{ may: false, code:
@@ -268,14 +281,22 @@ Review writes beside Accept what Accept itself would refuse (review-git
 
 A change Seshat would make to an issue's assignee, labels, priority or
 duplicate link, or a split, is a suggestion on the issue, and nothing
-changes until a person applies it (teams TEAM-18, TEAM-19).
+changes until a person applies it (teams TEAM-18, TEAM-19) — unless an Admin
+turned on auto-apply for that property on the issue's project
+(`PATCH /api/projects/:id/settings` with `{ auto_apply: { label | priority |
+duplicate | split: boolean } }`, an Admin's; never the assignee or health):
+then it is applied at once with that Admin as principal and can be undone in
+one action (planner-pm PM-N9-2, teams TEAM-41).
 
 - `GET /api/cards/:id/suggestions` returns
-  `{ suggestions: { id, cardId, kind, value, why?, suggested }[] }`, the open
-  ones, with `suggested` the issue's text ("Suggested: priority Urgent for
-  Search."). `kind` is `assignee`, `label`, `priority`, `duplicate`, `split`,
-  or the planner's `hold` and `remove` on an issue someone else owns. 404 for
-  an issue the person cannot see.
+  `{ suggestions: { id, cardId, kind, value, why?, suggested, state, rule? }[] }`:
+  first those an Admin's rule applied that no one has undone (`state:
+  "applied"`, `rule` the Admin's principal, `suggested` "Applied by Ada's
+  rule: priority Urgent for Search."), then the open ones (`state: "open"`,
+  `suggested` "Suggested: priority Urgent for Search."). `kind` is
+  `assignee`, `label`, `priority`, `duplicate`, `split`, or the planner's
+  `hold` and `remove` on an issue someone else owns. 404 for an issue the
+  person cannot see.
 - `POST /api/suggestions/:id/apply` returns `{ suggestion, cards }`: the
   change is made under the person's principal, then `suggestion/applied`.
   `duplicate` moves the issue to Rejected ("Duplicate of X"); `split` plans
@@ -287,6 +308,15 @@ changes until a person applies it (teams TEAM-18, TEAM-19).
 - `POST /api/suggestions/:id/dismiss` returns `{ suggestion: { id, state:
   "dismissed" } }`; the same change is not proposed again on that issue.
   Checked the same way, at the suggestion's own card's project.
+- `POST /api/suggestions/:id/undo` returns `{ suggestion: { …, state:
+  "undone" }, cards }` for one an Admin's rule applied: the issue goes back as
+  `suggestion/applied` recorded it (its labels, its priority; a duplicate back
+  from Won't do to its column; a split's parts moved to Won't do and the issue
+  restored), then `suggestion/undone { id, kind }` under the person; the same
+  change is not proposed again. Checked as Apply (`proposal.apply`, the
+  suggestion's own card's project), and in the Team setup the issue's owner
+  or the Admin whose rule it was; 409 when it was not applied by a rule, was
+  already undone, or a split's part has started.
 - `GET /api/pm/update-draft?project=` returns `{ draft: { project?, parts:
   { status, done, next, risks, asks }, text } }`: Seshat's weekly update,
   with no health word. It writes nothing.
@@ -401,7 +431,17 @@ from one read:
   (the project's lead or an Admin; Solo's person is Admin), and any other
   value is a 400 (`estimation is off or points`).
 - `PATCH /api/cards/:id` with any of the section 2 fields (inline editing).
-- `GET /api/cycles`, `POST /api/cycles`, `PATCH /api/cycles/:id`.
+- `GET /api/cycles`, `POST /api/cycles`, `PATCH /api/cycles/:id`. A `PATCH`
+  that moves a sprint to `closed` also records Seshat's measures for it once
+  (`pm/sprint_measured`, planner-pm PM-P6-12).
+- `GET /api/metrics/pm` returns Seshat's measured quality
+  `{ proposals: {applied, discarded, open, acceptanceRate?},
+     plannedCards: {cards, passedFirstTry}, profileCorrections, forecast?,
+     sprints: SprintMeasures[] }` — `sprints` each closed sprint's record,
+  oldest first: `{ cycleId, forecast: {state: "held" | "missed" |
+  "undecided" | "no_forecast", p85Date?}, calibration: {held, decided},
+  proposals: {applied, discarded, acceptanceRate?}, planned: {issues,
+  passedFirstTry, rate?}, editedAfterSeshat }`.
 - `GET /api/metrics/flow?days=30` returns
   `{ throughput: {date, done}[], cycleTime: {cardId, hours, doneAt?}[],
      cfd: {date, backlog, ready, working, checking, review, done}[],
@@ -689,8 +729,10 @@ interface BenchmarkRun {
    card. The paused time is excluded from the card's time budget.
 3. If no runner holds the lease, the server answers directly with the manager
    model.
-4. The PM's reply is a `pm/reply` ledger event with its proposals. The hash
-   chain covers the conversation.
+4. The PM's reply is a `pm/reply` ledger event with its proposals and the
+   senior-PM skill's version (`skillVersion`, planner-pm PM-P6-4) — on every
+   reply, a model's or one answered from the ledger. The hash chain covers
+   the conversation.
 
 ## 5. Integration roadmap (approved by the user, 2026-09-18)
 
@@ -778,7 +820,12 @@ interface LearnedRule {
 interface ProfileEntry {
   id: string; statement: string;
   category: "code_style" | "planning" | "communication" | "priorities";
-  strength: number;                       // 0..1, decays without new evidence
+  strength: number;                       // 0..1, decays without new evidence: as read, the recorded
+                                          // strength × (1 − scope.decayPerWeek) per week since the latest
+                                          // evidence; below 0.2 it is not used (planner-pm PM-P6-15)
+  recordedStrength?: number;              // as read: the strength recorded at the latest evidence
+  scope?: { reach: "project" | "all"; repository?: string; kind?: string;
+            decayPerWeek: number };       // default { reach: "project", decayPerWeek: 0.1 }
   evidence: { note: string; at: string }[];
   status: "active" | "dismissed";
   source: "send_back" | "proposal_choices" | "edits" | "reflection";

@@ -263,6 +263,12 @@ export interface ExecuteCardOptions {
    * for it and ends it, so a decided swap drains at the boundary.
    */
   beginStep?: () => Promise<() => void>;
+  /**
+   * review-git RG-P8-1: asked when the card passes, before it moves to
+   * Review. A reason keeps it in Verify, waiting for the AI review
+   * (`ReviewFlow.decide`); undefined moves it on.
+   */
+  reviewFirst?: (cardId: string) => Promise<string | undefined>;
 }
 
 /**
@@ -668,6 +674,7 @@ export async function executeCard(
       hold: async (id, reason, awaiting) => {
         await ctx.boardService.holdCard(id, reason, "executor", awaiting);
       },
+      ...(options.reviewFirst ? { awaitReview: options.reviewFirst } : {}),
     },
     onWorktreeReady: async (path) => {
       // Stage this card's acceptance tests: the oracle for THIS card is present
@@ -1771,36 +1778,6 @@ export interface QueueReport {
     loadMs?: { count: number; totalMs: number; firstMs: number };
     spawnToHealthyMs?: { count: number; totalMs: number; firstMs: number };
   }[];
-}
-
-/** A review finding (Seshat's or the Reviewer's), as `learning/review.ts` returns it. */
-export interface ReviewFinding {
-  severity: string;
-  note: string;
-}
-
-/**
- * Record a review of a passing card in its dossier (one entry, one line per
- * finding). The verdict is the strongest severity, so the Review surface and
- * the card's next attempt see "likely_send_back" first.
- */
-export async function recordReview(
-  cardStore: Pick<CardStore, "recordDossierEntry">,
-  cardId: string,
-  findings: ReviewFinding[],
-  actor = "reviewer",
-): Promise<void> {
-  if (findings.length === 0) return;
-  const verdict = findings.some((f) => f.severity === "likely_send_back")
-    ? "likely_send_back"
-    : "consider";
-  await cardStore.recordDossierEntry({
-    cardId,
-    kind: "review",
-    actor,
-    verdict,
-    text: findings.map((f) => `- [${f.severity}] ${f.note}`).join("\n"),
-  });
 }
 
 /** Persist a queue scorecard where the dashboard and a human can both find it. */

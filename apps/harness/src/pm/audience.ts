@@ -19,6 +19,12 @@ export interface Audience {
   canSee(principal: string, project: string | undefined): boolean;
   /** The project's lead, when one is named. */
   leadOf(project: string | undefined): string | undefined;
+  /**
+   * The Admin whose auto-apply rule applies Seshat's suggestion of this kind
+   * on this project (planner-pm PM-N9-2, teams TEAM-41); undefined, or
+   * absent, when no rule is on and a person applies it.
+   */
+  autoApplier?(project: string | undefined, kind: string): string | undefined;
 }
 
 /** The one person of a Solo install: sees everything, holds every level. */
@@ -46,6 +52,7 @@ export function audienceFromAccess(access: () => Access, db: DatabaseSync): Audi
     levelOf: (p, project) => access().level(p, project),
     canSee: (p, project) => access().level(p, project) !== undefined,
     leadOf: (project) => (project ? access().settings(project).lead : undefined),
+    autoApplier: (project, kind) => access().autoApplier(project, kind),
   };
 }
 

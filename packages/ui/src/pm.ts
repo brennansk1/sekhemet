@@ -1117,6 +1117,59 @@ export function pmSteps(
   });
 }
 
+/** How long a load may take before its row says so, when the status names no ETA. */
+export const PM_LOAD_ETA_FALLBACK_SECONDS = 40;
+/** After this long thinking, the long-answer note replaces the thinking note (§2.7.8). */
+export const PM_LONG_ANSWER_MS = 90_000;
+
+/**
+ * The pending block under Seshat's header (dashboard §2.7.8, DB-N2-8): its
+ * rows and its note for the phase the status is in, with the over-time
+ * notes once the phase has run `elapsedMs` past its bound. The page renders
+ * exactly this; the words are DEC-31's (the Worker is "the agent").
+ */
+export function pendingView(
+  status: PmStatusLike,
+  opts: { name?: string; workerInvolved?: boolean; step?: number; elapsedMs?: number } = {},
+): { rows: PmStepRow[]; note: string } {
+  const name = opts.name ?? "Seshat";
+  if (status.phase === "idle") {
+    return { rows: [], note: `Queued. ${name} starts as soon as the server picks it up.` };
+  }
+  const rows = pmSteps(status, {
+    ...(opts.workerInvolved !== undefined ? { workerInvolved: opts.workerInvolved } : {}),
+    ...(opts.step !== undefined ? { step: opts.step } : {}),
+  });
+  const step = opts.step;
+  const next = step ? `step ${step + 1}` : "its next step";
+  const elapsed = opts.elapsedMs ?? 0;
+  let note = "";
+  switch (status.phase) {
+    case "waiting_for_step":
+      note = `Waiting for ${step ? `step ${step}` : "the current step"} to finish. The agent is never stopped mid-edit.`;
+      break;
+    case "loading_pm": {
+      note = opts.workerInvolved
+        ? `Only one model fits in memory, so the agent waits at a safe step boundary and continues from ${next} once ${name} has replied. You can keep working; the reply lands here.`
+        : `${name} runs on this machine. You can keep working; the reply lands here.`;
+      const eta = statusEtaSeconds(status) ?? PM_LOAD_ETA_FALLBACK_SECONDS;
+      if (elapsed > eta * 1000)
+        note = `Taking longer than usual. The model is still loading. ${note}`;
+      break;
+    }
+    case "thinking":
+      note =
+        elapsed > PM_LONG_ANSWER_MS
+          ? "Long answers can take up to two minutes on this machine."
+          : "Reading the board, the runs and the ledger.";
+      break;
+    case "resuming_worker":
+      note = `Reloading the agent; ${next} starts next.`;
+      break;
+  }
+  return { rows, note };
+}
+
 /** `0:07`, `1:04`, `12:30` — elapsed time on a running clock. */
 export function formatClock(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -1453,4 +1506,21 @@ export function sourceCites(
     out.push(item);
   }
   return out;
+}
+
+/** The `model` the notifier records on a notice it shows in the panel (PM-P6-10). */
+export const PANEL_NOTICE_MODEL = "notifier";
+
+/**
+ * A notice the notifier put in Seshat's panel while the person had the board
+ * in focus (PM-P6-10), in the product's neutral text (PM-N9-6): shown as the
+ * product's notice, never as a reply in Seshat's voice. Undefined for any
+ * other message, which renders as it always has.
+ */
+export function threadNotice(m: {
+  role: string;
+  model?: string | undefined;
+  text: string;
+}): string | undefined {
+  return m.role === "pm" && m.model === PANEL_NOTICE_MODEL ? `Notice · ${m.text}` : undefined;
 }

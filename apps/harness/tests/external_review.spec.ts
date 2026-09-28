@@ -7,8 +7,10 @@ import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { MockInferenceAdapter } from "@sekhemet/models";
 import { intentFor } from "@sekhemet/sync";
+import { REVIEW_DESK_COPY } from "@sekhemet/ui";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  externalReviewerFor,
   isExternalReview,
   reviewTargetOf,
   runExternalReview,
@@ -97,7 +99,7 @@ describe("X15: external review cards", () => {
     const posted: { method: string; path: string; body: unknown }[] = [];
     const reviewer = new MockInferenceAdapter("seshat", [
       {
-        text: '{"findings":[{"severity":"likely_send_back","note":"b.ts: `as any` breaks the no-any preference; type c as number."}]}',
+        text: '{"criteria":[],"preferences":[{"n":1,"broken":true,"at":"b.ts:2","note":"`as any` breaks the no-any preference; type c as number."}]}', // review-git P8: the Reviewer's structured reply, a broken preference at its line.
         toolCalls: [],
         usage: { promptTokens: 1, completionTokens: 1, durationMs: 1 },
       },
@@ -159,7 +161,11 @@ describe("X15: external review cards", () => {
     };
     expect(body.commit_id).toBe(head);
     expect(body.event).toBe("COMMENT");
-    expect(body.comments).toEqual([expect.objectContaining({ path: "b.ts", line: 2 })]);
+    // The gate's failure and the AI review's finding, each at its line.
+    expect(body.comments).toEqual([
+      expect.objectContaining({ path: "b.ts", line: 2 }),
+      expect.objectContaining({ path: "b.ts", line: 2, body: expect.stringMatching(/as any/) }),
+    ]);
     // K-S4-4: through the board, and a review whose gates failed never
     // enters Review; its run is an attempt on the ledger with its evidence.
     const after = await store.getCard(card.id);
@@ -242,6 +248,128 @@ describe("X15: external review cards", () => {
     expect((await store.getCard(card.id))?.status).toBe("review");
     const [ev] = store.runs.listEvidence(card.id);
     expect(ev).toMatchObject({ passed: true, path: r.evidencePath });
+  });
+
+  describe("the AI review of a pull request (RG-P8-10, -1)", () => {
+    const passing = async () => ({
+      passed: true,
+      failures: [],
+      durationMs: 1,
+      rungResults: [{ gate: "test", rung: "test", passed: true, durationMs: 1 }],
+    });
+    async function reviewCardFor(n: number) {
+      const { root, head } = repoWithPr();
+      const { store, board } = ledger(root);
+      const id = await applyWebhookIntent(
+        store,
+        { kind: "external_review", pr: n, headSha: head, url: "u" },
+        `dx${n}`,
+      );
+      await store.updateCard(
+        id as string,
+        { acceptanceCriteria: ["b is exported as a number", "c keeps b's type"] },
+        "harness",
+      );
+      const card = await store.getCard(id as string);
+      if (!card) throw new Error("no card");
+      return { root, store, board, card };
+    }
+
+    it("posts no inline comment at a line the model never cited", async () => {
+      const { root, store, board, card } = await reviewCardFor(41);
+      const posted: { body: unknown }[] = [];
+      // The model skips criterion 2: its finding is unclear with no citation.
+      const reviewer = new MockInferenceAdapter("gemma-4-26b", [
+        {
+          text: '{"criteria":[{"n":1,"verdict":"unmet","at":"b.ts:2","note":"c is typed any."}]}',
+          toolCalls: [],
+          usage: { promptTokens: 1, completionTokens: 1, durationMs: 1 },
+        },
+      ]);
+      const r = await runExternalReview(root, card, {
+        store,
+        board,
+        runGates: passing,
+        reviewer: async () => reviewer,
+        github: {
+          client: {
+            rest: async (_m: string, _p: string, body?: unknown) => {
+              posted.push({ body });
+              return {};
+            },
+          },
+          repo: { owner: "o", repo: "r" },
+        },
+      });
+      const reviewerFindings = r.findings.filter((f) => f.source === "reviewer");
+      expect(reviewerFindings).toHaveLength(2);
+      expect(reviewerFindings[0]).toMatchObject({ path: "b.ts", line: 2 });
+      expect(reviewerFindings[1]?.path).toBeUndefined();
+      const comments = (posted[0]?.body as { comments: { path: string; line: number }[] }).comments;
+      expect(comments).toEqual([expect.objectContaining({ path: "b.ts", line: 2 })]);
+    });
+
+    it("with the Review role unfilled, runs no AI review and says why on the issue", async () => {
+      const { root, store, board, card } = await reviewCardFor(42);
+      const r = await runExternalReview(root, card, {
+        store,
+        board,
+        runGates: passing,
+        notReviewed: REVIEW_DESK_COPY.noReviewer,
+      });
+      expect(r.error).toBeUndefined();
+      expect((await store.getCard(card.id))?.status).toBe("review");
+      expect((await store.getDossier(card.id)).reviews).toEqual([
+        expect.objectContaining({ verdict: "not_reviewed", text: REVIEW_DESK_COPY.noReviewer }),
+      ]);
+    });
+
+    it("a Review model that cannot be loaded parks nothing: the issue reaches Review saying so", async () => {
+      const { root, store, board, card } = await reviewCardFor(43);
+      const r = await runExternalReview(root, card, {
+        store,
+        board,
+        runGates: passing,
+        reviewer: async () => {
+          throw new Error("No model is assigned to the reviewer role");
+        },
+      });
+      expect(r.error).toBeUndefined();
+      expect((await store.getCard(card.id))?.status).toBe("review");
+      expect((await store.getDossier(card.id)).reviews).toEqual([
+        expect.objectContaining({
+          verdict: "not_reviewed",
+          text: REVIEW_DESK_COPY.reviewFailed("No model is assigned to the reviewer role"),
+        }),
+      ]);
+    });
+
+    it("takes its Review model from the run's Review role, never the Coding model's family", async () => {
+      const asked: string[] = [];
+      const access = {
+        queuedModel: (queue: string) => {
+          asked.push(queue);
+          return {
+            model: async () => new MockInferenceAdapter("gemma-4-26b", []) as never,
+            release: async () => undefined,
+          };
+        },
+      };
+      const unfilled = externalReviewerFor(
+        { state: "unfilled", reason: REVIEW_DESK_COPY.noReviewer },
+        access,
+      );
+      expect(unfilled.reviewer).toBeUndefined();
+      expect(unfilled.notReviewed).toBe(REVIEW_DESK_COPY.noReviewer);
+      expect(asked).toEqual([]);
+      const onPlanner = externalReviewerFor(
+        { state: "filled", model: "gemma-4-26b", queue: "manager" },
+        access,
+      );
+      expect(onPlanner.notReviewed).toBeUndefined();
+      expect((await onPlanner.reviewer?.())?.modelId).toBe("gemma-4-26b");
+      expect(asked).toEqual(["manager"]);
+    });
   });
 
   it("K-N3-4: a pull_request closed webhook merges an accepted card to Done, or returns it to Review", async () => {

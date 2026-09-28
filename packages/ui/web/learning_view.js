@@ -4,6 +4,16 @@
 import { esc, icon, kbd } from "./dom.js";
 import { approveRule, dismissEntry, editEntry, editRule, retireRule } from "./learning.js";
 import {
+  PLAYBOOK_COPY,
+  learningMissing,
+  playbookCrumb,
+  playbookSectionNotes,
+  profileHeadingNote,
+  retireSentence,
+  ruleReach,
+  ruleRoleLabel,
+} from "./lib/playbook.js";
+import {
   PROFILE_SOURCE_LABELS,
   RULE_SOURCE_LABELS,
   groupRules,
@@ -36,7 +46,7 @@ function evidenceHtml(list) {
     `<li>${e.cardId ? (cardChip(e.cardId) ?? `<span class="mono">${esc(e.cardId)}</span>`) : ""}${e.note ? `<span class="q">“${esc(e.note)}”</span>` : ""}${e.at ? `<span class="sec tnum">${esc(ago(e.at))}</span>` : ""}</li>`;
   const first = list.slice(0, 2).map(item).join("");
   const rest = list.slice(2);
-  return `<ul class="lr-ev">${first}</ul>${rest.length ? `<details class="lr-more"><summary>${rest.length} more ${rest.length === 1 ? "signal" : "signals"}</summary><ul class="lr-ev">${rest.map(item).join("")}</ul></details>` : ""}`;
+  return `<ul class="lr-ev">${first}</ul>${rest.length ? `<details class="lr-more"><summary>${esc(PLAYBOOK_COPY.moreSignals(rest.length))}</summary><ul class="lr-ev">${rest.map(item).join("")}</ul></details>` : ""}`;
 }
 
 function ruleHtml(r, maxAbs, ui) {
@@ -51,20 +61,20 @@ function ruleHtml(r, maxAbs, ui) {
   const value = `<span class="valbar${vb.negative ? " neg" : ""}" role="img" aria-label="${esc(`Value ${r.value.toFixed(2)}`)}"><i style="width:${Math.round(vb.ratio * 100)}%"></i></span><span class="tnum">Value ${esc(r.value.toFixed(1))}</span>`;
   const counts = `<span class="cnt">${icon("check", 12, "ic s12 i-pass")}<span class="tnum">${r.helpful}</span> helpful</span><span class="cnt">${icon("x", 12, "ic s12 i-fail")}<span class="tnum">${r.harmful}</span> harmful</span>`;
   const retire = retireSuggested(r)
-    ? `<p class="lr-warn">${icon("alert", 12, "ic s12 i-park")}<span>Proposed for retirement: used ${r.harmful} times on failing first attempts, ${r.helpful} on passing ones.</span></p>`
+    ? `<p class="lr-warn">${icon("alert", 12, "ic s12 i-park")}<span>${esc(retireSentence(r))}</span></p>`
     : "";
   let acts = "";
   if (r.readonly) {
-    acts =
-      '<span class="sec small" title="Seeded rules live in .sekhemet/playbook.toml">Edit in <span class="mono">playbook.toml</span></span>';
+    acts = `<span class="sec small" title="${esc(PLAYBOOK_COPY.seededTitle)}">Edit in <span class="mono">playbook.toml</span></span>`;
   } else if (r.status === "candidate") {
     acts = `<button class="btn sm primary" type="button" data-approve aria-haspopup="dialog">${icon("check", 12, "ic s12")}Approve…</button><button class="btn sm" type="button" data-edit>Edit</button><button class="btn sm ghost" type="button" data-retire>Retire</button>`;
   } else if (r.status === "active") {
     acts = `<button class="btn sm" type="button" data-edit>Edit</button><button class="btn sm ${retireSuggested(r) ? "" : "ghost"}" type="button" data-retire>Retire</button>`;
   }
-  const role = r.role === "manager" ? "For Seshat" : "For the agent";
+  const role = ruleRoleLabel(r.role);
+  const reach = ruleReach(r.reach);
   const text = editing ? editForm("rule", r.id, r.text) : `<p class="lr-text">${esc(r.text)}</p>`;
-  return `<li class="lrule ${esc(r.status)}${retireSuggested(r) ? " warn" : ""}" data-rule-id="${esc(r.id)}"><div class="lr-main"><div class="lr-head"><span class="role">${esc(role)}</span>${r.status === "active" && !r.readonly ? `<span class="role reach${r.reach === "global" ? " global" : ""}" title="${esc(r.reach === "global" ? "Lives in ~/.config/sekhemet and applies to every repository on this machine" : "Applies to this project only")}">${r.reach === "global" ? "All projects" : "This project"}</span>` : ""}<span class="sec">${esc(RULE_SOURCE_LABELS[r.source] ?? r.source)}${r.createdAt ? ` · ${esc(ago(r.createdAt))}` : ""}</span></div>${text}<div class="lr-scope">${chips}</div>${r.status === "candidate" || r.unused ? "" : `<div class="lr-meta">${value}${counts}</div>`}${retire}${evidenceHtml(r.evidence)}</div>${editing ? "" : `<div class="lr-acts">${acts}</div>`}</li>`;
+  return `<li class="lrule ${esc(r.status)}${retireSuggested(r) ? " warn" : ""}" data-rule-id="${esc(r.id)}"><div class="lr-main"><div class="lr-head"><span class="role">${esc(role)}</span>${r.status === "active" && !r.readonly ? `<span class="role reach${r.reach === "global" ? " global" : ""}" title="${esc(reach.title)}">${esc(reach.label)}</span>` : ""}<span class="sec">${esc(RULE_SOURCE_LABELS[r.source] ?? r.source)}${r.createdAt ? ` · ${esc(ago(r.createdAt))}` : ""}</span></div>${text}<div class="lr-scope">${chips}</div>${r.status === "candidate" || r.unused ? "" : `<div class="lr-meta">${value}${counts}</div>`}${retire}${evidenceHtml(r.evidence)}</div>${editing ? "" : `<div class="lr-acts">${acts}</div>`}</li>`;
 }
 
 function profileEntryHtml(e, ui) {
@@ -87,11 +97,11 @@ export function profileSectionHtml(profile, ui) {
             `<div class="pgrp"><h4>${esc(g.label)}</h4><ul class="lrules">${g.entries.map((e) => profileEntryHtml(e, ui)).join("")}</ul></div>`,
         )
         .join("")
-    : '<p class="sec empty-l">Nothing yet. Seshat learns from your send-back notes, the proposals you apply or discard, and the fields you change after it sets them. Statements appear here after a run.</p>';
+    : `<p class="sec empty-l">${esc(PLAYBOOK_COPY.profile.empty)}</p>`;
   const gone = dismissed.length
-    ? `<details class="lr-more"><summary>${dismissed.length} dismissed</summary><ul class="lrules quiet">${dismissed.map((e) => `<li class="lentry dismissed"><p class="lr-text">${esc(e.statement)}</p></li>`).join("")}</ul></details>`
+    ? `<details class="lr-more"><summary>${esc(PLAYBOOK_COPY.profile.dismissed(dismissed.length))}</summary><ul class="lrules quiet">${dismissed.map((e) => `<li class="lentry dismissed"><p class="lr-text">${esc(e.statement)}</p></li>`).join("")}</ul></details>`
     : "";
-  return `<section id="pb-profile" class="lsec"><h3 class="sh">What Seshat has learned about you <span class="sec">${active} ${active === 1 ? "statement" : "statements"} Seshat reads when it answers you</span></h3><p class="lp-note">${icon("lock", 12, "ic s12")}<span>These stay on this machine, in the project's ledger. Edit a statement to correct it; dismiss it and Seshat stops using it.</span></p>${body}${gone}</section>`;
+  return `<section id="pb-profile" class="lsec"><h3 class="sh">${esc(PLAYBOOK_COPY.profile.heading)} <span class="sec">${esc(profileHeadingNote(active))}</span></h3><p class="lp-note">${icon("lock", 12, "ic s12")}<span>${esc(PLAYBOOK_COPY.profile.lock)}</span></p>${body}${gone}</section>`;
 }
 
 /**
@@ -124,33 +134,35 @@ function withSeeds(rules) {
 export function learningHtml(data, ui) {
   const rules = withSeeds(data.rules ?? []);
   const g = groupRules(rules);
+  const notes = playbookSectionNotes(g);
   const maxAbs = Math.max(1, ...rules.map((r) => Math.abs(r.value || 0)));
   const project = store.state.meta?.project ?? "";
   setTopbar({
     title: "Playbook",
-    crumb: `${project}${project ? " · " : ""}${g.active.length} active · ${g.candidate.length} awaiting approval`,
+    crumb: playbookCrumb(project, g),
   });
   const list = (items) =>
     `<ul class="lrules">${items.map((r) => ruleHtml(r, maxAbs, ui)).join("")}</ul>`;
   const cand = g.candidate.length
     ? list(g.candidate)
-    : '<p class="sec empty-l">Nothing awaiting approval. New rules come from fixes that took the agent several tries, your send-back notes, and Seshat\'s review at the end of a run.</p>';
-  const active = g.active.length ? list(g.active) : '<p class="sec empty-l">No active rules.</p>';
+    : `<p class="sec empty-l">${esc(PLAYBOOK_COPY.empty.candidates)}</p>`;
+  const active = g.active.length
+    ? list(g.active)
+    : `<p class="sec empty-l">${esc(PLAYBOOK_COPY.empty.active)}</p>`;
   const retired = g.retired.length
-    ? `<details class="lr-more"><summary>${g.retired.length} retired</summary>${list(g.retired)}</details>`
-    : '<p class="sec empty-l">None retired.</p>';
-  return `<div class="lp"><p class="lp-lede">${icon("lock", 14, "ic s14")}<span>Learned from check results and what you do, never from a model grading itself. Everything stays on this machine and is recorded on the ledger. A rule takes effect only after you approve it, and you can edit or retire any of them.</span></p>
-<section id="pb-candidates" class="lsec"><h3 class="sh">Needs your approval <span class="sec">${g.candidate.length} ${g.candidate.length === 1 ? "candidate" : "candidates"}</span></h3>${cand}</section>
-<section id="pb-active" class="lsec"><h3 class="sh">Active <span class="sec">${g.active.length} · given to the agent or Seshat when their scope matches · value rises with each helpful use and decays over time</span></h3>${active}</section>
-<section id="pb-retired" class="lsec"><h3 class="sh">Retired</h3>${retired}</section>
+    ? `<details class="lr-more"><summary>${esc(notes.retired)}</summary>${list(g.retired)}</details>`
+    : `<p class="sec empty-l">${esc(PLAYBOOK_COPY.empty.retired)}</p>`;
+  return `<div class="lp"><p class="lp-lede">${icon("lock", 14, "ic s14")}<span>${esc(PLAYBOOK_COPY.lede)}</span></p>
+<section id="pb-candidates" class="lsec"><h3 class="sh">${esc(PLAYBOOK_COPY.headings.candidates)} <span class="sec">${esc(notes.candidates)}</span></h3>${cand}</section>
+<section id="pb-active" class="lsec"><h3 class="sh">${esc(PLAYBOOK_COPY.headings.active)} <span class="sec">${esc(notes.active)}</span></h3>${active}</section>
+<section id="pb-retired" class="lsec"><h3 class="sh">${esc(PLAYBOOK_COPY.headings.retired)}</h3>${retired}</section>
 ${profileSectionHtml(data.profile, ui)}</div>`;
 }
 
 export function learningMissingHtml(status) {
-  const text =
-    status === 404
-      ? "<b>Learning isn't on this server yet.</b> <code>GET /api/learning</code> returned 404. Below are the seeded rules and your send-back suggestions; approvals, counts and what Seshat has learned about you arrive with an updated Sekhemet."
-      : `<b>Couldn't load what Sekhemet has learned.</b> The server returned ${esc(status > 0 ? status : "no response")}. Showing the playbook file instead.`;
+  // DB-N2-8: the banner's words are the model's (`learningMissing`, lib/playbook.js).
+  const m = learningMissing(status);
+  const text = `<b>${esc(m.title)}</b> ${m.endpoint ? `<code>${esc(m.endpoint)}</code> ` : ""}${esc(m.detail)}`;
   return `<p class="lp-banner">${icon("alert", 14, "ic s14 i-park")}<span>${text}</span></p>`;
 }
 
@@ -172,25 +184,24 @@ export function bindLearning(root, ui, rerender) {
     const ap = t.closest("[data-approve]");
     if (ap && rule) {
       openPicker(ap, {
-        heading: "Approve for",
+        heading: PLAYBOOK_COPY.approve.heading,
         search: false,
         options: [
           {
             value: "project",
-            label: "This project",
-            detail: "Only this repository's issues",
+            label: PLAYBOOK_COPY.approve.project.label,
+            detail: PLAYBOOK_COPY.approve.project.detail,
             plain: true,
           },
           {
             value: "global",
-            label: "All projects",
-            detail: "Every repository on this machine",
+            label: PLAYBOOK_COPY.approve.global.label,
+            detail: PLAYBOOK_COPY.approve.global.detail,
             plain: true,
           },
         ],
         wide: true,
-        footer:
-          "All-projects rules live in ~/.config/sekhemet and apply to every repository on this machine.",
+        footer: PLAYBOOK_COPY.approve.footer,
         onPick: (reach) => approveRule(rule, reach),
       });
       return;

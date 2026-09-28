@@ -2,7 +2,7 @@ import type { BoardServiceImpl } from "@sekhemet/board";
 import type { CardRecord, CardStatus, CardStore, EventLog } from "@sekhemet/kernel";
 import { recordDecision } from "./accept.js";
 import { releaseHeldCards } from "./execute.js";
-import { learnFromSendBack } from "./learning/reflect.js";
+import { isPlaybookCandidate, learnFromSendBack } from "./learning/reflect.js";
 import { LearningStore } from "./learning/store.js";
 import { hookEngineFor } from "./user_hooks.js";
 
@@ -128,15 +128,18 @@ export async function sendBack(
     .catch(() => undefined);
   await learnFromSendBack(new LearningStore(ctx.log), card, why).catch(() => undefined);
   // The playbook candidate is a ledger event, not a side file (kernel rule
-  // 12, K-S7-6): the ledger is the only durable channel.
-  await ctx.cardStore.recordEvent({
-    type: PLAYBOOK_CANDIDATE_EVENT,
-    cardId: card.id,
-    actor: "human",
-    payload: { cardId: card.id },
-    // A person's note is free text: the private part, erasable (rule 33, K-S7-9).
-    private: { reason: why },
-  });
+  // 12, K-S7-6): the ledger is the only durable channel. RG-P8-15: only a
+  // note naming a file, symbol, check or error pattern (or the plan, for
+  // Seshat's PM rules) is a candidate; any other stays the dossier note above.
+  if (isPlaybookCandidate(why))
+    await ctx.cardStore.recordEvent({
+      type: PLAYBOOK_CANDIDATE_EVENT,
+      cardId: card.id,
+      actor: "human",
+      payload: { cardId: card.id },
+      // A person's note is free text: the private part, erasable (rule 33, K-S7-9).
+      private: { reason: why },
+    });
   await drainReview(ctx, card);
 }
 

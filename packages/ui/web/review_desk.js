@@ -13,6 +13,7 @@ import {
   builtByLabel,
   orderImplementationFiles,
   reviewCoverage,
+  reviewerAbsence,
   reviewerFindings,
   supersessionRows,
   testApprovalRows,
@@ -95,7 +96,13 @@ export function reviewerHtml(card, detail) {
   const desk = detail?.desk;
   if (!desk) return "";
   const m = findingsOf(card, detail);
-  if (m.rows.length === 0) return "";
+  if (m.rows.length === 0) {
+    // RG-P8-10, models rule 23: why no AI review ran, in place of an empty list.
+    const why = reviewerAbsence(desk.findings ?? []);
+    return why
+      ? `<section aria-label="AI review findings" class="mreview rfind" data-reviewer><h3 class="sh">${esc(C.heading)}</h3><p class="mr-why">${esc(why)}</p></section>`
+      : "";
+  }
   const row = (r) => {
     const tone = r.verdict === "unmet" ? "fail" : r.verdict === "unclear" ? "parked" : "pass";
     const ic =

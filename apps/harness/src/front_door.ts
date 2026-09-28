@@ -199,6 +199,8 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--no-private",
   "--offline",
   "--on",
+  // `measure seshat|reviewer --only a,b` (PM-P6-13, RG-P8-13).
+  "--only",
   "--otlp",
   "--out",
   "--output",
