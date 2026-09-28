@@ -58,7 +58,7 @@ function svgHtml(cards) {
     .join("");
   return {
     lay,
-    html: `<svg class="dg-svg" role="img" aria-label="Card dependency graph"><defs><marker id="dg-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z"/></marker></defs><g class="dg-world">${edges}${nodes}</g></svg>`,
+    html: `<svg class="dg-svg" role="img" aria-label="Issue dependency graph"><defs><marker id="dg-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z"/></marker></defs><g class="dg-world">${edges}${nodes}</g></svg>`,
   };
 }
 
@@ -85,7 +85,7 @@ function render() {
   );
   setTopbar({
     title: "Dependencies",
-    crumb: `${store.state.meta?.project ?? ""} · ${linked.length} of ${cards.length} cards linked`,
+    crumb: `${store.state.meta?.project ?? ""} · ${linked.length} of ${cards.length} issues linked`,
   });
   const shown = linked.length ? linked : cards;
   const { html, lay } = svgHtml(shown);
@@ -95,13 +95,13 @@ function render() {
   const host = $(".dg-host", ui.root);
   host.innerHTML = shown.length
     ? html
-    : '<div class="ib-empty"><b>No cards yet.</b><span>Cards and the cards they wait on appear here as a graph.</span></div>';
+    : '<div class="ib-empty"><b>No issues yet.</b><span>Issues and the issues they wait on appear here as a graph.</span></div>';
   const note = $(".dg-note", ui.root);
   note.textContent = lay.cycles.length
-    ? `A dependency loop runs through ${lay.cycles.length} card(s); Sekhemet refuses to add another.`
+    ? `A dependency loop runs through ${lay.cycles.length} issue(s); Sekhemet refuses to add another.`
     : linked.length
-      ? "Arrows point from a card to the cards that wait on it. Faded arrows are satisfied."
-      : "No card depends on another yet, so every card stands alone.";
+      ? "Arrows point from an issue to the issues that wait on it. Faded arrows are satisfied."
+      : "No issue depends on another yet, so every issue stands alone.";
   if (!ui.fitted || !ui.view) {
     ui.fitted = true;
     fit();

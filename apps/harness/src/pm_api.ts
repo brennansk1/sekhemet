@@ -289,7 +289,7 @@ export function createPmApi(ctx: PmApiContext) {
       const underEpic = epic && epic.tier === "epic" ? epic : null;
       const reply = await pmStore.appendReply({
         replyTo: [],
-        text: `A new card from the board: “${title}”. Apply it and the planning model sizes it, writes its acceptance criteria and bounds its scope.`,
+        text: `A new issue from the board: “${title}”. Apply it and the planning model sizes it, writes its acceptance criteria and bounds its scope.`,
         proposals: [
           {
             kind: "create_card",
@@ -387,7 +387,7 @@ export function createPmApi(ctx: PmApiContext) {
       const card = ctx.cardStore ? await ctx.cardStore.getCard(id) : null;
       // PM-N9-8: an issue the person cannot see has none they can read.
       if (!ctx.cardStore || !card || !audience().canSee(personOf(req), card.projectId)) {
-        ctx.json(res, 404, { error: `No card ${id}` });
+        ctx.json(res, 404, { error: `No issue ${id}` });
         return true;
       }
       ctx.json(res, 200, { suggestions: await suggestionsOn(ctx.cardStore, id, audience()) });
@@ -539,7 +539,7 @@ export function createPmApi(ctx: PmApiContext) {
       if (!cardStore) return true;
       const id = cardMatch[1] as string;
       if (!(await cardStore.getCard(id))) {
-        ctx.json(res, 404, { error: `No card ${id}` });
+        ctx.json(res, 404, { error: `No issue ${id}` });
         return true;
       }
       const b = await ctx.readJsonBody(req);

@@ -276,7 +276,7 @@ async function openSuggestion(ctx: SuggestionContext, id: string) {
   if (!s) throw new SuggestionError(`No suggestion ${id}.`, 404);
   if (s.state !== "open") throw new SuggestionError(`This suggestion was already ${s.state}.`, 409);
   const card = await ctx.cardStore.getCard(s.cardId);
-  if (!card) throw new SuggestionError(`Card ${s.cardId} no longer exists.`, 409);
+  if (!card) throw new SuggestionError(`Issue ${s.cardId} no longer exists.`, 409);
   const principal = ctx.principal ?? ctx.cardStore.localPrincipal();
   const refusal = ownerRefusal(card, principal, ctx.audience);
   if (refusal) throw new SuggestionError(refusal, 403);

@@ -416,7 +416,7 @@ export async function acceptPreconditions(
   if (!card || card.status !== "review") {
     throw new AcceptRefusedError(
       "not_in_review",
-      `Card ${cardId} is in '${card?.status ?? "nowhere"}'. Only a card in Review can be accepted.`,
+      `Issue ${cardId} is in '${card?.status ?? "nowhere"}'. Only an issue in Review can be accepted.`,
     );
   }
   if (card.hold?.kind === "awaitingMerge") {
@@ -429,13 +429,13 @@ export async function acceptPreconditions(
   if (!ev) {
     throw new AcceptRefusedError(
       "no_evidence",
-      `${cardId} has no evidence bundle on the ledger; nothing to accept`,
+      `${cardId} has no checks recorded (its Checks tab is empty); nothing to accept`,
     );
   }
   if (ev.passed !== true || (ev.rungResults ?? []).length === 0) {
     throw new AcceptRefusedError(
       "evidence_failed",
-      `${cardId}'s latest evidence ${(ev.rungResults ?? []).length === 0 ? "ran no gates" : "did not pass every blocking gate"}`,
+      `${cardId}'s latest evidence ${(ev.rungResults ?? []).length === 0 ? "ran no checks" : "did not pass every blocking check"}`,
     );
   }
   const ledger = ctx.cardStore.verifyLedger();
@@ -464,7 +464,7 @@ export async function acceptPreconditions(
     if (remaining.findings.length > 0 || remaining.files.length > 0) {
       const parts = [
         remaining.findings.length
-          ? `acknowledge the Reviewer's finding(s) ${remaining.findings.join(", ")}`
+          ? `acknowledge the AI review finding(s) ${remaining.findings.join(", ")}`
           : "",
         remaining.files.length ? `look at ${remaining.files.join(", ")}` : "",
       ].filter(Boolean);
@@ -621,7 +621,7 @@ export async function acceptCard(
     afterAcceptedCardZero(ctx.repoPath, stored, sha);
   } catch (err) {
     (ctx.report ?? console.error)(
-      `The project's gates were not derived after card zero was accepted: ${err instanceof Error ? err.message : String(err)}`,
+      `The project's checks were not derived after the setup issue was accepted: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
   // §2.5.5: stacked children rebase onto the integration branch and re-run
@@ -629,7 +629,7 @@ export async function acceptCard(
   // The accept stands; a restack that fails is said, not swallowed.
   await execute.restackAfterAccept(execCtx, stored, target).catch((err: unknown) => {
     (ctx.report ?? console.error)(
-      `Restacking the cards stacked on ${stored.id} failed after it was accepted: ${err instanceof Error ? err.message : String(err)}`,
+      `Restacking the issues stacked on ${stored.id} failed after it was accepted: ${err instanceof Error ? err.message : String(err)}`,
     );
   });
   await execute.releaseHeldCards(execCtx).catch(() => []);
@@ -732,7 +732,7 @@ export async function revertAccept(
   const stored = await ctx.cardStore.getCard(card.id);
   if (stored?.status !== "done") {
     throw new Error(
-      `${card.id} is not done (it is ${stored?.status ?? "missing"}); only an accepted card is reverted`,
+      `${card.id} is not done (it is ${stored?.status ?? "missing"}); only an accepted issue is reverted`,
     );
   }
   const accepted = (await ctx.cardStore.cardEvents(card.id, ["card/accepted"])).at(-1);

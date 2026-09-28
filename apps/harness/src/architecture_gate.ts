@@ -12,6 +12,7 @@ import {
   createSourceIndex,
   gateCopy,
 } from "@sekhemet/gates";
+import { blockLines, isHeading, markdownBlocks } from "./markdown.js";
 import { changedSources } from "./reachability_gate.js";
 
 /**
@@ -52,25 +53,25 @@ export function parseInvariants(brief: string): ParsedInvariants {
   const rules: Invariant[] = [];
   const unenforced: string[] = [];
   let inSection = false;
-  // Comments are not declarations: a brief shows the forms as examples.
-  for (const raw of brief.replace(/<!--[\s\S]*?-->/g, "").split("\n")) {
-    const heading = /^#{1,6}\s+(.*)$/.exec(raw.trim());
-    if (heading) {
-      inSection = /^invariants\b/i.test(heading[1] ?? "");
+  // Read as Markdown (DEC-44): comments are not declarations (a brief shows
+  // the forms as examples in one), a `#` line in a code block is not a
+  // heading, and an item wrapped onto a second line is one invariant. A code
+  // block's lines are still read, so nothing in the section goes unreported.
+  for (const block of markdownBlocks(brief)) {
+    if (isHeading(block)) {
+      inSection = /^invariants\b/i.test(block.text.trim());
       continue;
     }
     if (!inSection) continue;
-    const line = raw
-      .trim()
-      .replace(/^[-*]\s+/, "")
-      .trim();
-    if (!line) continue;
-    const imp = NO_IMPORT.exec(line);
-    const def = DEFINED_ONLY.exec(line);
-    if (imp?.[1] && imp[2]) rules.push({ kind: "no-import", from: imp[1], to: imp[2], text: line });
-    else if (def?.[1] && def[2])
-      rules.push({ kind: "defined-only", name: def[1], file: def[2], text: line });
-    else unenforced.push(line);
+    for (const line of blockLines(block)) {
+      const imp = NO_IMPORT.exec(line);
+      const def = DEFINED_ONLY.exec(line);
+      if (imp?.[1] && imp[2])
+        rules.push({ kind: "no-import", from: imp[1], to: imp[2], text: line });
+      else if (def?.[1] && def[2])
+        rules.push({ kind: "defined-only", name: def[1], file: def[2], text: line });
+      else unenforced.push(line);
+    }
   }
   return { rules, unenforced };
 }

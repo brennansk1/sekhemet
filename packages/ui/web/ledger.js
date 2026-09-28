@@ -77,7 +77,7 @@ function filtersHtml() {
   ]
     .map((t) => `<option value="${t}"${ui.filter.type === t ? " selected" : ""}>${t}</option>`)
     .join("");
-  return `<div class="lg-filters" role="group" aria-label="Filters"><label>Card <select data-f="card"><option value="">All cards</option>${cards}</select></label><label>Actor <select data-f="actor"><option value="">Everyone</option>${actors}</select></label><label>Type <select data-f="type" class="mono"><option value="">All types</option>${types}</select></label>${ui.filter.card || ui.filter.actor || ui.filter.type ? '<button class="link-btn" type="button" data-clear>Clear filters</button>' : ""}</div>`;
+  return `<div class="lg-filters" role="group" aria-label="Filters"><label>Issue <select data-f="card"><option value="">All issues</option>${cards}</select></label><label>Actor <select data-f="actor"><option value="">Everyone</option>${actors}</select></label><label>Type <select data-f="type" class="mono"><option value="">All types</option>${types}</select></label>${ui.filter.card || ui.filter.actor || ui.filter.type ? '<button class="link-btn" type="button" data-clear>Clear filters</button>' : ""}</div>`;
 }
 
 function rowHtml(e) {

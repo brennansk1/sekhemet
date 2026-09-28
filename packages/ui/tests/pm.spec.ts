@@ -235,10 +235,10 @@ describe("proposal field diffs", () => {
         },
         { id: "c", kind: "update_card", summary: "", cardId: "z", state: "applied" },
       ]),
-    ).toBe("Apply 2 changes to 5 cards");
+    ).toBe("Apply 2 changes to 5 issues");
     expect(
       applyAllLabel([{ id: "a", kind: "create_card", summary: "", cards: [{}], state: "open" }]),
-    ).toBe("Apply 1 change to 1 card");
+    ).toBe("Apply 1 change to 1 issue");
   });
 });
 
@@ -516,7 +516,7 @@ describe("learning (contract §6)", () => {
       { label: "Kind", value: "RULES" },
       { label: "Files", value: "src/**" },
     ]);
-    expect(scopeChips({})).toEqual([{ label: "Applies to", value: "every card" }]);
+    expect(scopeChips({})).toEqual([{ label: "Applies to", value: "every issue" }]);
     expect(valueBar(-2, 4)).toEqual({ ratio: 0.5, negative: true });
     expect(valueBar(9, 4).ratio).toBe(1);
   });

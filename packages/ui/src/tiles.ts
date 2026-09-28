@@ -152,7 +152,7 @@ const APPROVAL_HOLD_CLI =
   /(Waiting on a person's approval of its criteria): sekhemet approve \S+?\.(?=\s|$)/g;
 
 function boardWords(reason: string): string {
-  return reason.replace(APPROVAL_HOLD_CLI, "$1: open the card to approve them.");
+  return reason.replace(APPROVAL_HOLD_CLI, "$1: open the issue to approve them.");
 }
 
 function blockerOf(card: TileCardLike): { text: string } | undefined {

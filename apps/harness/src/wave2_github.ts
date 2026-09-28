@@ -74,7 +74,7 @@ export function prBody(
   /** The person who accepted the card (INT-39): named here, never the assignee. */
   accepter?: string,
 ): string {
-  return `${evidenceSummary(card, ev ?? {}, abandoned)}\n\n_Implemented by the Sekhemet Worker. Card \`${card.id}\`._${accepter ? `\n\nAccepted by ${accepter}` : ""}`;
+  return `${evidenceSummary(card, ev ?? {}, abandoned)}\n\n_Implemented by the Sekhemet Agent. Issue \`${card.id}\`._${accepter ? `\n\nAccepted by ${accepter}` : ""}`;
 }
 
 /**
@@ -522,13 +522,13 @@ export async function runDependencyVerifications(
       payload: { id: card.id, pr: r.pr, headSha: r.headSha, passed: r.gatesPassed, autoMerge },
     });
     deps.say?.(
-      `Dependency PR #${r.pr}: gates ${r.gatesPassed ? "pass" : "fail"}; ${
+      `Dependency PR #${r.pr}: ${r.gatesPassed ? "all checks passed" : "checks failed"}; ${
         autoMerge === "enabled"
           ? "auto-merge enabled"
           : autoMerge === "not_allowed"
             ? "left for a person (the project does not allow auto-merge)"
             : autoMerge === "head_moved"
-              ? "not merged: its head moved since the gates ran"
+              ? "not merged: its head moved since the checks ran"
               : autoMerge === "not_dependency_bot"
                 ? "not merged: GitHub does not show it as the bot's own branch in this repository"
                 : autoMerge === "refused"

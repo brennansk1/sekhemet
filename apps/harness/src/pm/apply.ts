@@ -100,7 +100,7 @@ export async function applyProposal(
   const card = proposal.cardId ? await ctx.cardStore.getCard(proposal.cardId) : null;
   if (proposal.cardId && !card) {
     await ctx.pmStore.setProposalState(proposal.id, "stale");
-    throw new ProposalError(`Card ${proposal.cardId} no longer exists.`, 409);
+    throw new ProposalError(`Issue ${proposal.cardId} no longer exists.`, 409);
   }
   // PM-N9-9: a change Seshat made for someone else's issue is its owner's to apply.
   const refusal =
@@ -297,7 +297,7 @@ async function viaPipeline<T>(
 ): Promise<T> {
   if (!ctx.repoPath) {
     throw new ProposalError(
-      "This server has no repository to plan in, so the planner cannot apply it.",
+      "This server has no repository to plan in, so the Planning model cannot apply it.",
       501,
     );
   }
@@ -323,7 +323,7 @@ export async function markDuplicate(
   of: string,
   actor = "human",
 ): Promise<void> {
-  if (!(await ctx.cardStore.getCard(of))) throw new ProposalError(`No card ${of}.`, 409);
+  if (!(await ctx.cardStore.getCard(of))) throw new ProposalError(`No issue ${of}.`, 409);
   const reason = `Duplicate of ${of}`;
   if (card.status !== "rejected") {
     await ctx.boardService.transitionCard({

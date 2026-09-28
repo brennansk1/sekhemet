@@ -1,5 +1,9 @@
-// Gates strip (FRONTEND_DESIGN §2.5.3): one segment per gate in execution order.
+// Gates strip (dashboard §2.5.3): one segment per gate in execution order,
+// and past six gates one per check family, failing groups first, each naming
+// its failed gates and holding the rest behind "+n passed" (DB-N1-1). On a
+// phone the strip is a vertical list (review.css, DB-N1-2).
 import { esc, icon } from "./dom.js";
+import { gateStripModel } from "./lib/strip.js";
 import {
   GATE_STATE_LABELS,
   formatDuration,
@@ -47,47 +51,51 @@ export function gatesStripHtml(
   { failures = [], config = null, emptyContract = false, sha = "" } = {},
 ) {
   const firstFail = gates.find((g) => g.state === "fail");
-  const segs = gates.map((g) => {
-    const def = config?.gates?.find((d) => d.id === g.id);
-    const mine = failures.filter(
-      (f) => (f.gate ?? f.rung) === g.id || (!f.gate && f.rung === def?.rung),
-    );
-    const count =
-      g.state === "fail" && g.failures ? `<span class="sec tnum">${g.failures}</span>` : "";
-    const right = g.detail ?? (g.durationMs !== undefined ? formatDuration(g.durationMs) : "");
-    const aria = [
-      `${g.label}: ${GATE_STATE_LABELS[g.state].toLowerCase()}`,
-      g.failures ? `${g.failures} ${g.failures === 1 ? "error" : "errors"}` : "",
-      g.durationMs !== undefined ? seconds(g.durationMs) : (g.detail ?? ""),
-    ]
-      .filter(Boolean)
-      .join(", ");
-    let pop = `<b>${esc(g.label)} · ${esc(GATE_STATE_LABELS[g.state])}</b><span class="mono">${esc(g.id)}${def?.command ? ` · $ ${esc(def.command)}` : ""}</span>`;
-    if (g.state === "fail" && mine.length) {
-      const items = mine
-        .slice(0, 3)
-        .map((f) => {
-          const loc = f.location
-            ? `${f.location.file}${f.location.line ? `:${f.location.line}` : ""}`
-            : "";
-          const msg = String(f.errorExcerpt ?? "").split("\n")[0];
-          return `<li><span class="mono">${esc(loc)}</span> ${esc(msg.replace(loc, "").replace(/^:\d+\s*/, ""))}</li>`;
-        })
-        .join("");
-      pop += `<ul>${items}</ul>${mine.length > 3 ? `<div class="mono" style="margin-top:4px">Show all (${mine.length})</div>` : ""}`;
-    } else if (g.state === "skipped" && firstFail) {
-      pop += `<div style="margin-top:4px">Skipped because ${esc(firstFail.label)} failed.</div>`;
-    } else if (g.state === "unavailable") {
-      const why = String(mine[0]?.actual ?? mine[0]?.errorExcerpt ?? "").split("\n")[0];
-      pop += `<div style="margin-top:4px">Could not run, so it gave no verdict${why ? `: ${esc(why)}` : ""}.</div>`;
-    } else if (g.state === "not_run") {
-      pop +=
-        '<div style="margin-top:4px">Declared in gates.toml but did not run in this attempt.</div>';
-    } else if (g.derived) {
-      pop += `<div style="margin-top:4px">${esc(g.detail ?? "")}${config ? ` (limit ${esc(config.maxFiles)} files, ${esc(config.maxDiffLines)} lines)` : ""}. Computed by Sekhemet from the diff.</div>`;
-    }
-    return `<button class="g-seg ${g.state}" type="button" role="listitem" data-gate="${esc(g.id)}" aria-label="${esc(aria)}">${icon(ICON[g.state] ?? "minus")}<span class="nm">${esc(g.label)}</span>${count}<span class="t tnum">${esc(right)}</span><span class="pop" role="tooltip">${pop}</span></button>`;
-  });
+  const layers = Object.fromEntries((config?.gates ?? []).map((d) => [d.id, d.layer]));
+  const model = gateStripModel(gates, layers);
+  const segs = model.grouped
+    ? model.segments.map((seg) => groupHtml(seg))
+    : gates.map((g) => {
+        const def = config?.gates?.find((d) => d.id === g.id);
+        const mine = failures.filter(
+          (f) => (f.gate ?? f.rung) === g.id || (!f.gate && f.rung === def?.rung),
+        );
+        const count =
+          g.state === "fail" && g.failures ? `<span class="sec tnum">${g.failures}</span>` : "";
+        const right = g.detail ?? (g.durationMs !== undefined ? formatDuration(g.durationMs) : "");
+        const aria = [
+          `${g.label}: ${GATE_STATE_LABELS[g.state].toLowerCase()}`,
+          g.failures ? `${g.failures} ${g.failures === 1 ? "error" : "errors"}` : "",
+          g.durationMs !== undefined ? seconds(g.durationMs) : (g.detail ?? ""),
+        ]
+          .filter(Boolean)
+          .join(", ");
+        let pop = `<b>${esc(g.label)} · ${esc(GATE_STATE_LABELS[g.state])}</b><span class="mono">${esc(g.id)}${def?.command ? ` · $ ${esc(def.command)}` : ""}</span>`;
+        if (g.state === "fail" && mine.length) {
+          const items = mine
+            .slice(0, 3)
+            .map((f) => {
+              const loc = f.location
+                ? `${f.location.file}${f.location.line ? `:${f.location.line}` : ""}`
+                : "";
+              const msg = String(f.errorExcerpt ?? "").split("\n")[0];
+              return `<li><span class="mono">${esc(loc)}</span> ${esc(msg.replace(loc, "").replace(/^:\d+\s*/, ""))}</li>`;
+            })
+            .join("");
+          pop += `<ul>${items}</ul>${mine.length > 3 ? `<div class="mono" style="margin-top:4px">Show all (${mine.length})</div>` : ""}`;
+        } else if (g.state === "skipped" && firstFail) {
+          pop += `<div style="margin-top:4px">Skipped because ${esc(firstFail.label)} failed.</div>`;
+        } else if (g.state === "unavailable") {
+          const why = String(mine[0]?.actual ?? mine[0]?.errorExcerpt ?? "").split("\n")[0];
+          pop += `<div style="margin-top:4px">Could not run, so it gave no verdict${why ? `: ${esc(why)}` : ""}.</div>`;
+        } else if (g.state === "not_run") {
+          pop +=
+            '<div style="margin-top:4px">Declared in gates.toml but did not run in this attempt.</div>';
+        } else if (g.derived) {
+          pop += `<div style="margin-top:4px">${esc(g.detail ?? "")}${config ? ` (limit ${esc(config.maxFiles)} files, ${esc(config.maxDiffLines)} lines)` : ""}. Computed by Sekhemet from the diff.</div>`;
+        }
+        return `<button class="g-seg ${g.state}" type="button" role="listitem" data-gate="${esc(g.id)}" aria-label="${esc(aria)}">${icon(ICON[g.state] ?? "minus")}<span class="nm">${esc(g.label)}</span>${count}<span class="t tnum">${esc(right)}</span><span class="pop" role="tooltip">${pop}</span></button>`;
+      });
   if (emptyContract) {
     segs.push(
       `<button class="g-seg warn" type="button" role="listitem" aria-label="Checks configuration empty">${icon("alert")}<span class="nm">Checks configuration empty</span><span class="pop" role="tooltip"><b>These results weren’t checked against a configuration.</b>gates.toml hashed to <span class="mono">${esc(String(sha).slice(0, 8))}…</span>, the hash of an empty file.</span></button>`,
@@ -103,6 +111,28 @@ export function gatesStripHtml(
     );
   }
   return `<div class="g-strip" role="list" aria-label="Checks">${segs.join("")}</div>`;
+}
+
+/**
+ * One check family's segment (DB-N1-1): *Security 3/4*, the gates that did
+ * not pass by name, *+3 passed*; the popover lists every gate in the group.
+ */
+function groupHtml(seg) {
+  const names = seg.failing
+    .map((g) => `${g.label}${g.state === "fail" && g.failures ? ` ✕ ${g.failures}` : ""}`)
+    .join(", ");
+  const aria = [
+    `${seg.label}: ${seg.count.replace("/", " of ")} passed`,
+    ...seg.failing.map((g) => `${g.label} ${GATE_STATE_LABELS[g.state].toLowerCase()}`),
+  ].join(", ");
+  const rows = seg.gates
+    .map(
+      (g) =>
+        `<li>${icon(ICON[g.state] ?? "minus", 12)} ${esc(g.label)} · ${esc(GATE_STATE_LABELS[g.state])} <span class="mono">${esc(g.id)}</span>${g.firstError ? `<div class="mono">${esc(g.firstError)}</div>` : ""}</li>`,
+    )
+    .join("");
+  const first = seg.failing[0] ?? seg.gates[0];
+  return `<button class="g-seg grp ${seg.state}" type="button" role="listitem" data-gate="${esc(first?.id ?? "")}" data-family="${esc(seg.family ?? "")}" aria-label="${esc(aria)}">${icon(ICON[seg.state] ?? "minus")}<span class="nm">${esc(seg.label)}</span><span class="sec tnum">${esc(seg.count)}</span>${names ? `<span class="fl">${esc(names)}</span>` : ""}<span class="t tnum">${esc(seg.overflow)}</span><span class="pop" role="tooltip"><b>${esc(seg.label)} · ${esc(seg.count)} passed</b><ul>${rows}</ul></span></button>`;
 }
 
 /** Loading state: four neutral boxes of the real geometry. */

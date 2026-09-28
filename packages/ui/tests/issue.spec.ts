@@ -37,7 +37,7 @@ describe("DB-N8-1: the issue page's tabs", () => {
   });
 
   it("the cheat sheet names them from the one keymap", () => {
-    const row = KEY_GROUPS.find((g) => g.name === "Card and lists")?.rows[0];
+    const row = KEY_GROUPS.find((g) => g.name === "Issue and lists")?.rows[0];
     expect(row).toEqual({
       label: "Activity, Checks, Changes, AI review, Steps, Plan",
       keys: ["1", "6"],
@@ -263,7 +263,7 @@ describe("DB-N8-2: the agent's state and the controls it offers", () => {
       state: "taken_over",
       label: "paused",
       sentence:
-        "Taken over by a person. Work in the card's worktree; the agent's work so far is on its branch.",
+        "Taken over by a person. Work in the issue's worktree; the agent's work so far is on its branch.",
       controls: ["submit", "hand_back"],
       messageBox: false,
     });

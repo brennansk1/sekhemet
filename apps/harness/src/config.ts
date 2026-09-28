@@ -538,6 +538,8 @@ export interface ResolvedConfig {
   layers: string[];
   /** Values refused, each naming its key (RG-S6-8). */
   problems: string[];
+  /** The layer each value a file sets came from, by dotted key (DB-N4-1); the rest are defaults. */
+  sources: Record<string, string>;
 }
 
 /**
@@ -592,5 +594,34 @@ export function resolveConfig(options: ResolveConfigOptions): ResolvedConfig {
 
   const problems: string[] = [];
   const config = project(merged, problems, user?.values);
-  return { config, layers: layers.map((l) => l.name), problems };
+  return {
+    config,
+    layers: layers.map((l) => l.name),
+    problems,
+    sources: keySources(layers, problems),
+  };
+}
+
+/**
+ * Which layer each value set in a file came from (dashboard DB-N4-1): the
+ * last layer to set a dotted key wins. A key no layer sets is the default's
+ * and is absent; so is a value that was refused, whose default applies.
+ */
+function keySources(layers: ConfigLayer[], problems: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  const walk = (values: TomlTable, prefix: string, layer: string) => {
+    for (const [key, value] of Object.entries(values)) {
+      const dotted = prefix ? `${prefix}.${key}` : key;
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        walk(value as TomlTable, dotted, layer);
+      } else {
+        out[dotted] = layer;
+      }
+    }
+  };
+  for (const layer of layers) walk(layer.values, "", layer.name);
+  for (const key of Object.keys(out)) {
+    if (problems.some((p) => p.startsWith(`${key} `))) delete out[key];
+  }
+  return out;
 }

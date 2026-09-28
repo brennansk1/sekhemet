@@ -5,12 +5,23 @@
 // the section *Preferences*, never "This browser"). It replaces the Registry
 // and Settings views. Preferences holds the theme, Tips and the first-run
 // role (this browser's, §2.9.1, §2.2.5) and the project's Estimation (DB-N7-2: off, or story points), kept per project.
+// Review capacity and Project configuration are NEW-dashboard-4's (DB-N4-1..3):
+// the project's minutes a day with the In review limit they give, disabled
+// with its reason for a person who may not change them, and every effective
+// value with the file it came from.
 import { esc, getJSON, sendJSON } from "./dom.js";
 import { setTips, storage, tipsOn } from "./learn.js";
 import { FIRST_RUN, readRole, writeRole } from "./lib/learn.js";
 import { ESTIMATION_LABELS } from "./lib/pm.js";
+import {
+  DENSITY_CHOICES,
+  configRows,
+  readDensity,
+  reviewCapacityView,
+  reviewMinutesInput,
+} from "./lib/settings.js";
 import { getSession } from "./session.js";
-import { currentThemeChoice, setTheme, setTopbar } from "./shell.js";
+import { currentThemeChoice, setDensity, setTheme, setTopbar } from "./shell.js";
 import { store } from "./store.js";
 
 export const SECTIONS = [
@@ -39,7 +50,7 @@ function readOnlyReason() {
     : "Read-only: an Admin changes the models, the benchmark and the project's configuration.";
 }
 
-const ui = { root: null, section: "models", child: null };
+const ui = { root: null, section: "models", child: null, capacity: null };
 
 function tabsHtml() {
   return `<nav class="cfg-tabs" aria-label="Configuration sections">${SECTIONS.map(
@@ -75,20 +86,28 @@ async function mountBenchmark(host) {
 }
 
 function reviewHtml(cfg) {
-  const minutes = cfg?.config?.review?.reviewMinutesPerDay ?? 60;
+  const cap = cfg?.reviewCapacity;
   const project = store.state.project;
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-review"><h3 id="cfg-h-review">Review capacity</h3><p>Review minutes per day set the review WIP limit.</p>${
-    project
-      ? `<form class="row" data-review-form><label for="cfg-review">Minutes a day for ${esc(project.name ?? project.id)}</label><input id="cfg-review" type="text" inputmode="numeric" name="minutes" value="${esc(project.reviewMinutesPerDay ?? minutes)}"><button class="btn" type="submit">Save</button></form>`
-      : `<p class="sec">The default is ${esc(`${minutes} minutes a day`)}. Choose a project in the sidebar to change its own.</p>`
-  }<p class="why" data-review-note></p></section>`;
+  ui.capacity = cap ?? null;
+  if (!cap) {
+    const minutes = cfg?.config?.review?.reviewMinutesPerDay ?? 60;
+    return `<section class="cfg-sec" aria-labelledby="cfg-h-review"><h3 id="cfg-h-review">Review capacity</h3><p>Review minutes per day set the In review limit.</p><p class="sec">The default is ${esc(`${minutes} minutes a day`)}. Choose a project in the sidebar to change its own.</p></section>`;
+  }
+  const v = reviewCapacityView(cap);
+  const why = v.disabled ? ' aria-describedby="cfg-review-why"' : "";
+  return `<section class="cfg-sec" aria-labelledby="cfg-h-review"><h3 id="cfg-h-review">Review capacity</h3><p>Review minutes per day set the In review limit: how many issues may wait for review at once.</p><form class="row" data-review-form><label for="cfg-review">Minutes a day for ${esc(project?.name ?? cap.project)}</label><input id="cfg-review" type="text" inputmode="numeric" name="minutes" value="${esc(v.value)}"${v.disabled ? " disabled" : ""}${why}><button class="btn" type="submit"${v.disabled ? " disabled" : ""}${why}>Save</button></form>${v.disabled ? `<p class="why" id="cfg-review-why">${esc(v.reason)}</p>` : ""}<p class="sec" data-review-limit>${esc(v.limitText)}</p><p class="why" role="status" data-review-note></p></section>`;
 }
 
 function preferencesHtml() {
   const choice = currentThemeChoice();
   const opt = (v, label) =>
     `<option value="${v}"${choice === v ? " selected" : ""}>${label}</option>`;
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-preferences"><h3 id="cfg-h-preferences">Preferences</h3><div class="row"><label for="cfg-theme">Theme</label><select id="cfg-theme" data-theme-select>${opt("system", "Match the system")}${opt("dark", "Basalt (dark)")}${opt("light", "Sand (light)")}</select></div><p class="sec">The theme applies to this browser only and needs no permission.</p>${tipsHtml()}${estimationHtml()}</section>`;
+  const density = readDensity(storage());
+  const dens = DENSITY_CHOICES.map(
+    (c) =>
+      `<option value="${c.value}"${density === c.value ? " selected" : ""}>${esc(c.label)}</option>`,
+  ).join("");
+  return `<section class="cfg-sec" aria-labelledby="cfg-h-preferences"><h3 id="cfg-h-preferences">Preferences</h3><div class="row"><label for="cfg-theme">Theme</label><select id="cfg-theme" data-theme-select>${opt("system", "Match the system")}${opt("dark", "Basalt (dark)")}${opt("light", "Sand (light)")}</select></div><div class="row"><label for="cfg-density">Density</label><select id="cfg-density" data-density-select aria-describedby="cfg-density-why">${dens}</select></div><p class="sec" id="cfg-density-why">Comfortable board cards add the plan's first line and the token and time bars. The theme and density apply to this browser only and need no permission.</p>${tipsHtml()}${estimationHtml()}</section>`;
 }
 
 /** Tips and the first-run role: this browser's, like the theme (§2.9.1, §2.2.5). */
@@ -118,7 +137,7 @@ function estimationHtml() {
   const ro = readOnlyReason();
   const opt = (v) =>
     `<option value="${v}"${current === v ? " selected" : ""}>${esc(ESTIMATION_LABELS[v])}</option>`;
-  return `<h4 id="cfg-h-estimation">Estimation</h4><div class="row"><label for="cfg-estimation">Estimation for ${esc(project.name ?? project.id)}</label><select id="cfg-estimation" data-estimation-select aria-describedby="cfg-estimation-why"${ro ? " disabled" : ""}>${opt("off")}${opt("points")}</select></div><p class="sec" id="cfg-estimation-why">Kept for the whole project. Off, no points show on cards, columns or reports, and work is counted in issues; Story points shows them.${ro ? ` ${esc(ro)}` : ""}</p><p class="why" role="status" data-estimation-note></p>`;
+  return `<h4 id="cfg-h-estimation">Estimation</h4><div class="row"><label for="cfg-estimation">Estimation for ${esc(project.name ?? project.id)}</label><select id="cfg-estimation" data-estimation-select aria-describedby="cfg-estimation-why"${ro ? " disabled" : ""}>${opt("off")}${opt("points")}</select></div><p class="sec" id="cfg-estimation-why">Kept for the whole project. Off, no points show on board cards, columns or reports, and work is counted in issues; Story points shows them.${ro ? ` ${esc(ro)}` : ""}</p><p class="why" role="status" data-estimation-note></p>`;
 }
 
 async function saveEstimation(value) {
@@ -141,17 +160,15 @@ function projectHtml(cfg) {
   if (!cfg) return '<div class="sk" style="height:120px"></div>';
   if (cfg.error) return `<p role="alert">${esc(cfg.error)}</p>`;
   const c = cfg.config ?? {};
-  const rows = [
-    ["Reserved hours", c.machine?.reservedHours],
-    ["Overnight hours", c.machine?.overnightHours ?? "The complement of the reserved hours"],
-    ["Network", c.network?.mode],
-    ["Setup", c.team?.mode],
-  ]
-    .filter(([, v]) => v !== undefined)
-    .map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`)
+  // Every effective value with where it came from (DB-N4-1).
+  const rows = configRows(c, cfg.sources ?? {})
+    .map(
+      (r) =>
+        `<tr><th scope="row">${esc(r.label)}</th><td>${esc(r.value)}</td><td class="sec">${esc(r.source)} <span class="mono">${esc(r.key)}</span></td></tr>`,
+    )
     .join("");
   const problems = (cfg.problems ?? []).map((p) => `<li>${esc(p)}</li>`).join("");
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-project"><h3 id="cfg-h-project">Project configuration</h3><p class="sec">Read from ${esc((cfg.layers ?? []).join(", "))}. Edit the files to change it.</p><div class="cfg-detail"><dl>${rows}</dl></div>${problems ? `<h4>Problems</h4><ul class="cfg-warn">${problems}</ul>` : ""}</section>`;
+  return `<section class="cfg-sec" aria-labelledby="cfg-h-project"><h3 id="cfg-h-project">Project configuration</h3><p class="sec">The values in force, and the file each came from. Edit the files to change them.</p><div class="tbl-wrap"><table class="tbl"><thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">From</th></tr></thead><tbody>${rows}</tbody></table></div>${problems ? `<h4>Problems</h4><ul class="cfg-warn">${problems}</ul>` : ""}</section>`;
 }
 
 async function renderSection() {
@@ -172,7 +189,10 @@ async function renderSection() {
     host.innerHTML = preferencesHtml();
   } else {
     host.innerHTML = '<div class="sk" style="height:120px"></div>';
-    const r = await getJSON("/api/config").catch(() => ({ ok: false, data: null }));
+    const project = store.state.project?.id;
+    const r = await getJSON(
+      `/api/config${project ? `?project=${encodeURIComponent(project)}` : ""}`,
+    ).catch(() => ({ ok: false, data: null }));
     const cfg = r.ok ? r.data : { error: r.data?.error ?? "The configuration could not be read." };
     host.innerHTML = ui.section === "review" ? reviewHtml(cfg) : projectHtml(cfg);
   }
@@ -182,22 +202,40 @@ async function onSubmit(e) {
   const form = e.target instanceof HTMLFormElement ? e.target : null;
   if (!form?.hasAttribute("data-review-form")) return;
   e.preventDefault();
-  const minutes = Number(form.elements.namedItem("minutes")?.value);
+  const field = form.elements.namedItem("minutes");
   const note = ui.root.querySelector("[data-review-note]");
-  if (!Number.isFinite(minutes) || minutes <= 0) {
-    if (note) note.textContent = "Review minutes per day must be more than 0.";
+  const previous = ui.capacity?.minutesPerDay ?? 60;
+  // 0 or less is refused beside the field; the previous value stays (DB-N4-3).
+  const input = reviewMinutesInput(field?.value ?? "", previous);
+  if (!input.ok) {
+    if (field) field.value = String(input.value);
+    if (note) note.textContent = input.error;
     return;
   }
   const r = await sendJSON("PUT", "/api/config/review", {
-    project: store.state.project?.id,
-    minutesPerDay: minutes,
+    project: ui.capacity?.project ?? store.state.project?.id,
+    minutesPerDay: input.value,
   });
-  if (note) note.textContent = r.ok ? "Saved." : (r.data?.error ?? "Not saved.");
+  if (!r.ok) {
+    if (field) field.value = String(previous);
+    if (note) note.textContent = r.data?.error ?? "Not saved.";
+    return;
+  }
+  // The recomputed limit, at once (DB-N4-2).
+  ui.capacity = {
+    ...(ui.capacity ?? { project: r.data?.project, allowed: true }),
+    minutesPerDay: r.data?.minutesPerDay ?? input.value,
+    ...(r.data?.reviewWip !== undefined ? { reviewWip: r.data.reviewWip } : {}),
+  };
+  const limit = ui.root.querySelector("[data-review-limit]");
+  if (limit) limit.textContent = reviewCapacityView(ui.capacity).limitText;
+  if (note) note.textContent = "Saved.";
 }
 
 function onChange(e) {
   const t = e.target;
   if (t instanceof HTMLSelectElement && t.hasAttribute("data-theme-select")) setTheme(t.value);
+  if (t instanceof HTMLSelectElement && t.hasAttribute("data-density-select")) setDensity(t.value);
   if (t instanceof HTMLSelectElement && t.hasAttribute("data-tips-select"))
     setTips(t.value === "on");
   if (t instanceof HTMLSelectElement && t.hasAttribute("data-role-select"))

@@ -245,7 +245,7 @@ export function noticeFor(e: EventRecord, dashboard?: string): Notice | undefine
       ...base,
       event: "review",
       title: "Ready for review",
-      message: `${card} passed its gates and waits for you.`,
+      message: `${card} passed its checks and waits for you.`,
       priority: 3,
     };
   }
@@ -257,7 +257,7 @@ export function noticeFor(e: EventRecord, dashboard?: string): Notice | undefine
     return {
       ...base,
       event: budget ? "budget" : "parked",
-      title: budget ? "Budget reached" : "Card parked",
+      title: budget ? "Budget reached" : "Issue parked",
       message: `${card}: ${reason}`.slice(0, 400),
       priority: 4,
     };
@@ -297,7 +297,7 @@ export function noticeFor(e: EventRecord, dashboard?: string): Notice | undefine
       event: "requantised",
       key: `requantised:${r.model}`,
       title: "A model is served requantised",
-      message: `Ollama serves ${r.model} ${what}. Its answers may differ from the qualified weights; serve it through llama-server where exact weights matter.`,
+      message: `Ollama serves ${r.model} ${what}. Its answers may differ from the weights verified on this machine; serve it through llama-server where exact weights matter.`,
       priority: 3,
     };
   }
@@ -305,7 +305,7 @@ export function noticeFor(e: EventRecord, dashboard?: string): Notice | undefine
     return {
       ...base,
       event: "question",
-      title: "The Worker has a question",
+      title: "The agent has a question",
       message: `${card}: ${String(p.text ?? "").slice(0, 300)}`,
       priority: 3,
     };
@@ -472,7 +472,7 @@ const HELD_LABEL: Partial<Record<NotifyEvent, string>> = {
   review: "waits for review",
   parked: "was parked",
   budget: "reached its budget",
-  question: "has a question from the Worker",
+  question: "has a question from the agent",
   decision: "has a decision waiting",
   reminder: "has a reminder",
 };
@@ -483,7 +483,7 @@ function heldSummary(held: EventRecord[]): string {
   const lines = held.map((e) => {
     const kind = String((e.payload as { kind?: string }).kind ?? "needs_you") as NotifyEvent;
     const what = HELD_LABEL[kind] ?? "needs you";
-    return `- ${e.cardId ?? "a card"} ${what}`;
+    return `- ${e.cardId ?? "an issue"} ${what}`;
   });
   return `Needs you (held for this standup, past the day's notice budget):\n${lines.join("\n")}`;
 }

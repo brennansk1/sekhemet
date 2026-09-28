@@ -215,8 +215,8 @@ describe("the navigation model (dashboard P11)", () => {
 });
 
 describe("the board's keys (dashboard P3)", () => {
-  it("DB-P3-3: lists Shift+V for pipeline stages among the Cards keys", () => {
-    const cards = KEY_GROUPS.find((g) => g.name === "Cards");
+  it("DB-P3-3: lists Shift+V for pipeline stages among the Board keys", () => {
+    const cards = KEY_GROUPS.find((g) => g.name === "Board");
     expect(cards?.rows.find((r) => r.label === "Pipeline stages")?.keys).toEqual(["⇧", "V"]);
   });
 });

@@ -1,6 +1,7 @@
 // Runs (FRONTEND_DESIGN §2.4.4): "Did the last unattended run go well, and is
 // it better than the one before?" A list of runs, and one run's scorecard.
 import { $, esc, getJSON, icon } from "./dom.js";
+import { runningRunText } from "./lib/live.js";
 import {
   formatDuration,
   formatTokens,
@@ -20,7 +21,11 @@ const ui = {
   prev: null,
   sort: { key: "order", dir: 1 },
   seq: 0,
+  tick: 0,
 };
+
+/** The selected row of the list, when it is a run still going (DB-N2-11). */
+const runningRow = () => ui.runs?.find((r) => r.id === ui.id && r.running);
 
 function when(iso, withYear = false) {
   const d = new Date(iso);
@@ -42,9 +47,11 @@ function titleOf(id) {
 function listHtml() {
   if (!ui.runs) return '<div class="sk sk-line" style="margin:12px 16px;width:70%"></div>';
   const rows = ui.runs
-    .map(
-      (r) =>
-        `<button class="rn" type="button" role="option" data-run="${esc(r.id)}" aria-selected="${r.id === ui.id}"><div class="a"><span>${esc(when(r.startedAt))}</span><span class="tnum">${r.firstTry} of ${r.cards}</span></div><div class="b"><span class="mono">${esc(r.model.replace(/:latest$/, ""))}</span><span class="tnum">${esc(formatDuration(r.totalDurationMs))}</span></div></button>`,
+    .map((r) =>
+      r.running
+        ? // A run still going (DB-N2-11): its progress and time so far, from the stream.
+          `<button class="rn running" type="button" role="option" data-run="${esc(r.id)}" aria-selected="${r.id === ui.id}"><div class="a"><span>${esc(when(r.startedAt))}</span><span class="tnum">${esc(runningRunText(r))}</span></div><div class="b"><span class="mono">${esc(r.model.replace(/:latest$/, ""))}</span></div></button>`
+        : `<button class="rn" type="button" role="option" data-run="${esc(r.id)}" aria-selected="${r.id === ui.id}"><div class="a"><span>${esc(when(r.startedAt))}</span><span class="tnum">${r.firstTry} of ${r.cards}</span></div><div class="b"><span class="mono">${esc(r.model.replace(/:latest$/, ""))}</span><span class="tnum">${esc(formatDuration(r.totalDurationMs))}</span></div></button>`,
     )
     .join("");
   const hint =
@@ -71,7 +78,7 @@ function numsHtml(run, s, prevS) {
     s.cards ? Math.round((s.firstTry / s.cards) * 100) : 0,
     prevS ? (prevS.cards ? Math.round((prevS.firstTry / prevS.cards) * 100) : 0) : undefined,
     { unit: " pts" },
-  )}</div></div><div class="num"><div class="k">Passed after a Planning model retry</div><div class="v">${s.passedAfterRetry} <small>of ${s.retried}</small></div><div class="d">${esc(retryNote)}</div></div><div class="num"><div class="k">Total time</div><div class="v">${esc(formatDuration(s.totalMs))}</div><div class="d">${s.failedMs ? `Failed cards used ${esc(formatDuration(s.failedMs))} (${Math.round((s.failedMs / Math.max(1, s.totalMs)) * 100)}%)` : "No time lost to failures"}</div><div class="d">${delta(s.totalMs, prevS?.totalMs, { better: "down", fmt: formatDuration })}</div></div><div class="num"><div class="k">Tokens</div><div class="v">${esc(formatTokens(s.promptTokens))} <small>in</small></div><div class="d">${esc(formatTokens(s.completionTokens))} out · ${s.tokensPerSecond.toFixed(1)} tok/s overall</div></div></div>`;
+  )}</div></div><div class="num"><div class="k">Passed after a Planning model retry</div><div class="v">${s.passedAfterRetry} <small>of ${s.retried}</small></div><div class="d">${esc(retryNote)}</div></div><div class="num"><div class="k">Total time</div><div class="v">${esc(formatDuration(s.totalMs))}</div><div class="d">${s.failedMs ? `Failed issues used ${esc(formatDuration(s.failedMs))} (${Math.round((s.failedMs / Math.max(1, s.totalMs)) * 100)}%)` : "No time lost to failures"}</div><div class="d">${delta(s.totalMs, prevS?.totalMs, { better: "down", fmt: formatDuration })}</div></div><div class="num"><div class="k">Tokens</div><div class="v">${esc(formatTokens(s.promptTokens))} <small>in</small></div><div class="d">${esc(formatTokens(s.completionTokens))} out · ${s.tokensPerSecond.toFixed(1)} tok/s overall</div></div></div>`;
 }
 
 function timelineHtml(run, s) {
@@ -100,11 +107,11 @@ function timelineHtml(run, s) {
   const aria = s.segments
     .map((g) => `${shortId(g.cardId)} ${g.label.toLowerCase()} ${formatDuration(g.ms)}`)
     .join(", ");
-  return `<section><h3 class="sh">Timeline <span class="sec">cards ran one after another; width is time</span></h3><div class="tl" role="img" aria-label="Timeline: ${esc(aria)}">${segs}${gap}</div><div class="axis">${axis}</div><div class="legend"><span><i class="sw pass"></i>Passed</span><span><i class="sw fail"></i>Failed</span><span><i class="sw parked"></i>Paused</span></div></section>`;
+  return `<section><h3 class="sh">Timeline <span class="sec">issues ran one after another; width is time</span></h3><div class="tl" role="img" aria-label="Timeline: ${esc(aria)}">${segs}${gap}</div><div class="axis">${axis}</div><div class="legend"><span><i class="sw pass"></i>Passed</span><span><i class="sw fail"></i>Failed</span><span><i class="sw parked"></i>Paused</span></div></section>`;
 }
 
 const COLS = [
-  ["title", "Card", ""],
+  ["title", "Issue", ""],
   ["attempt", "Attempt", ""],
   ["result", "Result", ""],
   ["stop", "Why it stopped", ""],
@@ -142,7 +149,7 @@ function tableHtml(run) {
       return `<tr><td><a class="t" href="#/card/${encodeURIComponent(e.cardId)}/steps">${esc(e.title)}</a><span class="id">${esc(shortId(e.cardId))}</span></td><td class="tnum">${esc(e.attempt ?? 1)}</td><td>${res}</td><td title="${esc(stopReasonLabel(e.stopReason).sentence)}">${esc(e.stop)}</td><td class="r">${esc(e.turns)}</td><td class="r">${esc(formatDuration(e.durationMs))}</td><td class="r">${esc(formatTokens(e.promptTokens))} · ${esc(formatTokens(e.completionTokens))}</td><td>${main}</td></tr>`;
     })
     .join("");
-  return `<section><h3 class="sh">Cards</h3><div class="tbl-wrap"><table class="tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div></section>`;
+  return `<section><h3 class="sh">Issues</h3><div class="tbl-wrap"><table class="tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div></section>`;
 }
 
 function stopsHtml(s) {
@@ -153,7 +160,7 @@ function stopsHtml(s) {
         `<div class="bar-r"><span>${esc(x.label)}</span><span class="trk"><i class="${x.tone === "pass" ? "pass" : x.tone === "parked" ? "parked" : "fail"}" style="width:${((x.count / total) * 100).toFixed(1)}%"></i></span><span class="n tnum">${x.count}</span></div>`,
     )
     .join("");
-  return `<section><h3 class="sh">Why cards stopped</h3><div class="bars">${bars}</div></section>`;
+  return `<section><h3 class="sh">Why issues stopped</h3><div class="bars">${bars}</div></section>`;
 }
 
 function observations(run, s) {
@@ -169,12 +176,12 @@ function observations(run, s) {
   if (pass.length && fail.length) {
     out.push([
       "check",
-      `Passing cards took ${range(pass)} steps. Failing cards took ${range(fail)}.`,
+      `Passing issues took ${range(pass)} steps. Failing issues took ${range(fail)}.`,
     ]);
   } else if (pass.length) {
-    out.push(["check", `Every card passed, in ${range(pass)} steps.`]);
+    out.push(["check", `Every issue passed, in ${range(pass)} steps.`]);
   } else if (fail.length) {
-    out.push(["x", `No card passed. They stopped after ${range(fail)} steps.`]);
+    out.push(["x", `No issue passed. They stopped after ${range(fail)} steps.`]);
   }
   if (pass.length > 1) {
     const slow = [...pass].sort((a, b) => b.durationMs - a.durationMs)[0];
@@ -182,7 +189,7 @@ function observations(run, s) {
     if (slow.durationMs > 3 * Math.max(...rest)) {
       out.push([
         "clock",
-        `<b>${esc(titleOf(slow.cardId))}</b> took ${esc(formatDuration(slow.durationMs))} for ${slow.turns} steps; the other passing cards took ${esc(formatDuration(Math.min(...rest)))} to ${esc(formatDuration(Math.max(...rest)))}.`,
+        `<b>${esc(titleOf(slow.cardId))}</b> took ${esc(formatDuration(slow.durationMs))} for ${slow.turns} steps; the other passing issues took ${esc(formatDuration(Math.min(...rest)))} to ${esc(formatDuration(Math.max(...rest)))}.`,
       ]);
     }
   }
@@ -199,7 +206,7 @@ function observations(run, s) {
   if (rules.length) {
     out.push([
       "playbook",
-      `Playbook rules ${rules.map((r) => `<a class="mono" href="#/playbook">${esc(r.id)}</a>`).join(", ")} were learned from cards in this run.`,
+      `Playbook rules ${rules.map((r) => `<a class="mono" href="#/playbook">${esc(r.id)}</a>`).join(", ")} were learned from issues in this run.`,
     ]);
   }
   if (!out.length) return "";
@@ -207,14 +214,19 @@ function observations(run, s) {
 }
 
 function settingsHtml(run) {
-  return `<section><h3 class="sh">Run settings</h3><dl class="kv"><dt>Coding model</dt><dd class="mono">${esc(run.model)}</dd><dt>Planning model</dt><dd>${run.managerModel ? `<span class="mono">${esc(run.managerModel)}</span>` : '<span class="sec">None: failed cards were not retried</span>'}</dd><dt>Model swaps</dt><dd class="tnum">${run.modelSwaps ?? '<span class="sec">Not recorded</span>'}</dd><dt>Started</dt><dd class="tnum">${esc(when(run.startedAt, true))}</dd><dt>Report</dt><dd class="mono">${esc(run.id === "latest" ? ".sekhemet/queue_report.json" : `.sekhemet/runs/${run.id}.json`)}</dd></dl></section>`;
+  return `<section><h3 class="sh">Run settings</h3><dl class="kv"><dt>Coding model</dt><dd class="mono">${esc(run.model)}</dd><dt>Planning model</dt><dd>${run.managerModel ? `<span class="mono">${esc(run.managerModel)}</span>` : '<span class="sec">None: failed issues were not retried</span>'}</dd><dt>Model swaps</dt><dd class="tnum">${run.modelSwaps ?? '<span class="sec">Not recorded</span>'}</dd><dt>Started</dt><dd class="tnum">${esc(when(run.startedAt, true))}</dd><dt>Report</dt><dd class="mono">${esc(run.id === "latest" ? ".sekhemet/queue_report.json" : `.sekhemet/runs/${run.id}.json`)}</dd></dl></section>`;
 }
 
 function scoreHtml() {
   const sc = $(".sc", ui.root);
   if (!sc) return;
   if (ui.runs && ui.runs.length === 0) {
-    sc.innerHTML = `<div class="ev-empty">${icon("runs", 24, "ic s24")}<b>No runs yet.</b><span>Run every Ready card unattended: <code>sekhemet queue --auto-accept</code></span></div>`;
+    sc.innerHTML = `<div class="ev-empty">${icon("runs", 24, "ic s24")}<b>No runs yet.</b><span>Run every Ready issue unattended: <code>sekhemet queue --auto-accept</code></span></div>`;
+    return;
+  }
+  const live = runningRow();
+  if (live) {
+    sc.innerHTML = `<div class="ev-empty">${icon("runs", 24, "ic s24")}<b>${esc(runningRunText(live))}</b><span>This run is still going. Its scorecard appears here when it ends.</span></div>`;
     return;
   }
   const run = ui.run;
@@ -226,7 +238,7 @@ function scoreHtml() {
   const s = summarizeRun(run);
   const prevS = ui.prev ? summarizeRun(ui.prev) : null;
   const merged = run.entries.some((e) => e.accepted);
-  const sub = `${s.cards} Ready ${s.cards === 1 ? "card" : "cards"} on <span class="mono">${esc(run.model)}</span> · ${run.managerModel ? `Planning model <span class="mono">${esc(run.managerModel)}</span> retried failures` : "no Planning model retry configured"}${merged ? " · passing cards merged automatically" : ""}`;
+  const sub = `${s.cards} Ready ${s.cards === 1 ? "issue" : "issues"} on <span class="mono">${esc(run.model)}</span> · ${run.managerModel ? `Planning model <span class="mono">${esc(run.managerModel)}</span> retried failures` : "no Planning model retry configured"}${merged ? " · passing issues merged automatically" : ""}`;
   const top = sc.scrollTop;
   sc.innerHTML = `<div class="sc-h"><h2>Run of ${esc(when(run.startedAt))}</h2><p>${sub}</p></div>${numsHtml(run, s, prevS)}${timelineHtml(run, s)}${tableHtml(run)}<div class="two">${stopsHtml(s)}${observations(run, s)}</div>${settingsHtml(run)}`;
   sc.scrollTop = top;
@@ -238,6 +250,10 @@ async function selectRun(id, { replace = true } = {}) {
   $(".runs", ui.root).innerHTML = listHtml();
   ui.run = null;
   scoreHtml();
+  if (runningRow()) {
+    if (replace) history.replaceState(null, "", `#/runs/${encodeURIComponent(id)}`);
+    return;
+  }
   const i = ui.runs.findIndex((r) => r.id === id);
   const prevId = ui.runs[i + 1]?.id;
   const [cur, prev] = await Promise.all([
@@ -291,13 +307,27 @@ export function mount(view, route) {
       "cards" in patch &&
       (store.state.feed ?? []).some((e) => e.type === "card/status_changed")
     ) {
-      // A queue that just finished writes a new report; pick it up.
+      // A queue that just started or finished, or a running one's progress
+      // (DB-N2-11): picked up from the stream, without a reload.
       if (ui.runs)
         getJSON("/api/runs").then((r) => {
-          if (r.ok && ui.root && r.data.runs.length !== ui.runs.length) loadRuns(ui.id);
+          if (!r.ok || !ui.root) return;
+          const key = (runs) =>
+            runs
+              .map(
+                (x) => `${x.id}:${x.running ? `${x.running.finished}/${x.running.total}` : "done"}`,
+              )
+              .join(",");
+          if (key(r.data.runs) !== key(ui.runs)) loadRuns(ui.id);
         });
     }
   });
+  // A running run's elapsed time moves on between frames.
+  ui.tick = setInterval(() => {
+    if (!ui.root || !ui.runs?.some((r) => r.running)) return;
+    $(".runs", ui.root).innerHTML = listHtml();
+    if (runningRow()) scoreHtml();
+  }, 30_000);
   return {
     setParams(params) {
       if (params?.[0] && params[0] !== ui.id && ui.runs) selectRun(params[0], { replace: false });
@@ -311,6 +341,7 @@ export function mount(view, route) {
     },
     unmount() {
       unsub();
+      clearInterval(ui.tick);
       root.remove();
       ui.root = null;
     },

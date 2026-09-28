@@ -83,8 +83,8 @@ export function ledgerAnswer(
       (c) => c.stopReason && c.stopReason !== "gate_passed" && c.status !== "done",
     );
     const text = stopped.length
-      ? `Where the cards stop: ${stopped.map((c) => `${name(c)} stopped on ${c.stopReason}`).join("; ")}.`
-      : "No card has stopped short.";
+      ? `Where the issues stop: ${stopped.map((c) => `${name(c)} stopped on ${c.stopReason}`).join("; ")}.`
+      : "No issue has stopped short.";
     return `${text}${FROM_LEDGER}`;
   }
   if (kind === "waiting") {

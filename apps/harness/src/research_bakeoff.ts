@@ -351,7 +351,7 @@ export function researcherAdoption(
   const inc = models.find((r) => r.model === incumbent);
   if (!inc)
     throw new Error(
-      `the Researcher bake-off compares every candidate with the incumbent ${incumbent} on the same run; it did not run`,
+      `the Research model bake-off compares every candidate with the incumbent ${incumbent} on the same run; it did not run`,
     );
   const verdicts = models
     .filter((r) => r !== inc)
@@ -665,7 +665,7 @@ export async function adoptResearcher(
   const verdict = record.adoption.verdicts.find((v) => v.model === input.model);
   if (!verdict?.allowed)
     throw new AssignmentRefusal(
-      `Refusing to adopt ${input.model} as the Researcher: MD-N11-2 does not allow it${verdict ? ` (${verdict.reason})` : " (it was not in the bake-off)"}; the Researcher stays ${currentAssignment(registry, input.host, "researcher", "default")?.model ?? INCUMBENT_RESEARCHER}.`,
+      `Refusing to adopt ${input.model} as the Research model: MD-N11-2 does not allow it${verdict ? ` (${verdict.reason})` : " (it was not in the bake-off)"}; the Research model stays ${currentAssignment(registry, input.host, "researcher", "default")?.model ?? INCUMBENT_RESEARCHER}.`,
     );
   const eventId = record.benchmarkEvents[input.model];
   if (!eventId) throw new AssignmentRefusal(`No recorded bake-off event for ${input.model}.`);
@@ -839,7 +839,7 @@ export async function runResearchBakeoffCommand(
     const build = llamaBuildNumber(combination.engine);
     const refusal =
       look.status !== "qualified"
-        ? `${c.modelId} is not qualified for this combination on this host (${look.status}); qualify it first: sekhemet qualify --models ${c.modelId}`
+        ? `${c.modelId} is not verified on this machine for this combination (${look.status}); verify it first: sekhemet qualify --models ${c.modelId}`
         : c.minLlamaBuild && (build === undefined || build < c.minLlamaBuild)
           ? `${c.modelId} needs llama.cpp b${c.minLlamaBuild} or later; this engine is ${combination.engine}`
           : undefined;
@@ -887,7 +887,7 @@ export async function runResearchBakeoffCommand(
     print(
       v.recommended
         ? `${v.model}: research routes to ${v.recommended}; not recommended: ${v.notRecommended.join(", ")}.`
-        : `${v.model}: its pipelines are indistinguishable on this set.`,
+        : `${v.model}: its pipelines show no clear difference on this set.`,
     );
   for (const v of record.adoption.verdicts)
     print(`${v.model}: ${v.allowed ? "may be adopted" : "not adopted"} — ${v.reason}.`);
@@ -939,7 +939,7 @@ async function adoptFromRecord(
 ): Promise<number> {
   const adopt = record.adoption.adopt;
   if (!adopt) {
-    print(`The Researcher stays ${INCUMBENT_RESEARCHER}.`);
+    print(`The Research model stays ${INCUMBENT_RESEARCHER}.`);
     return 0;
   }
   if (!adoptNow) {
@@ -955,7 +955,7 @@ async function adoptFromRecord(
   const status = qualification(adopt);
   if (status !== "qualified") {
     print(
-      `Refusing to adopt ${adopt}: ${adopt} is not qualified for this combination on this host (${status}); qualify it first: sekhemet qualify --models ${adopt}`,
+      `Refusing to adopt ${adopt}: ${adopt} is not verified on this machine for this combination (${status}); verify it first: sekhemet qualify --models ${adopt}`,
     );
     return 1;
   }
@@ -967,7 +967,7 @@ async function adoptFromRecord(
       qualification: status,
     });
     print(
-      `${r.model} adopted as the Researcher default on this host${r.previous ? `, replacing ${r.previous}; restore it with: sekhemet models restore researcher --default` : ""}.`,
+      `${r.model} adopted as the Research model default on this machine${r.previous ? `, replacing ${r.previous}; restore it with: sekhemet models restore researcher --default` : ""}.`,
     );
     return 0;
   } catch (err) {

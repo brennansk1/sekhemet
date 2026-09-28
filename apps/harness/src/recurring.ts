@@ -156,7 +156,7 @@ export async function scheduleCard(
   opts: { now?: Date; board?: Pick<BoardService, "transitionCard"> } = {},
 ): Promise<CardRecord> {
   const card = await store.getCard(cardId);
-  if (!card) throw new Error(`No card ${cardId}`);
+  if (!card) throw new Error(`No issue ${cardId}`);
   if (!spec.cron && !spec.trigger) throw new Error("a schedule needs --cron or --on");
   if (spec.cron) parseCron(spec.cron);
   if (spec.trigger && !TRIGGER.test(spec.trigger))

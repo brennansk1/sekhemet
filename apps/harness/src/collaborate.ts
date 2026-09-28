@@ -40,7 +40,7 @@ export interface CardMessage {
 
 async function requireCard(cardStore: CardStore, cardId: string) {
   const card = await cardStore.getCard(cardId);
-  if (!card) throw new Error(`Card not found: ${cardId}`);
+  if (!card) throw new Error(`Issue not found: ${cardId}`);
   return card;
 }
 
@@ -179,7 +179,7 @@ export async function handBack(
 ): Promise<void> {
   const card = await requireCard(ctx.cardStore, cardId);
   if (card.stopReason !== "paused" || card.status !== "in_progress") {
-    throw new Error(`${cardId} is not paused; only a paused card is handed back`);
+    throw new Error(`${cardId} is not paused; only a paused issue is handed back`);
   }
   // The note and the move in one transaction (kernel S7): a refused move records neither.
   await ctx.boardService.transitionCard({
@@ -351,7 +351,7 @@ export async function submitTakenOver(
         toStatus: to,
         actor: "human",
         principal,
-        reason: "the person's take-over passed the gates",
+        reason: "the person's take-over passed the checks",
       });
     }
   }

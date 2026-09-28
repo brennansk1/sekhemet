@@ -32,6 +32,13 @@ import {
 } from "@sekhemet/sync";
 import type { SekhemetConfig } from "./config.js";
 import { effectiveConfig } from "./config_apply.js";
+import {
+  type Tokens,
+  isHeading,
+  listItemText,
+  markdownBlocks,
+  paragraphLines,
+} from "./markdown.js";
 import { PmStore } from "./pm/store.js";
 
 /**
@@ -378,7 +385,7 @@ async function renderDecision(
     "## Decision Drivers",
     "",
     `* Recommended: ${recommended?.label ?? "none"}, because ${req.recommendation.rationale.replace(/\.$/, "")}.`,
-    `* ${req.policy === "safe_default" ? "Without an answer by the deadline, the safe default applies" : "Without an answer, the card stays parked"}.`,
+    `* ${req.policy === "safe_default" ? "Without an answer by the deadline, the safe default applies" : "Without an answer, the issue stays parked"}.`,
     "",
     "## Considered Options",
     "",
@@ -431,45 +438,61 @@ interface ParsedRequirement {
   criteria: { id?: string; text: string }[];
 }
 
-const REQ_HEADING = /^### (?:(REQ-\d+) — )?(.*)$/;
+const REQ_HEADING = /^(?:(REQ-\d+) — )?(.*)$/s;
 
+function readMetaLine(cur: ParsedRequirement, line: string): void {
+  for (const part of line.split(" · ")) {
+    const [key, ...rest] = part.split(": ");
+    const value = rest.join(": ").trim();
+    if (key === "priority" && value in KANO_OF) cur.priority = value as Moscow;
+    if (key === "kano") cur.kano = value;
+    if (key === "must") cur.must = value === "yes";
+    if (key === "dependsOn")
+      cur.dependsOn =
+        value === "none" || !value
+          ? []
+          : value
+              .split(",")
+              .map((x) => x.trim())
+              .filter(Boolean);
+  }
+}
+
+/**
+ * A requirements document read back (DS-N3-2): each level-3 heading is a
+ * requirement (`REQ-n — title`, or a new one without an id) and runs to the
+ * next heading of level 3 or above; its meta line (`version: … · priority: …
+ * · dependsOn: …`, an older document's `kano:` and `must:` too) and its list
+ * items (`` `id` text `` or a new criterion's text; the `invariant:` item
+ * left out) are read, everything else is not.
+ */
 export function parseRequirements(text: string): ParsedRequirement[] {
   const out: ParsedRequirement[] = [];
   let cur: ParsedRequirement | undefined;
-  for (const raw of text.split("\n")) {
-    const line = raw.trimEnd();
-    const h = REQ_HEADING.exec(line);
-    if (h) {
-      cur = { ...(h[1] ? { id: h[1] } : {}), title: (h[2] ?? "").trim(), criteria: [] };
-      out.push(cur);
+  for (const block of markdownBlocks(text)) {
+    if (isHeading(block)) {
+      if (block.depth === 3) {
+        const m = REQ_HEADING.exec(block.text.trim());
+        cur = { ...(m?.[1] ? { id: m[1] } : {}), title: (m?.[2] ?? "").trim(), criteria: [] };
+        out.push(cur);
+      } else if (block.depth < 3) cur = undefined;
       continue;
     }
     if (!cur) continue;
-    if (/^version: /.test(line)) {
-      for (const part of line.split(" · ")) {
-        const [key, ...rest] = part.split(": ");
-        const value = rest.join(": ").trim();
-        if (key === "priority" && value in KANO_OF) cur.priority = value as Moscow;
-        if (key === "kano") cur.kano = value;
-        if (key === "must") cur.must = value === "yes";
-        if (key === "dependsOn")
-          cur.dependsOn =
-            value === "none" || !value
-              ? []
-              : value
-                  .split(",")
-                  .map((x) => x.trim())
-                  .filter(Boolean);
+    if (block.type === "paragraph") {
+      for (const line of paragraphLines(block as Tokens.Paragraph)) {
+        if (/^version: /.test(line)) readMetaLine(cur, line);
       }
       continue;
     }
-    const withId = /^- `([^`]+)` (.*)$/.exec(line);
-    if (withId && withId[1] !== undefined) {
-      cur.criteria.push({ id: withId[1], text: (withId[2] ?? "").trim() });
-      continue;
+    if (block.type !== "list") continue;
+    for (const item of (block as Tokens.List).items) {
+      const line = listItemText(item);
+      const withId = /^`([^`]+)` (.*)$/s.exec(line);
+      if (withId && withId[1] !== undefined) {
+        cur.criteria.push({ id: withId[1], text: (withId[2] ?? "").trim() });
+      } else if (line && !line.startsWith("invariant: ")) cur.criteria.push({ text: line });
     }
-    const bare = /^- (?!invariant: )(.+)$/.exec(line);
-    if (bare) cur.criteria.push({ text: (bare[1] ?? "").trim() });
   }
   return out;
 }
@@ -517,21 +540,22 @@ export function diffRequirements(text: string, ledger: Requirement[]): DocumentD
   return out;
 }
 
-function sectionOf(text: string, heading: string): string | undefined {
-  const lines = text.split("\n");
-  const start = lines.findIndex((l) => l.trim() === heading);
-  if (start === -1) return undefined;
-  const body: string[] = [];
-  for (const l of lines.slice(start + 1)) {
-    if (/^#{1,2} /.test(l)) break;
-    body.push(l);
+/** A level-2 section's Markdown, up to the next heading of level 2 or above, trimmed. */
+function sectionOf(text: string, title: string): string | undefined {
+  const blocks = markdownBlocks(text);
+  const at = blocks.findIndex((b) => isHeading(b) && b.depth === 2 && b.text.trim() === title);
+  if (at === -1) return undefined;
+  let body = "";
+  for (const b of blocks.slice(at + 1)) {
+    if (isHeading(b) && b.depth <= 2) break;
+    body += b.raw;
   }
-  return body.join("\n").trim();
+  return body.trim();
 }
 
 /** The brief's differences: its baseline, the part a person wrote (DS-N3-2). */
 export function diffBrief(text: string, baseline: string | undefined): DocumentDifference[] {
-  const now = sectionOf(text, "## What people have today");
+  const now = sectionOf(text, "What people have today");
   if (now === undefined || now === (baseline ?? "Not stated.")) return [];
   return [{ kind: "changed", target: "brief", field: "baseline", proposed: now }];
 }
@@ -541,7 +565,11 @@ export function diffDecision(
   text: string,
   decision: PlannerDecision | undefined,
 ): DocumentDifference[] {
-  const chosen = /^Chosen option: "(.*)",/m.exec(text)?.[1];
+  const chosen = markdownBlocks(text)
+    .filter((b): b is Tokens.Paragraph => b.type === "paragraph")
+    .flatMap(paragraphLines)
+    .map((l) => /^Chosen option: "(.*)",/.exec(l)?.[1])
+    .find((c) => c !== undefined);
   if (!decision || chosen === undefined) return [];
   const label = decision.request.options[decision.record.selectedOptionIndex ?? 0]?.label;
   if (chosen === label) return [];

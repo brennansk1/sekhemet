@@ -564,7 +564,7 @@ export async function checkCardOne(input: {
   const gate =
     input.gate ??
     loadGatesConfig(input.root).gates.find((g) => g.layer === "functional" && g.rung === "test");
-  if (!gate) return { passed: false, detail: "not run: the project has no test gate yet" };
+  if (!gate) return { passed: false, detail: "not run: the project has no test check yet" };
   return cardOneVerdict(await runAcceptanceTests(input.sandbox, input.root, gate, input.tests));
 }
 

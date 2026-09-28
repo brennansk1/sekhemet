@@ -58,7 +58,7 @@ function legacyHtml() {
               `<li><div class="cq"><blockquote>${esc(c.reason)}</blockquote><div class="sec">From <a href="#/card/${encodeURIComponent(c.cardId)}/thread">${esc(titleOf(c.cardId))}</a> · ${esc(day(c.at))}</div></div><button class="btn sm" type="button" data-copy-rule="${i}" title="Copy this note as a [[rule]] block for .sekhemet/playbook.toml">${icon("copy", 14, "ic s14")}Copy as rule</button></li>`,
           )
           .join("")}</ul>`
-      : '<p class="sec">No suggestions. Every note you write when sending a card back shows up here.</p>';
+      : '<p class="sec">No suggestions. Every note you write when sending an issue back shows up here.</p>';
     html = `<section><h3 class="sh">Rules <span class="sec">${p.rules.length} · given to the agent when an issue's files match</span></h3>${rules}</section><section><h3 class="sh">Suggested rules <span class="sec">${p.candidates.length} from your send-back notes</span></h3>${cands}</section>`;
   }
   return html;

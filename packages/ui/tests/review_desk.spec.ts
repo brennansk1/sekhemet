@@ -158,12 +158,12 @@ describe("DB-N5-9: independent accept names who may accept", () => {
     expect(
       acceptPermissionText({ may: false, code: "not_independent", because: "built", who }),
     ).toBe(
-      "You built this card; on a team another Accept-holder accepts it. Who may accept: Bob, p_carol.",
+      "You built this issue; on a team another Accept-holder accepts it. Who may accept: Bob, p_carol.",
     );
     expect(
       acceptPermissionText({ may: false, code: "not_independent", because: "delegated", who: [] }),
     ).toBe(
-      "You delegated this card to the agent; on a team another Accept-holder accepts it. Who may accept: no other Accept-holder yet.",
+      "You delegated this issue to the agent; on a team another Accept-holder accepts it. Who may accept: no other Accept-holder yet.",
     );
   });
   it("a person without Accept is told who holds it; one who may accept is told nothing", () => {
@@ -174,10 +174,10 @@ describe("DB-N5-9: independent accept names who may accept", () => {
   });
   it("a person who owns none of the files, where a code owner must accept, is told who owns them", () => {
     expect(acceptPermissionText({ may: false, code: "not_code_owner", who })).toBe(
-      "This project needs a code owner's accept, and you own none of this card's files. Who may accept: Bob, p_carol.",
+      "This project needs a code owner's accept, and you own none of this issue's files. Who may accept: Bob, p_carol.",
     );
     expect(acceptPermissionText({ may: false, code: "not_code_owner", who: [] })).toBe(
-      "This project needs a code owner's accept, and you own none of this card's files. Who may accept: no code owner is named in CODEOWNERS for these files.",
+      "This project needs a code owner's accept, and you own none of this issue's files. Who may accept: no code owner is named in CODEOWNERS for these files.",
     );
   });
 });

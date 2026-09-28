@@ -76,6 +76,41 @@ Status: **Built**, **Not built (by design)**, or **Needs hardware** (waits on th
 | Harness units H1, H3, H8, H10–H16, H20–H26 | Built: daemon plus WebSocket; calibrate; replay and trajectory diff; MCP server and client; REST completeness; SDK; ACP; config.toml applied; slash commands; ntfy/Gotify push; overnight scheduler; OTel spans; compute governance; reproducibility record; init and installer. H26 is the M20 watchdog wired into the queue | e9e6804, 5661807, 90a6ec1, 73c3fd7, 3462f49, abcc16e, d8f4f6f, e591074, 87660a7, 2c7dc14, 2dbf355, e6fe612, cfa8e5c, ebcf082, 9d3ce0e | daemon_ws, calibrate_cmd, replay, mcp, mcp_client, rest_extra, sdk, acp, config_apply, slash, notify, overnight, tracing, repro, init (apps/harness/tests/*.spec.ts) |
 | Research safety and knowledge tiers (X4, X5, X8, X9) | Built: llms.txt first, research on the ledger, untrusted wrapper for web content, cache lifetimes by kind | 95faa92 | research_service.spec.ts |
 
+## 3b. Phase B (B0–B4.7, 2026-09-25 → 27): research recommendations built or left
+
+One row per recommendation Phase B acted on; the spec named holds the detail and its State rows. *compliance C1–C6* is the compliance-fixes workstream (not yet committed when this was written). Every live measurement waits on model time and says so.
+
+| Recommendation (source) | Status | Commits | Proof (tests) |
+|---|---|---|---|
+| The rest of the git hardening list and a `.git/config` preflight (WEB_RESEARCH group A; S1, S2) | Built; nested `.git` under bubblewrap (G2, Linux) still partial | b341663 | packages/sync/tests/git_preflight.spec.ts, git_hardening.spec.ts |
+| Fail closed without a confinement mechanism; one egress policy through a hardened proxy (WEB_RESEARCH; S3, S3b) | Built | b341663, 525585e | packages/sandbox/tests/fail_closed.spec.ts, egress_hardening.spec.ts |
+| Append-only Worker prompt for the prefix cache (WEB_RESEARCH, M8) | Partial: static blocks byte-stable; history as native messages and the 0.85 hit rate not built | 5b17ed1, 2d97d02 | packages/context/tests/worker_prompt_ctx3.spec.ts |
+| MTP judged on seconds per step, ABBA with a sign test (WEB_RESEARCH; M7, M11) | Built; the per-host measurement waits on model time | 028b592, 0e30e61 | packages/models/tests/mtp_ab.spec.ts |
+| Small-sample statistics: exact intervals, paired sign test, admission only on a significant paired gain (M12, T8) | Built; the live admission needs NEW-worker-loop-5's records | 028b592, df72861 | packages/eval/tests/stats.spec.ts, admission.spec.ts, packages/models/tests/qualification_sampling.spec.ts |
+| Evidence-gated commit (ECLoop) as an A/B arm | Built behind `SEKHEMET_EVIDENCE_GATE`; the arm runs in B2.5 | df72861 | packages/loop/tests/evidence_gate.spec.ts |
+| Tool-call format per model (Format Tax, R4) | Partial: arms scored and pinned only past `MIN_ARM_TRIALS` | 2d97d02 | packages/models/tests/tool_arm_n5.spec.ts |
+| Mutation testing of tests (reverses §2's "not built": DESIGN_RESEARCH_TESTS_BROWNFIELD) | Built as test strength by depth profile | 160310d, eb6776f | packages/gates/tests/test_strength.spec.ts, mutation_scores.spec.ts |
+| Characterization and red/green by change kind; an error baseline; superseded tests (DESIGN_RESEARCH_TESTS_BROWNFIELD) | Built; the `characterize`/`refactor`/`upgrade` values partial | eb6776f | packages/gates/tests/change_kinds.spec.ts, baseline.spec.ts; apps/harness/tests/regression_superseded.spec.ts |
+| Project done computed from a requirement graph (PROJECT_DONE_AND_DEPTH, DEC-11) | Built | 2542716 | packages/kernel/tests/requirement_graph.spec.ts; apps/harness/tests/project_done.spec.ts |
+| A depth profile with the ISO/IEC 25010 checklist and comparables (DEC-11, P14) | Partial | eedf2f5 | packages/planner/tests/depth_coverage.spec.ts |
+| Project documents in the repository as MADR 4.0 records (DESIGN_RESEARCH_TEAMS_DATA_CHANGE) | Built; read with `marked` (DEC-44) | eedf2f5, compliance C1 | apps/harness/tests/project_docs.spec.ts, project_docs_markdown.spec.ts |
+| SemVer's 0.y.z rule, through `semver` (DESIGN_RESEARCH_TEAMS_DATA_CHANGE decision 13) | Built | 2542716, compliance C1 | apps/harness/tests/release_version.spec.ts |
+| One SPDX licence classifier shared with the licence gate (REUSE_SURVEY, DEC-08) | Built | 5e56b5d | packages/gates/tests/licence_classifier.spec.ts |
+| BM25 ranking over name, description and keywords; deps.dev package health (REUSE_SURVEY, DEC-44) | Built; OpenSSF Scorecard and dependents counts left unused | compliance C3 | apps/harness/tests/reuse_ranking.spec.ts, reuse_deps_dev.spec.ts |
+| gitleaks' own rule file for the offline history scan; `yaml` for CI files (DEC-43, DEC-44) | Built | compliance C2 | packages/gates/tests/gitleaks_vendored.spec.ts, gitleaks_rules.spec.ts; apps/harness/tests/ci_files.spec.ts |
+| Smart Swap: a round-trip cost model, one `decide()`, a replay simulator (SMART_SWAP_RESEARCH_2026-09, DEC-45) | Built; calibration and the load-mode A/B wait on model time | 160310d | packages/models/tests/swap_decide.spec.ts, swap_sim.spec.ts |
+| Weights identified by their GGUF header (DEC-44) | Built | 5019670 | packages/models/tests/model_scan.spec.ts |
+| MCP on the official SDK (DEC-08) | Built | d3c1e08 | apps/harness/tests/mcp_sdk_server.spec.ts |
+| Passkeys and OIDC for self-hosted sign-in (DESIGN_RESEARCH_COLLABORATION, DEC-38) | Built | 66d1276 | apps/harness/tests/team_sso.spec.ts |
+| Accessibility checked with axe in Chromium (P12) | Built | 2920484 | apps/harness/tests/a11y.spec.ts |
+| A story map and burn-up like the tools teams use (PROJECT_DONE_AND_DEPTH, P3) | Built | 4433b1a | packages/ui/tests/storymap.spec.ts, burnup.spec.ts |
+| The professional vocabulary of Jira, Linear and GitHub (DEC-31) | Built on screen and in the CLI; model-facing prompts wait on a suite A/B | 3410f94, compliance C4 | packages/ui/tests/professional_language.spec.ts; apps/harness/tests/cli_language.spec.ts |
+| Forecasts as 50% and 85% ranges, never one date (DESIGN_RESEARCH_COLLABORATION) | Built | 3410f94 | packages/ui/tests/status.spec.ts |
+| A smaller Researcher by bake-off (Spark-X2.5-4B) | Partial: the golden set and runner built; the bake-off waits on model time | eedf2f5 | apps/harness/tests/research_bakeoff.spec.ts |
+| A cross-family Reviewer judging each criterion (AutoDev, ARIS; P8) | Left: B4.8 | — | — |
+| The senior-PM skill scored on scripted conversations; non-directive suggestions (DESIGN_RESEARCH_COLLABORATION; P6, NEW-planner-pm-9) | Left: B4.8 (suggestions with reasons partly built) | — | — |
+| TruffleHog's live verification | Not built (by design): AGPL, and it sends secrets away (DEC-44) | — | — |
+
 ## 4. Known deviations
 
 - **Commit trailers.** Feature commits carry Card, Agent-Model, Agent-Harness, Agent-Role and Co-authored-by, as CLAUDE.md specifies. `GateStatus` and `Step` appear on checkpoint commits only, as CLAUDE.md scopes them. DEFINITION_OF_DONE §6 lists `GateStatus` for every commit. The two documents disagree; this cycle followed CLAUDE.md.

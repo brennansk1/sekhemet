@@ -5,10 +5,17 @@ import type { DatabaseSync } from "node:sqlite";
 import { PlaybookRegistry } from "@sekhemet/context";
 import type { EventLog } from "@sekhemet/kernel";
 import {
+  type MachineProfile,
+  type MachineTier,
   type MemoryPressureStatus,
+  TIER_PROFILES,
+  UnsupportedHardwareError,
   classifyMemoryPressure,
+  loadHostMachineProfile,
   readKernelPressureLevel,
   readSwapUsedBytes,
+  tierForInstalled,
+  tierSettingsOf,
 } from "@sekhemet/models";
 import { PLAYBOOK_CANDIDATE_EVENT } from "./triage.js";
 
@@ -281,6 +288,8 @@ export interface RunListItem {
   firstTry: number;
   passAt1: number;
   totalDurationMs: number;
+  /** A run still going (DB-N2-11): its issues finished so far, of all. */
+  running?: { finished: number; total: number };
 }
 
 export interface QueueReportLike {
@@ -315,11 +324,13 @@ function runItem(id: string, r: QueueReportLike): RunListItem {
 export async function listRuns(
   repoPath: string,
   log?: EventLog,
+  opts: { alive?: (pid: number) => boolean } = {},
 ): Promise<{ runs: RunListItem[]; reports: Map<string, QueueReportLike> }> {
   const dir = join(repoPath, ".sekhemet", "runs");
   const reports = new Map<string, QueueReportLike>();
   const runs: RunListItem[] = [];
   const seen = new Set<string>();
+  const running = log ? await runningRuns(log, opts.alive ?? processAlive) : [];
   for (const e of log ? await log.getEventsByTypes(["queue/reported"]) : []) {
     const r = (e.payload as { report: QueueReportLike }).report;
     if (!r || seen.has(r.startedAt)) continue;
@@ -355,10 +366,104 @@ export async function listRuns(
     }
   }
   runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-  return { runs, reports };
+  // A run still going leads the list (DB-N2-11); its report, when it lands, replaces it.
+  return { runs: [...running.filter((r) => !seen.has(r.startedAt)), ...runs], reports };
+}
+
+/** Whether a process is still running on this machine (EPERM: it is, as another user). */
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Queue runs started and not yet reported, whose process is alive: each with
+ * the run's issues that finished an attempt since it started (DB-N2-11).
+ */
+async function runningRuns(log: EventLog, alive: (pid: number) => boolean): Promise<RunListItem[]> {
+  const started = await log.getEventsByTypes(["queue/started"]);
+  if (started.length === 0) return [];
+  const reported = new Set(
+    (await log.getEventsByTypes(["queue/reported"])).map(
+      (e) => (e.payload as { report?: { startedAt?: string } }).report?.startedAt,
+    ),
+  );
+  const attempts = await log.getEventsByTypes(["attempt/finished"]);
+  const out: RunListItem[] = [];
+  for (const e of started) {
+    const p = e.payload as { startedAt: string; cards?: string[]; model?: string; pid?: number };
+    if (reported.has(p.startedAt) || typeof p.pid !== "number" || !alive(p.pid)) continue;
+    const cards = new Set(p.cards ?? []);
+    const finished = new Set<string>();
+    for (const f of attempts) {
+      if (f.seq > e.seq && f.cardId && cards.has(f.cardId)) finished.add(f.cardId);
+    }
+    out.push({
+      id: p.startedAt.replace(/[:.]/g, "-"),
+      startedAt: p.startedAt,
+      model: p.model ?? "",
+      cards: cards.size,
+      firstTry: 0,
+      passAt1: 0,
+      totalDurationMs: 0,
+      running: { finished: finished.size, total: cards.size },
+    });
+  }
+  return out.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
 /* ---------- Machine ---------- */
+
+/** Machine's hardware tier (dashboard DB-N2-9): `/api/machine`'s `tier`. */
+export interface HardwareTierInfo {
+  tier?: MachineTier;
+  source: "calibrated" | "installed";
+  /** The tier's memory range in GB; null above the top tier's floor. */
+  budgetGb?: [number, number | null];
+  installedBytes: number;
+  workingContextTokens?: number;
+  parallelCards?: number;
+  coLoadRoles?: boolean;
+  unsupported?: string;
+}
+
+/**
+ * The tier this machine runs at: the one its calibration decided for this
+ * host (models M14, `tierSettingsOf`), else the one its installed memory
+ * gives (MD-N1-1). Below 16 GB there is no tier, and it says so.
+ */
+export function activeHardwareTier(
+  installedBytes: number,
+  profile: MachineProfile | undefined = loadHostMachineProfile(),
+): HardwareTierInfo {
+  const range = (t: MachineTier): [number, number | null] => {
+    const [lo, hi] = TIER_PROFILES[t].budgetGb;
+    return [lo, Number.isFinite(hi) ? hi : null];
+  };
+  if (profile) {
+    const s = tierSettingsOf(profile);
+    return {
+      tier: s.tier,
+      source: "calibrated",
+      budgetGb: range(s.tier),
+      installedBytes,
+      workingContextTokens: s.workingContextTokens,
+      parallelCards: s.parallelCards,
+      coLoadRoles: s.coLoadRoles,
+    };
+  }
+  try {
+    const t = tierForInstalled(installedBytes).tier;
+    return { tier: t, source: "installed", budgetGb: range(t), installedBytes };
+  } catch (e) {
+    if (!(e instanceof UnsupportedHardwareError)) throw e;
+    return { source: "installed", installedBytes, unsupported: e.message };
+  }
+}
 
 export interface MemorySample {
   usedBytes: number;

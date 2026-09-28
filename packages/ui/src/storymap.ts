@@ -220,7 +220,7 @@ export function storyMapModel<C extends MapCardLike>(input: {
   }));
   bands.push({
     id: UNTRACED,
-    heading: slices.length ? "Not traced to a requirement" : "Cards by epic",
+    heading: slices.length ? "Not traced to a requirement" : "Issues by epic",
     skeleton: false,
     stateText: "",
     cells: backbone.map((e) => ({
@@ -237,7 +237,7 @@ export function storyMapModel<C extends MapCardLike>(input: {
     ...(input.map
       ? { provenLine: input.map.provenLine }
       : {
-          note: "No brief has been accepted yet, so there are no releases. Cards are shown under their epics.",
+          note: "No brief has been accepted yet, so there are no releases. Issues are shown under their epics.",
         }),
   };
 }

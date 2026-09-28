@@ -15,7 +15,8 @@ import {
   classifyLicence,
   licenceFromTroveClassifiers,
 } from "@sekhemet/gates";
-import { relevant } from "../research/keywords.js";
+import { queryFor, relevanceTermsFor } from "../research/keywords.js";
+import { rankByRelevance } from "../research/rank.js";
 
 /** A registry result as found, before its licence is judged. */
 export interface LibraryCandidate {
@@ -32,6 +33,10 @@ export interface LibraryCandidate {
   publishedAt?: string;
   /** Its repository is archived: nobody maintains it. */
   archived?: boolean;
+  /** The registry's keywords, ranked with the name and description (P7). */
+  keywords?: string[];
+  /** Advisories affecting this version, from deps.dev in research mode (DEC-44). */
+  advisories?: string[];
   url: string;
 }
 
@@ -116,6 +121,8 @@ export interface RepoCandidate {
   archived: boolean;
   pushedAt: string;
   description: string;
+  /** GitHub's topics, ranked with the name and description (P7). */
+  topics?: string[];
   url: string;
 }
 
@@ -145,6 +152,7 @@ export async function searchRepos(
       archived: boolean;
       pushed_at: string;
       description: string | null;
+      topics?: string[];
       html_url: string;
     }[];
   };
@@ -156,6 +164,7 @@ export async function searchRepos(
       archived: r.archived,
       pushedAt: r.pushed_at,
       description: r.description ?? "",
+      ...(Array.isArray(r.topics) && r.topics.length ? { topics: r.topics } : {}),
       url: r.html_url,
     }),
   );
@@ -185,8 +194,11 @@ const normalisedUrl = (u: string) =>
  * archived state are the repository's; its release date is PyPI's.
  */
 export async function searchPyPI(query: string, fetcher: Fetcher): Promise<LibraryHit[]> {
-  const repos = (await searchRepos(query, fetcher, "python"))
-    .filter((r) => relevant(query, `${r.fullName} ${r.description}`) && r.stars >= MIN_STARS)
+  const repos = rankByRelevance([queryFor(query)], await searchRepos(query, fetcher, "python"), {
+    text: repoText,
+    popularity: (r) => r.stars,
+  })
+    .filter((r) => r.stars >= MIN_STARS)
     .slice(0, 3);
   const found: LibraryHit[] = [];
   for (const r of repos) {
@@ -262,6 +274,7 @@ export async function searchLibraries(
         name: string;
         version: string;
         description?: string;
+        keywords?: string[];
         license?: string;
         date?: string;
         links?: { npm?: string };
@@ -278,6 +291,7 @@ export async function searchLibraries(
       license,
       ...judgeLicence(license),
       description: p.description ?? "",
+      ...(Array.isArray(p.keywords) && p.keywords.length ? { keywords: p.keywords } : {}),
       ...(downloads?.weekly ? { weeklyDownloads: downloads.weekly } : {}),
       ...(p.date ? { publishedAt: p.date } : {}),
       url: p.links?.npm ?? `https://www.npmjs.com/package/${p.name}`,
@@ -318,41 +332,63 @@ export function maintained(
 
 /** What the filters left: recommended, flagged (weak copyleft), excluded and named. */
 export interface Screened<T> {
-  /** Candidates, in the search's order: relevant, popular, licence not absent. */
+  /** Candidates, best first by relevance (BM25): relevant, popular, licence not absent. */
   candidates: T[];
   recommended: T[];
   flagged: T[];
   excluded: T[];
+  /** Usable and maintained, but deps.dev knows advisories on the version found (DEC-44). */
+  advised: T[];
 }
 
-function screen<T extends LicenceJudgement>(
+function screen<T extends LicenceJudgement & { advisories?: string[] }>(
   kept: readonly T[],
   isMaintained: (c: T) => boolean,
 ): Screened<T> {
   // DS-P7-2: an absent licence is dropped silently: code nobody may use.
   const candidates = kept.filter((c) => c.action !== "drop");
+  const advised = (c: T) => (c.advisories?.length ?? 0) > 0;
   return {
     candidates,
-    recommended: candidates.filter((c) => c.usable && isMaintained(c)),
+    recommended: candidates.filter((c) => c.usable && isMaintained(c) && !advised(c)),
     flagged: candidates.filter((c) => c.action === "flag"),
     excluded: candidates.filter((c) => c.action === "exclude"),
+    advised: candidates.filter((c) => c.usable && isMaintained(c) && advised(c)),
   };
 }
 
+const libraryText = (l: LibraryCandidate) => ({
+  name: l.name,
+  description: l.description,
+  ...(l.keywords ? { keywords: l.keywords } : {}),
+});
+const repoText = (r: RepoCandidate) => ({
+  name: r.fullName,
+  description: r.description,
+  ...(r.topics ? { keywords: r.topics } : {}),
+});
+/** Weekly downloads where the registry counts them, else the repository's stars. */
+const popularity = (c: { weeklyDownloads?: number; stars?: number }) =>
+  c.weeklyDownloads || c.stars || 0;
+
 /**
  * Registry results through the survey's filters: relevance to the need
- * first (an unrelated result is not a candidate, so it is neither
- * recommended nor "excluded for its licence"), then popularity, then each
- * licence judged here by the classifier, then maintenance.
+ * first, ranked by BM25 over name, description and keywords with a
+ * popularity prior (`rankByRelevance`) — an unrelated result is not a
+ * candidate, so it is neither recommended nor "excluded for its licence" —
+ * then popularity, then each licence judged here by the classifier, then
+ * maintenance and advisories. `queries` are the capability queries the
+ * survey sent besides the need's own keywords (design-stage §2.5 item 1).
  */
 export function screenLibraries(
   need: string,
   found: readonly LibraryCandidate[],
   now: Date = new Date(),
+  queries: readonly string[] = [],
 ): Screened<LibraryHit> {
   return screen(
-    found
-      .filter((l) => relevant(need, `${l.name} ${l.description}`) && popularEnough(l))
+    rankByRelevance([relevanceTermsFor(need), ...queries], found, { text: libraryText, popularity })
+      .filter(popularEnough)
       .map(judged),
     (l) => maintained(l.archived, l.publishedAt, now),
   );
@@ -363,10 +399,11 @@ export function screenRepos(
   need: string,
   found: readonly RepoCandidate[],
   now: Date = new Date(),
+  queries: readonly string[] = [],
 ): Screened<RepoHit> {
   return screen(
-    found
-      .filter((r) => relevant(need, `${r.fullName} ${r.description}`) && popularEnough(r))
+    rankByRelevance([relevanceTermsFor(need), ...queries], found, { text: repoText, popularity })
+      .filter(popularEnough)
       .map(judged),
     (r) => maintained(r.archived, r.pushedAt, now),
   );

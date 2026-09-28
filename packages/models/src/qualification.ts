@@ -473,7 +473,21 @@ export async function runQualification(
         });
         continue;
       }
-      timings.push({ tokens: res.usage.completionTokens, ms: res.usage.durationMs });
+      // A reply that is not a response fails its case like a failed request;
+      // it never stops the whole check (rule 27, compliance C6).
+      if (!res || typeof res !== "object" || !Array.isArray(res.toolCalls)) {
+        results.push({
+          id: c.id,
+          sample,
+          category: c.category,
+          passed: false,
+          schemaValid: false,
+          detail: "the reply was not a response (no tool-call list)",
+        });
+        continue;
+      }
+      // Speed is measured only from replies that report their usage.
+      if (res.usage) timings.push({ tokens: res.usage.completionTokens, ms: res.usage.durationMs });
       const violations = res.toolCalls.flatMap((call) => schemaViolations(call));
       const failure = c.score(res.toolCalls, res.text);
       results.push({

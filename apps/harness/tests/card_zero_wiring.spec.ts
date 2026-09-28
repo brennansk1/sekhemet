@@ -142,11 +142,11 @@ describe("the pass after card zero is Done derives the gates (DS-P2-1, -2)", () 
     expect(readFileSync(join(k.repoPath, ".sekhemet/brief.md"), "utf8")).toContain(
       "Generator: npm init, tsc --init and Vitest (TypeScript 5.9.2, Vitest 3.2.7)",
     );
-    expect(out.join("\n")).toMatch(/Card zero is done: the project's gates are now/);
+    expect(out.join("\n")).toMatch(/The setup issue is done: the project's checks are now/);
     // Again: nothing more is said or changed.
     const before = out.length;
     await queuePrelude(k, [], { print: (l) => out.push(l), setup: "solo" });
-    expect(out.slice(before).join("\n")).not.toMatch(/Card zero is done/);
+    expect(out.slice(before).join("\n")).not.toMatch(/The setup issue is done/);
   });
 
   it("leaves card zero's gate while card zero is not Done", async () => {

@@ -39,7 +39,7 @@ export function evidenceSummary(
     card.acceptanceCriteria?.length
       ? `### Done when\n${card.acceptanceCriteria.map((c) => `- ${c}`).join("\n")}`
       : "",
-    `### Gates\n${gates || "_No gate results were recorded._"}`,
+    `### Checks\n${gates || "_No check results were recorded._"}`,
     `### Tests added\n${tests.length ? tests.map((t) => `- ${t}`).join("\n") : "_None._"}`,
     `### Diff\n${files.length} file(s), +${ev.linesAdded ?? 0} −${ev.linesRemoved ?? 0}`,
     `### Coverage\n${

@@ -51,6 +51,7 @@ import {
   recordGeneratorInBrief,
 } from "../card_zero.js";
 import { LearningStore } from "../learning/store.js";
+import { blockLines, isHeading, markdownBlocks } from "../markdown.js";
 import { type Kernel, isGreenfield, planCommand, repoPlanner } from "../wave2.js";
 import { flowMetrics, monteCarloForecast } from "./metrics.js";
 import { NEW_PROJECT_REFUSAL } from "./pm_copy.js";
@@ -200,7 +201,7 @@ async function planSlices(
   });
   if (plan.rejected) {
     throw new PipelineRefusal(
-      `The planner refused it: ${plan.rejectionReason ?? "the spec leaves too many open questions"}. Say more about it and ask again.`,
+      `The Planning model refused it: ${plan.rejectionReason ?? "the spec leaves too many open questions"}. Say more about it and ask again.`,
     );
   }
   const result = await persistPlan(
@@ -224,7 +225,7 @@ async function planSlices(
   }
   if (cards.length === 0) {
     const why = result.rejected.map((r) => `${r.title}: ${r.reason}`).join("; ");
-    throw new PipelineRefusal(`The planner created no card${why ? ` (${why})` : ""}.`);
+    throw new PipelineRefusal(`The Planning model created no issue${why ? ` (${why})` : ""}.`);
   }
   return { result, cards, epicId: input.epicId };
 }
@@ -313,7 +314,7 @@ export async function splitThroughPipeline(
   }
   if (!OPEN.includes(parent.status)) {
     throw new PipelineRefusal(
-      `${parent.title} is ${parent.status.replace("_", " ")}; a card is split before it runs or after it stops.`,
+      `${parent.title} is ${parent.status.replace("_", " ")}; an issue is split before it runs or after it stops.`,
     );
   }
   const own = criteriaForParts(parent, parts);
@@ -358,7 +359,7 @@ export async function splitThroughPipeline(
   }
   const board =
     deps.boardService ?? new BoardServiceImpl(deps.cardStore, { entryConditions: true });
-  const reason = `Split into ${outcome.cards.length} cards: ${outcome.cards.map((c) => c.id).join(", ")}`;
+  const reason = `Split into ${outcome.cards.length} issues: ${outcome.cards.map((c) => c.id).join(", ")}`;
   await board.transitionCard({
     cardId: parent.id,
     fromStatus: parent.status,
@@ -539,17 +540,19 @@ export interface ProjectChoices {
   answers?: Record<string, number>;
 }
 
+/** Each `## ` section's lines, a list item per line (DEC-44: read as Markdown). */
 const sectionsOf = (markdown: string): Map<string, string[]> => {
   const out = new Map<string, string[]>();
   let at: string | undefined;
-  for (const line of markdown.split("\n")) {
-    const h = /^## (.+)$/.exec(line);
-    if (h) {
-      at = h[1]?.trim();
-      out.set(at ?? "", []);
+  for (const block of markdownBlocks(markdown)) {
+    if (isHeading(block)) {
+      if (block.depth === 2) {
+        at = block.text.trim();
+        out.set(at, []);
+      }
       continue;
     }
-    if (at && line.trim() && !line.startsWith("<!--")) out.get(at)?.push(line.replace(/^- /, ""));
+    if (at) out.get(at)?.push(...blockLines(block));
   }
   return out;
 };
@@ -681,7 +684,7 @@ export async function draftProjectGroup(
   const stack = design.stack.language;
   const g = generatorFor(stack);
   const profile = design.depth ?? { profile: "internal tool" as DepthProfile, reason: "" };
-  const briefMd = renderBrief(design, { gates: [`the gates derived from ${g.name}`] });
+  const briefMd = renderBrief(design, { gates: [`the checks derived from ${g.name}`] });
   const sec = sectionsOf(briefMd);
   const candidates = candidatesOf(design);
   const releaseLine = candidates.filter((c) => c.accepted && c.priority !== "could").length;
@@ -871,12 +874,12 @@ export async function applyProjectGroup(
     mkdirSync(dirname(briefPath), { recursive: true });
     writeFileSync(
       briefPath,
-      renderBrief(design, { gates: [`the gates derived from ${group.generator}`] }),
+      renderBrief(design, { gates: [`the checks derived from ${group.generator}`] }),
     );
   }
   recordGeneratorInBrief(
     briefPath,
-    `${group.generator} (its version is recorded when card zero is done)`,
+    `${group.generator} (its version is recorded when the setup issue is done)`,
   );
   installScaffoldGate(deps.repoPath, group.stack.language);
 

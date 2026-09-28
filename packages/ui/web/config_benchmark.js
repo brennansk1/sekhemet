@@ -156,7 +156,7 @@ function resultHtml(r) {
     )
     .join("");
   const e2e = r.endToEnd
-    ? `<p>End-to-end check: ${esc(`${r.endToEnd.passed}/${r.endToEnd.total}`)} cards passed (beside the scores)</p>`
+    ? `<p>End-to-end check: ${esc(`${r.endToEnd.passed}/${r.endToEnd.total}`)} issues passed (beside the scores)</p>`
     : "";
   const tied = r.indistinguishableFrom?.length
     ? `<p>No clear difference from ${esc(r.indistinguishableFrom.length)} other combination(s) on the ${esc(r.tier)} benchmark</p>`

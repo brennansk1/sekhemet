@@ -2003,6 +2003,8 @@ export class CardStore {
     id: string,
     reviewMinutesPerDay: number,
     actor = "human",
+    /** The person who changed it (dashboard DB-N4-2), recorded on the event. */
+    principal?: string,
   ): Promise<ProjectRecord> {
     if (!this.getProject(id))
       throw new CardStructureError("unknown_card", `Project not found: ${id}`);
@@ -2017,7 +2019,7 @@ export class CardStore {
       updatedAt: new Date().toISOString(),
     };
     await this.eventLog.append(
-      { actor, type: "project/review_hours", payload },
+      { actor, type: "project/review_hours", payload, ...(principal ? { principal } : {}) },
       { project: () => this.projectReviewMinutes(payload) },
     );
     return this.getProject(id) as ProjectRecord;

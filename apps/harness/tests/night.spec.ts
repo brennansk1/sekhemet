@@ -236,7 +236,7 @@ describe("NEW-runtime-5: the night does what it promises", () => {
       skipMutation: true,
       runQueue: async () => 0,
     });
-    expect(s.stoppedBecause).toBe("no Ready cards left");
+    expect(s.stoppedBecause).toBe("no Ready issues left");
     const [scan] = await log.getEventsByTypes(["security/vulnerability_scan"]);
     expect(scan?.actor).toBe("harness");
     // No lockfile here: the scan records that it had nothing to scan, never a pass.

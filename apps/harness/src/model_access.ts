@@ -256,7 +256,7 @@ export function resolvedWorkerWindowTokens(opts: {
   // PM-13: no fixed default — a Worker with no known window cannot be measured against.
   if (!window)
     throw new Error(
-      `The Worker ${name} has no context window in the registry, so INVEST's Small cannot be checked; qualify it first.`,
+      `The Coding model ${name} has no context window in the registry, so INVEST's Small cannot be checked; verify it on this machine first (sekhemet qualify).`,
     );
   return window.contextTokens;
 }

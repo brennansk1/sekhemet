@@ -31,7 +31,8 @@ export type ResearchAnswer = "yes" | "no";
 /**
  * Every host the harness's own research requests name: the plan's survey,
  * the registry tools (Seshat's and the Researcher's `find_library`,
- * `package_readme`) and the paper indexes. The question names each one
+ * `package_readme`), the paper indexes and deps.dev (the survey's release
+ * dates, licences and advisories, DEC-44). The question names each one
  * (DS-S8-2), and a yes covers exactly the hosts it named (DS-S8-8).
  */
 export const RESEARCH_HOSTS = [
@@ -41,6 +42,8 @@ export const RESEARCH_HOSTS = [
   "huggingface.co",
   "export.arxiv.org",
   "api.openalex.org",
+  // DEC-44: release dates, licences and advisories for the survey's candidates.
+  "api.deps.dev",
 ] as const;
 
 /**

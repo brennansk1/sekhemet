@@ -47,7 +47,7 @@ function show(host, cardId, view, onChange) {
     const released = res.data?.released?.length ?? 0;
     toast({
       tone: "pass",
-      text: `Approved. ${released} card${released === 1 ? "" : "s"} left Planning.`,
+      text: `Approved. ${released} issue${released === 1 ? "" : "s"} left Planning.`,
       ...(res.data?.held?.length
         ? { detail: res.data.held.map((h) => `${h.id}: ${h.reason}`).join(" ") }
         : {}),

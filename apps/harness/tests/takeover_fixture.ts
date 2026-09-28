@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
  *
  * The line numbers the tests expect are the lines written here.
  */
-export const FAKE_TOKEN = () => `ghp_${"Zy9Xw8Vu7T".repeat(4)}`;
+export const FAKE_TOKEN = () => `ghp_${"Zy9Xw8Vu7T".repeat(4).slice(0, 36)}`;
 
 export interface TakeoverFixture {
   root: string;

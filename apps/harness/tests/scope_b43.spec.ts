@@ -86,6 +86,6 @@ describe("PM-N9-8: the planning views are scoped to what the person can see", ()
       canSee: (_req, project) => project !== hidden,
     });
     expect(c.out.status).toBe(404);
-    expect(c.out.body).toEqual({ error: "No card card_secret" });
+    expect(c.out.body).toEqual({ error: "No issue card_secret" });
   });
 });

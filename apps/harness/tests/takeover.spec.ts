@@ -77,7 +77,7 @@ describe("DS-TO-1 to DS-TO-5, DS-TO-8: before trust, only files and git objects 
       {
         scanner: "builtin",
         commits: 4,
-        findings: [{ commit: fx.leakCommit, path: "src/config.ts", rule: "github-token" }],
+        findings: [{ commit: fx.leakCommit, path: "src/config.ts", rule: "github-pat" }],
       },
     ]);
 

@@ -153,7 +153,7 @@ describe("sekhemet measure rescore: an existing result re-scored from its work d
       (l) => lines.push(l),
     );
     expect(code).toBe(0);
-    expect(lines.join("\n")).toMatch(/2 of 3 card\(s\) ran with a different profile/);
+    expect(lines.join("\n")).toMatch(/2 of 3 issue\(s\) ran with a different profile/);
     expect(lines.join("\n")).toMatch(/chronicle\/card_b \(policies\.stepCap\)/);
   });
 });

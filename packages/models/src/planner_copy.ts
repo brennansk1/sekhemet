@@ -40,4 +40,13 @@ export const plannerCopy = {
   oracleSystem:
     'You compute what a function must return according to a specification. Reply with JSON only: {"expected": <value>}.',
   oracleQuestion: (call: string): string => `What does ${call} return?`,
+  /**
+   * The reuse survey's capability queries (design-stage §2.5 item 1, P7):
+   * the Planning model names a capability the way registries describe it.
+   * It sees the capability and the language only, never the rest of the spec.
+   */
+  reuseQueriesSystem:
+    'You name software capabilities the way package registries describe them. Reply with JSON only, for example {"queries": ["email sending", "smtp client"]}.',
+  reuseQueries: (capability: string, language: string): string =>
+    `Capability: ${capability}\nLanguage: ${language}\n\nWrite one to three search queries for a package that provides this capability, the most likely first. Each query is two or three words that a package's name or description would use.`,
 };

@@ -86,5 +86,5 @@ export function policyLine(d, now = Date.now()) {
       urgent: left < 15 * 60_000,
     };
   }
-  return { text: "If you don't answer, the card stays parked.", urgent: false, lock: true };
+  return { text: "If you don't answer, the issue stays parked.", urgent: false, lock: true };
 }

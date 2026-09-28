@@ -1184,6 +1184,19 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     seconds: s(MS),
     seed: s(COUNT),
   },
+  // design-stage DS-S8-3 (amended by the owner, 2026-09-28), DS-P7-7: the
+  // labelled set surveyed with keyword queries and with one Planning model's;
+  // `admitted` lets that model's queries leave the machine, for its prompt only.
+  "research/reuse_queries_measured": {
+    model: s(ID),
+    promptHash: s(SHA256),
+    setHash: s(SHA256),
+    n: s(COUNT),
+    keywords: s(v.strictObject({ p1: SCORE, silence: SCORE, measured: COUNT })),
+    modelQueries: s(v.strictObject({ p1: SCORE, silence: SCORE, measured: COUNT })),
+    fromModel: s(COUNT),
+    admitted: s(v.boolean()),
+  },
   // models MD-N11-1..3, design-stage DS-N2-9: one research golden-set run —
   // per model and pipeline its measures and grades, the pipeline verdicts and
   // MD-N11-2's adoption verdicts. Each verdict's reason is free text: private.

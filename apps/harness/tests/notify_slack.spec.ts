@@ -274,7 +274,7 @@ describe("the one notifier with Slack as a channel (P9)", () => {
     expect(hits).toHaveLength(1);
     const text = JSON.parse(hits[0]?.body ?? "{}").text as string;
     expect(text).toMatch(/Next up: Ledger \(`card_x`\)/);
-    expect(text).toMatch(/Done: 0 of 1 cards\./);
+    expect(text).toMatch(/Done: 0 of 1 issues\./);
     expect(text).not.toMatch(/without loading a model/);
     expect(await notifies()).toEqual([
       expect.objectContaining({ channel: "slack", kind: "standup", ok: true }),

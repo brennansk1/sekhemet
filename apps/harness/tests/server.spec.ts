@@ -451,7 +451,8 @@ describe("@sekhemet/harness Dashboard Server", () => {
     };
     const hasher = board.cards.find((c) => c.id === "card_chron_hasher");
     expect(hasher?.display.title).toBe("Implement canonical JSON and SHA-256 hash chaining");
-    expect(hasher?.display.kinds).toEqual(["rules"]);
+    // DB-N2-4: the kernel's stored kind, never a dashboard enumeration of its own.
+    expect(hasher?.display.kinds).toEqual(["rule"]);
     expect(hasher?.display.type).toBe("story");
     expect(hasher?.display.statusLine).toBe("Types failed · 3 errors");
     expect(hasher?.display.stateLabel).toBe("Verify");
@@ -712,6 +713,15 @@ describe("@sekhemet/harness Dashboard Server", () => {
     expect(mem.thresholds.warning).toBe(0.85);
     expect(Array.isArray(below.body.checks)).toBe(true);
     expect(below.body.worktrees).toEqual([]);
+    // DB-N2-9: the active hardware tier, from the same memory reading; this
+    // probe's 1,000 bytes are below the minimum unless a profile was measured.
+    const tier = below.body.tier as {
+      installedBytes: number;
+      source: string;
+      unsupported?: string;
+    };
+    expect(tier.installedBytes).toBe(1000);
+    if (tier.source === "installed") expect(tier.unsupported).toMatch(/16 GB minimum/);
 
     memUsedRatio = 0.86;
     expect(((await getJson("/api/machine")).body.memory as { level: string }).level).toBe(

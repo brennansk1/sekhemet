@@ -12,6 +12,7 @@ import { licenseGate, repoLicenseAudit, withLicenseGate } from "../src/license_g
 import {
   advanceResearchEntry,
   checkRegisters,
+  markdownTable,
   readProvenance,
   readResearchRegister,
   validateResearchRegister,
@@ -61,6 +62,33 @@ describe("X17/X18: the registers in this repository are well-formed", () => {
       true,
     );
     expect(p.licenses.find((l) => /semgrep/i.test(l.component))?.license).toBe("LGPL-2.1");
+  });
+
+  it("reads a register's table as Markdown: an example table in a code block is not the register (DEC-44)", () => {
+    const md = [
+      "## Techniques",
+      "",
+      "```",
+      "| A | B |",
+      "| --- | --- |",
+      "| x | y |",
+      "```",
+      "",
+      "| Technique | Public source |",
+      "| --- | --- |",
+      "| Repo map | `aider` (Apache-2.0) |",
+      "",
+      "## Licences",
+      "",
+      "| Component | Licence |",
+      "| --- | --- |",
+      "| semver | ISC |",
+    ].join("\n");
+    expect(markdownTable(md, "techniques")).toEqual([
+      { technique: "Repo map", "public source": "`aider` (Apache-2.0)" },
+    ]);
+    expect(markdownTable(md, "Licences")).toEqual([{ component: "semver", licence: "ISC" }]);
+    expect(markdownTable(md, "Missing")).toEqual([]);
   });
 
   it("RESEARCH_REGISTER.md follows the lifecycle rules, and the whole check passes", () => {

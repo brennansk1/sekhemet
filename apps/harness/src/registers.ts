@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { type Tokens, isHeading, markdownBlocks } from "./markdown.js";
 
 /**
  * The provenance and research registers (X17, X18; design "Provenance and
@@ -12,28 +13,28 @@ import { join } from "node:path";
 export const PROVENANCE_PATH = join("docs", "reference", "PROVENANCE.md");
 export const RESEARCH_REGISTER_PATH = join("docs", "research", "RESEARCH_REGISTER.md");
 
-/** The rows of the first table after `## <heading>` (or of the first table at all). */
+/**
+ * The rows of the first table after the `## <heading>` or `### <heading>`
+ * (any case), or of the first table at all, keyed by the lower-cased column
+ * names. Read as Markdown (DEC-44: `marked`), so a table shown as an example
+ * in a code block is not the register.
+ */
 export function markdownTable(md: string, heading?: string): Record<string, string>[] {
-  const lines = md.split("\n");
+  const blocks = markdownBlocks(md);
   let i = 0;
   if (heading) {
-    i = lines.findIndex((l) => new RegExp(`^#{2,3}\\s+${heading}\\s*$`, "i").test(l));
+    const want = heading.trim().toLowerCase();
+    i = blocks.findIndex(
+      (b) => isHeading(b) && b.depth >= 2 && b.depth <= 3 && b.text.trim().toLowerCase() === want,
+    );
     if (i === -1) return [];
   }
-  while (i < lines.length && !lines[i]?.trim().startsWith("|")) i++;
-  const cells = (l: string) =>
-    l
-      .trim()
-      .replace(/^\||\|$/g, "")
-      .split("|")
-      .map((c) => c.trim());
-  const header = cells(lines[i] ?? "");
-  const rows: Record<string, string>[] = [];
-  for (let j = i + 2; j < lines.length && lines[j]?.trim().startsWith("|"); j++) {
-    const c = cells(lines[j] as string);
-    rows.push(Object.fromEntries(header.map((h, k) => [h.toLowerCase(), c[k] ?? ""])));
-  }
-  return rows;
+  const table = blocks.slice(i).find((b): b is Tokens.Table => b.type === "table");
+  if (!table) return [];
+  const header = table.header.map((c) => c.text.trim().toLowerCase());
+  return table.rows.map((row) =>
+    Object.fromEntries(header.map((h, k) => [h, row[k]?.text.trim() ?? ""])),
+  );
 }
 
 // ----------------------------------------------------------------- provenance

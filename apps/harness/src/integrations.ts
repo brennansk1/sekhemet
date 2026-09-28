@@ -222,16 +222,16 @@ const CATALOGUE: Omit<IntegrationEntry, "connected">[] = [
   { id: "jira", name: "Jira import and export", tier: "now", via: "csv" },
   { id: "linear", name: "Linear import and export", tier: "now", via: "csv" },
   { id: "slack", name: "Slack for the PM", tier: "now", via: "webhook" },
-  { id: "research-web", name: "Researcher web access", tier: "now", via: "api" },
+  { id: "research-web", name: "Research model web access", tier: "now", via: "api" },
   { id: "push", name: "Push notifications (ntfy or Gotify)", tier: "now", via: "webhook" },
   { id: "jira-sync", name: "Jira live sync", tier: "next", via: "api" },
   { id: "linear-sync", name: "Linear live sync", tier: "next", via: "api" },
-  { id: "github-actions", name: "GitHub Actions gate mirror", tier: "next", via: "gh-cli" },
+  { id: "github-actions", name: "GitHub Actions checks mirror", tier: "next", via: "gh-cli" },
   { id: "teams", name: "Microsoft Teams", tier: "next", via: "webhook" },
   { id: "slack-replies", name: "Reply to the PM from Slack", tier: "next", via: "api" },
-  { id: "sentry", name: "Sentry errors as proposed cards", tier: "later", via: "api" },
-  { id: "datadog", name: "Datadog regressions as proposed cards", tier: "later", via: "api" },
-  { id: "pagerduty", name: "PagerDuty follow-ups as proposed cards", tier: "later", via: "api" },
+  { id: "sentry", name: "Sentry errors as proposed issues", tier: "later", via: "api" },
+  { id: "datadog", name: "Datadog regressions as proposed issues", tier: "later", via: "api" },
+  { id: "pagerduty", name: "PagerDuty follow-ups as proposed issues", tier: "later", via: "api" },
   { id: "notion", name: "Notion publishing", tier: "later", via: "api" },
   { id: "confluence", name: "Confluence publishing", tier: "later", via: "api" },
 ];
@@ -1072,14 +1072,14 @@ export async function handleIntegrationsApi(
         ctx.json(res, 200, { proposals: [], unchanged: true });
         return true;
       }
-      ctx.json(res, 400, { error: "No cards found. The file needs a Summary or Title column." });
+      ctx.json(res, 400, { error: "No issues found. The file needs a Summary or Title column." });
       return true;
     }
     // Stored as a PM message so each import proposal is applied or discarded
     // through exactly the same flow as the PM's own.
     const reply = await ctx.pmStore.appendReply({
       replyTo: [],
-      text: `Import preview: ${drafts.length} card${drafts.length === 1 ? "" : "s"} from ${format}. Apply the ones you want.`,
+      text: `Import preview: ${drafts.length} issue${drafts.length === 1 ? "" : "s"} from ${format}. Apply the ones you want.`,
       proposals: drafts.slice(0, 500),
     });
     ctx.json(res, 200, { proposals: reply.proposals ?? [], messageId: reply.id });

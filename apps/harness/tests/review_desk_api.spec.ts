@@ -333,7 +333,7 @@ describe("live output and the review desk stay inside the project (Team)", () =>
     expect((await fetch(`${base()}/api/cards/card_run/review`, as("p_member"))).status).toBe(200);
     const hidden = await fetch(`${base()}/api/cards/card_run/review`, as("p_pending"));
     expect(hidden.status).toBe(404);
-    expect(await hidden.json()).toEqual({ error: "No card card_run" });
+    expect(await hidden.json()).toEqual({ error: "No issue card_run" });
   });
 });
 

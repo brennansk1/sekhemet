@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } 
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { parseToml } from "@sekhemet/kernel";
+import semver from "semver";
 import { missingTrailers } from "./git_adapter.js";
 import { gitEnvFor } from "./git_preflight.js";
 import type { GitHubClient } from "./github_app.js";
@@ -108,20 +109,61 @@ export function keepAChangelog(
 
 const CC = /^(\w+)(?:\(([^)]*)\))?(!)?:\s*(.+)$/;
 
+/**
+ * A tag name as projects write a version: `v1.2.3`, `name@1.2.3`,
+ * `name-1.2.3`, `name/1.2.3`, a prerelease and build included. A tag that
+ * merely holds a number (`deploy-2026`, `build42`) is not one.
+ */
+const VERSION_TAG =
+  /^(?:[\w@./-]*?[-@/_])?v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+/**
+ * A version as SemVer reads it (DEC-44: the `semver` library): a tag's `v`
+ * or `=` is dropped, and a tag name shaped like a version (`release-1.2.3`,
+ * `pkg@2.0.0-beta.1`) gives the version inside it, prerelease included; any
+ * other string is no version (fix review C1: `deploy-2026` is not 2026.0.0).
+ */
+export function parseVersion(v: string | undefined): semver.SemVer | undefined {
+  if (!v) return undefined;
+  const t = v.trim();
+  return (
+    semver.parse(t, { loose: true }) ??
+    (VERSION_TAG.test(t) ? semver.coerce(t, { includePrerelease: true }) : null) ??
+    undefined
+  );
+}
+
+/**
+ * SemVer precedence (a prerelease before its release, `0.10.0` after
+ * `0.9.0`); a string that holds no version sorts first. For `sort`.
+ */
+export function compareVersions(a: string, b: string): number {
+  const [x, y] = [parseVersion(a), parseVersion(b)];
+  if (!x || !y) return (x ? 1 : 0) - (y ? 1 : 0);
+  return semver.compare(x, y);
+}
+
+/**
+ * The next version after `previous` for a Conventional-Commit bump, with a
+ * `v` (review-git §2.6 item 7, RG-N4-1). While the version is `0.y.z` a
+ * breaking change bumps minor, never to 1.0.0: SemVer's major version zero
+ * is initial development, and 1.0 is a person's decision (they tag it). A
+ * prerelease is released rather than skipped (`1.0.0-rc.1` + patch is
+ * `1.0.0`).
+ */
 export function nextVersion(previous: string | undefined, bump: Bump): string {
-  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(previous ?? "0.0.0");
-  let [maj, min, pat] = [Number(m?.[1] ?? 0), Number(m?.[2] ?? 0), Number(m?.[3] ?? 0)];
-  if (bump === "major") [maj, min, pat] = [maj + 1, 0, 0];
-  else if (bump === "minor") [min, pat] = [min + 1, 0];
-  else if (bump === "patch") pat += 1;
-  return `v${maj}.${min}.${pat}`;
+  const from = parseVersion(previous) ?? new semver.SemVer("0.0.0");
+  if (bump === "none") return `v${from.version}`;
+  const release = bump === "major" && from.major === 0 ? "minor" : bump;
+  return `v${semver.inc(from.version, release) ?? from.version}`;
 }
 
 /**
  * Aggregate the Conventional Commits since the last tag on `ref` (the
  * checkout's HEAD when omitted; a slice's release passes the integration
  * branch), propose the semver bump (breaking -> major, feat -> minor,
- * fix/perf -> patch) and write the changelog with git-cliff when installed,
+ * fix/perf -> patch; a breaking change on 0.y.z is the next minor, see
+ * `nextVersion`) and write the changelog with git-cliff when installed,
  * else grouped by Keep a Changelog's categories (PM-P13-13).
  */
 export function planRelease(
@@ -159,7 +201,8 @@ export function planRelease(
       : commits.some((c) => c.type === "fix" || c.type === "perf")
         ? "patch"
         : "none";
-  const version = bump === "none" ? (previousTag ?? "v0.0.0") : nextVersion(previousTag, bump);
+  // With no bump the version stays the previous tag's, normalised (`release-1.2.3` is v1.2.3).
+  const version = nextVersion(previousTag, bump);
   let changelog: string | undefined;
   let engine: ReleasePlan["engine"] = "builtin";
   const categories = keepAChangelog(commits);

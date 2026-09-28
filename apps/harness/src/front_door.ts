@@ -10,11 +10,11 @@ import { WAVE2_COMMANDS } from "./wave2.js";
 export const FRONT_DOOR: readonly { usage: string; what: string }[] = [
   { usage: "sekhemet", what: "Set up on first run, then open the board" },
   { usage: 'sekhemet "<spec>"', what: "Plan the work and run it" },
-  { usage: "sekhemet run [card]", what: "Run a card, resume a stopped one, or run the queue" },
-  { usage: "sekhemet review", what: "Show the next card waiting on you" },
+  { usage: "sekhemet run [issue]", what: "Run an issue, resume a stopped one, or run the queue" },
+  { usage: "sekhemet review", what: "Show the next issue waiting on you" },
   {
-    usage: "sekhemet accept <card>",
-    what: 'Accept and merge. Also: send-back <card> "<reason>", park / unpark <card>, reject <card> "<reason>", reopen <card>, revert <card>; card message|pause|hand-back|take-over <card> for a running one',
+    usage: "sekhemet accept <issue>",
+    what: 'Accept and merge. Also: send-back <issue> "<reason>", park / unpark <issue>, reject <issue> "<reason>", reopen <issue>, revert <issue>; sekhemet card message|pause|hand-back|take-over <issue> for a running one',
   },
   // NEW-surface-6 (O23, approved under DEC-42): `ask` in place of `board`,
   // which the bare `sekhemet` opens; `board --terminal` is under `dev`.
@@ -384,7 +384,7 @@ export function routeFrontDoor(argv: readonly string[]): FrontDoorRoute {
     if (!(CARD_VERBS as readonly string[]).includes(verb) || !id) {
       return {
         kind: "unknown",
-        word: `card needs a verb and a card id: sekhemet card ${CARD_VERBS.join("|")} <card> …`,
+        word: `sekhemet card needs a verb and an issue ID: sekhemet card ${CARD_VERBS.join("|")} <issue> …`,
       };
     }
     return { kind: "card", verb: verb as CardVerb, cardId: id, text: text.join(" "), flags };
@@ -399,7 +399,7 @@ export function routeFrontDoor(argv: readonly string[]): FrontDoorRoute {
       first === "revert") &&
     !cardId
   ) {
-    return { kind: "unknown", word: `${first} needs a card id` };
+    return { kind: "unknown", word: `${first} needs an issue ID` };
   }
   if (first === "send-back") return { kind: "send-back", cardId, reason: words.join(" "), flags };
   if (first === "park") return { kind: "park", cardId, reason: words.join(" "), flags };

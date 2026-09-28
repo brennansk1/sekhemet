@@ -200,10 +200,10 @@ describe("the story map (DB-P3-13)", () => {
   it("without an accepted brief, shows the epics and their cards and says why there are no releases", () => {
     const m = storyMapModel({ map: null, cards, epics });
     expect(m.note).toBe(
-      "No brief has been accepted yet, so there are no releases. Cards are shown under their epics.",
+      "No brief has been accepted yet, so there are no releases. Issues are shown under their epics.",
     );
     expect(m.bands.map((b) => b.id)).toEqual(["untraced"]);
-    expect(m.bands[0]?.heading).toBe("Cards by epic");
+    expect(m.bands[0]?.heading).toBe("Issues by epic");
     expect(m.bands[0]?.cells.map((c) => c.cards.map((x) => x.id))).toEqual([
       ["c_parse", "c_upload"],
       ["c_tagrule", "c_loose"],

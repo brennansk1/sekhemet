@@ -27,7 +27,8 @@ import {
   qualifyModel,
 } from "@sekhemet/models";
 import { confinedSandbox } from "@sekhemet/sandbox";
-import { type CiStep, deriveGates, installGates } from "./init.js";
+import { readCiSteps } from "./ci_files.js";
+import { type CiStep, deriveGates, installGates, shellWord } from "./init.js";
 import { applyExploration, exploreProject } from "./learning/explore.js";
 import { LearningStore } from "./learning/store.js";
 import { ownRepoGitEnv } from "./takeover_recon.js";
@@ -200,27 +201,27 @@ export function detectCommands(root: string): DetectedCommand[] {
       if (kind) add(kind, `make ${m[1]}`, "Makefile");
     }
   }
-  const wf = join(root, ".github", "workflows");
-  if (existsSync(wf)) {
-    for (const f of readdirSync(wf)
-      .filter((n) => /\.ya?ml$/.test(n))
-      .sort()) {
-      for (const m of readFileSync(join(wf, f), "utf8").matchAll(/^\s*(?:-\s*)?run:\s*(.+)$/gm)) {
-        const cmd = (m[1] as string).trim().replace(/^["']|["']$/g, "");
-        const kind: DetectedCommand["kind"] | undefined = /\btest\b/.test(cmd)
-          ? "test"
-          : /\blint\b|clippy|ruff check|eslint|biome/.test(cmd)
-            ? "lint"
-            : /typecheck|tsc|mypy/.test(cmd)
-              ? "typecheck"
-              : /\bbuild\b/.test(cmd)
-                ? "build"
-                : /fmt|format|prettier/.test(cmd)
-                  ? "format"
-                  : undefined;
-        if (kind) add(kind, cmd, `.github/workflows/${f}`);
-      }
-    }
+  // CI commands from the one CI reader (YAML-parsed, DEC-44): GitHub
+  // Actions and GitLab CI, block scalars included.
+  for (const step of readCiSteps(root)) {
+    // A step in a subdirectory is that directory's command (fix review C2a).
+    const cmd =
+      step.command && step.directory && !step.directory.includes("${{")
+        ? `cd ${shellWord(step.directory)} && ${step.command}`
+        : step.command;
+    if (!cmd) continue;
+    const kind: DetectedCommand["kind"] | undefined = /\btest\b/.test(cmd)
+      ? "test"
+      : /\blint\b|clippy|ruff check|eslint|biome/.test(cmd)
+        ? "lint"
+        : /typecheck|tsc|mypy/.test(cmd)
+          ? "typecheck"
+          : /\bbuild\b/.test(cmd)
+            ? "build"
+            : /fmt|format|prettier/.test(cmd)
+              ? "format"
+              : undefined;
+    if (kind) add(kind, cmd, step.file);
   }
   return out;
 }
@@ -545,10 +546,10 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
   writeFileSync(gatesPath, toml);
   const gates = derived.gates;
   writeFileSync(join(dir, "ci_coverage.json"), `${JSON.stringify(derived.ci, null, 2)}\n`);
-  say(`4. Proposed gates (${relative(root, gatesPath)}): ${gates.join("; ") || "none"}.`);
+  say(`4. Proposed checks (${relative(root, gatesPath)}): ${gates.join("; ") || "none"}.`);
   for (const step of derived.ci) {
     say(
-      `   CI ${step.file}:${step.line} ${step.command} → ${step.gate ? `gate ${step.gate}` : (step.reason ?? "").replace(/_/g, " ")}`,
+      `   CI ${step.file}:${step.line}${step.directory ? ` (in ${step.directory}/)` : ""} ${step.command} → ${step.gate ? `check ${step.gate}` : (step.reason ?? "").replace(/_/g, " ")}${step.detail ? ` (${step.detail})` : ""}`,
     );
   }
   const liveGates = join(root, ".sekhemet", "gates.toml");
@@ -623,13 +624,13 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
         qualified: best.qualified,
       });
       say(
-        `7. ${m.modelId}: ${(best.passRate * 100).toFixed(0)}% ${best.qualified ? "qualified" : "not qualified"} on ${cases.length} cases.`,
+        `7. ${m.modelId}: ${(best.passRate * 100).toFixed(0)}% ${best.qualified ? "verified on this machine" : "not verified on this machine"} on ${cases.length} cases.`,
       );
       await opts.release?.(m);
     }
   } else {
     say(
-      "7. Qualification skipped: pass --models to qualify this machine's models on this repository.",
+      "7. Verification skipped: pass --models to verify this machine's models on this repository.",
     );
   }
 
@@ -639,7 +640,7 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
     if (installed.state === "written" || installed.state === "replaced") {
       applied.push(".sekhemet/gates.toml");
     }
-    if (installed.state === "replaced") say(`Kept the previous gates as ${installed.backup}.`);
+    if (installed.state === "replaced") say(`Kept the previous checks as ${installed.backup}.`);
     if (installed.state === "needs_confirmation") {
       say("Your .sekhemet/gates.toml differs from the proposal; kept. The difference:");
       for (const l of installed.diff.split("\n")) say(`   ${l}`);
@@ -657,7 +658,7 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
     say(`Applied: ${applied.join(", ")}.`);
   } else {
     say(
-      "Review .sekhemet/onboard/ and rerun with --apply to install the gates and the AGENTS.md / CLAUDE.md drafts.",
+      "Review .sekhemet/onboard/ and rerun with --apply to install the checks and the AGENTS.md / CLAUDE.md drafts.",
     );
   }
 
@@ -667,12 +668,12 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
   let baseline: OnboardReport["baseline"];
   if (opts.baseline !== false && !trusted) {
     say(
-      "8. Baseline not taken: it runs the project's gates, and this repository is not trusted yet.",
+      "8. Baseline not taken: it runs the project's checks, and this repository is not trusted yet.",
     );
   } else if (opts.baseline !== false) {
     baseline = await recordOnboardingBaseline(root, dir, opts.store?.log, opts.restricted === true);
     say(
-      `8. Baseline: ${baseline.entries} pre-existing finding(s), ${baseline.flaky} flaky test(s)${baseline.recorded ? ", on the ledger" : ""} (${baseline.path}); cards count only new ones.`,
+      `8. Baseline: ${baseline.entries} pre-existing finding(s), ${baseline.flaky} flaky test(s)${baseline.recorded ? ", on the ledger" : ""} (${baseline.path}); issues count only new ones.`,
     );
   }
 

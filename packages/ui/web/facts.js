@@ -26,7 +26,7 @@ export function factsSections(card, evidence, detail) {
   const allPassed = evidence?.passed;
   const crit = criteria.length
     ? `<ul class="crit">${criteria.map((c) => `<li><span class="bul" aria-hidden="true"></span><span>${esc(c)}</span></li>`).join("")}</ul>${allPassed ? '<p class="crit-note">All checks passed. Criteria are checked by the acceptance tests.</p>' : ""}`
-    : '<p class="sec" style="font-size:var(--text-sm)">No criteria recorded for this card.</p>';
+    : '<p class="sec" style="font-size:var(--text-sm)">No criteria recorded for this issue.</p>';
 
   let run = "";
   if (evidence) {

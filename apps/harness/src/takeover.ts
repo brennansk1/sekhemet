@@ -245,7 +245,7 @@ export function trustPlanLines(root: string, restricted = false): string[] {
     ...(plan.build ? [`build: ${line(plan.build)}`] : []),
     ...(gates.source === "repository"
       ? [
-          `gates from the repository's own .sekhemet/gates.toml, kept as it ships (not derived by Sekhemet; read it before you trust it)${gates.error ? `: it could not be read (${gates.error}), so nothing of it runs` : ":"}`,
+          `checks from the repository's own .sekhemet/gates.toml, kept as it ships (not derived by Sekhemet; read it before you trust it)${gates.error ? `: it could not be read (${gates.error}), so nothing of it runs` : ":"}`,
         ]
       : []),
     ...gates.gates.map((g) => `${g.twice ? `${g.rung} (twice)` : g.rung}: ${g.command}`),
@@ -399,7 +399,7 @@ export async function runTakeover(root: string, options: TakeoverOptions): Promi
     writeFileSync(join(dir, "gates.proposed.toml"), derived.toml);
     const installed = installGates(root, derived.toml, false);
     if (installed.state === "written")
-      say("3. Gates: wrote .sekhemet/gates.toml from the project.");
+      say("3. Checks: wrote .sekhemet/gates.toml from the project.");
     const log = options.log;
     const baseline = await recordOnboardingBaseline(root, dir, log, options.restricted === true);
     if (log) {

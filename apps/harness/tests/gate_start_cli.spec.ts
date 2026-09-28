@@ -76,16 +76,16 @@ describe("SUR-12: a derived test gate that cannot start stops the run", () => {
   it("stops `run` before the card starts, naming package.json", async () => {
     const { run } = await project();
     const r = run("dev", "run", "c1");
-    expect(r.out).toMatch(/The test gate cannot start: package\.json has no "test" script/);
+    expect(r.out).toMatch(/The test check cannot start: package\.json has no "test" script/);
     expect(r.out).toMatch(/Edit package\.json/);
-    expect(r.out).not.toMatch(/Executing card c1/);
+    expect(r.out).not.toMatch(/Running issue c1/);
     expect(r.code).toBe(1);
   }, 60_000);
 
   it("stops `queue` before any card, naming package.json", async () => {
     const { run } = await project();
     const r = run("dev", "queue");
-    expect(r.out).toMatch(/The test gate cannot start: package\.json has no "test" script/);
+    expect(r.out).toMatch(/The test check cannot start: package\.json has no "test" script/);
     expect(r.out).toMatch(/Edit package\.json/);
     expect(r.code).toBe(1);
   }, 60_000);

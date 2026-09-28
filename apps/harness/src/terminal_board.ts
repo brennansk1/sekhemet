@@ -1,5 +1,6 @@
 import type { BoardState } from "@sekhemet/board";
 import type { CardStatus } from "@sekhemet/kernel";
+import { BOARD_COLUMNS, columnLabel } from "@sekhemet/ui";
 
 /**
  * `sekhemet board --terminal` in the board's words (surface NEW-surface-2,
@@ -7,28 +8,15 @@ import type { CardStatus } from "@sekhemet/kernel";
  * where a column holds two states, and a WIP limit only where one is set.
  */
 
-/** The stored states' names, in sentence case (NAMING.md "Card states"). */
-export const STATE_NAMES: Record<CardStatus, string> = {
-  backlog: "Backlog",
-  ready: "Ready",
-  planning: "Planning",
-  in_progress: "In progress",
-  verify: "Verify",
-  review: "Review",
-  done: "Done",
-  parked: "Parked",
-  rejected: "Rejected",
-};
-
-/** The default board's columns (NAMING.md "Board columns"); Won't do is a filter. */
-const COLUMNS: { name: string; states: CardStatus[]; onlyWhenNonEmpty?: boolean }[] = [
-  { name: "Backlog", states: ["backlog"] },
-  { name: "To do", states: ["ready", "planning"] },
-  { name: "In progress", states: ["in_progress", "verify"] },
-  { name: "In review", states: ["review"] },
-  { name: "Done", states: ["done"] },
-  { name: "On hold", states: ["parked"], onlyWhenNonEmpty: true },
-];
+/**
+ * The stored states' names and the default board's columns: the dashboard's
+ * one label map (`vocabulary.ts`, DB-N2-3), never a copy. Won't do is a filter.
+ */
+const COLUMNS = BOARD_COLUMNS.map((c) => ({
+  name: c.label,
+  states: c.states,
+  onlyWhenNonEmpty: c.onlyWithCards,
+}));
 
 /**
  * Above this a limit is a safety cap, not a WIP limit a team set — the same
@@ -64,13 +52,13 @@ export function terminalBoardLines(state: BoardState): string[] {
       const limits = col.states
         .map((s) => ({ s, limit: limitOf(state, s) }))
         .filter((x) => x.limit !== undefined)
-        .map((x) => `${STATE_NAMES[x.s]} ${count(x.s)}/${x.limit}`);
+        .map((x) => `${columnLabel(x.s)} ${count(x.s)}/${x.limit}`);
       if (limits.length) heading += `  (${limits.join(" · ")})`;
     }
     out.push(heading);
     if (cards.length === 0) out.push("  —");
     for (const c of cards) {
-      const stateName = col.states.length > 1 ? `  ${STATE_NAMES[c.status]}` : "";
+      const stateName = col.states.length > 1 ? `  ${columnLabel(c.status)}` : "";
       out.push(`  ${c.id}  ${c.title}${stateName}  · ${c.stepsUsed}/${c.stepBudget} steps`);
     }
     out.push("");

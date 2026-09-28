@@ -1,6 +1,7 @@
 // Machine (FRONTEND_DESIGN §2.4.6): memory against its thresholds, the model
 // server, health checks with fixes, the sandbox and the worktrees on disk.
 import { $, esc, getJSON, icon } from "./dom.js";
+import { hardwareTierView } from "./lib/machine_tier.js";
 import { ROSTER_STATE_LABELS, rosterRows } from "./lib/pm.js";
 import { checkFixHint, shortId } from "./lib/vocabulary.js";
 import { setTopbar } from "./shell.js";
@@ -27,7 +28,7 @@ const LEVEL = {
   warning: {
     label: "Warning",
     tone: "parked",
-    text: "Above 85%: multi-token prediction is off, and above 90% no new worktree is created. Running cards continue.",
+    text: "Above 85%: multi-token prediction is off, and above 90% no new worktree is created. Running issues continue.",
   },
   critical: {
     label: "Critical",
@@ -55,6 +56,13 @@ function memoryHtml(m) {
     ? ({ 1: "normal", 2: "warning", 4: "critical" }[m.kernelLevel] ?? String(m.kernelLevel))
     : null;
   return `<section class="mc-card"><h3 class="sh">Memory <span class="sec">${esc(lv.label)}</span></h3><div class="mem-big"><span class="v tnum">${pct}%</span><span class="sec tnum">${esc(gb(m.usedBytes))} used of ${esc(gb(m.totalBytes))}</span></div><div class="gauge ${lv.tone}" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Memory used"><span class="fill" style="width:${Math.min(100, pct)}%"></span>${tick(t.warning)}${tick(t.throttle, true)}${tick(t.critical)}</div>${legend}<p class="sec mem-why">${esc(lv.text)}</p>${source}<dl class="kv"><dt>Swap in use</dt><dd class="tnum">${m.swapUsedBytes !== undefined ? esc(gb(m.swapUsedBytes)) : '<span class="sec">Not readable here</span>'}</dd>${kernel ? `<dt>System pressure</dt><dd>${esc(kernel)}</dd>` : ""}<dt>Keep-alive now</dt><dd class="mono">${esc(m.recommendedKeepAlive)}</dd></dl></section>`;
+}
+
+/** The active hardware tier and what it decides (DB-N2-9). */
+function tierHtml(d) {
+  const v = hardwareTierView(d?.tier);
+  if (!v) return "";
+  return `<section class="mc-card" aria-labelledby="mc-tier"><h3 class="sh" id="mc-tier">Hardware tier <span class="sec">${esc(v.heading)}</span></h3>${v.range ? `<p class="tnum">${esc(v.range)}</p>` : ""}${v.lines.map((l) => `<p class="sec">${esc(l)}</p>`).join("")}</section>`;
 }
 
 function modelHtml(d) {
@@ -129,7 +137,7 @@ function sandboxHtml(d) {
           return `<li><a href="#/card/${encodeURIComponent(id)}/steps">${esc(c?.display?.title ?? shortId(id))}</a> <span class="mono sec">${esc(id)}</span></li>`;
         })
         .join("")}</ul>`
-    : '<p class="sec">No worktrees. Each running card gets its own under .sekhemet/worktrees.</p>';
+    : '<p class="sec">No worktrees. Each running issue gets its own under .sekhemet/worktrees.</p>';
   return `<div class="two"><section class="mc-card"><h3 class="sh">Sandbox</h3><p>${sb ? esc(sb.detail) : "Unknown"}</p></section><section class="mc-card"><h3 class="sh">Worktrees <span class="sec">${trees.length}</span></h3>${treeList}</section></div>`;
 }
 
@@ -145,7 +153,7 @@ function render() {
   const err = ui.error
     ? `<div class="ev-error" role="alert">${icon("alert")}<span><b>Couldn't read the machine.</b> <span class="sec">The server returned ${esc(ui.error)}.</span></span><button class="btn sm" type="button" data-rerun>Retry</button></div>`
     : "";
-  const html = `${err}<div class="two">${memoryHtml(mem)}${modelHtml(d)}</div>${telemetryHtml()}${rosterHtml()}${checksHtml(d)}${sandboxHtml(d)}`;
+  const html = `${err}<div class="two">${memoryHtml(mem)}${modelHtml(d)}</div>${tierHtml(d)}${telemetryHtml()}${rosterHtml()}${checksHtml(d)}${sandboxHtml(d)}`;
   if (html === ui.last) {
     paintTelemetry();
     return;

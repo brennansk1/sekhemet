@@ -50,7 +50,7 @@ export const ACTIONS = {
   "agent.pause": { level: "member", does: "pause the Agent" },
   "agent.take_over": { level: "member", does: "take this issue over from the Agent" },
   review: { level: "member", does: "send back, park or reject this issue" },
-  "gates.run": { level: "member", does: "run the gates" },
+  "gates.run": { level: "member", does: "run the checks" },
   "proposal.apply": { level: "member", does: "apply Seshat's proposals" },
   "plan.approve": { level: "member", does: "approve plans" },
   "run.start": { level: "member", does: "start a queue or overnight run" },

@@ -9,7 +9,7 @@ import { main } from "../src/index.js";
 import { RESEARCH_HOSTS, planResearch, registrySearch } from "../src/research/plan_research.js";
 import { priorArtLines, queryFor, reuseSurvey } from "../src/research/reuse.js";
 import { searchPapers } from "../src/research/web.js";
-import { researchFetch } from "../src/research_consent.js";
+import { UNLISTED_YES_HOSTS, researchFetch } from "../src/research_consent.js";
 
 /**
  * design-stage S8 — `plan` honours offline mode and the research setting, and
@@ -193,10 +193,15 @@ describe("DS-S8-3, DS-S8-4: every query is logged, and only keywords leave the m
     const events = await log.getEventsByTypes(["research/query"]);
     expect(events.map((e) => (e.payload as { source: string }).source).sort()).toEqual([
       "GitHub",
+      "deps.dev",
       "registries",
     ]);
+    // A deps.dev lookup (DEC-44) is a query too: by a name the search returned.
+    // (This yes names no hosts, so deps.dev is not reached: recorded, not sent.)
+    const lookup = events.find((e) => (e.payload as { source: string }).source === "deps.dev");
+    expect((lookup?.private as { query: string }).query).toBe("csv-export-kit");
     const keywords = new Set(queryFor(need).split(" "));
-    for (const e of events) {
+    for (const e of events.filter((x) => (x.payload as { source: string }).source !== "deps.dev")) {
       const p = e.private as { query: string; results: string[] };
       for (const word of p.query.split(" ")) expect(keywords.has(word)).toBe(true);
       expect(e.payload).toMatchObject({ ok: true });
@@ -299,8 +304,8 @@ describe("Seshat's registry search goes through the research policy (review of B
   });
 });
 
-/** The hosts the question named before B4.5 added pypi.org. */
-const OLD_HOSTS = RESEARCH_HOSTS.filter((h) => h !== "pypi.org");
+/** The hosts the question named before B4.5 added pypi.org (and C3 api.deps.dev). */
+const OLD_HOSTS = UNLISTED_YES_HOSTS;
 const listed = (hosts: readonly string[]) => `[${hosts.map((h) => `"${h}"`).join(", ")}]`;
 const recordedHosts = () => {
   const m = /^research_hosts = (\[.*\])$/m.exec(readFileSync(userConfig, "utf8"));
@@ -410,7 +415,9 @@ describe("DS-S8-8: a yes covers exactly the hosts its question named (lead rulin
     expect(ask).toHaveBeenCalledTimes(1);
     expect(deps).toBeDefined();
     expect(recordedHosts()).toEqual([...OLD_HOSTS].sort());
-    expect(readFileSync(userConfig, "utf8")).toMatch(/research_hosts_declined = \["pypi\.org"\]/);
+    expect(readFileSync(userConfig, "utf8")).toMatch(
+      /research_hosts_declined = \["pypi\.org", "api\.deps\.dev"\]/,
+    );
     await expect(deps?.libraries("python csv", "pypi")).rejects.toThrow(/pypi\.org/);
     expect(urls).toEqual([]);
     await planResearch({ repoPath: repo, log, newProject: true, print, ask, fetchImpl: f });

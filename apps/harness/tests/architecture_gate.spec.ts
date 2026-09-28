@@ -92,6 +92,40 @@ describe("the architecture gate", () => {
     expect(parseInvariants(brief)).toEqual({ rules: [], unenforced: [] });
   });
 
+  // DEC-44: the brief is read as Markdown (marked), not line by line.
+  it("reads the Invariants section as Markdown: a code comment is not a heading, a wrapped item is whole", () => {
+    const brief = [
+      "# Brief",
+      "## Invariants",
+      "- `src/db/` does not import",
+      "  `src/cli.ts`",
+      "",
+      "```sh",
+      "# not a heading: a shell comment",
+      "```",
+      "",
+      "- `PartitionKey` is defined only in `src/types.ts`",
+      "## Riskiest assumption",
+      "- `src/x.ts` does not import `src/y.ts`",
+    ].join("\n");
+    const { rules, unenforced } = parseInvariants(brief);
+    expect(rules).toEqual([
+      {
+        kind: "no-import",
+        from: "src/db/",
+        to: "src/cli.ts",
+        text: "`src/db/` does not import `src/cli.ts`",
+      },
+      {
+        kind: "defined-only",
+        name: "PartitionKey",
+        file: "src/types.ts",
+        text: "`PartitionKey` is defined only in `src/types.ts`",
+      },
+    ]);
+    expect(unenforced).toEqual(["# not a heading: a shell comment"]);
+  });
+
   // GT-T2-2: the regex counted all three as a definition (gates review F1, reproduced).
   it("does not count a type import, a comment or a local variable as a definition (GT-T2-2)", () => {
     const root = repo({ ".sekhemet/brief.md": BRIEF, "src/types.ts": "", "src/ledger.ts": "" });

@@ -81,7 +81,7 @@ describe("the burn-up (DB-P3-14)", () => {
     expect(c.title).toBe("Burn-up · the project");
     expect(c.labels.done.y - c.labels.scope.y).toBe(12);
     expect(c.caption).toBe(
-      "3 of 3 pts done by Sep 25. Scope has not changed since Sep 24. 2 cards unestimated, counted as 1 pt each.",
+      "3 of 3 pts done by Sep 25. Scope has not changed since Sep 24. 2 issues unestimated, counted as 1 pt each.",
     );
   });
 
@@ -112,7 +112,7 @@ describe("the burn-up (DB-P3-14)", () => {
     ).toEqual({ title: "Burn-up · Cycle 3", empty: "Cycle 3 starts on Oct 1." });
     expect(burnupChart({ scope: "project", days: [], unestimated: 0 }, 560)).toEqual({
       title: "Burn-up · the project",
-      empty: "No cards yet.",
+      empty: "No issues yet.",
     });
   });
 });

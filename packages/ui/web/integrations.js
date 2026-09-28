@@ -2,6 +2,7 @@
 // entry says what leaves this machine when connected; nothing is on by default.
 // Import is a preview of proposals, never a silent write.
 import { esc, getJSON, icon, postJSON, sendJSON } from "./dom.js";
+import { integrationGroups } from "./lib/integrations_view.js";
 import { formatWait } from "./lib/vocabulary.js";
 import { bindProposals, proposalGroupHtml } from "./proposals.js";
 import { setTopbar } from "./shell.js";
@@ -9,11 +10,14 @@ import { store } from "./store.js";
 import { toast } from "./toast.js";
 import { mutationsBlocked } from "./triage.js";
 
-/** The design's catalogue: order, copy and data lines. The server adds state. */
+/**
+ * The page's words for the integrations it knows: what each does and what
+ * leaves this machine. Which integrations exist, and their tier, are the
+ * API's (DB-N2-7): an entry `/api/integrations` omits is not shown.
+ */
 const CATALOG = [
   {
     id: "github",
-    tier: "now",
     name: "GitHub Issues + Projects",
     mono: "GH",
     does: "Two-way issue sync through your gh login. Priority, points and sprint map to Projects fields; Sekhemet issues and GitHub issues link by reference.",
@@ -22,15 +26,13 @@ const CATALOG = [
   },
   {
     id: "github-pr",
-    tier: "now",
     name: "GitHub PR on accept",
     mono: "PR",
-    does: "Accept pushes the card branch and opens a pull request whose body is the evidence, instead of merging locally.",
+    does: "Accept pushes the issue's branch and opens a pull request whose body is the evidence, instead of merging locally.",
     leaves: "The issue branch, its diff, and the check results.",
   },
   {
     id: "research-web",
-    tier: "now",
     name: "Research model web access",
     mono: "RW",
     does: "When on, the Research model can search papers (Hugging Face, arXiv), read papers and web pages, and search GitHub. When off, it works only from this machine: the project's docs, history and registries.",
@@ -39,7 +41,6 @@ const CATALOG = [
   },
   {
     id: "jira",
-    tier: "now",
     name: "Jira",
     mono: "JI",
     does: "Import and export in Jira's own CSV columns: Summary, Issue Type, Priority, Story Points, Sprint, Epic Link, Labels, Description.",
@@ -47,7 +48,6 @@ const CATALOG = [
   },
   {
     id: "linear",
-    tier: "now",
     name: "Linear",
     mono: "LI",
     does: "Import and export in Linear's fields: title, priority 0–4, estimate, sprint, project, labels.",
@@ -55,41 +55,36 @@ const CATALOG = [
   },
   {
     id: "slack",
-    tier: "now",
     name: "Slack for the PM",
     mono: "SL",
     does: "Seshat posts the daily standup, “needs you” alerts and run reports to one channel.",
     leaves:
-      "Standup text, the titles of cards that need you, and run summaries, to the channel behind the webhook.",
+      "Standup text, the titles of issues that need you, and run summaries, to the channel behind the webhook.",
   },
   {
     id: "push",
-    tier: "now",
     name: "Push notifications (ntfy or Gotify)",
     mono: "PU",
-    does: "Your phone hears when a card waits for review, an issue is put on hold or hits its budget, the agent asks a question, or a run finishes. Tapping opens the issue here.",
+    does: "Your phone hears when an issue waits for review, an issue is put on hold or hits its budget, the agent asks a question, or a run finishes. Tapping opens the issue here.",
     leaves:
-      "The alert title and one line naming the card, to the ntfy or Gotify server you choose (your own, or ntfy.sh).",
+      "The alert title and one line naming the issue, to the ntfy or Gotify server you choose (your own, or ntfy.sh).",
   },
   {
     id: "jira-sync",
-    tier: "next",
     name: "Jira live sync",
     mono: "JI",
     does: "Two-way sync over Jira's REST API.",
-    leaves: "Card fields, to your Jira site, with a token from your OS keychain.",
+    leaves: "Issue fields, to your Jira site, with a token from your OS keychain.",
   },
   {
     id: "linear-sync",
-    tier: "next",
     name: "Linear live sync",
     mono: "LI",
     does: "Two-way sync over Linear's GraphQL API.",
-    leaves: "Card fields, to your Linear workspace, with a token from your OS keychain.",
+    leaves: "Issue fields, to your Linear workspace, with a token from your OS keychain.",
   },
   {
     id: "github-actions",
-    tier: "next",
     name: "GitHub Actions check mirror",
     mono: "GA",
     does: "Posts each issue's check results as a check run on its pull request.",
@@ -97,7 +92,6 @@ const CATALOG = [
   },
   {
     id: "teams",
-    tier: "next",
     name: "Microsoft Teams",
     mono: "MT",
     does: "The same standup, alerts and run reports as Slack, through an incoming webhook.",
@@ -105,7 +99,6 @@ const CATALOG = [
   },
   {
     id: "slack-replies",
-    tier: "next",
     name: "Slack replies",
     mono: "SL",
     does: "Talk to Seshat from a Slack thread.",
@@ -113,31 +106,27 @@ const CATALOG = [
   },
   {
     id: "sentry",
-    tier: "later",
     name: "Sentry",
     mono: "SE",
-    does: "New errors and regressions arrive as proposals for bug cards.",
+    does: "New errors and regressions arrive as proposals for bugs.",
     leaves: "Nothing leaves; issue data comes in.",
   },
   {
     id: "datadog",
-    tier: "later",
     name: "Datadog",
     mono: "DD",
-    does: "Monitors that fire arrive as proposals for bug cards.",
+    does: "Monitors that fire arrive as proposals for bugs.",
     leaves: "Nothing leaves; alert data comes in.",
   },
   {
     id: "pagerduty",
-    tier: "later",
     name: "PagerDuty",
     mono: "PD",
-    does: "Incident follow-ups arrive as proposals for cards.",
+    does: "Incident follow-ups arrive as proposals for issues.",
     leaves: "Nothing leaves; incident data comes in.",
   },
   {
     id: "notion",
-    tier: "later",
     name: "Notion",
     mono: "NO",
     does: "Seshat publishes sprint plans, run reports and decision logs, and reads linked specs as issue context.",
@@ -145,7 +134,6 @@ const CATALOG = [
   },
   {
     id: "confluence",
-    tier: "later",
     name: "Confluence",
     mono: "CO",
     does: "The same publishing as Notion, to a Confluence space.",
@@ -180,24 +168,14 @@ function ago(iso) {
   return ms < 60_000 ? "just now" : `${formatWait(ms)} ago`;
 }
 
+/** The API's entries with the page's words, grouped by the API's tier (DB-N2-7). */
+function grouped() {
+  return integrationGroups(ui.entries, CATALOG);
+}
+
 function merged() {
-  const byId = new Map(ui.entries.map((e) => [e.id, e]));
-  const out = CATALOG.map((c) => ({
-    ...c,
-    ...(byId.get(c.id) ?? {}),
-    known: byId.has(c.id),
-    name: c.name,
-  }));
-  for (const e of ui.entries)
-    if (!CATALOG.some((c) => c.id === e.id))
-      out.push({
-        mono: e.name.slice(0, 2).toUpperCase(),
-        does: e.detail ?? "",
-        leaves: "",
-        known: true,
-        ...e,
-      });
-  return out;
+  const g = grouped();
+  return [...g.now, ...g.next, ...g.later].map((e) => ({ ...e, known: true }));
 }
 
 function stateTag(e) {
@@ -282,27 +260,26 @@ function importHtml() {
   const preview = ui.importList
     ? `${proposalGroupHtml(ui.importList, { title: ui.importTitle })}<p class="inote">The same preview is in Seshat's thread. Nothing changes until you apply.</p>`
     : "";
-  return `<section class="isheet" aria-label="Import"><header><h2>Import</h2><button class="icon-btn" type="button" data-import-close aria-label="Close import">${icon("x", 14, "ic s14")}</button></header><form data-import-form><div class="irow"><label>Format <select name="format">${opts}</select></label><label class="file">File <input type="file" name="file" accept=".csv,.json,text/csv,application/json"></label></div><textarea name="content" rows="5" placeholder="Or paste the export here" spellcheck="false">${esc(ui.importContent ?? "")}</textarea><div class="iacts"><button class="btn sm primary" type="submit" ${ui.busy.has("import") ? "disabled" : ""}>${ui.busy.has("import") ? "Reading…" : "Preview as proposals"}</button><span class="sec">Import is never silent: each card becomes a proposal you apply or discard.</span></div>${ui.importError ? `<p class="ierr">${icon("alert", 12, "ic s12 i-fail")}${esc(ui.importError)}</p>` : ""}</form>${preview}</section>`;
+  return `<section class="isheet" aria-label="Import"><header><h2>Import</h2><button class="icon-btn" type="button" data-import-close aria-label="Close import">${icon("x", 14, "ic s14")}</button></header><form data-import-form><div class="irow"><label>Format <select name="format">${opts}</select></label><label class="file">File <input type="file" name="file" accept=".csv,.json,text/csv,application/json"></label></div><textarea name="content" rows="5" placeholder="Or paste the export here" spellcheck="false">${esc(ui.importContent ?? "")}</textarea><div class="iacts"><button class="btn sm primary" type="submit" ${ui.busy.has("import") ? "disabled" : ""}>${ui.busy.has("import") ? "Reading…" : "Preview as proposals"}</button><span class="sec">Import is never silent: each issue becomes a proposal you apply or discard.</span></div>${ui.importError ? `<p class="ierr">${icon("alert", 12, "ic s12 i-fail")}${esc(ui.importError)}</p>` : ""}</form>${preview}</section>`;
 }
 
 function render() {
   if (!ui.root) return;
-  const all = merged();
-  const now = all.filter((e) => e.tier === "now");
-  const next = all.filter((e) => e.tier === "next");
-  const later = all.filter((e) => e.tier === "later");
+  const g = grouped();
+  const now = g.now.map((e) => ({ ...e, known: true }));
+  const { next, later } = g;
   const connected = now.filter((e) => e.connected || e.enabled).length;
   setTopbar({
     title: "Integrations",
-    crumb: ui.status === 404 ? "Roadmap" : `${connected} of ${now.length} connected`,
+    crumb: ui.status === 404 ? "" : `${connected} of ${now.length} connected`,
   });
   const banner =
     ui.status === 404
-      ? `<p class="ibanner">${icon("alert", 14, "ic s14 i-park")}<span><b>Integrations aren't on this server yet.</b> <code>GET /api/integrations</code> returned 404. The roadmap below is what arrives with an updated Sekhemet.</span></p>`
+      ? `<p class="ibanner">${icon("alert", 14, "ic s14 i-park")}<span><b>Integrations aren't on this server yet.</b> <code>GET /api/integrations</code> returned 404. Update Sekhemet to connect GitHub, Jira, Linear and Slack.</span></p>`
       : ui.status && ui.status !== 200
         ? `<p class="ibanner">${icon("alert", 14, "ic s14 i-fail")}<span><b>Couldn't load integrations.</b> The server returned ${esc(ui.status)}.</span></p>`
         : "";
-  const html = `<div class="ints">${banner}<p class="ilede">Every integration is off until you connect it, and each one says what leaves this machine. Sekhemet uses your own CLI logins and webhook URLs and keeps no tokens in the repository.</p>${importHtml()}<section><h2>Now <span class="sec">Connect these</span></h2><div class="igrid">${now.map(nowCard).join("")}</div></section><section><h2>Next <span class="sec">Planned</span></h2><div class="igrid next">${next.map(nextCard).join("")}</div></section><section><h2>Later <span class="sec">On the roadmap</span></h2><ul class="ilater">${later.map(laterRow).join("")}</ul></section></div>`;
+  const html = `<div class="ints">${banner}<p class="ilede">Every integration is off until you connect it, and each one says what leaves this machine. Sekhemet uses your own CLI logins and webhook URLs and keeps no tokens in the repository.</p>${importHtml()}${now.length ? `<section><h2>Now <span class="sec">Connect these</span></h2><div class="igrid">${now.map(nowCard).join("")}</div></section>` : ""}${next.length ? `<section><h2>Next <span class="sec">Planned</span></h2><div class="igrid next">${next.map(nextCard).join("")}</div></section>` : ""}${later.length ? `<section><h2>Later <span class="sec">On the roadmap</span></h2><ul class="ilater">${later.map(laterRow).join("")}</ul></section>` : ""}</div>`;
   const scroll = ui.root.scrollTop;
   ui.root.innerHTML = html;
   ui.root.scrollTop = scroll;

@@ -26,8 +26,9 @@ afterEach(() => {
   while (dirs.length) rmSync(dirs.pop() as string, { recursive: true, force: true });
 });
 
-// A fake token of the GitHub shape, built at run time so this file holds none.
-const FAKE = `ghp_${"A1b2C3d4E5".repeat(4)}`;
+// A fake token of the GitHub shape (ghp_ and 36 characters, as gitleaks'
+// github-pat reads it), built at run time so this file holds none.
+const FAKE = `ghp_${"A1b2C3d4E5".repeat(4).slice(0, 36)}`;
 
 function git(root: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
@@ -66,13 +67,36 @@ describe("DS-TO-3, SEC-55: the offline history secret scan", () => {
     expect(scan.scanner).toBe("builtin");
     expect(scan.commits).toBe(3);
     expect(scan.notScanned).toBeUndefined();
-    expect(scan.findings).toEqual([
-      { commit: leaked, path: "src/config.ts", rule: "github-token" },
-    ]);
-    // The rule id is the bundled rule set's own (secrets.ts), shared with the diff gate.
+    expect(scan.findings).toEqual([{ commit: leaked, path: "src/config.ts", rule: "github-pat" }]);
+    // The rule id is gitleaks' own (DEC-44: the vendored rule file), shared
+    // with the diff gate and the gitleaks program.
     expect(SECRET_RULES.map((r) => r.id)).toContain(scan.findings[0]?.rule);
     // The secret is recorded nowhere, not even in part.
     expect(JSON.stringify(scan)).not.toContain(FAKE.slice(4, 14));
+  });
+
+  it("finds a private key committed over several lines, and a PKCS #12 file by its path, as gitleaks does", async () => {
+    const root = repo();
+    commit(root, { "README.md": "# app\n" }, "init");
+    const body = Array.from({ length: 4 }, (_, i) => `${"Q2w3E4r5T6y7U8i9".repeat(3)}${i}`).join(
+      "\n",
+    );
+    const pem = `-----BEGIN EC ${"PRIVATE"} KEY-----\n${body}\n-----END EC ${"PRIVATE"} KEY-----\n`;
+    const leaked = commit(
+      root,
+      { "deploy/id_ec": pem, "certs/client.p12": "\u0000binary\u0000" },
+      "keys",
+    );
+    const scan = await scanHistorySecrets(root, { gitleaks: false });
+    expect(scan.notScanned).toBeUndefined();
+    expect(scan.reason).toBeUndefined();
+    expect(scan.findings).toEqual(
+      expect.arrayContaining([
+        { commit: leaked, path: "deploy/id_ec", rule: "private-key" },
+        { commit: leaked, path: "certs/client.p12", rule: "pkcs12-file" },
+      ]),
+    );
+    expect(scan.findings).toHaveLength(2);
   });
 
   it("refuses when the repository config names a textconv driver: history not scanned, no driver runs", async () => {
@@ -158,9 +182,7 @@ describe("DS-TO-3, SEC-55: the offline history secret scan", () => {
     expect(forced).toBe("/dev/null");
     const scan = await scanHistorySecrets(root, { gitleaks: false });
     expect(scan.notScanned).toBeUndefined();
-    expect(scan.findings).toEqual([
-      { commit: leaked, path: "src/config.ts", rule: "github-token" },
-    ]);
+    expect(scan.findings).toEqual([{ commit: leaked, path: "src/config.ts", rule: "github-pat" }]);
     expect(existsSync(hookRan)).toBe(false);
   });
 
@@ -256,7 +278,7 @@ describe("B1: a history git could not read is never a clean scan", () => {
 });
 
 describe("M3: gitleaks reads none of the repository's own configuration", () => {
-  it("passes a harness-owned --config (gitleaks' default rules) and an empty --gitleaks-ignore-path outside the repository", async () => {
+  it("passes a harness-owned --config (the vendored gitleaks rule file) and an empty --gitleaks-ignore-path outside the repository", async () => {
     const root = repo();
     commit(
       root,
@@ -271,7 +293,7 @@ describe("M3: gitleaks reads none of the repository's own configuration", () => 
       `for a in "$@"; do echo "$a" >> ${JSON.stringify(argsFile)}; done`,
       'report=""; cfg=""; ign=""; prev=""',
       'for a in "$@"; do case "$prev" in --report-path) report="$a";; --config) cfg="$a";; --gitleaks-ignore-path) ign="$a";; esac; prev="$a"; done',
-      `echo "CONFIG-BODY $(cat "$cfg" | tr '\\n' ' ')" >> ${JSON.stringify(argsFile)}`,
+      `echo "CONFIG-SHA $(shasum -a 256 "$cfg" | cut -d ' ' -f 1)" >> ${JSON.stringify(argsFile)}`,
       `echo "IGNORE-DIR $(ls -A "$ign" | wc -l | tr -d ' ')" >> ${JSON.stringify(argsFile)}`,
       `printf '[]' > "$report"`,
       "exit 0",
@@ -285,7 +307,11 @@ describe("M3: gitleaks reads none of the repository's own configuration", () => 
     expect(args).toContain("--gitleaks-ignore-path");
     expect(config.startsWith(root)).toBe(false);
     expect(ignore.startsWith(root)).toBe(false);
-    expect(args.find((a) => a.startsWith("CONFIG-BODY"))).toMatch(/\[extend\]\s+useDefault = true/);
+    // C2b: the vendored rule file itself, so the program and the bundled
+    // scan use one rule set whatever gitleaks version is installed.
+    expect(args).toContain(
+      "CONFIG-SHA e163e53b9e7e8a8511e77271e2b323ed057759542a6d988258afe3a1fa329caf",
+    );
     expect(args).toContain("IGNORE-DIR 0");
   });
 
@@ -300,9 +326,7 @@ describe("M3: gitleaks reads none of the repository's own configuration", () => 
     const scan = await scanHistorySecrets(root, { gitleaks: fake });
     expect(scan.scanner).toBe("builtin");
     expect(scan.reason).toMatch(/\.gitleaksignore/);
-    expect(scan.findings).toEqual([
-      { commit: leaked, path: "src/config.ts", rule: "github-token" },
-    ]);
+    expect(scan.findings).toEqual([{ commit: leaked, path: "src/config.ts", rule: "github-pat" }]);
   });
 
   it("keeps a gitleaks finding on a SHA-256 commit (64 hex)", async () => {

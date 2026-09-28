@@ -79,7 +79,7 @@ export const approveRule = (r, reach = "project") =>
     patch: { status: "active", reach },
     done:
       reach === "global"
-        ? "Approved for all projects. Every repository on this machine uses it from the next matching card."
+        ? "Approved for all projects. Every repository on this machine uses it from the next matching issue."
         : "Approved. The rule is given to the agent from the next matching issue.",
     failed: "Couldn't approve the rule.",
   });

@@ -299,7 +299,7 @@ export function proposalDiff(p: ProposalLike, ctx: DiffContext = {}): DiffRow[] 
 }
 
 export const PROPOSAL_KINDS: Record<string, { label: string; icon: string }> = {
-  create_card: { label: "Create card", icon: "plus" },
+  create_card: { label: "Create issue", icon: "plus" },
   update_card: { label: "Update", icon: "pencil" },
   split_card: { label: "Split", icon: "split" },
   reorder: { label: "Reorder", icon: "layers" },
@@ -327,7 +327,7 @@ export function applyAllLabel(proposals: ProposalLike[]): string {
   const cards = open.reduce((n, p) => n + proposalCardCount(p), 0);
   const changes = `${open.length} ${open.length === 1 ? "change" : "changes"}`;
   return cards > 0
-    ? `Apply ${changes} to ${cards} ${cards === 1 ? "card" : "cards"}`
+    ? `Apply ${changes} to ${cards} ${cards === 1 ? "issue" : "issues"}`
     : `Apply ${changes}`;
 }
 
@@ -782,7 +782,7 @@ export function groupCards<C extends PmCardLike>(
   by: GroupBy,
   ctx: MatchContext = {},
 ): CardGroup<C>[] {
-  if (by === "none") return [{ key: "all", label: "All cards", cards, points: sumPoints(cards) }];
+  if (by === "none") return [{ key: "all", label: "All issues", cards, points: sumPoints(cards) }];
   const map = new Map<string, C[]>();
   const keyOf = (c: C): string => {
     switch (by) {
@@ -1230,7 +1230,7 @@ export function scopeChips(
   if (scope?.kind) out.push({ label: "Kind", value: kindLabel(scope.kind) });
   if (scope?.pathPattern) out.push({ label: "Files", value: scope.pathPattern });
   if (scope?.errorPattern) out.push({ label: "Error", value: scope.errorPattern });
-  if (out.length === 0) out.push({ label: "Applies to", value: "every card" });
+  if (out.length === 0) out.push({ label: "Applies to", value: "every issue" });
   return out;
 }
 

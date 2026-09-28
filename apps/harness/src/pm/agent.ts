@@ -856,6 +856,9 @@ export async function answer(
           Partial<Pick<ResearchAnswer, "confidence" | "badCitations">> = await researcher(q, {
           deep,
         }).catch((err) => ({
+          // Model-facing (Seshat's prompt reads it through `found`): wording
+          // frozen by PROMPT_STANDARD until a suite A/B; DEC-31 governs
+          // person-facing text.
           answer: `The Researcher failed: ${err instanceof Error ? err.message : String(err)}`,
           sources: [],
           grounded: false,
@@ -917,7 +920,7 @@ export async function answer(
     text =
       proposals.length > 0
         ? `I have ${proposals.length} proposed change${proposals.length > 1 ? "s" : ""} for you to review.`
-        : "I could not produce an answer to that. Could you rephrase it or point me at a card?";
+        : "I could not produce an answer to that. Could you rephrase it or point me at an issue?";
   }
   // PM-N9-4: said, not silently dropped.
   if (unreasoned > 0) {
@@ -1005,7 +1008,7 @@ export function ledgerStandup(s: PmSnapshot): string {
   }
   const ready = [...by("ready")].sort((a, b) => (a.priority || 9) - (b.priority || 9));
   if (ready.length) lines.push(`Next up: ${ready.slice(0, 3).map(name).join(", ")}.`);
-  lines.push(`Done: ${by("done").length} of ${s.cards.length} cards.`);
+  lines.push(`Done: ${by("done").length} of ${s.cards.length} issues.`);
   // PM-P13-3, -8: the must-haves proven and the unplanned ones, from the ledger.
   const map = s.storyMap;
   if (map && map.slices.length > 0) {
@@ -1014,16 +1017,18 @@ export function ledgerStandup(s: PmSnapshot): string {
     );
     const waiting = map.slices.filter((x) => x.state === "proven");
     if (waiting.length) {
-      lines.push(`Proven, waiting for your acceptance: ${waiting.map((x) => x.id).join(", ")}.`);
+      lines.push(
+        `Requirements done, waiting for your acceptance: ${waiting.map((x) => x.id).join(", ")}.`,
+      );
     }
   }
   if (s.forecast) lines.push(`Forecast: ${s.forecast}`);
-  if (s.worker) lines.push(`Worker record: ${s.worker.record}`);
+  if (s.worker) lines.push(`Coding model record: ${s.worker.record}`);
   // GT-N1-1: an invariant no gate checks is said, never silently assumed to hold.
   const loose = s.unenforcedInvariants ?? [];
   if (loose.length) {
     lines.push(
-      `Not enforced (restate as ${loose[0]?.restate.join(" or ")} for the architecture gate to check it): ${loose.map((l) => `"${l.line}"`).join("; ")}.`,
+      `Not enforced (restate as ${loose[0]?.restate.join(" or ")} for the architecture check to enforce it): ${loose.map((l) => `"${l.line}"`).join("; ")}.`,
     );
   }
   return `${lines.join("\n")}\n\n_Answered from the ledger without loading a model. Ask a specific question for my judgement._`;

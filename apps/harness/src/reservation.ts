@@ -106,7 +106,7 @@ export async function mayStartCard(
   const projectId = card.projectId ?? (await ctx.cardStore.getCard(card.id))?.projectId;
   const project = projectId ? ctx.cardStore.getProject(projectId) : undefined;
   if (project && project.status === "paused") {
-    return `its project ${project.name} is paused; resume it to run its cards`;
+    return `its project ${project.name} is paused; resume it to run its issues`;
   }
   return undefined;
 }
@@ -123,7 +123,7 @@ export function unattendedStartRefusal(
   ctx: { unattended: boolean; reservedNow: boolean; inReservedHours: boolean },
 ): string | undefined {
   if (!ctx.unattended || card.priority === 1) return undefined;
-  if (ctx.reservedNow) return "the machine is reserved and the card is not urgent";
-  if (ctx.inReservedHours) return "it is inside the reserved hours and the card is not urgent";
+  if (ctx.reservedNow) return "the machine is reserved and the issue is not urgent";
+  if (ctx.inReservedHours) return "it is inside the reserved hours and the issue is not urgent";
   return undefined;
 }

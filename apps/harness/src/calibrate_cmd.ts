@@ -245,7 +245,7 @@ export async function runCalibrate(
   if (profile.settings) {
     const s = profile.settings;
     say(
-      `  working context ${s.workingContextTokens} tokens, ${s.parallelCards} card(s) at once, roles ${s.coLoadRoles ? "co-loaded" : "swapped"} — ${s.reason}.`,
+      `  working context ${s.workingContextTokens} tokens, ${s.parallelCards} issue(s) at once, roles ${s.coLoadRoles ? "co-loaded" : "swapped"} — ${s.reason}.`,
     );
   }
   if (profile.launch) say(`  ${profile.launch.reason}.`);

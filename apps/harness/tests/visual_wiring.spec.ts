@@ -80,7 +80,7 @@ describe("the vision checklist's model (GT-N4-2)", () => {
   it("gives the checklist only to a vision model the registry records as qualified, and says why otherwise", () => {
     const load = async () => fakeVisionModel("");
     expect(cardVision([], load)).toEqual({
-      visionNotRun: `no vision model in the registry has qualified on checklist ${VISION_CHECKLIST_VERSION}`,
+      visionNotRun: `no vision model in the registry is verified on this machine on checklist ${VISION_CHECKLIST_VERSION}`,
     });
     const unmeasured: ModelEntry = { id: "vision-u", vision: true };
     const short: ModelEntry = {
@@ -96,7 +96,9 @@ describe("the vision checklist's model (GT-N4-2)", () => {
     const chosen = cardVision([unmeasured, good], load);
     expect(chosen.vision?.adapter.model).toBe("vision-q");
     expect(chosen.vision?.qualification).toMatchObject({ model: "vision-q", approvedScreens: 60 });
-    expect(cardVision([good], undefined).visionNotRun).toMatch(/vision-q has qualified, but/);
+    expect(cardVision([good], undefined).visionNotRun).toMatch(
+      /vision-q is verified on this machine, but/,
+    );
   });
 
   it("executeCard's choice reads the model registry on disk", () => {
@@ -109,7 +111,9 @@ describe("the vision checklist's model (GT-N4-2)", () => {
         typeof visionForCard
       >[0];
       writeFileSync(path, JSON.stringify({ models: [{ id: "vision-u", vision: true }] }));
-      expect(visionForCard(ctx).visionNotRun).toMatch(/no vision model has qualified/);
+      expect(visionForCard(ctx).visionNotRun).toMatch(
+        /no vision model is verified on this machine/,
+      );
       writeFileSync(
         path,
         JSON.stringify({
@@ -231,7 +235,7 @@ describe.runIf(findChrome() !== undefined)("the visual layer in a card's verific
     const none = await verify({ card: { id: "card_v" }, vision: cardVision([], undefined) });
     expect(none.allFailures).toEqual([]);
     expect(none.advisories).toContain(
-      `vision checklist not run: no vision model in the registry has qualified on checklist ${VISION_CHECKLIST_VERSION}`,
+      `vision checklist not run: no vision model in the registry is verified on this machine on checklist ${VISION_CHECKLIST_VERSION}`,
     );
   }, 60_000);
 

@@ -228,7 +228,7 @@ describe("the board API for the professional board (dashboard P3)", () => {
       1,
       "",
       "1 / 4",
-      "Limit 4, from 60 review minutes a day at ~15 min per card (the starting estimate until you review a card).",
+      "Limit 4, from 60 review minutes a day at ~15 min per issue (the starting estimate until you review an issue).",
     ]);
   });
 });

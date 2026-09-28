@@ -1031,7 +1031,7 @@ describe("INT-12/12a/15/39: Accept opens a draft pull request and the card waits
       body: string;
     };
     expect(pr).toMatchObject({ base: "develop", draft: true });
-    expect(pr.body).toContain("### Gates\n- pass unit (12 ms)");
+    expect(pr.body).toContain("### Checks\n- pass unit (12 ms)");
     expect(pr.body).toContain("### Coverage");
     expect(pr.body).toContain("### Tried and abandoned");
     expect(pr.body).toContain("Accepted by Jane Doe");
@@ -1616,7 +1616,7 @@ describe("INT-16a/16: a dependency bot's pull request is verified by the full ga
       tier: "task",
       title: "Verify dependabot[bot] PR #9",
       status: "ready",
-      spec: `Run the full gates against PR #9 at ${head} and report.`,
+      spec: `Run the full checks against PR #9 at ${head} and report.`,
       labels: ["dependency-update"],
       externalRef: { system: "github", id: "pr/9", url: "https://github.com/o/r/pull/9" },
     });
@@ -1663,7 +1663,7 @@ describe("INT-16a/16: a dependency bot's pull request is verified by the full ga
       tier: "task",
       title: "Verify dependabot[bot] PR #9",
       status: "ready",
-      spec: `Run the full gates against PR #9 at ${head} and report.`,
+      spec: `Run the full checks against PR #9 at ${head} and report.`,
       labels: ["dependency-update"],
       externalRef: { system: "github", id: "pr/9", url: "https://github.com/o/r/pull/9" },
     });
@@ -1934,7 +1934,7 @@ describe("B3: the external review's git fetch goes through the network policy", 
       tier: "task",
       title: "Review PR #12",
       status: "ready",
-      spec: "Run the full gates against PR #12 at its head and report.",
+      spec: "Run the full checks against PR #12 at its head and report.",
       labels: ["external-review"],
       externalRef: { system: "github", id: "pr/12", url: "https://github.com/o/r/pull/12" },
     });

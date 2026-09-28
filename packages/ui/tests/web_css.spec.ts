@@ -408,3 +408,25 @@ describe("the brand mark and the AI badge in the page (DB-N9-19, DB-N9-18)", () 
     for (const f of modules) expect(source(f), f).not.toMatch(/avatar\([^)]*Agent/);
   });
 });
+
+describe("the gates strip on a phone (dashboard NEW-dashboard-1)", () => {
+  it("DB-N1-2: at 400 px the strip is a vertical list whose text wraps rather than overlaps", () => {
+    expect(cascaded("review.css", ".g-strip", "flex-direction", 1440) ?? "row").toBe("row");
+    expect(cascaded("review.css", ".g-strip", "flex-direction", 400)).toBe("column");
+    // Each segment is a full-width row with its hairline below, not beside it.
+    expect(cascaded("review.css", ".g-seg", "border-right", 400)).toBe("0");
+    expect(cascaded("review.css", ".g-seg", "border-bottom", 400)).toBe(
+      "1px solid var(--border-subtle)",
+    );
+    // Its text wraps inside the row: no fixed height, no nowrap.
+    expect(cascaded("review.css", ".g-seg", "white-space", 400)).toBe("normal");
+    expect(cascaded("review.css", ".g-seg", "height", 400)).toBe("auto");
+    expect(cascaded("review.css", ".g-seg", "min-height", 400)).toBe("32px");
+  });
+
+  it("DB-N1-1: a group's failed gates are cut with an ellipsis on a wide strip, never overlapping", () => {
+    expect(cascaded("review.css", ".g-seg .fl", "overflow", 1440)).toBe("hidden");
+    expect(cascaded("review.css", ".g-seg .fl", "text-overflow", 1440)).toBe("ellipsis");
+    expect(cascaded("review.css", ".g-seg .fl", "overflow", 400)).toBe("visible");
+  });
+});

@@ -250,7 +250,7 @@ export function changesHtml(
   if (ctx.acceptanceTests.length === 0) {
     const globs = ctx.protectedGlobs.length ? ctx.protectedGlobs : ["**/*.spec.ts"];
     groups.push(
-      `<div class="group"><div class="g-h">${icon("lock", 14, "ic s14")}<span>Acceptance tests</span><span class="sec">· none for this card</span></div><div class="note-row">This issue is checked by the project’s checks and existing tests only. The agent cannot edit files that match ${globs.map((g) => `<span class="mono">${esc(g)}</span>`).join(", ")}.</div></div>`,
+      `<div class="group"><div class="g-h">${icon("lock", 14, "ic s14")}<span>Acceptance tests</span><span class="sec">· none for this issue</span></div><div class="note-row">This issue is checked by the project’s checks and existing tests only. The agent cannot edit files that match ${globs.map((g) => `<span class="mono">${esc(g)}</span>`).join(", ")}.</div></div>`,
     );
   }
 

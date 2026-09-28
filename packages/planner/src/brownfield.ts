@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, posix } from "node:path";
 import type { CardChange, CardRecord } from "@sekhemet/kernel";
-import { gitEnvFor } from "@sekhemet/sync";
+import { compareVersions, gitEnvFor, parseVersion } from "@sekhemet/sync";
 import { approvalHold } from "./approval_hold.js";
 import { criterionIdsFor } from "./criteria.js";
 import type { ExampleRow } from "./criteria.js";
@@ -291,15 +291,6 @@ export function renderSupersedingTest(input: {
 /* Upgrades (PM-N6-4)                                                       */
 /* ------------------------------------------------------------------------ */
 
-function semver(v: string): [number, number, number] | undefined {
-  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(v.trim());
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : undefined;
-}
-
-function compare(a: [number, number, number], b: [number, number, number]): number {
-  return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
-}
-
 /**
  * The changelog entries after the installed version up to and including the
  * proposed one, newest first: each `## [x.y.z]` / `## x.y.z` section's
@@ -310,18 +301,16 @@ export function changelogBetween(
   from: string,
   to: string,
 ): { version: string; lines: string[] }[] {
-  const lo = semver(from);
-  const hi = semver(to);
-  if (!lo || !hi) return [];
+  if (!parseVersion(from) || !parseVersion(to)) return [];
   const out: { version: string; lines: string[] }[] = [];
   let current: { version: string; lines: string[] } | undefined;
   for (const line of text.split("\n")) {
     const heading = /^#{1,4}\s*\[?v?(\d+\.\d+\.\d+[^\]\s]*)\]?/.exec(line);
     if (heading) {
-      const v = semver(heading[1] as string);
+      const v = heading[1] as string;
       current =
-        v && compare(v, lo) > 0 && compare(v, hi) <= 0
-          ? { version: heading[1] as string, lines: [] }
+        parseVersion(v) && compareVersions(v, from) > 0 && compareVersions(v, to) <= 0
+          ? { version: v, lines: [] }
           : undefined;
       if (current) out.push(current);
       continue;
@@ -332,12 +321,7 @@ export function changelogBetween(
     }
     if (current && line.trim()) current.lines.push(line.trim());
   }
-  return out.sort((a, b) =>
-    compare(
-      semver(b.version) as [number, number, number],
-      semver(a.version) as [number, number, number],
-    ),
-  );
+  return out.sort((a, b) => compareVersions(b.version, a.version));
 }
 
 /** The package manager's tool step for the version change, by the lockfile present. */

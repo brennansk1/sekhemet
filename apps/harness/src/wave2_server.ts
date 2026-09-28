@@ -188,7 +188,7 @@ export async function applyWebhookIntent(
               ? `Review PR #${intent.pr}`
               : `Verify ${intent.author} PR #${intent.pr}`,
           status: "ready",
-          spec: `Run the full gates against PR #${intent.pr} at ${intent.headSha || "its head"} and report.`,
+          spec: `Run the full checks against PR #${intent.pr} at ${intent.headSha || "its head"} and report.`,
           labels: [intent.kind === "external_review" ? "external-review" : DEPENDENCY_LABEL],
           ...(url || intent.kind === "external_review"
             ? { externalRef: { system: "github" as const, id: `pr/${intent.pr}`, url } }
@@ -494,7 +494,7 @@ export async function handleWave2Route(
     const id = review[1] as string;
     const card = await cardStore.getCard(id);
     if (!card) {
-      json(res, 404, { error: `Card not found: ${id}` });
+      json(res, 404, { error: `Issue not found: ${id}` });
       return true;
     }
     json(res, 200, await reviewBrief(ctx.repoPath, cardStore, ctx.log, card));

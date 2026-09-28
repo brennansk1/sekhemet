@@ -286,6 +286,32 @@ describe("PM-N6-4: an upgrade is a tool step, then child fix cards from the fail
     expect(entries[0]?.lines).toEqual(["- `pad` throws on a negative length."]);
   });
 
+  it("orders prereleases by SemVer precedence (DEC-44: the semver library)", () => {
+    const text = [
+      "# Changelog",
+      "## [2.0.0]",
+      "- Stable.",
+      "## [2.0.0-rc.10]",
+      "- Tenth candidate.",
+      "## [2.0.0-rc.2]",
+      "- Second candidate.",
+      "## [1.10.0]",
+      "- Ten.",
+      "## [1.9.0]",
+      "- Nine.",
+      "",
+    ].join("\n");
+    expect(changelogBetween(text, "2.0.0-rc.1", "2.0.0").map((e) => e.version)).toEqual([
+      "2.0.0",
+      "2.0.0-rc.10",
+      "2.0.0-rc.2",
+    ]);
+    expect(changelogBetween(text, "1.9.0", "2.0.0-rc.2").map((e) => e.version)).toEqual([
+      "2.0.0-rc.2",
+      "1.10.0",
+    ]);
+  });
+
   it("plans the version change as a tool step and turns each failing file into a fix card citing the changelog", async () => {
     const root = billing();
     writeFileSync(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");

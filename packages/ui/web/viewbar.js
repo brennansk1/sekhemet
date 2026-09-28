@@ -35,7 +35,7 @@ const STATE_KEY = "sekhemet-board-view";
 const VIEWS_KEY = "sekhemet-views";
 
 export const BUILTIN_VIEWS = [
-  { id: "all", name: "All cards", query: "" },
+  { id: "all", name: "All issues", query: "" },
   { id: "cycle", name: "Current sprint", query: "sprint:current" },
   { id: "needs", name: "Needs you", query: "is:needs-you" },
   { id: "hot", name: "Urgent and high", query: "priority:urgent,high is:open" },
@@ -342,7 +342,7 @@ export function viewBarHtml(layout) {
 <div class="lseg" role="tablist" aria-label="Layout"><a role="tab" href="#/board" aria-selected="${layout === "board"}" title="Board (v)">${icon("board", 14, "ic s14")}<span>Board</span></a><a role="tab" href="#/board/list" aria-selected="${layout === "list"}" title="List (v)">${icon("list", 14, "ic s14")}<span>List</span></a><a role="tab" href="#/board/map" aria-selected="${layout === "map"}" ${tip("Story map: epics across, releases beneath")}>${icon("layers", 14, "ic s14")}<span>Story map</span></a></div>
 <button class="vsel" type="button" data-view-menu aria-haspopup="dialog"><span class="sec">View:</span> <b>${esc(v.name)}</b>${icon("chevron-down", 12, "ic s12")}</button>
 <div class="chips">${chips}<button class="filter" type="button" data-add-filter aria-haspopup="menu">${icon("filter", 12, "ic s12")}Filter</button></div>
-<label class="q">${icon("search", 12, "ic s12")}<input type="text" data-q value="${esc([vb.filter.text, vb.draft].filter(Boolean).join(" "))}" placeholder="Filter by title, or type label:api" aria-label="Filter cards. Accepts priority:, label:, epic:, sprint:, owner:, delegate:, type:, is:" spellcheck="false">${kbd("/")}</label>
+<label class="q">${icon("search", 12, "ic s12")}<input type="text" data-q value="${esc([vb.filter.text, vb.draft].filter(Boolean).join(" "))}" placeholder="Filter by title, or type label:api" aria-label="Filter issues. Accepts priority:, label:, epic:, sprint:, owner:, delegate:, type:, is:" spellcheck="false">${kbd("/")}</label>
 <div class="vr"><button class="vsel" type="button" data-group-menu title="Group into swimlanes (⇧S)" aria-description="Group into swimlanes" aria-keyshortcuts="Shift+S">${icon("layers", 12, "ic s12")}<span class="sec">Group:</span> <b>${esc(group.label)}</b></button>${save}</div>
 </div>`;
 }

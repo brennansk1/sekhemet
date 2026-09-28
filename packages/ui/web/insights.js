@@ -37,14 +37,8 @@ const ui = {
   burn: null,
 };
 const AGING_COLS = ["ready", "planning", "in_progress", "verify", "review", "parked"];
-const CFD_LABEL = {
-  backlog: "Backlog",
-  ready: "Ready",
-  in_progress: "In Progress",
-  verify: "Verify",
-  review: "Review",
-  done: "Done",
-};
+// One label map (DB-N2-3): the flow bands read the vocabulary's state names.
+const CFD_LABEL = Object.fromEntries(CFD_KEYS.map((k) => [k, columnLabel(k)]));
 
 /** Drawn 1:1 at the panel's real width, so text is never scaled. */
 let W = 560;
@@ -135,7 +129,7 @@ function agingChart(wip, stats) {
       const dx = (j - (here.length - 1) / 2) * 12;
       const cls = agingClass(w.hours, stats);
       const y = yOf(w.hours, max);
-      const tip = `${w.title} · ${columnLabel(s)} · ${formatHours(w.hours)} old${cls === "old" ? " · older than 85% of finished cards" : ""}`;
+      const tip = `${w.title} · ${columnLabel(s)} · ${formatHours(w.hours)} old${cls === "old" ? " · older than 85% of finished issues" : ""}`;
       parts.push(
         `<g class="dotg" data-card="${esc(w.cardId)}" tabindex="0" role="button" aria-label="${esc(tip)}"><title>${esc(tip)}</title><circle class="hit" cx="${x + dx}" cy="${y}" r="10"/><circle class="dot ${cls}" cx="${x + dx}" cy="${y}" r="5"/>${cls === "old" ? `<text class="dl" x="${x + dx + 9}" y="${y + 3.5}">${esc(w.shortId)}</text>` : ""}</g>`,
       );
@@ -143,12 +137,12 @@ function agingChart(wip, stats) {
   });
   const old = wip.filter((w) => agingClass(w.hours, stats) === "old");
   const caption = old.length
-    ? `${old.length} of ${wip.length} cards in progress are older than 85% of finished cards: ${old.map((w) => `${w.shortId} (${formatHours(w.hours)})`).join(", ")}.`
+    ? `${old.length} of ${wip.length} issues in progress are older than 85% of finished issues: ${old.map((w) => `${w.shortId} (${formatHours(w.hours)})`).join(", ")}.`
     : wip.length === 0
       ? "Nothing is in progress right now."
-      : `All ${wip.length} cards in progress are younger than the 85th percentile of finished cards.`;
+      : `All ${wip.length} issues in progress are younger than the 85th percentile of finished issues.`;
   const table = tableHtml(
-    ["Card", "Column", "Age"],
+    ["Issue", "Column", "Age"],
     wip.map((w) => [w.shortId, columnLabel(w.status), formatHours(w.hours)]),
   );
   return figure(
@@ -190,9 +184,9 @@ function cycleChart(entries, stats) {
       `<text class="ax" x="${M.l}" y="${H - 8}">${esc(formatShortDate(new Date(t0).toISOString()))}</text><text class="ax" x="${W - M.r}" y="${H - 8}" text-anchor="end">${esc(formatShortDate(new Date(t1).toISOString()))}</text>`,
     );
   }
-  const caption = `85% of cards finish within ${formatHours(stats.p85)}; half within ${formatHours(stats.p50)}. ${stats.n} finished cards.`;
+  const caption = `85% of issues finish within ${formatHours(stats.p85)}; half within ${formatHours(stats.p50)}. ${stats.n} finished issues.`;
   const table = tableHtml(
-    ["Card", "Cycle time", "Done"],
+    ["Issue", "Cycle time", "Done"],
     entries.map((e) => [
       e.cardId,
       formatHours(e.hours),
@@ -201,7 +195,7 @@ function cycleChart(entries, stats) {
   );
   return figure(
     "Cycle time",
-    "How long do cards take?",
+    "How long do issues take?",
     caption,
     parts.join(""),
     table,
@@ -238,7 +232,7 @@ function throughputChart(rows) {
     );
   }
   const total = vals.reduce((a, b) => a + b, 0);
-  const caption = `${total} cards finished in ${n} days, ${(total / Math.max(1, n)).toFixed(1)} a day. The 7-day average is ${lastAvg.toFixed(1)} a day.`;
+  const caption = `${total} issues finished in ${n} days, ${(total / Math.max(1, n)).toFixed(1)} a day. The 7-day average is ${lastAvg.toFixed(1)} a day.`;
   const table = tableHtml(
     ["Date", "Done", "7-day avg"],
     rows.map((r, i) => [formatShortDate(r.date), String(r.done), avg[i].toFixed(1)]),
@@ -319,7 +313,7 @@ function typeRows(rows) {
       const at = Math.min(100, Math.max(0, r.rate * 100));
       const flag = r.trusted
         ? ""
-        : `<span class="few" title="${esc(`Fewer than ${MIN_TRUSTED_ATTEMPTS} attempts: the interval is wide and the rate can move a lot with the next few cards.`)}">${icon("alert", 12, "ic s12")}Too few attempts to trust</span>`;
+        : `<span class="few" title="${esc(`Fewer than ${MIN_TRUSTED_ATTEMPTS} attempts: the interval is wide and the rate can move a lot with the next few issues.`)}">${icon("alert", 12, "ic s12")}Too few attempts to trust</span>`;
       return `<li class="${r.trusted ? "" : "untrusted"}"><span class="cap-l">${esc(r.label)}</span><span class="cap-trk" role="img" aria-label="${esc(`${r.label}: ${r.text}${r.trusted ? "" : ". Too few attempts to trust."}`)}"><span class="cap-ci" style="left:${lo}%;width:${Math.max(0.5, hi - lo)}%"></span><span class="cap-pt" style="left:${at}%"></span></span><span class="cap-v tnum">${esc(r.text)}</span>${flag}</li>`;
     })
     .join("");
@@ -379,7 +373,7 @@ function capabilityHtml() {
   }
   const few = rows.filter((r) => !r.trusted).length;
   const sub = `${c.sampleSize} attempts · bars show the pass rate and its 95% interval`;
-  const rowsFig = `<figure class="chart"><header><h2>Which kinds of card does it pass?</h2><span class="sec">Pass rate by kind</span></header>${typeRows(rows)}<figcaption>${esc(
+  const rowsFig = `<figure class="chart"><header><h2>Which kinds of issue does it pass?</h2><span class="sec">Pass rate by kind</span></header>${typeRows(rows)}<figcaption>${esc(
     few
       ? `${few} of ${rows.length} kinds have fewer than ${MIN_TRUSTED_ATTEMPTS} attempts; treat those rates as rough.`
       : `Every kind has at least ${MIN_TRUSTED_ATTEMPTS} attempts.`,
@@ -412,7 +406,7 @@ function tuningHtml() {
     `<tr><th scope="row">${esc(label)}</th><td class="tnum">${esc(a)}</td><td class="tnum${better ? " better" : ""}">${esc(b)}</td></tr>`;
   const c = t.current;
   const b = t.best;
-  const table = `<table class="tbl tune-tbl"><thead><tr><th></th><th>Current</th><th>${sum.same ? "Recommended (same)" : "Recommended"}</th></tr></thead><tbody>${row("Step budget", `${c.policy.stepBudget} steps`, `${b.policy.stepBudget} steps`, b.policy.stepBudget < c.policy.stepBudget)}${row("Failed checks allowed", checks(c.policy.maxFailedChecks), checks(b.policy.maxFailedChecks), false)}${row("Time for the replayed cards", `${c.minutes} min`, `${b.minutes} min`, b.minutes < c.minutes)}${row("Passed on the first try", `${c.firstTry} of ${c.cards}`, `${b.firstTry} of ${b.cards}`, false)}${row("Passed eventually", `${c.eventually} of ${c.cards}`, `${b.eventually} of ${b.cards}`, false)}</tbody></table>`;
+  const table = `<table class="tbl tune-tbl"><thead><tr><th></th><th>Current</th><th>${sum.same ? "Recommended (same)" : "Recommended"}</th></tr></thead><tbody>${row("Step budget", `${c.policy.stepBudget} steps`, `${b.policy.stepBudget} steps`, b.policy.stepBudget < c.policy.stepBudget)}${row("Failed checks allowed", checks(c.policy.maxFailedChecks), checks(b.policy.maxFailedChecks), false)}${row("Time for the replayed issues", `${c.minutes} min`, `${b.minutes} min`, b.minutes < c.minutes)}${row("Passed on the first try", `${c.firstTry} of ${c.cards}`, `${b.firstTry} of ${b.cards}`, false)}${row("Passed eventually", `${c.eventually} of ${c.cards}`, `${b.eventually} of ${b.cards}`, false)}</tbody></table>`;
   const cmd = sum.same
     ? ""
     : `<div class="tune-cmd"><code>${esc(sum.command)}</code><button class="btn sm" type="button" data-copy-cmd="${esc(sum.command)}">${icon("copy", 12, "ic s12")}Copy</button></div>${sum.checksNote ? `<p class="sec small">${esc(sum.checksNote)}</p>` : ""}`;
@@ -433,7 +427,7 @@ function tuningHtml() {
           ]),
       )}</details>`
     : "";
-  return `<section class="capab tune"><header class="cap-h"><h2>Stopping policy</h2><span class="sec">From replaying recorded runs${esc(when)}</span></header><div class="chart"><p class="tune-head">${esc(sum.headline)}</p>${sum.same ? "" : `<p class="sec">${esc(`Saves ${sum.savedText} on these cards and keeps ${sum.firstTryKept} first-try passes. Nothing changes until you run with the new cap.`)}</p>`}${table}${cmd}<p class="tune-caveat">${icon("alert", 12, "ic s12")}<span>Replay only stops a recorded run earlier than it really stopped. It never credits a pass the agent didn't make, so it can't overstate what a tighter cap keeps. It can't tell you whether a looser cap would have rescued a failure.</span></p>${grid}</div></section>`;
+  return `<section class="capab tune"><header class="cap-h"><h2>Stopping policy</h2><span class="sec">From replaying recorded runs${esc(when)}</span></header><div class="chart"><p class="tune-head">${esc(sum.headline)}</p>${sum.same ? "" : `<p class="sec">${esc(`Saves ${sum.savedText} on these issues and keeps ${sum.firstTryKept} first-try passes. Nothing changes until you run with the new cap.`)}</p>`}${table}${cmd}<p class="tune-caveat">${icon("alert", 12, "ic s12")}<span>Replay only stops a recorded run earlier than it really stopped. It never credits a pass the agent didn't make, so it can't overstate what a tighter cap keeps. It can't tell you whether a looser cap would have rescued a failure.</span></p>${grid}</div></section>`;
 }
 
 /* ---------- View ---------- */
@@ -445,7 +439,7 @@ function numbers(stats, throughput, wip) {
   const oldest = [...wip].sort((a, b) => b.hours - a.hours)[0];
   const block = (k, v, d = "", metric = "", term = k) =>
     `<div class="num"><div class="k">${esc(k)}${metricTip(metric, term)}</div><div class="v tnum">${v}</div>${d ? `<div class="d">${d}</div>` : ""}</div>`;
-  return `<div class="nums">${block("Cycle time, 85th percentile", esc(formatHours(stats.p85)), `Half finish within ${esc(formatHours(stats.p50))}`, "sle", "Service level expectation")}${block("Throughput", `${perDay.toFixed(1)} <small>a day</small>`, `${total} in ${throughput.length} days`, "throughput")}${block("Work in progress", `${wip.length} <small>cards</small>`, old ? `<span class="warn">${old} older than 85%</span>` : "None older than 85%", "wip")}${block("Oldest in progress", oldest ? esc(formatHours(oldest.hours)) : "–", oldest ? esc(oldest.shortId) : "", "work_item_age", "Work item age")}</div>`;
+  return `<div class="nums">${block("Cycle time, 85th percentile", esc(formatHours(stats.p85)), `Half finish within ${esc(formatHours(stats.p50))}`, "sle", "Service level expectation")}${block("Throughput", `${perDay.toFixed(1)} <small>a day</small>`, `${total} in ${throughput.length} days`, "throughput")}${block("Work in progress", `${wip.length} <small>issues</small>`, old ? `<span class="warn">${old} older than 85%</span>` : "None older than 85%", "wip")}${block("Oldest in progress", oldest ? esc(formatHours(oldest.hours)) : "–", oldest ? esc(oldest.shortId) : "", "work_item_age", "Work item age")}</div>`;
 }
 
 /** The numbers each Insights lesson reads: this period's, and the board's today. */
@@ -517,7 +511,7 @@ function render() {
   const stats = cycleTimeStats(cycle);
   if (cycle.length < 3) {
     return paint(
-      `<div class="later ins-later">${icon("insights", 24, "ic s24")}<b>Not enough finished cards to measure flow yet.</b><span>Insights need at least 3 finished cards; this period has ${cycle.length}.</span></div>`,
+      `<div class="later ins-later">${icon("insights", 24, "ic s24")}<b>Not enough finished issues to measure flow yet.</b><span>Insights need at least 3 finished issues; this period has ${cycle.length}.</span></div>`,
     );
   }
   const perRow = ui.perRow;

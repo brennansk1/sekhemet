@@ -82,7 +82,7 @@ describe("NEW-worker-loop-10 from the command line: sekhemet card …", () => {
     expect(empty.stderr).toMatch(/needs text/);
     const missing = sekhemet(["card", "message", "nope", "hi"], where);
     expect(missing.status).toBe(1);
-    expect(missing.stderr).toMatch(/no card nope/);
+    expect(missing.stderr).toMatch(/no issue nope/);
   }, 120_000);
 
   it("WL-N10-2: `card pause` asks for a pause; `card hand-back` is refused (exit 1) until the card is paused, then returns it to Ready with the note", async () => {

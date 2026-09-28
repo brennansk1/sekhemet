@@ -660,7 +660,7 @@ export async function executeCard(
           fromStatus: current.status,
           toStatus: to,
           actor: "executor",
-          reason: reason ?? `card runner advanced card to ${to}`,
+          reason: reason ?? `the agent's run moved the issue to ${to}`,
         });
       },
       // A move the board refuses (back-pressure, WIP) holds the card with its
@@ -1027,7 +1027,7 @@ export async function requestAbort(
   reason: string,
   actor = "human",
 ): Promise<void> {
-  if (!(await cardStore.getCard(cardId))) throw new Error(`Card not found: ${cardId}`);
+  if (!(await cardStore.getCard(cardId))) throw new Error(`Issue not found: ${cardId}`);
   await cardStore.recordEvent({
     type: CONTROL_EVENTS.abortRequested,
     cardId,
@@ -1085,7 +1085,7 @@ async function moveCardBack(
   attemptId?: string,
 ): Promise<{ step: number; gitRef: string; preservedRef: string }> {
   const card = await ctx.cardStore.getCard(cardId);
-  if (!card) throw new Error(`Card not found: ${cardId}`);
+  if (!card) throw new Error(`Issue not found: ${cardId}`);
   if (card.status === "done") throw new Error(`${cardId} is done; reopen it before a ${kind}`);
   const point = await checkpointAtOrBefore(ctx.cardStore, cardId, step, attemptId);
   if (!point) throw new Error(`${cardId} has no checkpoint at or before step ${step}`);
@@ -1282,7 +1282,7 @@ export async function pullThroughPlanning(
     fromStatus: "ready",
     toStatus: "planning",
     actor: "planner",
-    reason: "planner claims the card",
+    reason: "the Planning model claims the issue",
   });
   // A cap the caller put on its copy (the queue's --max-turns) still holds
   // for this run; the stored budget is the planner's.
@@ -1389,16 +1389,16 @@ export async function rollupParent(
     }
   };
   if (result.passed) {
-    await move("done", `rollup: all ${children.length} children done; integration gate passed`);
+    await move("done", `rollup: all ${children.length} children done; integration checks passed`);
     return { status: "passed", children: children.length };
   }
-  await move("planning", "rollup: integration gate failed on the merged result").catch(
+  await move("planning", "rollup: integration checks failed on the merged result").catch(
     () => undefined,
   );
   await ctx.cardStore
     .updateCard(
       parentId,
-      { blockedReason: `integration gate failed: ${failures.slice(0, 3).join("; ")}` },
+      { blockedReason: `integration checks failed: ${failures.slice(0, 3).join("; ")}` },
       "gate",
     )
     .catch(() => undefined);
@@ -1412,7 +1412,7 @@ export async function rollupParent(
  */
 export async function explainCard(ctx: ExecutionContext, cardId: string): Promise<string[]> {
   const card = await ctx.cardStore.getCard(cardId);
-  if (!card) throw new Error(`Card not found: ${cardId}`);
+  if (!card) throw new Error(`Issue not found: ${cardId}`);
   const lines = [`${card.id} is in ${card.status}.`];
   const waiting = ctx.cardStore.waitingOn(card.id);
   if (waiting.length > 0) lines.push(`It waits on ${waiting.join(", ")}, not done yet.`);
@@ -1437,7 +1437,7 @@ export async function explainCard(ctx: ExecutionContext, cardId: string): Promis
     const first = ev.failures?.[0];
     if (!ev.passed && first) {
       lines.push(
-        `First failing gate: ${first.gate ?? first.rung}: ${String(first.errorExcerpt ?? "").split("\n")[0]}.`,
+        `First failing check: ${first.gate ?? first.rung}: ${String(first.errorExcerpt ?? "").split("\n")[0]}.`,
       );
     }
   } catch {
@@ -1500,7 +1500,7 @@ export async function releaseHeldCards(ctx: ExecutionContext): Promise<string[]>
           fromStatus: "verify",
           toStatus: "review",
           actor: "executor",
-          reason: "released from hold: gates passed",
+          reason: "released from hold: checks passed",
         });
       } catch (err) {
         await ctx.boardService
@@ -1687,6 +1687,8 @@ export async function regateRestackedChild(
         cardId: child.id,
         kind: "lesson",
         actor: "gate",
+        // Model-facing (a dossier lesson the Worker reads): wording frozen by
+        // PROMPT_STANDARD until a suite A/B; DEC-31 governs person-facing text.
         text: `After its parent was accepted and it was rebased, these gates failed: ${failures.join("; ")}`.slice(
           0,
           2000,
@@ -1701,10 +1703,11 @@ export async function regateRestackedChild(
         fromStatus: "review",
         toStatus: "ready",
         actor: "harness",
-        reason: `restacked onto the integration branch; gates failed: ${failures.join("; ")}`.slice(
-          0,
-          1000,
-        ),
+        reason:
+          `restacked onto the integration branch; checks failed: ${failures.join("; ")}`.slice(
+            0,
+            1000,
+          ),
       });
     }
   }
@@ -1837,6 +1840,23 @@ export function recordQueueProgress(
 
 /** The ledger event a queue run's report is (runtime item 34b, RUN-56). */
 export const QUEUE_REPORTED = "queue/reported";
+
+/** A queue run's start (dashboard DB-N2-11): its issues, model and process. */
+export const QUEUE_STARTED = "queue/started";
+
+export interface QueueStarted {
+  /** The same instant as its report's `startedAt`, which ends it. */
+  startedAt: string;
+  cards: string[];
+  model: string;
+  /** The `queue` process, so a run whose process died is not shown as running. */
+  pid: number;
+}
+
+/** Record a queue run's start: Runs shows it as running until its report lands. */
+export async function recordQueueStarted(log: EventLog, started: QueueStarted): Promise<void> {
+  await log.append({ actor: "harness", type: QUEUE_STARTED, payload: { ...started } });
+}
 
 /**
  * Record a finished run's report (RUN-56): one `queue/reported {report}`

@@ -289,7 +289,7 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
       say(`Recurring: ${f.template} -> ${f.cloneId} (${f.reason}).`);
     const ready = (await opts.cardStore.listCards({ status: "ready" as never })).length;
     if (ready === 0) {
-      summary.stoppedBecause = "no Ready cards left";
+      summary.stoppedBecause = "no Ready issues left";
       break;
     }
     // RUN-58: reserved from the dashboard or `sekhemet dev reserve`, read
@@ -321,7 +321,7 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
       break;
     }
     summary.rounds++;
-    say(`Round ${summary.rounds}: ${ready} Ready card(s); ${slot.why}.`);
+    say(`Round ${summary.rounds}: ${ready} Ready issue(s); ${slot.why}.`);
     // M25: the window's batched plan, one model load per batch.
     say(
       overnightPlanLine(
@@ -423,7 +423,7 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
     `Vulnerability scan: ${scan.skipped ? `skipped (${scan.skipped})` : scan.passed ? "no known vulnerabilities" : `${scan.findings?.length ?? 0} finding(s)`}.`,
   );
   say(
-    `Overnight done: ${summary.rounds} round(s), ${summary.passed}/${summary.cardsRun} card(s) passed; stopped: ${summary.stoppedBecause}.`,
+    `Overnight done: ${summary.rounds} round(s), ${summary.passed}/${summary.cardsRun} issue(s) passed; stopped: ${summary.stoppedBecause}.`,
   );
   await sendPush(
     opts.repoPath,

@@ -100,7 +100,7 @@ describe("a research card's claim gate (GT-N5-3)", () => {
     );
     expect(ev.rungResults.find((x: { gate: string }) => x.gate === "claims")).toMatchObject({
       passed: true,
-      detail: "the claim gate passed",
+      detail: "the claim check passed",
     });
   });
 
@@ -112,7 +112,7 @@ describe("a research card's claim gate (GT-N5-3)", () => {
       readFileSync(join(repo, ".sekhemet", "evidence", "latest-card_q.json"), "utf8"),
     );
     expect(ev.rungResults.find((x: { gate: string }) => x.gate === "claims").detail).toMatch(
-      /no claim gate declared in gates\.toml/,
+      /no claim check declared in gates\.toml/,
     );
   });
 });

@@ -12,16 +12,16 @@ import { type CardFilter, slug, termValues } from "./pm.js";
 
 /** Every word of the form. */
 export const QUICK_CREATE_COPY = {
-  heading: "New card",
+  heading: "New issue",
   title: "Title",
   description: "Description (optional)",
   descriptionHint: "What done looks like, in your words.",
-  submit: "Propose card",
+  submit: "Propose issue",
   cancel: "Cancel",
   note: "The planning model checks its size, acceptance criteria and scope, and Seshat shows it as a proposal for you to apply.",
-  sent: "Proposed in Seshat. Apply it to plan the card.",
-  plus: "New card",
-  plusTip: "New card. The planning model decides where it starts.",
+  sent: "Proposed in Seshat. Apply it to plan the issue.",
+  plus: "New issue",
+  plusTip: "New issue. The planning model decides where it starts.",
 } as const;
 
 export const TITLE_MAX = 300;
@@ -46,7 +46,7 @@ export type QuickCreateRequest =
 /** The request body the form sends, or why it cannot be sent, in words. */
 export function quickCreateRequest(input: QuickCreateInput): QuickCreateRequest {
   const title = String(input.title ?? "").trim();
-  if (!title) return { ok: false, error: "A card needs a title." };
+  if (!title) return { ok: false, error: "An issue needs a title." };
   if (/[\r\n]/.test(title))
     return { ok: false, error: "Keep the title to one line; put the rest in the description." };
   if (title.length > TITLE_MAX)

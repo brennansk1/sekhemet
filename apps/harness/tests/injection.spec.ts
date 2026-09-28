@@ -93,7 +93,7 @@ describe("the injection fixtures", () => {
     // A memory stop before the first reply records a step with no tokens.
     expect(workerExposure([{ completionTokens: 0 }], "memory_pressure")).toEqual({
       ran: false,
-      reason: "the Worker never replied (stopped: memory_pressure)",
+      reason: "the Coding model never replied (stopped: memory_pressure)",
     });
     expect(workerExposure([], undefined).ran).toBe(false);
     // An environment stop part-way through is an incomplete exposure.

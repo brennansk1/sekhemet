@@ -97,7 +97,8 @@ describe("DS-P7-4: popularity floors", () => {
       },
       { now: NOW, perNeed: 10 },
     );
-    expect(f?.libraries.map((l) => l.name)).toEqual(["starred-mailer", "used-mailer"]);
+    // Ranked by relevance with a popularity prior (C3): 5,000 downloads a week above 20 stars.
+    expect(f?.libraries.map((l) => l.name)).toEqual(["used-mailer", "starred-mailer"]);
   });
 });
 
@@ -184,8 +185,9 @@ describe("DS-P7-5: a Python project searches PyPI by verified name and GitHub in
     // The recorded query holds only the need's keywords; the language is its own field.
     const events = await k.log.getEventsByTypes(["research/query"]);
     const keywords = new Set(queryFor(need).split(" "));
+    // Name lookups (PyPI's and, DEC-44, deps.dev's) are checked below.
     const searches2 = events.filter(
-      (e) => (e.payload as { source: string }).source !== "pypi-name",
+      (e) => !["pypi-name", "deps.dev"].includes((e.payload as { source: string }).source),
     );
     expect(searches2.length).toBeGreaterThan(0);
     for (const e of searches2) {
@@ -207,6 +209,9 @@ describe("DS-P7-5: a Python project searches PyPI by verified name and GitHub in
     expect(
       lookups.find((e) => (e.private as { query: string }).query === "pyyaml")?.private,
     ).toMatchObject({ results: ["PyYAML"] });
+    // deps.dev is asked by the name PyPI verified, nothing else.
+    const depsDev = events.filter((e) => (e.payload as { source: string }).source === "deps.dev");
+    expect(depsDev.map((e) => (e.private as { query: string }).query)).toEqual(["PyYAML"]);
   });
 
   /** One repository on GitHub whose PyPI project states its licence by classifiers. */
@@ -532,12 +537,12 @@ describe("DS-P7-10: a brief's Prior art has one cited deep answer, or says why n
     const k = kernel();
     await planCommand(k, BRIEF_SPEC, {
       print: () => undefined,
-      deep: { skipped: "card c-7 is running (pid 42)" },
+      deep: { skipped: "issue c-7 is running (pid 42)" },
     });
-    expect(priorArt(brief(k))).toMatch(/deep question did not run: card c-7 is running/i);
+    expect(priorArt(brief(k))).toMatch(/deep question did not run: issue c-7 is running/i);
     const none = kernel();
     await planCommand(none, BRIEF_SPEC, { print: () => undefined });
-    expect(priorArt(brief(none))).toMatch(/deep question did not run: no Researcher/i);
+    expect(priorArt(brief(none))).toMatch(/deep question did not run: no Research model/i);
   });
 
   it("an answer without a citation is not written as one", async () => {
@@ -583,11 +588,11 @@ describe("DS-P7-10: a brief's Prior art has one cited deep answer, or says why n
     expect(reason({})).toBe("runs");
     expect(reason({ offline: true })).toMatch(/offline/);
     expect(reason({ allowed: false })).toMatch(/research is off/);
-    expect(reason({ researcher: undefined })).toMatch(/no Researcher is configured/);
+    expect(reason({ researcher: undefined })).toMatch(/no Research model is configured/);
     const lease = acquireRunnerLease(k.repoPath, { kind: "run", cardId: "c-7" });
     expect("release" in lease).toBe(true);
     try {
-      expect(reason({})).toMatch(/card c-7 is running/);
+      expect(reason({})).toMatch(/issue c-7 is running/);
     } finally {
       if ("release" in lease) lease.release();
     }
@@ -753,7 +758,7 @@ describe("DS-P7-10: the lease is checked again when the Researcher is about to l
     }
     expect(asked).toBe(0);
     const brief = readFileSync(join(k.repoPath, ".sekhemet", "brief.md"), "utf8");
-    expect(brief).toMatch(/deep question did not run: card c-9 is running/i);
-    expect(brief).not.toMatch(/Researcher failed/);
+    expect(brief).toMatch(/deep question did not run: issue c-9 is running/i);
+    expect(brief).not.toMatch(/Research model failed/);
   });
 });

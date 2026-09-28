@@ -124,3 +124,19 @@ describe("DB-N3-2: nothing is kept while the Steps tab is closed", () => {
     expect(UI_LIB_MODULES).toContain("live.js");
   });
 });
+
+describe("a run in progress on Runs (DB-N2-11)", () => {
+  it("reads Running · finished of total issues · elapsed", async () => {
+    const { runningRunText } = await import("../src/live.js");
+    const start = "2026-09-27T10:00:00.000Z";
+    const now = Date.parse(start) + 4 * 60_000;
+    expect(runningRunText({ startedAt: start, running: { finished: 2, total: 6 } }, now)).toBe(
+      "Running · 2 of 6 issues · 4m",
+    );
+    expect(runningRunText({ startedAt: start, running: { finished: 0, total: 1 } }, now)).toBe(
+      "Running · 0 of 1 issue · 4m",
+    );
+    // Not running: nothing to say.
+    expect(runningRunText({ startedAt: start }, now)).toBe("");
+  });
+});

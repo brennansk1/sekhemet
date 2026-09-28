@@ -122,7 +122,7 @@ describe("REST API completeness (H12)", () => {
     expect(subtasks[1]?.dependsOn).toContain(subtasks[0]?.id);
     const original = await cards.getCard("card_big");
     expect(original?.status).toBe("rejected");
-    expect(original?.blockedReason).toMatch(/^Split into 2 cards/);
+    expect(original?.blockedReason).toMatch(/^Split into 2 issues/);
   });
 
   it("runs gates in the repository, serves evidence, and starts runs and calibration in the background", async () => {

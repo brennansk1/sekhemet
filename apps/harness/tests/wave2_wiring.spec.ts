@@ -437,7 +437,7 @@ describe("qualify and m0 need a model resolver", () => {
       model: (n) => new MockInferenceAdapter(n, [], { exhaustion: "default" }),
     });
     expect(code).toBe(1);
-    expect(out[0]).toMatch(/^silent: .* not qualified/);
+    expect(out[0]).toMatch(/^silent: .* not verified on this machine for /);
     expect(await runWave2Command("m0", [], k, quiet)).toBe(1);
     expect(existsSync(join(k.repoPath, "models.json"))).toBe(true);
     Reflect.deleteProperty(process.env, "SEKHEMET_MODEL_REGISTRY");

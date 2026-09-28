@@ -377,7 +377,7 @@ describe("sekhemet qualify --override (rule 27, MD-N4-4)", () => {
     expect(line).toContain(
       `qualified by override: person: Brennan Kelley, ${o?.date.slice(0, 10)}: failed ${failedChecks.join(", ")}`,
     );
-    expect(line).toMatch(/the qualification itself failed/);
+    expect(line).toMatch(/the verification itself failed/);
 
     // Any change to the combination invalidates it, naming the element.
     // (A scripted adapter has no engine build, so the host stands in for it.)

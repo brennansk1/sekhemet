@@ -18,7 +18,7 @@ import { ToolExecutor } from "../src/tools.js";
 import { validateWrite } from "../src/write_contract.js";
 
 // A fake key for the tests, assembled so this file itself holds no literal.
-const FAKE_GH = `ghp_${"a1B2c3D4e5".repeat(4)}`;
+const FAKE_GH = `ghp_${"a1B2c3D4e5".repeat(4).slice(0, 36)}`;
 
 describe("loop tools, wave 2 (L7, L9, L10, L16, G6, G7)", () => {
   let root: string;
@@ -165,7 +165,7 @@ describe("loop tools, wave 2 (L7, L9, L10, L16, G6, G7)", () => {
   it("scans added diff lines for secrets with redaction (G14)", () => {
     const diff = `+++ b/src/a.ts\n@@ -1,0 +1,2 @@\n+const ok = 1;\n+const key = "${FAKE_GH}";\n`;
     const [f] = scanDiffForSecrets(diff);
-    expect(f).toMatchObject({ rule: "github-token", file: "src/a.ts", line: 2 });
+    expect(f).toMatchObject({ rule: "github-pat", file: "src/a.ts", line: 2 });
     expect(f?.redacted).not.toContain(FAKE_GH.slice(4, 20));
     expect(scanSecrets('const password = "aaaaaaaaaaaaaaaaaaaaaaaa";', "x")).toEqual([]);
   });

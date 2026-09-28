@@ -102,7 +102,7 @@ describe("PM-N9-6: neutral reminders, to the owner, within the budget", () => {
     await toReview(cards, "card_theirs", "p_bob");
     await toReview(cards, "card_mine", log.localPrincipal());
     await n.tick();
-    expect(bodies).toEqual(["card_mine passed its gates and waits for you."]);
+    expect(bodies).toEqual(["card_mine passed its checks and waits for you."]);
     n.stop();
   });
 

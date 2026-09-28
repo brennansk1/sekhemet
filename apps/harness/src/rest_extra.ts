@@ -158,7 +158,7 @@ export async function handleRestExtras(
     const b = await ctx.readJsonBody(req);
     const title = typeof b.title === "string" ? b.title.trim() : "";
     if (!title) {
-      json(res, 400, { error: "A card needs a title" });
+      json(res, 400, { error: "An issue needs a title" });
       return true;
     }
     const tier = TIERS.has(String(b.tier)) ? (b.tier as CardTier) : "task";
@@ -188,7 +188,7 @@ export async function handleRestExtras(
     const [, cardId, verb] = action as unknown as [string, string, string];
     const card = await s.getCard(cardId);
     if (!card) {
-      json(res, 404, { error: `No card ${cardId}` });
+      json(res, 404, { error: `No issue ${cardId}` });
       return true;
     }
     const b = await ctx.readJsonBody(req);
@@ -227,7 +227,7 @@ export async function handleRestExtras(
       const lease = runnerLease(ctx.repoPath);
       if (lease) {
         json(res, 409, {
-          error: `${leaseRefusal(lease)} The card will be picked up if it is Ready.`,
+          error: `${leaseRefusal(lease)} The issue will be picked up if it is Ready.`,
         });
         return true;
       }

@@ -326,7 +326,7 @@ export const DESIGN_COPY = {
   takeover: {
     epic: (proposalId: string) => `Take-over plan ${proposalId}`,
     approved: (proposalId: string, cards: number, defaults: number) =>
-      `Approved ${proposalId}: ${cards} card${cards === 1 ? "" : "s"} planned, ${defaults} open question${defaults === 1 ? "" : "s"} took the default. Approve each card's criteria with: sekhemet approve <card>`,
+      `Approved ${proposalId}: ${cards} issue${cards === 1 ? "" : "s"} planned, ${defaults} open question${defaults === 1 ? "" : "s"} took the default. Approve each issue's criteria with: sekhemet approve <issue>`,
     usage: "Usage: sekhemet dev take-over --approve TOP-<n> [--project <id>]",
     evidence: "Evidence:",
     finding: (id: string, kind: string, at?: string) =>

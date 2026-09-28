@@ -81,6 +81,7 @@ import {
   policyFetch,
   policyRefusal,
 } from "@sekhemet/sandbox";
+import { REVIEW_MINUTES_REFUSED } from "@sekhemet/ui";
 import type { BenchmarkService } from "./benchmark_cmd.js";
 import { type ModelFolderSetting, resolveConfig, userConfigPath } from "./config.js";
 import { networkConfigs } from "./config_apply.js";
@@ -170,8 +171,21 @@ export interface ConfigApiDeps {
   host?: () => string;
   /** Review capacity is per project (review-git §2.2.3). */
   cardStore?: CardStore;
-  /** Recompute ReviewWIP after a change (the board's calibration). */
-  recalibrateReviewWip?: (minutesPerDay: number) => Promise<unknown>;
+  /**
+   * A project's In review limit now, from its own review minutes a day
+   * (the board's `reviewLimitFacts`): shown with the setting and recomputed
+   * after a change, for that project alone (DB-N4-2).
+   */
+  reviewLimitFacts?: (project: string) => Promise<{ limit: number }>;
+  /**
+   * Whether the person behind a request may change a project's review
+   * capacity (`review.capacity`: an Admin, or a person the project's Accept
+   * rule names), and why not (DB-N4-2). Defence in depth behind `authorize`.
+   */
+  mayChangeReviewCapacity?: (
+    req: IncomingMessage,
+    project: string,
+  ) => { allowed: boolean; reason?: string };
   /** The hashes already computed, by path, size and modification time; `<user dir>/model-hashes.json`. */
   hashCachePath?: string;
   /** Where a copy to internal storage goes: `~/AI-Models/llm` by default. */
@@ -331,6 +345,12 @@ export function modelLicenceWarning(license: string | undefined): string | undef
 }
 
 export function createConfigApi(deps: ConfigApiDeps) {
+  /** The project a review-capacity request names, or the workspace's only active one. */
+  const reviewProject = (named: string | undefined): string | undefined => {
+    if (named) return named;
+    const active = deps.cardStore?.listProjects().filter((p) => p.status === "active") ?? [];
+    return active.length === 1 ? active[0]?.id : undefined;
+  };
   const env = deps.env ?? process.env;
   const cfgPath = deps.userConfigPath ?? userConfigPath();
   const registry = deps.registry ?? new ModelRegistry();
@@ -1206,7 +1226,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
         coResident: [],
       })),
       order:
-        "quality floors, then time per card including swaps, then footprint (no combined score)",
+        "quality floors, then time per issue including swaps, then footprint (no combined score)",
     };
   };
 
@@ -1856,37 +1876,71 @@ export function createConfigApi(deps: ConfigApiDeps) {
       switch (key) {
         case "GET /api/config": {
           const r = resolveConfig({ repoPath: deps.repoPath, userConfigPath: cfgPath });
-          deps.json(res, 200, { config: r.config, layers: r.layers, problems: r.problems });
+          // The project's review capacity (DB-N4-1, -2): its minutes, the
+          // limit they give, and whether this person may change them.
+          const project = reviewProject(query.get("project") ?? undefined);
+          const record = project ? deps.cardStore?.getProject(project) : undefined;
+          const capacity = record
+            ? await (async () => {
+                const may = deps.mayChangeReviewCapacity?.(req, record.id) ?? { allowed: true };
+                const facts = await deps.reviewLimitFacts?.(record.id).catch(() => undefined);
+                return {
+                  project: record.id,
+                  minutesPerDay: record.reviewMinutesPerDay,
+                  ...(facts ? { reviewWip: facts.limit } : {}),
+                  allowed: may.allowed,
+                  ...(!may.allowed && may.reason ? { reason: may.reason } : {}),
+                };
+              })()
+            : undefined;
+          deps.json(res, 200, {
+            config: r.config,
+            layers: r.layers,
+            problems: r.problems,
+            sources: r.sources,
+            ...(capacity ? { reviewCapacity: capacity } : {}),
+          });
           return true;
         }
         case "PUT /api/config/review": {
           // Review capacity (dashboard §2.16 item 3, review-git §2.2.3):
-          // above 0, recorded per project (`project/review_hours`).
+          // above 0, recorded per project (`project/review_hours`) with the
+          // person's principal; the limit it gives is that project's alone.
           const minutes = body.minutesPerDay ?? body.reviewMinutesPerDay;
           if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes <= 0) {
             deps.json(res, 400, {
-              error: "review_minutes_per_day must be greater than 0.",
+              error: REVIEW_MINUTES_REFUSED,
               key: "review_minutes_per_day",
             });
             return true;
           }
-          const active = deps.cardStore?.listProjects().filter((p) => p.status === "active") ?? [];
-          const project =
-            typeof body.project === "string"
-              ? body.project
-              : active.length === 1
-                ? active[0]?.id
-                : undefined;
+          const project = reviewProject(
+            typeof body.project === "string" ? body.project : undefined,
+          );
           if (!deps.cardStore || !project) {
             deps.json(res, 400, { error: "Name the project whose review capacity changes." });
             return true;
           }
-          await deps.cardStore.setProjectReviewMinutes(project, minutes, "human");
-          const wip = await deps.recalibrateReviewWip?.(minutes).catch(() => undefined);
+          const may = deps.mayChangeReviewCapacity?.(req, project) ?? { allowed: true };
+          if (!may.allowed) {
+            deps.json(res, 403, {
+              error: may.reason ?? "You can't change this project's review capacity.",
+              refused: "permission",
+              permission: "review.capacity",
+            });
+            return true;
+          }
+          await deps.cardStore.setProjectReviewMinutes(
+            project,
+            minutes,
+            "human",
+            deps.principalOf(req),
+          );
+          const facts = await deps.reviewLimitFacts?.(project).catch(() => undefined);
           deps.json(res, 200, {
             project,
             minutesPerDay: minutes,
-            ...(wip !== undefined ? { reviewWip: wip } : {}),
+            ...(facts ? { reviewWip: facts.limit } : {}),
           });
           return true;
         }
@@ -2138,7 +2192,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
           if (!deps.residency) {
             deps.json(res, 409, {
               error:
-                "Models load through the residency scheduler where cards run; this server holds no model.",
+                "Models load through the residency scheduler where issues run; this server holds no model.",
             });
             return true;
           }

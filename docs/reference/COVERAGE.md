@@ -30,25 +30,27 @@ The core ideas hold — gates decide, the event log records, a card is the unit 
 
 ## The programme
 
+**State** (DEFINITION_OF_DONE §5.3.5, marked 2026-09-27 at `3410f94` plus the compliance fixes C1–C6): each change's state is read from the State rows of the specifications that name it, never claimed here. ✅ **done** — every row naming it is *built*, with the workstream's commits; ◐ **partial** — at least one row is *partial* or *not built*, with the counts, so the spec says what is left; ○ **not built** — its workstream was committed without it; **not started** — its workstream (B4.8, B4.11, B5) has not begun. *compliance C1–C6* is the compliance-fixes workstream, committed after this marking. Where no State row names an ID, the note names the rows that carry it.
+
 ### Tier 0 — stop-ship: safety and the spine
 
 No further model runs start until S1–S2 are fixed; nothing is offered to a user until all are.
 
-| | Change | Why | Size |
-| --- | --- | --- | --- |
-| S1 ✅ | Harden every unconfined git call in a worktree (`core.fsmonitor`, `core.hooksPath`, refuse a non-standard gitdir) and deny sandbox writes to the `.git` pointer | Critical, verified: code outside the sandbox from a confused or injected Worker | S |
-| S2 ◐ | Stop granting sandbox writes through the `node_modules` link (read-only mount, or a per-worktree install) | High, verified: a card can alter dependencies the user runs unconfined | S–M |
-| S3 | One egress policy: loopback and ports refused by the proxy, host sockets closed on Linux, registry lookups proxied and on the ledger, the policy not taken from the repo's own `gates.toml` | High | M |
-| S3a | **One confined execution path**: the visual gate's dev server, language servers, monorepo package gates and `--validate-tools` all run inside the sandbox with an allowlisted environment | Critical: today they run Worker-written code unconfined with API keys and tokens | M |
-| S3b | **Fail closed**: no confinement mechanism on the host means no Worker commands, unless the user explicitly opts out | Critical: contradicts the design's "fails closed" | S |
-| S3c | Dashboard: Host-header check, a real per-session mutation token, no framing, a CSP; redact secrets before they reach packs, the ledger or evidence; tokens not readable from the sandbox | Medium, but the ledger cannot be purged once a secret is in it | M |
-| S4 | Transition law in the kernel: check the stored status, remove the same-status bypass, route the 11 direct writers through it, no `override` for the `mcp` actor | Spine: the model never certifies its own work | S–M |
-| S5 | Safe, reversible Accept: board first, merge with plumbing (never the user's working copy), real `GateStatus`, reject / reopen / revert | Spine: the human decides; data safety | M–L |
-| S6 | Review WIP from human decisions only, per project, with a floor | Spine: the human is the rate limiter (7,708 today) | S |
-| S7 | One validated transaction per event: append and project together | Spine: the event log is the only durable channel | M |
-| S8 | `plan` honours offline mode and the research setting, and logs its queries | The local-first promise | S |
-| S9 | Workspace trust for repo-supplied hooks, `mcp.json` and skills (plugins are cut, DEC-29 O4) | Security | M |
-| S10 | CLI exit codes and `--version` | Scripts must be able to trust the CLI | S |
+| | Change | Why | Size | State |
+| --- | --- | --- | --- | --- |
+| S1 | Harden every unconfined git call in a worktree (`core.fsmonitor`, `core.hooksPath`, refuse a non-standard gitdir) and deny sandbox writes to the `.git` pointer | Critical, verified: code outside the sandbox from a confused or injected Worker | S | ◐ partial — `47097ec` (State rows in security: 4 built, 1 partial) |
+| S2 | Stop granting sandbox writes through the `node_modules` link (read-only mount, or a per-worktree install) | High, verified: a card can alter dependencies the user runs unconfined | S–M | ✅ done — `b341663`, `525585e`, `5b17ed1` |
+| S3 | One egress policy: loopback and ports refused by the proxy, host sockets closed on Linux, registry lookups proxied and on the ledger, the policy not taken from the repo's own `gates.toml` | High | M | ◐ partial — `b341663`, `525585e`, `5b17ed1` (State rows in security: 3 built, 3 partial) |
+| S3a | **One confined execution path**: the visual gate's dev server, language servers, monorepo package gates and `--validate-tools` all run inside the sandbox with an allowlisted environment | Critical: today they run Worker-written code unconfined with API keys and tokens | M | ◐ partial — `b341663`, `525585e`, `5b17ed1` (State rows in security, surface: 5 built, 1 partial, 1 not built) |
+| S3b | **Fail closed**: no confinement mechanism on the host means no Worker commands, unless the user explicitly opts out | Critical: contradicts the design's "fails closed" | S | ✅ done — `b341663`, `525585e`, `5b17ed1` |
+| S3c | Dashboard: Host-header check, a real per-session mutation token, no framing, a CSP; redact secrets before they reach packs, the ledger or evidence; tokens not readable from the sandbox | Medium, but the ledger cannot be purged once a secret is in it | M | ◐ partial — `d3c1e08` (State rows in dashboard, integrations, runtime, security: 3 built, 1 partial, 4 not built) |
+| S4 | Transition law in the kernel: check the stored status, remove the same-status bypass, route the 11 direct writers through it, no `override` for the `mcp` actor | Spine: the model never certifies its own work | S–M | ◐ partial — `18a3197` (State rows in extensibility, integrations, kernel, review-git: 4 built, 2 partial, 1 not built) |
+| S5 | Safe, reversible Accept: board first, merge with plumbing (never the user's working copy), real `GateStatus`, reject / reopen / revert | Spine: the human decides; data safety | M–L | ✅ done — `d3c1e08` (review-git: every Accept row built) |
+| S6 | Review WIP from human decisions only, per project, with a floor | Spine: the human is the rate limiter (7,708 today) | S | ✅ done — `d3c1e08` (review-git: ReviewWIP rows built) |
+| S7 | One validated transaction per event: append and project together | Spine: the event log is the only durable channel | M | ◐ partial — `18a3197` (State rows in kernel: 1 built, 2 partial) |
+| S8 | `plan` honours offline mode and the research setting, and logs its queries | The local-first promise | S | ✅ done — `d3c1e08` |
+| S9 | Workspace trust for repo-supplied hooks, `mcp.json` and skills (plugins are cut, DEC-29 O4) | Security | M | ◐ partial — `d3c1e08` (State rows in extensibility, security, surface: 1 built, 2 partial, 2 not built) |
+| S10 | CLI exit codes and `--version` | Scripts must be able to trust the CLI | S | ✅ done — `d3c1e08` |
 
 **S1 done, S2 partly, in the Phase A commit** — reviewed independently (`reviews/security_fix_review.md`), which found four gaps, two now closed:
 - Git runs with `core.fsmonitor=false`, `core.hooksPath=/dev/null`, `safe.bareRepository=explicit` and `log.showSignature=false` pinned through `GIT_CONFIG_*` for the harness process and everything it spawns (`packages/sync/src/git_hardening.ts`); tests prove an fsmonitor and a nested bare repository are refused.
@@ -58,193 +60,192 @@ No further model runs start until S1–S2 are fixed; nothing is offered to a use
 
 ### Tier 1 — measurement validity (before the remaining A/B arms and the scored run)
 
-| | Change | Why | Size |
-| --- | --- | --- | --- |
-| M1 | Prompt coherence: remove the contradictions ("history cleared" beside the history; "no other tool exists"; double numbering; masked compaction) | The Worker has been measured under self-contradicting prompts | S |
-| M2 | A fixed tool set per card class instead of `tool_search` (as an A/B) | Runs 3–5 losses; 5 of 9 searches were for tools already loaded | S–M |
-| M3 | Separate prompt, thinking and answer budgets; read `finish_reason` | An "all thinking" turn can overrun 16k and look like a stall | S |
-| M4 | Provenance: the real harness commit, build hash, settings and server identity on every card; refuse a foreign server | A result must say what produced it | S–M |
-| M5 | Data contracts as their own high-priority prompt section | Today they sit in the section cut first | S |
-| M6 | Gate feedback proven on real tool output (vitest JSON; repros that select the failing test); built-in gates never vanish on error | Wrong remedies and silent passes | S–M |
-| M7 | Measure MTP per host and per thinking policy | On by default, never measured | S |
-| M8 | **Make the Worker prompt append-only** (diagnosed by the research): byte-identical system prompt and tools; earlier tool output never edited; compaction rare and whole; `--checkpoint-min-step` ~512–1024; drop `--cache-reuse`; `preserve_thinking` if thinking stays on | On a hybrid-attention model one changed early byte forces a full prefill; ~60% of model time is prompt reading | M |
-
-| M11 | MTP A/B on **seconds per turn**, with two draft tokens, watching Metal's working set | MTP speeds decode only (~1.1–1.3x on this MoE) and slows prefill, which dominates agent turns | S |
-| M12 | Statistics that fit 14–30 tasks: paired arms, exact or Bayesian intervals, repeated runs, pass^k; claim only effects of ≥20 points | At 25 tasks a paired test has ~6–7% power to see a 10-point gain | S |
-| M9 | The benchmark wrapper passes on only `generate`, so every `m0` benchmark attempt ran a different prompt and budget than production (`instrumentation.ts`) — one measurement path (added by the gap sweep) | S |
-| M10 | The mutation step never runs the tests unmutated first, so a checkout whose tests cannot run scores 1.0 (added by the gap sweep) | S |
+| | Change | Why | Size | State |
+| --- | --- | --- | --- | --- |
+| M1 | Prompt coherence: remove the contradictions ("history cleared" beside the history; "no other tool exists"; double numbering; masked compaction) | The Worker has been measured under self-contradicting prompts | S | ◐ partial — `5b17ed1`, `028b592` (State rows in context, worker-loop: 9 partial, 5 not built) |
+| M2 | A fixed tool set per card class instead of `tool_search` (as an A/B) | Runs 3–5 losses; 5 of 9 searches were for tools already loaded | S–M | ◐ partial — `5b17ed1`, `028b592`, `df72861` (State rows in context, worker-loop: 2 partial) |
+| M3 | Separate prompt, thinking and answer budgets; read `finish_reason` | An "all thinking" turn can overrun 16k and look like a stall | S | ◐ partial — `5b17ed1`, `028b592` (State rows in worker-loop: 1 partial) |
+| M4 | Provenance: the real harness commit, build hash, settings and server identity on every card; refuse a foreign server | A result must say what produced it | S–M | ✅ done — `028b592`, `0e30e61` |
+| M5 | Data contracts as their own high-priority prompt section | Today they sit in the section cut first | S | ○ not built — `5b17ed1`, `028b592` closed without it (State rows in context: 1 not built) |
+| M6 | Gate feedback proven on real tool output (vitest JSON; repros that select the failing test); built-in gates never vanish on error | Wrong remedies and silent passes | S–M | ◐ partial — `028b592` (State rows in gates: 2 partial) |
+| M7 | Measure MTP per host and per thinking policy | On by default, never measured | S | ◐ partial — `028b592`, `0e30e61` (State rows in models: 1 partial) |
+| M8 | **Make the Worker prompt append-only** (diagnosed by the research): byte-identical system prompt and tools; earlier tool output never edited; compaction rare and whole; `--checkpoint-min-step` ~512–1024; drop `--cache-reuse`; `preserve_thinking` if thinking stays on | On a hybrid-attention model one changed early byte forces a full prefill; ~60% of model time is prompt reading | M | ◐ partial — `5b17ed1`, `028b592` (State rows in context: 1 built, 3 partial, 3 not built) |
+| M11 | MTP A/B on **seconds per turn**, with two draft tokens, watching Metal's working set | MTP speeds decode only (~1.1–1.3x on this MoE) and slows prefill, which dominates agent turns | S | ◐ partial — `028b592`, `0e30e61` (State rows in models: 1 partial) |
+| M12 | Statistics that fit 14–30 tasks: paired arms, exact or Bayesian intervals, repeated runs, pass^k; claim only effects of ≥20 points | At 25 tasks a paired test has ~6–7% power to see a 10-point gain | S | ◐ partial — `028b592`, `df72861` (State rows in measurement: 2 partial) |
+| M9 | The benchmark wrapper passes on only `generate`, so every `m0` benchmark attempt ran a different prompt and budget than production (`instrumentation.ts`) — one measurement path (added by the gap sweep) | S | ◐ partial — `028b592`, `df72861` (State rows in measurement, worker-loop: 3 partial, 1 not built) |
+| M10 | The mutation step never runs the tests unmutated first, so a checkout whose tests cannot run scores 1.0 (added by the gap sweep) | S | ◐ partial — `028b592`, `df72861` (State rows in gates, measurement: 1 partial, 1 not built) |
 
 
 ### Tier 2 — the product workstreams (the positioning)
 
-| | Change | Size |
-| --- | --- | --- |
-| P1 | **One planner, model first**, used by the CLI and the PM; an acceptance-criterion contract (no title echoes; correct idempotency rules); the five planner bugs; red-first on planner cards | L |
-| P2 | **Start a project by conversation**: a `start_project` tool for the PM, design questions as board decisions with defaults, card zero from the ecosystem's generator | L |
-| P3 | **A professional board**: five familiar columns over the gate states, card anatomy (key, type, assignee, points, epic, blocker cause), then story map and burn-up | M |
-| P4 | **The Learn layer**, off by default for experts | M |
-| P5 | **A status view for non-developers** on data that already exists (standup, signals, burn-up, "needs you") | M |
-| P6 | **The senior-PM skill**, versioned and scored on ~20 scripted conversations | M |
-| P7 | **Reuse survey by capability**, with one SPDX licence classifier shared with the licence gate | M |
-| P8 | **The Reviewer rebuilt** to the design: per-criterion findings, before Review and before auto-accept | M |
-| P9 | **GitHub first** (one adapter, one ID, pagination, merge-aware), one notifier, then the Team setup's minimum (DEC-06, [DEC-35](../design/DECISIONS.md#dec-35--one-product-two-setups-solo-and-team)) | L |
-| P11 | **The navigation** (first slice, one card): grouped and labelled, labels kept at laptop widths, a phone bottom bar (Status · Review · Board · PM), first-letter chords, no bare `t` | S |
-| P12 | **Colour and contrast**: a warning hue apart from the accent gold, neutral disabled buttons, a ≥3:1 control border, no muted text that must be read; checked by axe and screenshots in CI | S |
-| P13 | **Project done is computed, never claimed** (owner, 2026-09-22): a requirement graph from the brief, traceability both ways and no orphan cards, release slices from a walking skeleton, "proven" from tests and gates on `main`, appetite and a circuit breaker ([research](../research/PROJECT_DONE_AND_DEPTH.md)) | L |
-| P14 | **Depth and coverage** (owner, 2026-09-22): a depth profile with an ISO/IEC 25010 checklist, comparable products classified by Kano, a user walkthrough, clarifying questions only where the answer changes the cards | M |
-| P10 | **One first run** for all three audiences — including onboarding an existing team repository, where `onboard.ts` is today a fourth separate way of deriving gates and `--apply` overwrites a hand-tuned `gates.toml` (gap sweep) | M |
+| | Change | Size | State |
+| --- | --- | --- | --- |
+| P1 | **One planner, model first**, used by the CLI and the PM; an acceptance-criterion contract (no title echoes; correct idempotency rules); the five planner bugs; red-first on planner cards | L | ◐ partial — `2542716` (State rows in context, gates, planner-pm: 6 built, 1 partial, 2 not built) |
+| P2 | **Start a project by conversation**: a `start_project` tool for the PM, design questions as board decisions with defaults, card zero from the ecosystem's generator | L | ◐ partial — `eedf2f5` (State rows in design-stage, planner-pm: 1 built, 4 partial) |
+| P3 | **A professional board**: five familiar columns over the gate states, card anatomy (key, type, assignee, points, epic, blocker cause), then story map and burn-up | M | ◐ partial — `4433b1a` (State rows in dashboard, kernel: 7 built, 3 partial, 1 not built) |
+| P4 | **The Learn layer**, off by default for experts | M | ◐ partial — `3410f94` (State rows in dashboard: 1 partial) |
+| P5 | **A status view for non-developers** on data that already exists (standup, signals, burn-up, "needs you") | M | ◐ partial — `3410f94` (State rows in dashboard: 2 built, 1 partial) |
+| P6 | **The senior-PM skill**, versioned and scored on ~20 scripted conversations | M | ◐ partial, ahead of B4.8 (State rows in planner-pm: 3 partial, 2 not built) |
+| P7 | **Reuse survey by capability**, with one SPDX licence classifier shared with the licence gate | M | ◐ partial — `5e56b5d`, compliance C3 (State rows in design-stage: 8 built, 2 partial) |
+| P8 | **The Reviewer rebuilt** to the design: per-criterion findings, before Review and before auto-accept | M | not started (B4.8) |
+| P9 | **GitHub first** (one adapter, one ID, pagination, merge-aware), one notifier, then the Team setup's minimum (DEC-06, [DEC-35](../design/DECISIONS.md#dec-35--one-product-two-setups-solo-and-team)) | L | ◐ partial — `c069b99`, `2e4168f`, `66d1276` (State rows in integrations, runtime: 1 partial, 1 not built) |
+| P11 | **The navigation** (first slice, one card): grouped and labelled, labels kept at laptop widths, a phone bottom bar (Status · Review · Board · PM), first-letter chords, no bare `t` | S | ◐ partial — `2920484` (State rows in dashboard: 2 partial) |
+| P12 | **Colour and contrast**: a warning hue apart from the accent gold, neutral disabled buttons, a ≥3:1 control border, no muted text that must be read; checked by axe and screenshots in CI | S | ◐ partial — `2920484` (State rows in dashboard: 1 partial) |
+| P13 | **Project done is computed, never claimed** (owner, 2026-09-22): a requirement graph from the brief, traceability both ways and no orphan cards, release slices from a walking skeleton, "proven" from tests and gates on `main`, appetite and a circuit breaker ([research](../research/PROJECT_DONE_AND_DEPTH.md)) | L | ◐ partial — `2542716` (State rows in dashboard, planner-pm: 2 built, 1 partial) |
+| P14 | **Depth and coverage** (owner, 2026-09-22): a depth profile with an ISO/IEC 25010 checklist, comparable products classified by Kano, a user walkthrough, clarifying questions only where the answer changes the cards | M | ◐ partial — `eedf2f5` (State rows in design-stage: 2 partial) |
+| P10 | **One first run** for all three audiences — including onboarding an existing team repository, where `onboard.ts` is today a fourth separate way of deriving gates and `--apply` overwrites a hand-tuned `gates.toml` (gap sweep) | M | ◐ partial — `5019670` (State rows in surface: 7 built, 3 partial) |
 
 ### Tier 3 — structure, as each workstream touches it
 
-| | Change | Size |
-| --- | --- | --- |
-| T1 | One gate pipeline: every gate, built-in or project, runs through one path with one result shape | M |
-| T2 | An AST-based source index replacing the eight regex parsers (exports, imports, symbols) | M |
-| T3 | A verification controller and one stop-reason table shared by the loop, the runner and the evidence bundle | M |
-| T4 | `index.ts` as a command registry, with `queue` in its own module (strangler, between suite runs) | L |
-| T5 | The dashboard server's 1,045-line closure split by route group | M |
-| T6 ✅ | The design rebuilt as `SPINE.md`, one specification per subsystem and a decisions log. *Process — no subsystem spec; done in design v3.* | L |
-| T7 | Paired trials with statistics, and the planning measure | M |
-| T8 | Self-improvement admits a change only on a significant paired gain | S |
-| T9 | The DEFINITION_OF_DONE test gaps: missing negative tests, one vanity assertion, skips on Linux. *Process — no subsystem spec; carried by DEFINITION_OF_DONE §2 and workstream B5.* | S |
-| T10 | Executable documentation checks: README ↔ the front door, config schema ↔ `config.ts`, the `SEKHEMET_*` inventory, model names ↔ registry, `file:` links, spec front matter ↔ the SPINE status table | M |
-| T11 | **Evaluation assets** the acceptance criteria depend on, built before the criteria that use them: the labelled reuse set (~40 needs, P7), the research golden set (25 questions, NEW-design-stage-2), golden briefs with annotated implicit requirements (≥ 10, P14 and T7), a held-out acceptance suite for premature completion (T7), seeded defects for the Reviewer (≥ 20, P8), scripted PM conversations with a rubric (~20, P6), scripted non-developer project starts (5, P2), injection fixtures (NEW-security-4), reference solutions per fixture card (T7), and a labelled set of UI screens for the visual checklist (GT-N4-2). Owned by measurement; each asset is versioned and hashed like the frozen suite, and built in the workstream that first uses it ([plan](MODERNIZATION_PLAN.md), "Evaluation assets") | L |
+| | Change | Size | State |
+| --- | --- | --- | --- |
+| T1 | One gate pipeline: every gate, built-in or project, runs through one path with one result shape | M | ◐ partial — `0c76973`, `160310d`, `eb6776f` (State rows in gates: 3 built, 2 partial, 1 not built) |
+| T2 | An AST-based source index replacing the eight regex parsers (exports, imports, symbols) | M | ◐ partial — `0c76973`, `160310d`, `eb6776f` (State rows in context, gates: 1 built, 1 partial) |
+| T3 | A verification controller and one stop-reason table shared by the loop, the runner and the evidence bundle | M | ◐ partial — `5b17ed1`, `028b592` (State rows in worker-loop: 1 built, 1 partial, 1 not built) |
+| T4 | `index.ts` as a command registry, with `queue` in its own module (strangler, between suite runs) | L | not started (B5) |
+| T5 | The dashboard server's 1,045-line closure split by route group | M | ◐ partial, ahead of B5 (State rows in dashboard, runtime: 1 partial, 1 not built) |
+| T6 | The design rebuilt as `SPINE.md`, one specification per subsystem and a decisions log. *Process — no subsystem spec; done in design v3.* | L | ✅ done — design v3 (`24c1803`) |
+| T7 | Paired trials with statistics, and the planning measure | M | ◐ partial — `028b592`, `df72861` (State rows in measurement: 5 partial, 1 not built) |
+| T8 | Self-improvement admits a change only on a significant paired gain | S | ◐ partial — `028b592`, `df72861` (State rows in measurement: 10 partial, 1 not built) |
+| T9 | The DEFINITION_OF_DONE test gaps: missing negative tests, one vanity assertion, skips on Linux. *Process — no subsystem spec; carried by DEFINITION_OF_DONE §2 and workstream B5.* | S | not started (B5, as each workstream touches it) |
+| T10 | Executable documentation checks: README ↔ the front door, config schema ↔ `config.ts`, the `SEKHEMET_*` inventory, model names ↔ registry, `file:` links, spec front matter ↔ the SPINE status table | M | ◐ partial, ahead of B5 (State rows in surface: 2 partial, 1 not built) |
+| T11 | **Evaluation assets** the acceptance criteria depend on, built before the criteria that use them: the labelled reuse set (~40 needs, P7), the research golden set (25 questions, NEW-design-stage-2), golden briefs with annotated implicit requirements (≥ 10, P14 and T7), a held-out acceptance suite for premature completion (T7), seeded defects for the Reviewer (≥ 20, P8), scripted PM conversations with a rubric (~20, P6), scripted non-developer project starts (5, P2), injection fixtures (NEW-security-4), reference solutions per fixture card (T7), and a labelled set of UI screens for the visual checklist (GT-N4-2). Owned by measurement; each asset is versioned and hashed like the frozen suite, and built in the workstream that first uses it ([plan](MODERNIZATION_PLAN.md), "Evaluation assets") | L | ◐ partial — `028b592`, `df72861` (State rows in measurement: 1 partial) |
 
 
 ### Changes added by the specifications (2026-09-22)
 
 The design v3 specifications found gaps the Phase A programme had no ID for. Each keeps the ID its spec gave it; the spec holds its acceptance criteria, and the workstream column says where [MODERNIZATION_PLAN.md](MODERNIZATION_PLAN.md) builds it.
 
-| ID | Change | Spec | Workstream |
-| --- | --- | --- | --- |
-| NEW-context-1 | One token estimator calibrated to the model | [context](../design/specs/context.md) | B2.1 |
-| NEW-context-2 | Budgets asserted on the live path | [context](../design/specs/context.md) | B2.1 |
-| NEW-context-3 | One allocator for every role | [context](../design/specs/context.md) | B4.0a |
-| NEW-context-4 | Rules that are scoped exactly, kept once, and credited fairly | [context](../design/specs/context.md) | B4.0a |
-| NEW-context-5 | The repo map's weighting and cache, and condensing savings | [context](../design/specs/context.md) | B4.0a |
-| NEW-context-6 | The context version gates qualification; prompt changes are measured | [context](../design/specs/context.md) | B4.0a |
-| NEW-dashboard-1 | Evidence that stays readable | [dashboard](../design/specs/dashboard.md) | B4.2 |
-| NEW-dashboard-2 | A web layer under test, with one vocabulary | [dashboard](../design/specs/dashboard.md) | B4.2 |
-| NEW-dashboard-3 | The model's output, live, on the Steps tab | [dashboard](../design/specs/dashboard.md) | B4.6 |
-| NEW-dashboard-4 | Settings | [dashboard](../design/specs/dashboard.md) | B4.2 |
-| NEW-dashboard-5 | Review for a team, and review that forces a look | [dashboard](../design/specs/dashboard.md) | B4.6 |
-| NEW-dashboard-6 | The Configuration page: model folders, role recommendations, explicit downloads, the benchmark, every role's model name (DEC-29 O2, O3) | [dashboard](../design/specs/dashboard.md) | B4.1 |
-| NEW-dashboard-7 | Every on-screen word from DEC-31's professional vocabulary; issue types, checks, sprint, release | [dashboard](../design/specs/dashboard.md) | B4.2 |
-| NEW-dashboard-8 | The issue page for working with the agent (DEC-34) | [dashboard](../design/specs/dashboard.md) | B4.6 |
-| NEW-dashboard-9 | The pages for working together: Status for the stakeholder and the team (DEC-37), Projects, Sign in, Inbox, My issues, Members, Audit, the account menu, the brand mark and the AI badge | [dashboard](../design/specs/dashboard.md) | B4.7 (Status, Projects, brand mark); B4.10 (Sign in, the account menu and session UI); B4.11 (Inbox, My issues, Members, Audit) |
-| NEW-design-stage-5 | The Researcher asked early, with the card in hand | [design-stage](../design/specs/design-stage.md) | B4.4 |
-| NEW-design-stage-1 | Design-stage judgement | [design-stage](../design/specs/design-stage.md) | B4.4 |
-| NEW-design-stage-2 | Research that can be verified and does not park wrongly | [design-stage](../design/specs/design-stage.md) | B4.4 |
-| NEW-design-stage-3 | Project documents in the repository, generated from the ledger | [design-stage](../design/specs/design-stage.md) | B4.4 |
-| NEW-design-stage-4 | Deep research that says how hard it looked | [design-stage](../design/specs/design-stage.md) | B4.4 |
-| NEW-design-stage-6 | Take over a project (DEC-43): trust first, the repository's agent configuration inert, the offline history secret scan, recon without a model and the as-built inventory (DS-TO-1–8); the brief as found, one batch of questions, the evidenced backlog and its approval (DS-TO-9–16) | [design-stage](../design/specs/design-stage.md), with [security](../design/specs/security.md) (SEC-54, SEC-55), [surface](../design/specs/surface.md) (SUR-56), [planner-pm](../design/specs/planner-pm.md) and [dashboard](../design/specs/dashboard.md) | B4.1 (trust, recon and the as-built inventory, *could not build* as a finding only; after B4.0b, whose NEW-gates-7 baseline DS-TO-6 writes); B4.4 (the brief as found, the conversation and the backlog, including the *stabilise* cards) |
-| NEW-extensibility-1 | Board-lifecycle hooks | [extensibility](../design/specs/extensibility.md) | B3.3 |
-| NEW-extensibility-2 | Hooks that fail visibly | [extensibility](../design/specs/extensibility.md) | B3.3 |
-| NEW-extensibility-3 | MCP on the official SDK | [extensibility](../design/specs/extensibility.md) | B3.3 |
-| NEW-extensibility-4 | Skills in the Agent Skills format | [extensibility](../design/specs/extensibility.md) | B3.3 |
-| NEW-extensibility-5 | The plugin container and the SDK package cut (DEC-29 O4) | [extensibility](../design/specs/extensibility.md) | B0 |
-| NEW-gates-1 | Unenforced invariants shown to a person | [gates](../design/specs/gates.md) | B4.0b (moved from B2.3 on 2026-09-25: B2.3's plan row named only M6, and these were not built) |
-| NEW-gates-2 | Judge only what the card wrote | [gates](../design/specs/gates.md) | B4.0b (moved from B2.3 on 2026-09-25: B2.3's plan row named only M6, and these were not built) |
-| NEW-gates-3 | Gate economics and flaky tests | [gates](../design/specs/gates.md) | B4.0b (moved from B2.3 on 2026-09-25: B2.3's plan row named only M6, and these were not built) |
-| NEW-gates-4 | The visual layer to its design | [gates](../design/specs/gates.md) | B4.0b (moved from B2.3 on 2026-09-25: B2.3's plan row named only M6, and these were not built) |
-| NEW-gates-5 | The gates the old design listed: templates, the claim gate, bundled static-analysis rules | [gates](../design/specs/gates.md) | B4.0b |
-| NEW-gates-6 | Tests that can fail, checked before the build | [gates](../design/specs/gates.md) | B4.0b |
-| NEW-gates-7 | Gates for existing codebases | [gates](../design/specs/gates.md) | B4.0b |
-| NEW-gates-8 | The change kind and the test-strength record on the card | [gates](../design/specs/gates.md) | B4.0b |
-| NEW-integrations-1 | Idempotent import | [integrations](../design/specs/integrations.md) | B4.9 |
-| NEW-integrations-2 | Owner, delegate and accepter mapped to every tracker | [integrations](../design/specs/integrations.md) | B4.9 |
-| NEW-integrations-3 | External results name their source | [integrations](../design/specs/integrations.md) | B4.9 |
-| NEW-integrations-4 | Inherited issues reconciled against the code as proposals: already done, duplicate, stale or valid (DEC-43) | [integrations](../design/specs/integrations.md) | B4.4 |
-| NEW-kernel-1 | Hash chain v3 | [kernel](../design/specs/kernel.md) | B3.1 |
-| NEW-kernel-2 | A `principal` column on events | [kernel](../design/specs/kernel.md) | B3.1 |
-| NEW-kernel-3 | Held as a typed field | [kernel](../design/specs/kernel.md) | B3.1 |
-| NEW-kernel-4 | Numbered migrations and one column table | [kernel](../design/specs/kernel.md) | B3.1 |
-| NEW-kernel-5 | The lifecycle's missing conditions | [kernel](../design/specs/kernel.md) | B3.1 |
-| NEW-kernel-6 | Who is on a card, and who built each attempt | [kernel](../design/specs/kernel.md) | B3.1 |
-| NEW-kernel-7 | An erasable ledger | [kernel](../design/specs/kernel.md) | B3.1 |
-| NEW-kernel-8 | Requirement versions and gate-result sources in the record | [kernel](../design/specs/kernel.md) | B3.1 |
-| NEW-kernel-9 | The stored `kind`, `change` and `split` fields (DEC-26) | [kernel](../design/specs/kernel.md) | B3.1 |
-| NEW-kernel-10 | `on_behalf_of` on the Agent's events, covered by the hash chain (DEC-36) | [kernel](../design/specs/kernel.md) | B4.11 |
-| NEW-measurement-1 | Self-describing, isolated runs | [measurement](../design/specs/measurement.md) | B2.4 |
-| NEW-measurement-2 | Diagnostics on real inputs | [measurement](../design/specs/measurement.md) | B2.4 |
-| NEW-measurement-3 | Adoptions per phase | [measurement](../design/specs/measurement.md) | B2.4 |
-| NEW-measurement-4 | Test strength and human-built work in the measures | [measurement](../design/specs/measurement.md) | B2.4 |
-| NEW-measurement-5 | Benchmarking model combinations in two tiers: **quick** (role-by-role screening in minutes, cached, hardware-aware, with intervals) and **overnight** (paired, repeated full comparison in the overnight window, resumable, morning report) (DEC-29 O2a) | [measurement](../design/specs/measurement.md) | B4.1 |
-| NEW-models-1 | Calibrate the reference host and correct its tier | [models](../design/specs/models.md) | B4.0a |
-| NEW-models-2 | Floors and the watchdog on every path | [models](../design/specs/models.md) | B4.0a |
-| NEW-models-3 | Declared hours and swap batching | [models](../design/specs/models.md), with [surface](../design/specs/surface.md) and [dashboard](../design/specs/dashboard.md) | B4.0a |
-| NEW-models-4 | One profile, one role enum, one construction path, a live registry | [models](../design/specs/models.md) | B4.0a |
-| NEW-models-5 | Tool-arm qualification | [models](../design/specs/models.md) | B4.0a |
-| NEW-models-6 | Competence rows that can improve routing | [models](../design/specs/models.md) | B4.0a |
-| NEW-models-7 | Weights that a new user can obtain | [models](../design/specs/models.md) | B2.2 |
-| NEW-models-8 | Engines as adapters, qualified per combination | [models](../design/specs/models.md) | B2.2 |
-| NEW-models-9 | One scheduler owns residency | [models](../design/specs/models.md) | B4.0a |
-| NEW-models-10 | Adopting a model is a measured decision | [models](../design/specs/models.md) | B4.0a |
-| NEW-models-11 | The Spark-X2.5-4B Researcher bake-off | [models](../design/specs/models.md) | B4.4 |
-| NEW-models-12 | Scan model folders, identify weights, recommend a model per role with its reason, verified explicit downloads (DEC-29 O2) | [models](../design/specs/models.md) | B4.1 |
-| NEW-models-13 | The model library: nested-folder scan, Hugging Face matching, suggested assignments checked deterministically, predicted and measured speed (DEC-32) | [models](../design/specs/models.md) | B4.1 |
-| NEW-models-14 | Smart Swap ([DEC-45](../design/DECISIONS.md)): every model load and unload recorded (volume, cold or warm, bytes, timings), each load predicted, slow loads flagged with cause and fix (MD-N14-1–6, built); then the policy — the round-trip cost model, one pure `decide()` with C1–C10, Seshat answered while the Worker runs, headroom admission (no two large models, by footprint), load modes by A/B with the `--fit`, drive and Ollama guards, slot and prefix caches deleted on erasure, the closed-loop replay simulator, and the swap policy recorded in evidence (MD-N14-7–40; runtime RUN-34 and RUN-35 amended); its parameters admitted by a paired replay across five or more recorded days, and calibration nights (measurement MS-NM14-1–3); placement, the placement measurement and time per card (MD-N14-41–42, MS-NM14-4) and the model section of Configuration (dashboard DB-NM14-1–9) | [models](../design/specs/models.md), with [runtime](../design/specs/runtime.md), [measurement](../design/specs/measurement.md) and [dashboard](../design/specs/dashboard.md) | B4.0a (the engine: the record, built; the policy, part 3); B4.1 (placement and the model section, with the benchmark) |
-| NEW-planner-pm-1 | Points on the board | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
-| NEW-planner-pm-2 | Signals propose, never mutate | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
-| NEW-planner-pm-3 | Split to the measured horizon | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
-| NEW-planner-pm-4 | The goal loop re-evaluates on the right events | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
-| NEW-planner-pm-5 | Every signal response is carried out, as a proposal where a person owns the field | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
-| NEW-planner-pm-6 | Planning on existing codebases | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
-| NEW-planner-pm-7 | Test approval and strength by depth profile | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
-| NEW-planner-pm-8 | Dependencies from what a card uses, not a blanket rule | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
-| NEW-planner-pm-9 | How Seshat speaks and proposes: suggestions with reasons, never assigning people or setting health, neutral reminders, the drafted weekly update, answers scoped to what the person can see, planner changes to an owned issue as suggestions (DEC-36) | [planner-pm](../design/specs/planner-pm.md) | B4.8; its auto-apply criterion PM-N9-2 with B4.10 |
-| NEW-review-git-1 | A rebase conflict goes back to the Worker as typed failures | [review-git](../design/specs/review-git.md) | B3.2 |
-| NEW-review-git-2 | Restacked children re-run their gates | [review-git](../design/specs/review-git.md) | B3.2 |
-| NEW-review-git-3 | Per-package gates in card verification | [review-git](../design/specs/review-git.md) | B4.0b |
-| NEW-review-git-4 | Versions follow SemVer's 0.y.z rule, per slice | [review-git](../design/specs/review-git.md) | B4.3 |
-| NEW-review-git-5 | Review for a team: who may accept, who should look | [review-git](../design/specs/review-git.md) | B3.2 |
-| NEW-runtime-1 | One supervisor, an atomic lease | [runtime](../design/specs/runtime.md) | B3.3 |
-| NEW-runtime-2 | Kills that reach every descendant | [runtime](../design/specs/runtime.md) | B3.3 |
-| NEW-runtime-3 | Crash recovery and bounded rounds | [runtime](../design/specs/runtime.md) | B3.3 |
-| NEW-runtime-4 | Bounded disk | [runtime](../design/specs/runtime.md) | B3.3 |
-| NEW-runtime-5 | The night does what it promises | [runtime](../design/specs/runtime.md) | B3.3 |
-| NEW-runtime-6 | One scheduler, fair across people, per-slot leases | [runtime](../design/specs/runtime.md) | B4.10 |
-| NEW-runtime-7 | Every budget the spec names is enforced | [runtime](../design/specs/runtime.md) | B4.10 |
-| NEW-runtime-8 | Backup, restore, export and upgrades that lose nothing | [runtime](../design/specs/runtime.md) | B3.1 |
-| NEW-runtime-9 | Telemetry as specified | [runtime](../design/specs/runtime.md) | B3.3 |
-| NEW-runtime-10 | Pause a project | [runtime](../design/specs/runtime.md) | B3.3 |
-| NEW-security-1 | Flag files that execute later | [security](../design/specs/security.md) | B1 |
-| NEW-security-2 | The air-gap self-test checks at the proxy | [security](../design/specs/security.md) | B1 |
-| NEW-security-3 | Small hardening items | [security](../design/specs/security.md) | B1 |
-| NEW-security-4 | Injection fixtures run against the real Worker | [security](../design/specs/security.md) | B1 |
-| NEW-security-5 | Documentation and skills that match the air-gapped project | [security](../design/specs/security.md) | B1 |
-| NEW-security-6 | An Ask that a person really answers | [security](../design/specs/security.md) | B1 |
-| NEW-security-7 | Erase a secret the scanner missed | [security](../design/specs/security.md) | B3.1 |
-| NEW-security-8 | Research asks once, on the first new project; a yes never opens a route for the sandbox (O16) | [security](../design/specs/security.md) | B3.3 |
-| NEW-security-9 | Model downloads only by a person's explicit choice, hash-verified, refused offline (DEC-29 O2) | [security](../design/specs/security.md) | B4.1 |
-| NEW-security-10 | Protections for scanning model folders and the Hugging Face lookup (DEC-32) | [security](../design/specs/security.md) | B4.1 |
-| NEW-surface-1 | One user directory | [surface](../design/specs/surface.md) | B3.3 |
-| NEW-surface-2 | A terminal board in the board's words | [surface](../design/specs/surface.md) | B3.3 |
-| NEW-surface-3 | The card layer of the configuration is real or removed | [surface](../design/specs/surface.md) | B3.3 |
-| NEW-surface-4 | One install path per audience | [surface](../design/specs/surface.md) | B4.1 |
-| NEW-surface-5 | One recorded run profile | [surface](../design/specs/surface.md) | B3.3 |
-| NEW-surface-6 | `sekhemet ask` at the front door in place of `board` (O23) | [surface](../design/specs/surface.md) | B4.1 |
-| NEW-teams-1 | The two setups, Solo and Team (DEC-35) | [teams](../design/specs/teams.md) | B4.10 |
-| NEW-teams-2 | Workspace, projects and access levels | [teams](../design/specs/teams.md) | B4.10 |
-| NEW-teams-3 | Accounts and sessions: setup token, invites, passwords, sessions, personal tokens | [teams](../design/specs/teams.md) | B4.10 |
-| NEW-teams-4 | Passkeys and company SSO (DEC-38) | [teams](../design/specs/teams.md) | B4.10 |
-| NEW-teams-5 | AI teammates: identities, states, `@Agent` and `@Seshat`, `on_behalf_of` (DEC-36) | [teams](../design/specs/teams.md) | B4.11 |
-| NEW-teams-6 | Seshat proposes, people decide: suggestions with reasons; a stakeholder's plan sent for approval (DEC-36) | [teams](../design/specs/teams.md) | B4.11 |
-| NEW-teams-7 | Subscriptions, watch, @mentions of people, the Inbox | [teams](../design/specs/teams.md) | B4.11 |
-| NEW-teams-8 | Review verdicts: Comment, stale-accept dismissal, resolved threads | [teams](../design/specs/teams.md) | B4.11 |
-| NEW-teams-9 | Presence | [teams](../design/specs/teams.md) | B4.11 |
-| NEW-teams-10 | The audit view and export | [teams](../design/specs/teams.md) | B4.11 |
-| NEW-teams-11 | Health set by a person, project updates (DEC-37), and the shared queue in tokens with a per-person Agent cap | [teams](../design/specs/teams.md) | B4.10 (the shared queue); B4.11 (health and updates) |
-| NEW-worker-loop-1 | Repetition refusals that survive alternation and truncation | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
-| NEW-worker-loop-2 | The ladder's dead fields | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
-| NEW-worker-loop-3 | Remove the session's dead direct-tool API | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
-| NEW-worker-loop-4 | `ask` that can wait for a person without stopping the Worker | [worker-loop](../design/specs/worker-loop.md) | B4.0a |
-| NEW-worker-loop-5 | One attempt record, a grounded re-plan, and equal repair chances | [worker-loop](../design/specs/worker-loop.md) | B4.0a |
-| NEW-worker-loop-6 | Mechanical edits as tools | [worker-loop](../design/specs/worker-loop.md) | B4.0a |
-| NEW-worker-loop-7 | Language servers as bounded tenants, reached through LSP | [worker-loop](../design/specs/worker-loop.md) | B4.0a |
-| NEW-worker-loop-8 | MCP tools without their prefill cost | [worker-loop](../design/specs/worker-loop.md) | B4.0a |
-| NEW-worker-loop-9 | Evidence-gated commit behind `SEKHEMET_EVIDENCE_GATE` (ECLoop), built for the B2.5 A/B | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
-| NEW-worker-loop-10 | Collaborating on a running issue: messages at step boundaries, pause, take over, hand back, line comments (DEC-34) | [worker-loop](../design/specs/worker-loop.md) | B3.2 |
+| ID | Change | Spec | Workstream | State |
+| --- | --- | --- | --- | --- |
+| NEW-context-1 | One token estimator calibrated to the model | [context](../design/specs/context.md) | B2.1 | ◐ partial — `5b17ed1`, `028b592` (State rows in context: 1 partial) |
+| NEW-context-2 | Budgets asserted on the live path | [context](../design/specs/context.md) | B2.1 | ◐ partial — `5b17ed1`, `028b592` (State rows in context: 1 partial, 3 not built) |
+| NEW-context-3 | One allocator for every role | [context](../design/specs/context.md) | B4.0a | ◐ partial — `b612f90`, `2d97d02`, `0c76973`, `160310d` (State rows in context: 2 built, 1 partial) |
+| NEW-context-4 | Rules that are scoped exactly, kept once, and credited fairly | [context](../design/specs/context.md) | B4.0a | ◐ partial — `b612f90`, `2d97d02`, `0c76973`, `160310d` (State rows in context, measurement: 6 built, 1 partial) |
+| NEW-context-5 | The repo map's weighting and cache, and condensing savings | [context](../design/specs/context.md) | B4.0a | ✅ done — `b612f90`, `2d97d02`, `0c76973`, `160310d` |
+| NEW-context-6 | The context version gates qualification; prompt changes are measured | [context](../design/specs/context.md) | B4.0a | ✅ done — `b612f90`, `2d97d02`, `0c76973`, `160310d` |
+| NEW-dashboard-1 | Evidence that stays readable | [dashboard](../design/specs/dashboard.md) | B4.2 | ✅ done — `2920484`, compliance C5 |
+| NEW-dashboard-2 | A web layer under test, with one vocabulary | [dashboard](../design/specs/dashboard.md) | B4.2 | ◐ partial — `2920484`, compliance C5 (State rows in dashboard: 6 built, 3 partial, 1 not built) |
+| NEW-dashboard-3 | The model's output, live, on the Steps tab | [dashboard](../design/specs/dashboard.md) | B4.6 | ✅ done — `4433b1a` |
+| NEW-dashboard-4 | Settings | [dashboard](../design/specs/dashboard.md) | B4.2 | ✅ done — `2920484`, compliance C5 |
+| NEW-dashboard-5 | Review for a team, and review that forces a look | [dashboard](../design/specs/dashboard.md) | B4.6 | ◐ partial — `4433b1a` (State rows in dashboard: 1 built, 1 partial) |
+| NEW-dashboard-6 | The Configuration page: model folders, role recommendations, explicit downloads, the benchmark, every role's model name (DEC-29 O2, O3) | [dashboard](../design/specs/dashboard.md) | B4.1 | ◐ partial — `5019670` (State rows in dashboard: 1 partial) |
+| NEW-dashboard-7 | Every on-screen word from DEC-31's professional vocabulary; issue types, checks, sprint, release | [dashboard](../design/specs/dashboard.md) | B4.2 | ◐ partial — `2920484`, `3410f94`, compliance C4 (State rows in dashboard: 1 built, 1 partial) |
+| NEW-dashboard-8 | The issue page for working with the agent (DEC-34) | [dashboard](../design/specs/dashboard.md) | B4.6 | ◐ partial — `4433b1a` (State rows in dashboard: 1 partial) |
+| NEW-dashboard-9 | The pages for working together: Status for the stakeholder and the team (DEC-37), Projects, Sign in, Inbox, My issues, Members, Audit, the account menu, the brand mark and the AI badge | [dashboard](../design/specs/dashboard.md) | B4.7 (Status, Projects, brand mark); B4.10 (Sign in, the account menu and session UI); B4.11 (Inbox, My issues, Members, Audit) | ◐ partial — `3410f94`, `66d1276` (State rows in dashboard: 5 partial); B4.11 to come |
+| NEW-design-stage-5 | The Researcher asked early, with the card in hand | [design-stage](../design/specs/design-stage.md) | B4.4 | ◐ partial — `eedf2f5` (State rows in design-stage: 1 partial) |
+| NEW-design-stage-1 | Design-stage judgement | [design-stage](../design/specs/design-stage.md) | B4.4 | ◐ partial — `eedf2f5` (State rows in design-stage: 1 built, 2 partial, 1 not built) |
+| NEW-design-stage-2 | Research that can be verified and does not park wrongly | [design-stage](../design/specs/design-stage.md) | B4.4 | ◐ partial — `eedf2f5` (State rows in design-stage: 4 built, 1 partial) |
+| NEW-design-stage-3 | Project documents in the repository, generated from the ledger | [design-stage](../design/specs/design-stage.md) | B4.4 | ◐ partial — `eedf2f5` (State rows in design-stage: 2 partial) |
+| NEW-design-stage-4 | Deep research that says how hard it looked | [design-stage](../design/specs/design-stage.md) | B4.4 | ✅ done — `eedf2f5` |
+| NEW-design-stage-6 | Take over a project (DEC-43): trust first, the repository's agent configuration inert, the offline history secret scan, recon without a model and the as-built inventory (DS-TO-1–8); the brief as found, one batch of questions, the evidenced backlog and its approval (DS-TO-9–16) | [design-stage](../design/specs/design-stage.md), with [security](../design/specs/security.md) (SEC-54, SEC-55), [surface](../design/specs/surface.md) (SUR-56), [planner-pm](../design/specs/planner-pm.md) and [dashboard](../design/specs/dashboard.md) | B4.1 (trust, recon and the as-built inventory, *could not build* as a finding only; after B4.0b, whose NEW-gates-7 baseline DS-TO-6 writes); B4.4 (the brief as found, the conversation and the backlog, including the *stabilise* cards) | ◐ partial — `5019670`, `eedf2f5`, compliance C2 (State rows in design-stage, security, surface: 3 built, 2 partial) |
+| NEW-extensibility-1 | Board-lifecycle hooks | [extensibility](../design/specs/extensibility.md) | B3.3 | ✅ done — `d3c1e08` |
+| NEW-extensibility-2 | Hooks that fail visibly | [extensibility](../design/specs/extensibility.md) | B3.3 | ✅ done — `d3c1e08` |
+| NEW-extensibility-3 | MCP on the official SDK | [extensibility](../design/specs/extensibility.md) | B3.3 | ◐ partial — `d3c1e08` (State rows in extensibility: 1 built, 1 partial) |
+| NEW-extensibility-4 | Skills in the Agent Skills format | [extensibility](../design/specs/extensibility.md) | B3.3 | ◐ partial — `d3c1e08` (State rows in extensibility: 2 built, 1 partial) |
+| NEW-extensibility-5 | The plugin container and the SDK package cut (DEC-29 O4) | [extensibility](../design/specs/extensibility.md) | B0 | ✅ done — `5b8053d` |
+| NEW-gates-1 | Unenforced invariants shown to a person | [gates](../design/specs/gates.md) | B4.0b (moved from B2.3 on 2026-09-25: B2.3's plan row named only M6, and these were not built) | ✅ done — `0c76973`, `160310d`, `eb6776f` |
+| NEW-gates-2 | Judge only what the card wrote | [gates](../design/specs/gates.md) | B4.0b (moved from B2.3 on 2026-09-25: B2.3's plan row named only M6, and these were not built) | ✅ done — `0c76973`, `160310d`, `eb6776f` |
+| NEW-gates-3 | Gate economics and flaky tests | [gates](../design/specs/gates.md) | B4.0b (moved from B2.3 on 2026-09-25: B2.3's plan row named only M6, and these were not built) | ◐ partial — `0c76973`, `160310d`, `eb6776f` (State rows in gates: 2 built, 1 partial) |
+| NEW-gates-4 | The visual layer to its design | [gates](../design/specs/gates.md) | B4.0b (moved from B2.3 on 2026-09-25: B2.3's plan row named only M6, and these were not built) | ◐ partial — `0c76973`, `160310d`, `eb6776f` (State rows in gates: 2 built, 1 partial) |
+| NEW-gates-5 | The gates the old design listed: templates, the claim gate, bundled static-analysis rules | [gates](../design/specs/gates.md) | B4.0b | ◐ partial — `0c76973`, `160310d`, `eb6776f` (State rows in gates: 3 built, 2 partial) |
+| NEW-gates-6 | Tests that can fail, checked before the build | [gates](../design/specs/gates.md) | B4.0b | ◐ partial — `0c76973`, `160310d`, `eb6776f` (State rows in gates, worker-loop: 3 built, 2 partial) |
+| NEW-gates-7 | Gates for existing codebases | [gates](../design/specs/gates.md) | B4.0b | ✅ done — `0c76973`, `160310d`, `eb6776f` |
+| NEW-gates-8 | The change kind and the test-strength record on the card | [gates](../design/specs/gates.md) | B4.0b | ◐ partial — `0c76973`, `160310d`, `eb6776f` (gates: the change values row is partial) |
+| NEW-integrations-1 | Idempotent import | [integrations](../design/specs/integrations.md) | B4.9 | ✅ done — `c069b99`, `2e4168f` (integrations: import as proposals, built (B4.9)) |
+| NEW-integrations-2 | Owner, delegate and accepter mapped to every tracker | [integrations](../design/specs/integrations.md) | B4.9 | ✅ done — `c069b99`, `2e4168f` (integrations: owner, delegate and accepter mapped, built (B4.9)) |
+| NEW-integrations-3 | External results name their source | [integrations](../design/specs/integrations.md) | B4.9 | ✅ done — `c069b99`, `2e4168f` (integrations: external check results named, built (B4.9)) |
+| NEW-integrations-4 | Inherited issues reconciled against the code as proposals: already done, duplicate, stale or valid (DEC-43) | [integrations](../design/specs/integrations.md) | B4.4 | ✅ done — `eedf2f5` |
+| NEW-kernel-1 | Hash chain v3 | [kernel](../design/specs/kernel.md) | B3.1 | ✅ done — `18a3197` (kernel: the chain rows, built) |
+| NEW-kernel-2 | A `principal` column on events | [kernel](../design/specs/kernel.md) | B3.1 | ◐ partial — `18a3197` (State rows in kernel: 1 partial) |
+| NEW-kernel-3 | Held as a typed field | [kernel](../design/specs/kernel.md) | B3.1 | ✅ done — `18a3197` |
+| NEW-kernel-4 | Numbered migrations and one column table | [kernel](../design/specs/kernel.md) | B3.1 | ◐ partial — `18a3197` (State rows in kernel: 1 partial) |
+| NEW-kernel-5 | The lifecycle's missing conditions | [kernel](../design/specs/kernel.md) | B3.1 | ◐ partial — `18a3197` (State rows in kernel: 3 built, 2 partial) |
+| NEW-kernel-6 | Who is on a card, and who built each attempt | [kernel](../design/specs/kernel.md) | B3.1 | ◐ partial — `18a3197` (State rows in kernel: 1 partial) |
+| NEW-kernel-7 | An erasable ledger | [kernel](../design/specs/kernel.md) | B3.1 | ✅ done — `18a3197` (kernel: private part and erasure, built) |
+| NEW-kernel-8 | Requirement versions and gate-result sources in the record | [kernel](../design/specs/kernel.md) | B3.1 | ◐ partial — `18a3197` (State rows in kernel: 2 partial) |
+| NEW-kernel-9 | The stored `kind`, `change` and `split` fields (DEC-26) | [kernel](../design/specs/kernel.md) | B3.1 | ✅ done — `18a3197` |
+| NEW-kernel-10 | `on_behalf_of` on the Agent's events, covered by the hash chain (DEC-36) | [kernel](../design/specs/kernel.md) | B4.11 | ✅ done — `18a3197` (built ahead of B4.11) |
+| NEW-measurement-1 | Self-describing, isolated runs | [measurement](../design/specs/measurement.md) | B2.4 | ◐ partial — `028b592`, `df72861` (State rows in measurement: 1 partial, 2 not built) |
+| NEW-measurement-2 | Diagnostics on real inputs | [measurement](../design/specs/measurement.md) | B2.4 | ◐ partial — `028b592`, `df72861` (State rows in measurement: 1 partial) |
+| NEW-measurement-3 | Adoptions per phase | [measurement](../design/specs/measurement.md) | B2.4 | ○ not built — `028b592`, `df72861` closed without it (State rows in measurement: 1 not built) |
+| NEW-measurement-4 | Test strength and human-built work in the measures | [measurement](../design/specs/measurement.md) | B2.4 | ◐ partial — `028b592`, `df72861` (State rows in measurement: 1 partial, 1 not built) |
+| NEW-measurement-5 | Benchmarking model combinations in two tiers: **quick** (role-by-role screening in minutes, cached, hardware-aware, with intervals) and **overnight** (paired, repeated full comparison in the overnight window, resumable, morning report) (DEC-29 O2a) | [measurement](../design/specs/measurement.md) | B4.1 | ◐ partial — `5019670` (State rows in measurement, models: 3 partial) |
+| NEW-models-1 | Calibrate the reference host and correct its tier | [models](../design/specs/models.md) | B4.0a | ◐ partial — `b612f90`, `2d97d02`, `0c76973`, `160310d` (State rows in models: 1 built, 1 partial) |
+| NEW-models-2 | Floors and the watchdog on every path | [models](../design/specs/models.md) | B4.0a | ◐ partial — `b612f90`, `2d97d02`, `0c76973`, `160310d` (State rows in models: 2 built, 1 partial) |
+| NEW-models-3 | Declared hours and swap batching | [models](../design/specs/models.md), with [surface](../design/specs/surface.md) and [dashboard](../design/specs/dashboard.md) | B4.0a | ◐ partial — `b612f90`, `2d97d02`, `0c76973`, `160310d` (State rows in dashboard, measurement, models, surface: 3 partial, 3 not built) |
+| NEW-models-4 | One profile, one role enum, one construction path, a live registry | [models](../design/specs/models.md) | B4.0a | ◐ partial — `b612f90`, `2d97d02`, `0c76973`, `160310d` (State rows in models, planner-pm: 5 built, 3 partial, 1 not built) |
+| NEW-models-5 | Tool-arm qualification | [models](../design/specs/models.md) | B4.0a | ◐ partial — `b612f90`, `2d97d02`, `0c76973`, `160310d` (State rows in models: 1 partial) |
+| NEW-models-6 | Competence rows that can improve routing | [models](../design/specs/models.md) | B4.0a | ◐ partial — `b612f90`, `2d97d02`, `0c76973`, `160310d` (State rows in models: 1 built, 1 partial) |
+| NEW-models-7 | Weights that a new user can obtain | [models](../design/specs/models.md) | B2.2 | ○ not built — `028b592`, `0e30e61` closed without it (State rows in models: 1 not built) |
+| NEW-models-8 | Engines as adapters, qualified per combination | [models](../design/specs/models.md) | B2.2 | ◐ partial — `028b592`, `0e30e61` (State rows in models: 3 built, 1 partial, 4 not built) |
+| NEW-models-9 | One scheduler owns residency | [models](../design/specs/models.md) | B4.0a | ✅ done — `b612f90`, `2d97d02`, `0c76973`, `160310d` |
+| NEW-models-10 | Adopting a model is a measured decision | [models](../design/specs/models.md) | B4.0a | ✅ done — `b612f90`, `2d97d02`, `0c76973`, `160310d` |
+| NEW-models-11 | The Spark-X2.5-4B Researcher bake-off | [models](../design/specs/models.md) | B4.4 | ◐ partial — `eedf2f5` (State rows in models: 1 partial) |
+| NEW-models-12 | Scan model folders, identify weights, recommend a model per role with its reason, verified explicit downloads (DEC-29 O2) | [models](../design/specs/models.md) | B4.1 | ✅ done — `5019670` |
+| NEW-models-13 | The model library: nested-folder scan, Hugging Face matching, suggested assignments checked deterministically, predicted and measured speed (DEC-32) | [models](../design/specs/models.md) | B4.1 | ✅ done — `5019670` |
+| NEW-models-14 | Smart Swap ([DEC-45](../design/DECISIONS.md)): every model load and unload recorded (volume, cold or warm, bytes, timings), each load predicted, slow loads flagged with cause and fix (MD-N14-1–6, built); then the policy — the round-trip cost model, one pure `decide()` with C1–C10, Seshat answered while the Worker runs, headroom admission (no two large models, by footprint), load modes by A/B with the `--fit`, drive and Ollama guards, slot and prefix caches deleted on erasure, the closed-loop replay simulator, and the swap policy recorded in evidence (MD-N14-7–40; runtime RUN-34 and RUN-35 amended); its parameters admitted by a paired replay across five or more recorded days, and calibration nights (measurement MS-NM14-1–3); placement, the placement measurement and time per card (MD-N14-41–42, MS-NM14-4) and the model section of Configuration (dashboard DB-NM14-1–9) | [models](../design/specs/models.md), with [runtime](../design/specs/runtime.md), [measurement](../design/specs/measurement.md) and [dashboard](../design/specs/dashboard.md) | B4.0a (the engine: the record, built; the policy, part 3); B4.1 (placement and the model section, with the benchmark) | ◐ partial — `b612f90`, `2d97d02`, `0c76973`, `160310d`, `5019670` (State rows in dashboard, measurement, models: 5 built, 4 partial, 1 not built) |
+| NEW-planner-pm-1 | Points on the board | [planner-pm](../design/specs/planner-pm.md) | B4.3 | ✅ done — `2542716` (planner-pm: points written to cards, built) |
+| NEW-planner-pm-2 | Signals propose, never mutate | [planner-pm](../design/specs/planner-pm.md) | B4.3 | ✅ done — `2542716` |
+| NEW-planner-pm-3 | Split to the measured horizon | [planner-pm](../design/specs/planner-pm.md) | B4.3 | ✅ done — `2542716` |
+| NEW-planner-pm-4 | The goal loop re-evaluates on the right events | [planner-pm](../design/specs/planner-pm.md) | B4.3 | ✅ done — `2542716` |
+| NEW-planner-pm-5 | Every signal response is carried out, as a proposal where a person owns the field | [planner-pm](../design/specs/planner-pm.md) | B4.3 | ✅ done — `2542716` |
+| NEW-planner-pm-6 | Planning on existing codebases | [planner-pm](../design/specs/planner-pm.md) | B4.3 | ◐ partial — `2542716` (State rows in planner-pm: 1 partial) |
+| NEW-planner-pm-7 | Test approval and strength by depth profile | [planner-pm](../design/specs/planner-pm.md) | B4.3 | ◐ partial — `2542716` (State rows in planner-pm: 1 partial) |
+| NEW-planner-pm-8 | Dependencies from what a card uses, not a blanket rule | [planner-pm](../design/specs/planner-pm.md) | B4.3 | ✅ done — `2542716` |
+| NEW-planner-pm-9 | How Seshat speaks and proposes: suggestions with reasons, never assigning people or setting health, neutral reminders, the drafted weekly update, answers scoped to what the person can see, planner changes to an owned issue as suggestions (DEC-36) | [planner-pm](../design/specs/planner-pm.md) | B4.8; its auto-apply criterion PM-N9-2 with B4.10 | ◐ partial — `66d1276` (State rows in planner-pm: 1 partial); B4.8 to come |
+| NEW-review-git-1 | A rebase conflict goes back to the Worker as typed failures | [review-git](../design/specs/review-git.md) | B3.2 | ✅ done — `d3c1e08` (review-git: rebase conflict with typed hunks, built (B3.2)) |
+| NEW-review-git-2 | Restacked children re-run their gates | [review-git](../design/specs/review-git.md) | B3.2 | ✅ done — `d3c1e08` (review-git: restacked children re-run their gates, built) |
+| NEW-review-git-3 | Per-package gates in card verification | [review-git](../design/specs/review-git.md) | B4.0b | ✅ done — `0c76973`, `160310d`, `eb6776f` |
+| NEW-review-git-4 | Versions follow SemVer's 0.y.z rule, per slice | [review-git](../design/specs/review-git.md) | B4.3 | ✅ done — `2542716`, compliance C1 |
+| NEW-review-git-5 | Review for a team: who may accept, who should look | [review-git](../design/specs/review-git.md) | B3.2 | ✅ done — `d3c1e08` (review-git: independent accept and CODEOWNERS, built) |
+| NEW-runtime-1 | One supervisor, an atomic lease | [runtime](../design/specs/runtime.md) | B3.3 | ✅ done — `d3c1e08` |
+| NEW-runtime-2 | Kills that reach every descendant | [runtime](../design/specs/runtime.md) | B3.3 | ✅ done — `d3c1e08` |
+| NEW-runtime-3 | Crash recovery and bounded rounds | [runtime](../design/specs/runtime.md) | B3.3 | ◐ partial — `d3c1e08` (State rows in runtime, worker-loop: 2 built, 1 partial) |
+| NEW-runtime-4 | Bounded disk | [runtime](../design/specs/runtime.md) | B3.3 | ✅ done — `d3c1e08` |
+| NEW-runtime-5 | The night does what it promises | [runtime](../design/specs/runtime.md) | B3.3 | ◐ partial — `d3c1e08` (State rows in runtime: 1 built, 2 partial) |
+| NEW-runtime-6 | One scheduler, fair across people, per-slot leases | [runtime](../design/specs/runtime.md) | B4.10 | ◐ partial — `66d1276` (State rows in runtime: 1 partial, 1 not built) |
+| NEW-runtime-7 | Every budget the spec names is enforced | [runtime](../design/specs/runtime.md) | B4.10 | ○ not built — `66d1276` closed without it (State rows in runtime: 1 not built) |
+| NEW-runtime-8 | Backup, restore, export and upgrades that lose nothing | [runtime](../design/specs/runtime.md) | B3.1 | ○ not built — `18a3197` closed without it (State rows in runtime: 1 not built) |
+| NEW-runtime-9 | Telemetry as specified | [runtime](../design/specs/runtime.md) | B3.3 | ◐ partial — `d3c1e08` (State rows in runtime: 2 built, 1 partial) |
+| NEW-runtime-10 | Pause a project | [runtime](../design/specs/runtime.md) | B3.3 | ✅ done — `d3c1e08` |
+| NEW-security-1 | Flag files that execute later | [security](../design/specs/security.md) | B1 | ✅ done — `b341663`, `525585e`, `5b17ed1` |
+| NEW-security-2 | The air-gap self-test checks at the proxy | [security](../design/specs/security.md) | B1 | ◐ partial — `b341663`, `525585e`, `5b17ed1` (State rows in security: 1 partial) |
+| NEW-security-3 | Small hardening items | [security](../design/specs/security.md) | B1 | ✅ done — `b341663`, `525585e`, `5b17ed1` |
+| NEW-security-4 | Injection fixtures run against the real Worker | [security](../design/specs/security.md) | B1 | ◐ partial — `b341663`, `525585e`, `5b17ed1` (State rows in security: 1 partial) |
+| NEW-security-5 | Documentation and skills that match the air-gapped project | [security](../design/specs/security.md) | B1 | ✅ done — `b341663`, `525585e`, `5b17ed1` |
+| NEW-security-6 | An Ask that a person really answers | [security](../design/specs/security.md) | B1 | ✅ done — `b341663`, `525585e`, `5b17ed1` |
+| NEW-security-7 | Erase a secret the scanner missed | [security](../design/specs/security.md) | B3.1 | ◐ partial — `18a3197` (State rows in security: 1 partial) |
+| NEW-security-8 | Research asks once, on the first new project; a yes never opens a route for the sandbox (O16) | [security](../design/specs/security.md) | B3.3 | ◐ partial — `d3c1e08` (State rows in security: 1 partial) |
+| NEW-security-9 | Model downloads only by a person's explicit choice, hash-verified, refused offline (DEC-29 O2) | [security](../design/specs/security.md) | B4.1 | ✅ done — `5019670` |
+| NEW-security-10 | Protections for scanning model folders and the Hugging Face lookup (DEC-32) | [security](../design/specs/security.md) | B4.1 | ✅ done — `5019670` |
+| NEW-surface-1 | One user directory | [surface](../design/specs/surface.md) | B3.3 | ✅ done — `d3c1e08` |
+| NEW-surface-2 | A terminal board in the board's words | [surface](../design/specs/surface.md) | B3.3 | ✅ done — `d3c1e08` |
+| NEW-surface-3 | The card layer of the configuration is real or removed | [surface](../design/specs/surface.md) | B3.3 | ◐ partial — `d3c1e08` (State rows in surface: 1 partial) |
+| NEW-surface-4 | One install path per audience | [surface](../design/specs/surface.md) | B4.1 | ◐ partial — `5019670` (State rows in surface: 1 built, 1 partial) |
+| NEW-surface-5 | One recorded run profile | [surface](../design/specs/surface.md) | B3.3 | ✅ done — `d3c1e08` |
+| NEW-surface-6 | `sekhemet ask` at the front door in place of `board` (O23) | [surface](../design/specs/surface.md) | B4.1 | ✅ done — `5019670` |
+| NEW-teams-1 | The two setups, Solo and Team (DEC-35) | [teams](../design/specs/teams.md) | B4.10 | ◐ partial — `66d1276` (State rows in integrations, teams: 1 partial, 1 not built) |
+| NEW-teams-2 | Workspace, projects and access levels | [teams](../design/specs/teams.md) | B4.10 | ◐ partial — `66d1276` (State rows in integrations, teams: 1 partial, 1 not built) |
+| NEW-teams-3 | Accounts and sessions: setup token, invites, passwords, sessions, personal tokens | [teams](../design/specs/teams.md) | B4.10 | ◐ partial — `66d1276` (State rows in integrations, security, teams: 1 partial, 2 not built) |
+| NEW-teams-4 | Passkeys and company SSO (DEC-38) | [teams](../design/specs/teams.md) | B4.10 | ◐ partial — `66d1276` (State rows in integrations, teams: 1 partial, 1 not built) |
+| NEW-teams-5 | AI teammates: identities, states, `@Agent` and `@Seshat`, `on_behalf_of` (DEC-36) | [teams](../design/specs/teams.md) | B4.11 | not started (B4.11) |
+| NEW-teams-6 | Seshat proposes, people decide: suggestions with reasons; a stakeholder's plan sent for approval (DEC-36) | [teams](../design/specs/teams.md) | B4.11 | ◐ partial, ahead of B4.11 (State rows in design-stage, teams: 2 partial) |
+| NEW-teams-7 | Subscriptions, watch, @mentions of people, the Inbox | [teams](../design/specs/teams.md) | B4.11 | not started (B4.11) |
+| NEW-teams-8 | Review verdicts: Comment, stale-accept dismissal, resolved threads | [teams](../design/specs/teams.md) | B4.11 | not started (B4.11) |
+| NEW-teams-9 | Presence | [teams](../design/specs/teams.md) | B4.11 | not started (B4.11) |
+| NEW-teams-10 | The audit view and export | [teams](../design/specs/teams.md) | B4.11 | not started (B4.11) |
+| NEW-teams-11 | Health set by a person, project updates (DEC-37), and the shared queue in tokens with a per-person Agent cap | [teams](../design/specs/teams.md) | B4.10 (the shared queue); B4.11 (health and updates) | ◐ partial — `66d1276` (State rows in teams: 1 partial); B4.11 to come |
+| NEW-worker-loop-1 | Repetition refusals that survive alternation and truncation | [worker-loop](../design/specs/worker-loop.md) | B2.1 | ○ not built — `5b17ed1`, `028b592` closed without it (State rows in worker-loop: 1 not built) |
+| NEW-worker-loop-2 | The ladder's dead fields | [worker-loop](../design/specs/worker-loop.md) | B2.1 | ◐ partial — `5b17ed1`, `028b592` (State rows in worker-loop: 1 partial) |
+| NEW-worker-loop-3 | Remove the session's dead direct-tool API | [worker-loop](../design/specs/worker-loop.md) | B2.1 | ○ not built — `5b17ed1`, `028b592` closed without it (State rows in worker-loop: 1 not built) |
+| NEW-worker-loop-4 | `ask` that can wait for a person without stopping the Worker | [worker-loop](../design/specs/worker-loop.md) | B4.0a | ✅ done — `b612f90`, `2d97d02`, `0c76973`, `160310d` |
+| NEW-worker-loop-5 | One attempt record, a grounded re-plan, and equal repair chances | [worker-loop](../design/specs/worker-loop.md) | B4.0a | ◐ partial — `b612f90`, `2d97d02`, `0c76973`, `160310d` (State rows in kernel, worker-loop: 2 partial, 3 not built) |
+| NEW-worker-loop-6 | Mechanical edits as tools | [worker-loop](../design/specs/worker-loop.md) | B4.0a | ◐ partial — `b612f90`, `2d97d02`, `0c76973`, `160310d` (State rows in worker-loop: 1 partial) |
+| NEW-worker-loop-7 | Language servers as bounded tenants, reached through LSP | [worker-loop](../design/specs/worker-loop.md) | B4.0a | ◐ partial — `b612f90`, `2d97d02`, `0c76973`, `160310d` (State rows in worker-loop: 1 built, 1 partial) |
+| NEW-worker-loop-8 | MCP tools without their prefill cost | [worker-loop](../design/specs/worker-loop.md) | B4.0a | ◐ partial — `b612f90`, `2d97d02`, `0c76973`, `160310d` (State rows in worker-loop: 1 partial) |
+| NEW-worker-loop-9 | Evidence-gated commit behind `SEKHEMET_EVIDENCE_GATE` (ECLoop), built for the B2.5 A/B | [worker-loop](../design/specs/worker-loop.md) | B2.1 | ◐ partial — `5b17ed1`, `028b592` (State rows in worker-loop: 1 partial) |
+| NEW-worker-loop-10 | Collaborating on a running issue: messages at step boundaries, pause, take over, hand back, line comments (DEC-34) | [worker-loop](../design/specs/worker-loop.md) | B3.2 | ✅ done — `d3c1e08` (worker-loop: collaborating on a running issue, built (B3.2)) |
 
 ## Decisions only the owner can make
 

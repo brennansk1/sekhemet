@@ -171,7 +171,7 @@ describe("the chat template qualification measured is the one pinned (live-test 
       model: (n) => describeModel(n, "worker", { registry: adapterRegistry }),
       combinationDeps: deps,
     });
-    expect(out.join("\n")).toMatch(/QUALIFIED/);
+    expect(out.join("\n")).toMatch(/% on \S+ VERIFIED on this machine for /);
     expect(code).toBe(0);
     const pinned = new ModelRegistry(registryPath).get(MODEL)?.template?.checksum;
     expect(pinned).toBe(templateChecksum(TEMPLATE));

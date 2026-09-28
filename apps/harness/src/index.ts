@@ -110,6 +110,7 @@ import {
   recordDependencies,
   recordQueueProgress,
   recordQueueReport,
+  recordQueueStarted,
   recordReview,
   requestAbort,
   rewindCard,
@@ -415,7 +416,7 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
  */
 function gateStartStop(repoPath: string): string[] {
   return gateStartProblems(loadGatesConfig(repoPath), repoPath).map(
-    (p) => `The ${p.gate} gate cannot start: ${p.reason}. Edit ${p.file}; no card was run.`,
+    (p) => `The ${p.gate} check cannot start: ${p.reason}. Edit ${p.file}; no issue was run.`,
   );
 }
 
@@ -788,7 +789,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       const report = tuning.report;
       const fmt = (s: typeof report.current) =>
         `${s.policy.stepBudget} steps, ${s.policy.maxFailedChecks} failed checks: first try ${s.firstTry}/${s.cards}, eventually ${s.eventually}/${s.cards}, ${s.minutes} min`;
-      console.log(`Replayed ${attempts.length} attempts on ${report.current.cards} cards.`);
+      console.log(`Replayed ${attempts.length} attempts on ${report.current.cards} issues.`);
       console.log(`Current:     ${fmt(report.current)}`);
       console.log(`Recommended: ${fmt(report.best)}`);
       console.log(
@@ -1199,7 +1200,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const reserved = await reserveMachine(log, { principal, ...(until ? { until } : {}) });
     console.log(
       reserved
-        ? `Reserved${until ? ` until ${until.toISOString()}` : " until you run `sekhemet dev reserve --release`"}: no unattended card or benchmark starts meanwhile.`
+        ? `Reserved${until ? ` until ${until.toISOString()}` : " until you run `sekhemet dev reserve --release`"}: no unattended issue or benchmark starts meanwhile.`
         : "The machine is already reserved.",
     );
     return;
@@ -1227,7 +1228,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     }
     console.log(
       status === "paused"
-        ? `Project ${project.name} is paused: no new card of it starts until you resume it; a running card finishes.`
+        ? `Project ${project.name} is paused: no new issue of it starts until you resume it; a running issue finishes.`
         : `Project ${project.name} is active again.`,
     );
     return;
@@ -1381,7 +1382,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     });
     if (!plannerName && named !== "none" && configured !== "none") {
       console.error(
-        `Planner: ${DEFAULT_PM_MODEL}, Seshat's model, is not in the model registry; planning without a model.`,
+        `Planning model: ${DEFAULT_PM_MODEL}, Seshat's model, is not in the model registry; planning without a model.`,
       );
     }
     // MD-N9-4: the Planner's model through the scheduler, loaded when first asked.
@@ -1401,7 +1402,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
           .then(() => true)
           .catch((err: unknown) => {
             console.error(
-              `Planner: ${plannerName} could not be loaded (${err instanceof Error ? err.message : String(err)}); planning without a model.`,
+              `Planning model: ${plannerName} could not be loaded (${err instanceof Error ? err.message : String(err)}); planning without a model.`,
             );
             return false;
           })
@@ -1466,7 +1467,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       await hub?.close();
     }
     await (sketcher as { unload?: () => Promise<void> } | undefined)?.unload?.();
-    console.log("View the cards with 'sekhemet board'.\n");
+    console.log("View the issues with 'sekhemet board'.\n");
     return;
   }
 
@@ -1478,7 +1479,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const worktree = cardId ? join(config.repoPath, ".sekhemet", "worktrees", cardId) : undefined;
     const cwd = worktree && existsSync(worktree) ? worktree : config.repoPath;
     if (cardId && cwd === config.repoPath) {
-      console.log(`No worktree for ${cardId}; running the gates in the repository instead.`);
+      console.log(`No worktree for ${cardId}; running the checks in the repository instead.`);
     }
     const gatesConfig = loadGatesConfig(config.repoPath);
     for (const w of gatesConfig.warnings ?? []) console.log(`  warning: ${w}`);
@@ -1562,7 +1563,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       console.log(`  ${mark} ${r.gate} (${r.durationMs} ms)${why}`);
     }
     if (passed) {
-      console.log("All gates pass.\n");
+      console.log("All checks passed.\n");
       return;
     }
     for (const f of res.failures) {
@@ -1580,7 +1581,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const certDir = join(config.repoPath, ".sekhemet", "gate-host");
     const { server } = generateGateHostCerts(certDir);
     if (config.targetArg === "init") {
-      console.log(`Gate host certificates in ${certDir} (ca.pem, server.*, client.*).`);
+      console.log(`Check host certificates in ${certDir} (ca.pem, server.*, client.*).`);
       console.log(
         `Add to gates.toml:\n[gate_host]\nurl = "https://127.0.0.1:${config.port === DEFAULT_DASHBOARD_PORT ? 7443 : config.port}"`,
       );
@@ -1605,7 +1606,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         ),
     });
     console.log(
-      `Sekhemet gate host on https://127.0.0.1:${host.port} (mutual TLS; Ctrl+C to stop)`,
+      `Sekhemet check host on https://127.0.0.1:${host.port} (mutual TLS; Ctrl+C to stop)`,
     );
     return;
   }
@@ -1736,7 +1737,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     if (as) {
       const card = await cardStore.getCard(cardId);
       if (!card) {
-        console.error(`Card not found: ${cardId}`);
+        console.error(`Issue not found: ${cardId}`);
         process.exit(1);
       }
       const replayCtx = {
@@ -1755,7 +1756,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         process.exit(1);
       }
       if (gate.override)
-        console.log(`Worker ${adapter.modelId}: ${describeOverride(gate.override)}`);
+        console.log(`Coding model ${adapter.modelId}: ${describeOverride(gate.override)}`);
       await forkCard(replayCtx, cardId, 0);
       console.log(`Replaying ${cardId} from the start on ${as}...`);
       try {
@@ -1831,7 +1832,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
 
     console.log(`\nBake-off on ${fixture}${manager ? ` (manager: ${manager})` : ""}`);
     console.log(
-      "worker                                   passed/measured  first try  minutes  tokens",
+      "coding model                             passed/measured  first try  minutes  tokens",
     );
     for (const row of rows) {
       if (!row.result) {
@@ -1891,7 +1892,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     }
     const card = await cardStore.getCard(cardId);
     if (!card) {
-      console.error(`Card not found: ${cardId}`);
+      console.error(`Issue not found: ${cardId}`);
       process.exit(1);
     }
     try {
@@ -1912,8 +1913,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         : checkoutNotice(config.repoPath, target, sha);
       console.log(
         sha.startsWith("http")
-          ? `\nAccepted ${cardId} — pull request ${sha} opened; the card reaches Done when it merges.`
-          : `\nAccepted ${cardId} — squashed onto ${target} as ${sha.slice(0, 10)}, card moved to Done. Your files were not touched.`,
+          ? `\nAccepted ${cardId} — pull request ${sha} opened; the issue reaches Done when it merges.`
+          : `\nAccepted ${cardId} — squashed onto ${target} as ${sha.slice(0, 10)}, issue moved to Done. Your files were not touched.`,
       );
       if (notice) console.log(notice);
     } catch (err) {
@@ -1933,7 +1934,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     }
     const card = await cardStore.getCard(cardId);
     if (!card) {
-      console.error(`Card not found: ${cardId}`);
+      console.error(`Issue not found: ${cardId}`);
       process.exit(1);
     }
     // SUR-12: a derived test gate that cannot start stops the run, naming the file.
@@ -1975,13 +1976,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     }
     const swept = await cardStore.getCard(cardId);
     if (swept) Object.assign(card, swept);
-    console.log(`\nExecuting card ${cardId}: "${card.title}"`);
+    console.log(`\nRunning issue ${cardId}: "${card.title}"`);
     console.log(`Scope: [${card.scopeFiles.join(", ") || "unrestricted"}]`);
     console.log(`Budget: ${card.stepBudget} steps\n`);
     // SUR-40: the card's layer of the configuration, between the project's
     // and the command line's, shown and applied.
     const overrideLines = configOverrideLines(card.configOverrides);
-    if (overrideLines.length) console.log(`Card config overrides: ${overrideLines.join(", ")}`);
+    if (overrideLines.length) console.log(`Issue config overrides: ${overrideLines.join(", ")}`);
     const profileCap = runProfile.policies.stepCap ?? undefined;
     const runCap = cardStepCap(
       card,
@@ -2013,7 +2014,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       { registry, ledger: log },
     );
     const model = access.adapterFor("worker");
-    console.log(`Worker: ${model.modelId}`);
+    console.log(`Coding model: ${model.modelId}`);
     // MD-N8-1: the Worker runs cards only once its exact combination (engine,
     // model build, host, settings) has qualified on this host. Nothing loads.
     // Rule 27, MD-N4-4: a person's override runs the failed combination, and
@@ -2029,7 +2030,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       releaseRunLease();
       return;
     }
-    if (gate.override) console.log(`Worker ${model.modelId}: ${describeOverride(gate.override)}`);
+    if (gate.override)
+      console.log(`Coding model ${model.modelId}: ${describeOverride(gate.override)}`);
     // MD-N2-3: below the overnight throughput floor `run` refuses, as the queue does.
     const floorRefusal = workerFloorRefusal(model.modelId);
     if (floorRefusal) {
@@ -2099,8 +2101,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     console.log(`\n${summarizeEvidence(result.evidence)}\n`);
     console.log(
       result.passed
-        ? `Card ${cardId} PASSED verification and moved to Review for human acceptance.`
-        : `Card ${cardId} stopped: ${result.stopReason}. Left in ${result.finalStatus} for inspection.`,
+        ? `Issue ${cardId}: all checks passed; moved to Review for a person's acceptance.`
+        : `Issue ${cardId} stopped: ${result.stopReason}. Left in ${result.finalStatus} for inspection.`,
     );
 
     // SUR-16: scripts read the card's outcome from the exit status.
@@ -2233,7 +2235,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     }
     const readyRaw = (await cardStore.listCards({ status: "ready" })) as CardRecord[];
     if (readyRaw.length === 0) {
-      console.log("No Ready cards.");
+      console.log("No Ready issues.");
       releaseLease();
       return;
     }
@@ -2272,7 +2274,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     }
     if (workerOverride) {
       console.log(
-        `Worker ${workerModel ?? defaultWorkerName()}: ${describeOverride(workerOverride)}`,
+        `Coding model ${workerModel ?? defaultWorkerName()}: ${describeOverride(workerOverride)}`,
       );
     }
 
@@ -2502,7 +2504,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const collectAnswers = async (): Promise<void> => {
       if (workerQuestions.size === 0) return;
       const filed = await workerQuestions.fileAnswers(await pmStore.thread(), cardStore);
-      if (filed > 0) console.log(`   filed ${filed} answer(s) from Seshat in the cards' dossiers`);
+      if (filed > 0) console.log(`   filed ${filed} answer(s) from Seshat in the issues' dossiers`);
     };
 
     /**
@@ -2523,7 +2525,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       // the next manager batch instead of forcing a swap each.
       if (!batch && queuedNow.every(isWorkerQuestion)) return;
       console.log(
-        `   PM: pausing the Worker${step !== undefined ? ` after step ${step}` : ""} to answer`,
+        `   PM: pausing the agent${step !== undefined ? ` after step ${step}` : ""} to answer`,
       );
       const workerWasActive = router.activeRole === "worker";
       // Models rule 20e: the answer is a queued request — interactive when a
@@ -2542,13 +2544,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         ...(quick ? { quick } : {}),
         ...(step !== undefined ? { step } : {}),
         team: [
-          `Worker (${workerModelId}): ${router.isResident("worker") ? "resident" : "swapped out"}; it asks you questions its cards' contracts do not answer.`,
+          `Coding model (${workerModelId}): ${router.isResident("worker") ? "resident" : "swapped out"}; it asks you questions its issues' descriptions do not answer.`,
           router.has("researcher")
             ? `Researcher: ${router.isResident("researcher") ? "resident, asking is cheap" : "swapped out, asking costs a model load (~40 s): batch questions into one"}.`
             : "No Researcher configured: use find_library for packages.",
           router.has("reviewer")
-            ? "Reviewer (different model family): reviews passing cards at the end of a pass."
-            : "You review passing cards yourself at the end of a pass.",
+            ? "Review model (different model family): reviews passing issues at the end of a pass."
+            : "You review passing issues yourself at the end of a pass.",
           `Residency: ${router.residentRoles().join(", ") || "none"} loaded now.`,
         ].join("\n"),
         ...(askResearcher ? { researcher: askResearcher } : {}),
@@ -2556,7 +2558,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       if (workerWasActive) {
         await pmStore.setStatus({
           phase: "resuming_worker",
-          detail: "Reloading the Worker",
+          detail: "Reloading the Coding model",
           workerPaused: true,
           ...(step !== undefined ? { step } : {}),
         });
@@ -2665,6 +2667,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       say: (line) => console.log(`   ${line}`),
     }).catch((err) => console.log(`   vision: ${err instanceof Error ? err.message : err}`));
     const started = Date.now();
+    // DB-N2-11: Runs shows this run as running until its report lands.
+    await recordQueueStarted(log, {
+      startedAt: new Date(started).toISOString(),
+      cards: ready.map((c) => c.id),
+      model: workerModel ?? defaultWorkerName(),
+      pid: process.pid,
+    }).catch(() => undefined);
     // RUN-34, TEAM-30: tokens each person's cards spend from here on decide the next pick.
     const queueSinceSeq = (await log.getLastEvent())?.seq ?? 0;
     // Ctrl+C stops the running card before its next turn and ends the queue
@@ -2967,7 +2976,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         if (isResearchCard(card)) {
           if (!researcherModel) {
             console.log(
-              `\n--- ${card.id} is a research card; start the queue with --researcher to run it ---`,
+              `\n--- ${card.id} is a research spike; start the queue with --researcher to run it ---`,
             );
             continue;
           }
@@ -3199,7 +3208,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
               const research = researched.get(card.id);
               if (research) {
                 console.log(
-                  `   researched first: ${research.sources.length} source(s), on the card's dossier`,
+                  `   researched first: ${research.sources.length} source(s), on the issue's dossier`,
                 );
               }
               // A rung-3 re-plan request carries the Worker's own account of the
@@ -3333,7 +3342,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       config.repoPath,
       log,
       "run_report",
-      `Run finished: ${firstTry}/${cardIds.length} cards passed on the first try, ${eventually}/${cardIds.length} after a Planner retry, in ${(report.totalDurationMs / 60000).toFixed(1)} min.`,
+      `Run finished: ${firstTry}/${cardIds.length} issues passed on the first try, ${eventually}/${cardIds.length} after a Planning model retry, in ${(report.totalDurationMs / 60000).toFixed(1)} min.`,
     ).catch(() => undefined);
     await sendPush(
       config.repoPath,
@@ -3358,7 +3367,9 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
 /** The eight commands a user meets (design: "The command surface"). */
 function printFrontDoorHelp(): void {
   const width = Math.max(...FRONT_DOOR.map((c) => c.usage.length)) + 2;
-  console.log("Sekhemet — a local coding harness that builds projects one gated card at a time.\n");
+  console.log(
+    "Sekhemet — a local coding harness that builds projects one checked issue at a time.\n",
+  );
   for (const c of FRONT_DOOR) console.log(`  ${c.usage.padEnd(width)}${c.what}`);
   console.log("\nEverything else: sekhemet dev --help");
 }
@@ -3370,39 +3381,39 @@ function printDevHelp(): void {
     ["take-over", "Take over an unfinished project: trust, recon, then what runs"],
     [
       "take-over --approve TOP-<n> [--project <id>]",
-      "Approve a take-over plan: its cards are planned",
+      "Approve a take-over plan: its issues are planned",
     ],
     [
       "trust [--yes] | trust --approve <file>",
       "Trust this repository; approve another agent's config file",
     ],
-    ["plan <spec>", "Decompose a spec into cards without running them"],
+    ["plan <spec>", "Decompose a spec into issues without running them"],
     [
-      "depth [<profile>] [--project <id>]",
-      "Show the depth profile in force, or choose one (prototype, internal tool, production, regulated)",
+      "depth [<type>] [--project <id>]",
+      "Show the project's Type, or choose one (Prototype, Internal tool, Production, Regulated)",
     ],
-    ["queue [--worker m] [--manager m]", "Run Ready cards"],
-    ["resume <card>", "Continue a card that stopped part-way"],
-    ["gate [card]", "Run the verification gates"],
-    ["gates init", "Write the gate template for this project's language"],
-    ["replay <card>", "Replay a card's trajectory from the log"],
-    ["abort <card>", "Stop a running card before its next turn"],
-    ["rewind <card> <n> / fork <card> <n>", "Back to, or branch from, step n"],
+    ["queue [--worker m] [--manager m]", "Run Ready issues"],
+    ["resume <issue>", "Continue an issue that stopped part-way"],
+    ["gate [issue]", "Run the checks"],
+    ["gates init", "Write the checks template for this project's language"],
+    ["replay <issue>", "Replay an issue's trajectory from the log"],
+    ["abort <issue>", "Stop a running issue before its next step"],
+    ["rewind <issue> <n> / fork <issue> <n>", "Back to, or branch from, step n"],
     ["log", "The event log and its hash chain"],
     ["backup <path> / restore <path>", "Back the ledger up; restore it, re-applying erasures"],
     ["export --ledger [--no-private]", "The ledger as NDJSON a verifier checks alone"],
     ["erase --secret --rotated", "Erase a secret found after the fact (stdin or --secret-file)"],
-    ['research "<q>" [--deep]', "Ask the Researcher directly"],
+    ['research "<q>" [--deep]', "Ask the Research model directly"],
     [
       "research-bakeoff [--models a,b] [--pipelines native,tool-loop] [--adopt] | --adopt-from <run>",
-      "Compare Researchers on the research golden set; adopt one only as MD-N11-2 allows",
+      "Compare Research models on the research golden set; adopt one only as MD-N11-2 allows",
     ],
     ["overnight [--until 07:00]", "Queue rounds while the machine is free"],
-    ["bake-off --workers a,b", "Compare workers on a release gate"],
+    ["bake-off --workers a,b", "Compare Coding models on a release's checks"],
     ["serve / ui", "The web dashboard server"],
     ["mcp / acp", "Stdio servers for editors"],
     ["calibrate / tune / explore / daemon / traces / init", "Machine and runtime tooling"],
-    [`${WAVE2_COMMANDS.join(" / ")}`, "Planner, evaluation and sync tooling"],
+    [`${WAVE2_COMMANDS.join(" / ")}`, "Planning model, evaluation and sync tooling"],
   ];
   console.log("sekhemet dev <command> — harness development. These also run without `dev`.\n");
   for (const [u, w] of lines) console.log(`  ${u}\n      ${w}`);
@@ -3460,7 +3471,7 @@ async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
         : await nextForReview(ctx);
       if (!card) {
         console.log(
-          route.cardId ? `sekhemet: no card ${route.cardId}` : "Nothing is waiting on you.",
+          route.cardId ? `sekhemet: no issue ${route.cardId}` : "Nothing is waiting on you.",
         );
         return;
       }
@@ -3470,7 +3481,7 @@ async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
       const e = await ledgerBundle(ctx, card.id);
       if (e) {
         const gates = (e.rungResults ?? []).map((r) => `${r.passed ? "✓" : "✗"} ${r.gate}`);
-        console.log(`  gates: ${gates.join("  ") || "none recorded"}`);
+        console.log(`  checks: ${gates.join("  ") || "none recorded"}`);
         console.log(
           `  changed: ${(e.filesTouched ?? []).join(", ") || "nothing"} (+${e.linesAdded ?? 0} −${e.linesRemoved ?? 0})`,
         );
@@ -3491,14 +3502,14 @@ async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
     }
     const card = await cardStore.getCard(route.cardId);
     if (!card) {
-      console.error(`sekhemet: no card ${route.cardId}`);
+      console.error(`sekhemet: no issue ${route.cardId}`);
       process.exitCode = 1;
       return;
     }
     if (route.kind === "send-back") {
       if (!route.reason.trim()) {
         console.error(
-          `sekhemet: a send-back needs a reason — it is what the Worker is told next.\n  sekhemet send-back ${card.id} "<what to change>"`,
+          `sekhemet: a send-back needs a reason — it is what the agent is told next.\n  sekhemet send-back ${card.id} "<what to change>"`,
         );
         process.exitCode = 2;
         return;
@@ -3524,7 +3535,7 @@ async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
     } else if (route.kind === "revert") {
       const sha = await revertAccept(ctx, card, route.reason);
       console.log(
-        `${card.id}'s accept is reverted (${sha.slice(0, 10)} on ${integrationBranch(repoPath)}); the card is back in Ready.`,
+        `${card.id}'s accept is reverted (${sha.slice(0, 10)} on ${integrationBranch(repoPath)}); the issue is back in Ready.`,
       );
     } else {
       const to = await unpark(ctx, card);
@@ -3552,7 +3563,7 @@ async function runCardVerb(
   try {
     const card = await cardStore.getCard(route.cardId);
     if (!card) {
-      console.error(`sekhemet: no card ${route.cardId}`);
+      console.error(`sekhemet: no issue ${route.cardId}`);
       process.exitCode = 1;
       return;
     }

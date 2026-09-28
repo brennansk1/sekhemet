@@ -49,7 +49,7 @@ describe("DS-P2-4: an empty directory is offered a start by conversation", () =>
     runInit(root, { run, totalBytes: 24 * 1024 ** 3, say: (l) => said.push(l) });
     const text = said.join("\n");
     expect(text).toContain(START_BY_CONVERSATION);
-    expect(text).not.toContain("No gates found");
+    expect(text).not.toContain("No checks found");
   });
 
   it("a folder with files but no gates is still told what to add", () => {
@@ -58,7 +58,7 @@ describe("DS-P2-4: an empty directory is offered a start by conversation", () =>
     expect(isEmptyProject(root)).toBe(false);
     const said: string[] = [];
     runInit(root, { run, totalBytes: 24 * 1024 ** 3, say: (l) => said.push(l) });
-    expect(said.join("\n")).toContain("No gates found");
+    expect(said.join("\n")).toContain("No checks found");
   });
 
   it("the first run asks for one sentence and gives it to Seshat as the person's message", async () => {

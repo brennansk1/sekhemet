@@ -198,8 +198,8 @@ function render() {
   const project = s.meta?.project ?? "";
   const count =
     cards.length === s.cards.length
-      ? `${s.cards.length} cards`
-      : `${cards.length} of ${s.cards.length} cards`;
+      ? `${s.cards.length} issues`
+      : `${cards.length} of ${s.cards.length} issues`;
   setTopbar({ title: "Board", crumb: `${project}${project ? " · " : ""}${count}` });
   paintViewBar(
     $(".vbar-host", ui.root.parentElement),
@@ -220,15 +220,15 @@ function render() {
     const rows = sorted(g.cards);
     if (vb.group !== "none") {
       const shut = ui.collapsed.has(g.key);
-      body += `<tr class="grp"><th colspan="${cols().length + 1}"><button type="button" data-grp="${esc(g.key)}" aria-expanded="${!shut}">${icon(shut ? "chevron-right" : "chevron-down", 12, "ic s12")}<b>${esc(g.label)}</b><span class="sec tnum">${g.cards.length} ${g.cards.length === 1 ? "card" : "cards"}${g.points && showsPoints(store.state.estimation) ? ` · ${g.points} pts` : ""}</span></button></th></tr>`;
+      body += `<tr class="grp"><th colspan="${cols().length + 1}"><button type="button" data-grp="${esc(g.key)}" aria-expanded="${!shut}">${icon(shut ? "chevron-right" : "chevron-down", 12, "ic s12")}<b>${esc(g.label)}</b><span class="sec tnum">${g.cards.length} ${g.cards.length === 1 ? "issue" : "issues"}${g.points && showsPoints(store.state.estimation) ? ` · ${g.points} pts` : ""}</span></button></th></tr>`;
       if (shut) continue;
     }
     body += rows.map(rowHtml).join("");
   }
   const empty = cards.length
     ? ""
-    : `<div class="list-empty"><b>No cards match this view.</b><span>Clear a filter chip, or press <kbd>/</kbd> and change the query.</span></div>`;
-  const html = `<div class="tbl-wrap list-wrap"><table class="tbl ltbl" aria-label="Cards" aria-multiselectable="true">${head}<tbody>${body}</tbody></table>${empty}</div>`;
+    : `<div class="list-empty"><b>No issues match this view.</b><span>Clear a filter chip, or press <kbd>/</kbd> and change the query.</span></div>`;
+  const html = `<div class="tbl-wrap list-wrap"><table class="tbl ltbl" aria-label="Issues" aria-multiselectable="true">${head}<tbody>${body}</tbody></table>${empty}</div>`;
   if (html === ui.last) return;
   const activeId = document.activeElement?.closest?.("tr[data-id]")?.dataset.id;
   const scroller = $(".list-wrap", ui.root);

@@ -324,7 +324,7 @@ export async function runExternalReview(
         discardedEdits: result.discardedEdits,
       },
     });
-    const verdict = `external review of PR #${target.pr}: ${gates.passed ? "gates pass" : "gates fail"}, ${result.findings.length} finding(s)`;
+    const verdict = `external review of PR #${target.pr}: ${gates.passed ? "all checks passed" : "checks failed"}, ${result.findings.length} finding(s)`;
     try {
       await move("verify", verdict);
       // A review whose gates failed never enters Review (K-S4-4): a person
@@ -358,10 +358,10 @@ function reviewBody(r: ExternalReviewResult): string {
     (f) => `- [${f.severity}] ${f.path ? `\`${f.path}:${f.line}\` ` : ""}${f.note}`,
   );
   return [
-    `Sekhemet review of \`${r.headSha.slice(0, 12)}\`: gates ${r.gatesPassed ? "pass" : "fail"}.`,
+    `Sekhemet review of \`${r.headSha.slice(0, 12)}\`: ${r.gatesPassed ? "all checks passed" : "checks failed"}.`,
     lines.join("\n") || "No findings.",
-    r.discardedEdits ? "_A gate wrote into the checkout; those writes were discarded._" : "",
-    `_Evidence: \`${r.evidencePath}\` (card \`${r.cardId}\`). This review never edits the branch._`,
+    r.discardedEdits ? "_A check wrote into the checkout; those writes were discarded._" : "",
+    `_Evidence: \`${r.evidencePath}\` (issue \`${r.cardId}\`). This review never edits the branch._`,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -410,7 +410,7 @@ export async function runExternalReviews(
     deps.say?.(
       r.error
         ? `External review ${card.id}: parked (${r.error})`
-        : `External review ${card.id} (PR #${r.pr}): gates ${r.gatesPassed ? "pass" : "fail"}, ${r.findings.length} finding(s)${r.posted ? ", posted" : ""}; evidence ${r.evidencePath}`,
+        : `External review ${card.id} (PR #${r.pr}): ${r.gatesPassed ? "all checks passed" : "checks failed"}, ${r.findings.length} finding(s)${r.posted ? ", posted" : ""}; evidence ${r.evidencePath}`,
     );
   }
   return ready.filter((c) => !isExternalReview(c));

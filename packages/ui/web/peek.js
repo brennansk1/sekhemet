@@ -105,7 +105,7 @@ async function fill(id) {
   body.push(filesHtml(ev));
   node.querySelector(".body").innerHTML = body.join("");
   node.querySelector("footer").innerHTML =
-    `${triageBarHtml(card, ev, { hint: false }).replace(/^<div class="triage[^"]*"[^>]*>|<\/div>$/g, "")}<span class="hint">${kbd("↵")} open card</span>`;
+    `${triageBarHtml(card, ev, { hint: false }).replace(/^<div class="triage[^"]*"[^>]*>|<\/div>$/g, "")}<span class="hint">${kbd("↵")} open issue</span>`;
   current.evidence = ev;
   current.detail = detail;
   current.sig = signature(card) + store.state.connection;

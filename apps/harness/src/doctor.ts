@@ -393,7 +393,7 @@ export async function researchPipelineCheck(repoPath: string): Promise<Diagnosti
 export function m0PendingCheck(repoPath: string): DiagnosticCheck {
   const pending = pendingM0InRepo(repoPath);
   return pending.length === 0
-    ? check("M0", "pass", "no Worker owes the M0 protocol")
+    ? check("M0", "pass", "no Coding model owes the M0 protocol")
     : check(
         "M0",
         "warn",

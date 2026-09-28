@@ -54,6 +54,7 @@ import { type ConfigApiDeps, createConfigApi } from "./config_api.js";
 import { effectiveConfig, queueDefaults } from "./config_apply.js";
 import {
   type MemorySample,
+  activeHardwareTier,
   latestByCard,
   listRuns,
   liveSteps,
@@ -407,11 +408,17 @@ export function startDashboardServer(
     registry: configRegistry,
     ...(options.headroomProbe !== undefined ? { headroomProbe: options.headroomProbe } : {}),
     ...(options.cardStore ? { cardStore: options.cardStore } : {}),
-    // The interface has no calibration; the board service implementation does.
-    recalibrateReviewWip: async (minutes) =>
+    // Review capacity (DB-N4-2): a project's limit from its own minutes a
+    // day, recomputed for that project alone; who may change it, and why not.
+    reviewLimitFacts: async (project) =>
       (
-        boardService as { calibrateReviewWip?: (m: number) => Promise<number> }
-      ).calibrateReviewWip?.(minutes),
+        boardService as { reviewLimitFacts?: (p?: string) => Promise<{ limit: number }> }
+      ).reviewLimitFacts?.(project) ?? Promise.reject(new Error("no review limit")),
+    mayChangeReviewCapacity: (req, project) => {
+      const name = options.cardStore?.getProject(project)?.name;
+      const d = access.decide(principalOf(req), "review.capacity", project, name, ceilingOf(req));
+      return d.allowed ? { allowed: true } : { allowed: false, reason: d.message };
+    },
     residency: dashboardResidency(() => {
       const access = options.modelAccess ?? sharedModelAccess();
       access.recordSwapsOn(log);
@@ -1353,7 +1360,7 @@ export function startDashboardServer(
       const files = transcriptFiles(repoPath, cardId);
       const card = (await boardService.getBoardState()).cards.find((c) => c.id === cardId);
       if (!card) {
-        json(res, 404, { error: `No card ${cardId}` });
+        json(res, 404, { error: `No issue ${cardId}` });
         return;
       }
       const wanted = query.get("attempt");
@@ -1365,7 +1372,7 @@ export function startDashboardServer(
         return;
       }
       if (!Number.isInteger(n) || n < 1 || n > total) {
-        json(res, 404, { error: `No attempt ${wanted} recorded for this card` });
+        json(res, 404, { error: `No attempt ${wanted} recorded for this issue` });
         return;
       }
       if (running && n === total) {
@@ -1420,8 +1427,11 @@ export function startDashboardServer(
         .split(",")
         .map((m) => m.trim())
         .filter(Boolean);
+      const sample = memoryProbe();
       json(res, 200, {
-        memory: machineMemory(memoryProbe()),
+        memory: machineMemory(sample),
+        // The active hardware tier and what it decides (DB-N2-9).
+        tier: activeHardwareTier(sample.totalBytes),
         models: {
           endpoint: /^(\S+) reachable/.exec(inference?.detail ?? "")?.[1],
           reachable: inference ? inference.status !== "fail" : false,
@@ -1456,7 +1466,7 @@ export function startDashboardServer(
         const n = Number(wanted);
         const hit = attemptsFor(cardId).find((a) => a.summary.attempt === n);
         if (!Number.isInteger(n) || !hit) {
-          json(res, 404, { error: `No attempt ${wanted} recorded for this card` });
+          json(res, 404, { error: `No attempt ${wanted} recorded for this issue` });
           return;
         }
         json(res, 200, readJsonCached(hit.path));
@@ -1464,7 +1474,7 @@ export function startDashboardServer(
       }
       const path = join(evidenceDir, `latest-${cardId}.json`);
       if (!existsSync(path)) {
-        json(res, 404, { error: "No evidence recorded for this card yet" });
+        json(res, 404, { error: "No evidence recorded for this issue yet" });
         return;
       }
       json(res, 200, JSON.parse(readFileSync(path, "utf8")));
@@ -1478,7 +1488,7 @@ export function startDashboardServer(
       const card = store ? await store.getCard(deskMatch[1] as string) : undefined;
       // PM-N9-8: a card whose project the person cannot see is no card to them.
       if (!store || !card || !planningCanSee(req, projectOfCard(card))) {
-        json(res, 404, { error: `No card ${deskMatch[1]}` });
+        json(res, 404, { error: `No issue ${deskMatch[1]}` });
         return;
       }
       const holders = access.acceptHolders(projectOfCard(card));
@@ -1501,7 +1511,7 @@ export function startDashboardServer(
       const state = await boardService.getBoardState();
       const card = state.cards.find((c) => c.id === cardMatch[1]);
       if (!card) {
-        json(res, 404, { error: `No card ${cardMatch[1]}` });
+        json(res, 404, { error: `No issue ${cardMatch[1]}` });
         return;
       }
       json(res, 200, {
@@ -1610,7 +1620,7 @@ export function startDashboardServer(
       const [, cardId, verb] = action as unknown as [string, string, string];
       const card = await store.getCard(cardId);
       if (!card) {
-        json(res, 404, { error: `No card ${cardId}` });
+        json(res, 404, { error: `No issue ${cardId}` });
         return;
       }
       try {
@@ -1802,7 +1812,7 @@ export function startDashboardServer(
         const [, cardId, verb] = command as unknown as [string, string, string];
         const card = await store.getCard(cardId);
         if (!card) {
-          json(res, 404, { error: `No card ${cardId}` });
+          json(res, 404, { error: `No issue ${cardId}` });
           return;
         }
         if (verb === "abort") {
@@ -1879,7 +1889,7 @@ export function startDashboardServer(
           // K-S7-5: a value outside the nine states is refused before anything is appended.
           if (!isCardStatus(to)) {
             json(res, 400, {
-              error: `'${to}' is not a card state; use one of ${CARD_STATUSES.join(", ")}`,
+              error: `'${to}' is not an issue state; use one of ${CARD_STATUSES.join(", ")}`,
             });
             return;
           }

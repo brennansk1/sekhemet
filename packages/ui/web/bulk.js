@@ -38,7 +38,7 @@ function render() {
     node = document.createElement("div");
     node.className = "bulk";
     node.setAttribute("role", "toolbar");
-    node.setAttribute("aria-label", "Selected cards");
+    node.setAttribute("aria-label", "Selected issues");
     document.getElementById("main").append(node);
     node.addEventListener("click", onClick);
   }
@@ -59,7 +59,7 @@ function parkAll(list, anchor) {
     return;
   }
   openPrompt(anchor, {
-    heading: `Park ${list.length} cards: why?`,
+    heading: `Park ${list.length} issues: why?`,
     placeholder: "Not now",
     value: "Not now",
     submit: "Park",
@@ -74,7 +74,7 @@ function parkAll(list, anchor) {
         toast({
           tone: "parked",
           iconName: "park",
-          text: `Parked ${list.length} cards. Nothing runs until you unpark them.`,
+          text: `Parked ${list.length} issues. Nothing runs until you unpark them.`,
         });
       } else {
         const [id, r] = failed[0];

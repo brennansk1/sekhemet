@@ -10,7 +10,7 @@ import { pushOverlay, trapFocus } from "./overlay.js";
 import { askMerit, askSeshat } from "./pm_panel.js";
 import { currentContext } from "./pm_thread.js";
 import { getSession, signOutAndLeave } from "./session.js";
-import { currentNav, toggleTheme } from "./shell.js";
+import { currentNav, setDensity, toggleTheme } from "./shell.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
 
@@ -108,15 +108,10 @@ function views() {
 
 /** Compact (88px tiles) or comfortable (112px: spec line, token and time bars, difficulty). */
 export function toggleDensity() {
-  const root = document.documentElement;
-  const next = root.dataset.density === "comfortable" ? "compact" : "comfortable";
-  root.dataset.density = next;
-  try {
-    localStorage.setItem("sekhemet-density", next);
-  } catch {
-    // Private mode: this page only.
-  }
-  window.dispatchEvent(new CustomEvent("sekhemet:refresh-view"));
+  // The same setting as Configuration › Preferences › Density ("sekhemet-density").
+  setDensity(
+    document.documentElement.dataset.density === "comfortable" ? "compact" : "comfortable",
+  );
 }
 
 function prefs() {
@@ -169,13 +164,13 @@ function cardActions(actions) {
     out.push({ label: `Park “${title}”`, search: "Park", keys: ["p"], run: run("p") });
   out.push({
     label: `Open “${title}”`,
-    search: "Open card",
+    search: "Open issue",
     keys: ["↵"],
     run: goTo(`#/card/${encodeURIComponent(card.id)}`),
   });
   out.push({
-    label: "Copy card id",
-    search: "Copy card id",
+    label: "Copy issue ID",
+    search: "Copy issue ID",
     run: async () =>
       toast({
         text: (await copyText(card.id)) ? `Copied ${card.id}` : "Couldn't copy to the clipboard.",
@@ -225,7 +220,7 @@ function build(query, actions) {
   const groups = [];
   if (only === "commands" || (!only && !q)) {
     const acts = rank(cardActions(actions));
-    if (acts.length) groups.push({ name: "Actions on focused card", items: acts });
+    if (acts.length) groups.push({ name: "Actions on focused issue", items: acts });
   }
   if (only !== "commands") {
     let cards = rank(cardItems());
@@ -237,7 +232,7 @@ function build(query, actions) {
           Number(Boolean(a.card.display?.needsYou) || a.card.status === "review"),
       );
     }
-    if (cards.length) groups.push({ name: "Cards", items: cards.slice(0, q ? 8 : 5) });
+    if (cards.length) groups.push({ name: "Issues", items: cards.slice(0, q ? 8 : 5) });
   }
   if (only !== "cards") {
     const go = rank(views());
@@ -286,7 +281,7 @@ function render() {
   const list = node.querySelector(".palette-list");
   list.innerHTML =
     html ||
-    `<div class="palette-empty">No matches for “${esc(input.value)}”. Try <kbd>&gt;</kbd> for commands or <kbd>#</kbd> for cards.</div>`;
+    `<div class="palette-empty">No matches for “${esc(input.value)}”. Try <kbd>&gt;</kbd> for commands or <kbd>#</kbd> for issues.</div>`;
   input.setAttribute("aria-activedescendant", flat.length ? `po-${open.index}` : "");
   list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
 }
@@ -323,7 +318,7 @@ export function openPalette(initial, actions) {
   }
   const node = document.createElement("div");
   node.className = "scrim";
-  node.innerHTML = `<div class="dialog palette" role="dialog" aria-modal="true" aria-label="Command palette"><div class="palette-input">${icon("search")}<input type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" placeholder="Search cards, views and commands" autocomplete="off" spellcheck="false"></div><div class="palette-list" id="palette-list" role="listbox"></div><div class="palette-foot"><span>${kbd("↑", "↓")} move</span><span>${kbd("↵")} run</span><span>${kbd(`${MOD}↵`)} open card</span><span>${kbd(">")} commands</span><span>${kbd("#")} cards</span><span>${kbd("Esc")} close</span></div></div>`;
+  node.innerHTML = `<div class="dialog palette" role="dialog" aria-modal="true" aria-label="Command palette"><div class="palette-input">${icon("search")}<input type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" placeholder="Search issues, views and commands" autocomplete="off" spellcheck="false"></div><div class="palette-list" id="palette-list" role="listbox"></div><div class="palette-foot"><span>${kbd("↑", "↓")} move</span><span>${kbd("↵")} run</span><span>${kbd(`${MOD}↵`)} open issue</span><span>${kbd(">")} commands</span><span>${kbd("#")} issues</span><span>${kbd("Esc")} close</span></div></div>`;
   document.getElementById("overlay-root").append(node);
   const input = node.querySelector("input");
   const invoker = document.activeElement;

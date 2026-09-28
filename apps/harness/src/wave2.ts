@@ -115,6 +115,7 @@ import {
   qualificationRefusal,
   speculativeProbe,
 } from "./qualify.js";
+import { reuseQueriesAdmitted } from "./research/capability_queries.js";
 import { researchCopy } from "./research/research_copy.js";
 import {
   type DeepAnswer,
@@ -235,7 +236,7 @@ function reuseSummary(findings: readonly ReuseFinding[]): string[] {
     out.push(
       "Before planning, I looked for what already exists. Worth checking before writing it:",
       ...lines,
-      "Each card is told about the options for its part; licences are checked.",
+      "Each issue is told about the options for its part; licences are checked.",
     );
   } else if (searched && unreachable.length === 0) {
     out.push(
@@ -327,9 +328,21 @@ export async function planCommand(
   // language the request named or the design stage assumed.
   const stack = reuseStack(k.repoPath, design.stack.language);
   const needs = needsOf(design.buildSpec);
+  // §2.5 item 1: the Planning model writes each capability's queries — once
+  // a live measurement has admitted that exact model (DS-S8-3 as the owner
+  // amended it on 2026-09-28); until then the keywords are sent, and each
+  // `research/query` records its origin as keywords.
+  const surveyed = options.research && design.proportion !== "none";
+  const queryModel =
+    surveyed && options.sketcher && (await reuseQueriesAdmitted(k.log, options.sketcher.modelId))
+      ? options.sketcher
+      : undefined;
   const findings =
-    options.research && design.proportion !== "none"
-      ? await reuseSurvey(needs, options.research, { stack })
+    surveyed && options.research
+      ? await reuseSurvey(needs, options.research, {
+          stack,
+          ...(queryModel ? { planner: queryModel } : {}),
+        })
       : undefined;
   if (findings) for (const line of reuseSummary(findings)) print(line);
   // Never over a brief a person has written or edited.
@@ -429,7 +442,7 @@ export async function planCommand(
   });
   print(formatPlanReport(result));
   if (result.created.length > 0) {
-    print(`Approve the criteria before any card leaves Planning: sekhemet approve ${epicId}`);
+    print(`Approve the criteria before any issue leaves Planning: sekhemet approve ${epicId}`);
   }
   // DS-N1-4: the first question was asked in what the design stage said; a
   // second waits as its own open decision, planning on its default.
@@ -481,7 +494,7 @@ const LANGUAGE: Record<ReuseStack, string> = {
 };
 
 const NO_RESEARCHER =
-  "no Researcher is configured (name one with --researcher or SEKHEMET_RESEARCHER)";
+  "no Research model is configured (name one with --researcher or SEKHEMET_RESEARCHER)";
 
 /** Ask the brief's deep question from the needs' keywords only, or say why not (DS-P7-10). */
 async function deepQuestion(
@@ -498,7 +511,7 @@ async function deepQuestion(
   } catch (err) {
     if (err instanceof DeepQuestionSkipped) return { skipped: err.message };
     return {
-      skipped: `the Researcher failed (${err instanceof Error ? err.message : String(err)})`,
+      skipped: `the Research model failed (${err instanceof Error ? err.message : String(err)})`,
     };
   }
 }
@@ -549,7 +562,7 @@ export async function queuePrelude(
     say(
       d.state === "default_applied"
         ? `Decision ${d.id}: no answer by the deadline, the safe default was applied.`
-        : `Decision ${d.id}: deadline passed, the card stays parked (default_deny).`,
+        : `Decision ${d.id}: deadline passed, the issue stays parked (default_deny).`,
     );
   }
 
@@ -559,7 +572,7 @@ export async function queuePrelude(
   const zero = afterDoneCardZero(k.repoPath, cards);
   if (zero?.state === "derived") {
     say(
-      `Card zero is done: the project's gates are now ${zero.gates.join(", ")}, derived from what ${zero.generator ?? "the generator"} left.`,
+      `The setup issue is done: the project's checks are now ${zero.gates.join(", ")}, derived from what ${zero.generator ?? "the generator"} left.`,
     );
   }
   const events = await k.log.getEventsByTypes([
@@ -863,7 +876,7 @@ export async function runWave2Command(
         });
         print(`Attached ${a.name} (${a.mime}, ${a.bytes} bytes) to ${cardId}.`);
       }
-      return done("The vision model describes them before the card runs.", 0);
+      return done("The vision model describes them before the issue runs.", 0);
     }
     case "goal": {
       // `sekhemet goal "<statement>"` | `goal approve <id>` | `goal status`
@@ -873,7 +886,7 @@ export async function runWave2Command(
         if (!id) return done("Usage: sekhemet goal approve <goal-id>", 1);
         const { goal, plan } = await approveGoal(ledger, await repoPlanner(k), id);
         print(
-          `Goal ${goal.id} is active: strategy ${goal.strategy}, ${plan.created.length} cards.`,
+          `Goal ${goal.id} is active: strategy ${goal.strategy}, ${plan.created.length} issues.`,
         );
         return 0;
       }
@@ -950,7 +963,7 @@ export async function runWave2Command(
         return done("Usage: sekhemet decide <id> <option-number>", 1);
       const d = await store.answer(id, n - 1, "human");
       print(
-        `Answered ${d.id}: ${d.request.options[n - 1]?.label}. The card resumes on the next queue pass.`,
+        `Answered ${d.id}: ${d.request.options[n - 1]?.label}. The issue resumes on the next queue pass.`,
       );
       return 0;
     }
@@ -994,7 +1007,7 @@ export async function runWave2Command(
       });
       const rate = calibration.calibrationFor(assumption.category);
       print(
-        `Recorded ${assumption.id} as ${sub === "override" ? "overridden" : "kept"}. ${assumption.category}: ${rate.overridden}/${rate.observed} overridden, the planner will ${rate.disposition}.`,
+        `Recorded ${assumption.id} as ${sub === "override" ? "overridden" : "kept"}. ${assumption.category}: ${rate.overridden}/${rate.observed} overridden, the Planning model will ${rate.disposition}.`,
       );
       return 0;
     }
@@ -1093,7 +1106,7 @@ export async function runWave2Command(
             )
           : undefined;
         return done(
-          `The Researcher's default changes only as a research golden-set run's adoption verdict allows (MD-N11-2): sekhemet research-bakeoff --adopt-from ${run?.id ?? "<run event id>"}`,
+          `The Research model's default changes only as a research golden-set run's adoption verdict allows (MD-N11-2): sekhemet research-bakeoff --adopt-from ${run?.id ?? "<run event id>"}`,
           1,
         );
       }
@@ -1259,8 +1272,8 @@ export async function runWave2Command(
           print(
             why ??
               (failure
-                ? `${a.modelId}: ${look.reason} (the qualification itself failed: ${failure})`
-                : `${a.modelId}: qualified for this combination on this host.`),
+                ? `${a.modelId}: ${look.reason} (the verification itself failed: ${failure})`
+                : `${a.modelId}: verified on this machine for this combination.`),
           );
           // MS-M9-6: the M0 protocol this Worker still owes.
           if (owed)
@@ -1308,7 +1321,7 @@ export async function runWave2Command(
             reason: "qualified for this combination on this host",
           });
         print(
-          `${a.modelId}: ${(best.passRate * 100).toFixed(1)}% on ${best.arm} ${look.status === "qualified" ? "QUALIFIED" : "not qualified"} for ${describeCombination(combination)} (${Object.entries(
+          `${a.modelId}: ${(best.passRate * 100).toFixed(1)}% on ${best.arm} ${look.status === "qualified" ? "VERIFIED on this machine" : "not verified on this machine"} for ${describeCombination(combination)} (${Object.entries(
             best.byCategory,
           )
             .map(([c, v]) => `${c} ${(v * 100).toFixed(0)}%`)
@@ -1331,7 +1344,7 @@ export async function runWave2Command(
         const writes = skillProtectedWrites(join(dir, name));
         if (writes.length)
           return done(
-            `${name} is rejected: ${writes.map((w) => `${w.script} names ${w.target} (${w.what})`).join("; ")} — a skill never changes gates, the loop driver or the sandbox`,
+            `${name} is rejected: ${writes.map((w) => `${w.script} names ${w.target} (${w.what})`).join("; ")} — a skill never changes the checks, the loop driver or the sandbox`,
             1,
           );
         // EXT-27a: a skill with evals runs them confined, with no network,
@@ -1398,7 +1411,7 @@ export async function runWave2Command(
           return (await pd.releaseSubcommand(k, ["status"], print)) ?? 0;
         }
         const pending = named ?? (await pd.latestUntaggedRelease(k));
-        if (!pending) return done("No slice release is waiting to be tagged.", 1);
+        if (!pending) return done("No release is waiting to be tagged.", 1);
         try {
           const t = await pd.confirmSliceRelease(k, pending);
           if (t.notice) print(t.notice);
@@ -1424,7 +1437,7 @@ export async function runWave2Command(
         ...(flag(args, "--job") ? { job: flag(args, "--job") as string } : {}),
         ...(flag(args, "--workflow") ? { workflow: flag(args, "--workflow") as string } : {}),
       });
-      if (!r.available) return done(`CI gate unavailable: ${r.reason}`, 2);
+      if (!r.available) return done(`CI check unavailable: ${r.reason}`, 2);
       for (const j of r.jobs)
         print(
           `${j.passed ? "pass" : "FAIL"} ${j.job}${j.failedSteps.length ? `: ${j.failedSteps.join(", ")}` : ""}`,
@@ -1464,7 +1477,7 @@ async function improveCommand(k: Kernel, args: string[], io: CommandIO): Promise
             : `${r.killed}/${r.total} killed (score ${r.score ?? "not applicable: nothing to mutate"})`
         }${r.notMeasured?.length ? `; not measured (language): ${r.notMeasured.join(", ")}` : ""}${r.proposalCardId ? `; test proposals on ${r.proposalCardId}` : ""}`,
       );
-    if (runs.length === 0) print("No accepted cards left to mutate.");
+    if (runs.length === 0) print("No accepted issues left to mutate.");
     return 0;
   }
   const gateRule = flag(args, "--gate-rule");
@@ -1495,13 +1508,13 @@ async function improveCommand(k: Kernel, args: string[], io: CommandIO): Promise
       });
     } catch (err) {
       // A fixture run that failed is named, never scored as 0 of 0.
-      print(`The rule gate did not run: ${err instanceof Error ? err.message : String(err)}`);
+      print(`The rule check did not run: ${err instanceof Error ? err.message : String(err)}`);
       return 1;
     }
     for (const p of v.perSuite)
       print(`${p.suite}: ${p.baseline} -> ${p.candidate} (${p.delta >= 0 ? "+" : ""}${p.delta})`);
     print(
-      `Diagnostic only: ${v.accepted ? "no fixture lost a card" : "a fixture lost cards"} (${v.reason}). A project rule is admitted by a person's approval; the frozen suite never admits one (DEC-28).`,
+      `Diagnostic only: ${v.accepted ? "no fixture lost an issue" : "a fixture lost issues"} (${v.reason}). A project rule is admitted by a person's approval; the frozen suite never admits one (DEC-28).`,
     );
     return v.accepted ? 0 : 1;
   }
@@ -1522,7 +1535,7 @@ async function improveCommand(k: Kernel, args: string[], io: CommandIO): Promise
         )
       : p;
     print(
-      `tool candidate ${p.name}: ${p.template} (used on ${p.cards.length} cards) [${validated.status}]`,
+      `tool candidate ${p.name}: ${p.template} (used on ${p.cards.length} issues) [${validated.status}]`,
     );
     if (validated.status === "validated")
       writeToolCandidate(join(dot, "tool-candidates"), validated);
@@ -1583,14 +1596,14 @@ async function improveCommand(k: Kernel, args: string[], io: CommandIO): Promise
     hist.set(c.id, h);
   }
   const slice = siftSlice([...hist.values()], 5);
-  if (slice.length) print(`SIFT slice: ${slice.map((s) => s.taskId).join(", ")}`);
+  if (slice.length) print(`SIFT selection: ${slice.map((s) => s.taskId).join(", ")}`);
 
   // E17: what the guard is watching.
   const guard = new LearningGuard(join(dot, "learning_guard.json"));
   const w = guard.watching();
   print(
     w
-      ? `learning guard: watching ${w.id} (${w.outcomes.length}/10 cards)`
+      ? `learning guard: watching ${w.id} (${w.outcomes.length}/10 issues)`
       : "learning guard: no change being measured",
   );
   return 0;
@@ -1909,7 +1922,7 @@ export async function runFixtureGate(
     else if (a === "--settings" && value) settingsFile = value;
     else
       throw new Error(
-        `the rule gate runs the suite path; ${a} is not one of its flags: name the arm in a settings file and pass --settings <file>`,
+        `the rule check runs the suite path; ${a} is not one of its flags: name the arm in a settings file and pass --settings <file>`,
       );
     i++;
   }
@@ -2028,7 +2041,7 @@ export function overnightPlanLine(
   if (r.state === "user_time")
     return `Declared hours: the machine is yours until ${r.resumesAt?.toISOString() ?? "later"}.`;
   const s = r.schedule;
-  return `Plan: ${s.batches.map((b) => `${b.modelId}/${b.project} x${b.items.length}`).join(", ")}; ${s.swaps} model load(s)${s.deferred.length ? `, ${s.deferred.length} card(s) deferred past the window` : ""}.`;
+  return `Plan: ${s.batches.map((b) => `${b.modelId}/${b.project} x${b.items.length}`).join(", ")}; ${s.swaps} model load(s)${s.deferred.length ? `, ${s.deferred.length} issue(s) deferred past the window` : ""}.`;
 }
 
 // ---------------------------------------------- --validate-tools (item 4a)

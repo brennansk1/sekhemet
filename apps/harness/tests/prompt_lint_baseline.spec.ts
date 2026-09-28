@@ -63,6 +63,7 @@ import {
   summarizeConversation,
 } from "../src/pm/agent.js";
 import type { PmMessage } from "../src/pm/types.js";
+import { capabilityQueries } from "../src/research/capability_queries.js";
 
 // PROMPT_STANDARD rules 35.1 and 36; context CX-M1-1 and CX-M1-12. This
 // measures today's prompts and changes none of them: a rewrite is a prompt
@@ -84,7 +85,7 @@ const REMEASURE = process.env.SEKHEMET_PROMPT_BASELINE_REMEASURE;
  * that lowers a count lowers the total here in the same change.
  */
 const RECORDED_TOTALS = {
-  templates: 124,
+  templates: 126,
   capitalWords: 635,
   negations: 443,
   longToolDescriptions: 7,
@@ -588,6 +589,12 @@ async function renderTemplates(): Promise<Template[]> {
   } as unknown as PlannedStory;
   const sketch = await capture((m) => sketchWithModel(m, story));
   t.push(...requestTemplates("planner.edit_sketch", sketch));
+  // Design-stage §2.5 item 1 (compliance C3): the survey's capability queries.
+  const reuseQueries = await capture(
+    (m) => capabilityQueries("sends invoices to customers by email", { planner: m }),
+    '{"queries": ["email sending"]}',
+  );
+  t.push(...requestTemplates("planner.reuse_queries", reuseQueries));
 
   // --- Seshat ---
   const snapshot: PmSnapshot = {

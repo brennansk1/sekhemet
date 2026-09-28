@@ -738,20 +738,20 @@ export async function airgapSelfTest(
       await proxy.close();
     }
     checks.push({
-      name: "gates make no outbound attempt",
+      name: "checks make no outbound attempt",
       ok: attempts.length === 0 && notRun.length === 0,
       detail:
         attempts.length > 0
           ? `outbound attempts: ${[...new Set(attempts.map((a) => a.host))].join(", ")}`
           : notRun.length > 0
-            ? `not proven, these gates did not run to completion: ${notRun.join(", ")}`
-            : `${opts.gateRuns.length} gate(s) ran with no outbound attempt`,
+            ? `not proven, these checks did not run to completion: ${notRun.join(", ")}`
+            : `${opts.gateRuns.length} check(s) ran with no outbound attempt`,
     });
   }
   for (const g of opts.gates ?? []) {
     const found = onPath(g.command);
     checks.push({
-      name: `gate ${g.id} runnable`,
+      name: `check ${g.id} runnable`,
       ok: found,
       detail: found ? `${g.command} is installed` : `${g.command} not found`,
     });

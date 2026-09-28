@@ -56,7 +56,7 @@ describe("quick create (DB-P3-12)", () => {
   it("refuses an empty title in words, and a title longer than one line", () => {
     expect(quickCreateRequest({ title: "   " })).toEqual({
       ok: false,
-      error: "A card needs a title.",
+      error: "An issue needs a title.",
     });
     expect(quickCreateRequest({ title: "One\nTwo" })).toEqual({
       ok: false,
@@ -70,16 +70,16 @@ describe("quick create (DB-P3-12)", () => {
 
   it("names the planning model and Seshat, and never the CLI", () => {
     expect(QUICK_CREATE_COPY).toEqual({
-      heading: "New card",
+      heading: "New issue",
       title: "Title",
       description: "Description (optional)",
       descriptionHint: "What done looks like, in your words.",
-      submit: "Propose card",
+      submit: "Propose issue",
       cancel: "Cancel",
       note: "The planning model checks its size, acceptance criteria and scope, and Seshat shows it as a proposal for you to apply.",
-      sent: "Proposed in Seshat. Apply it to plan the card.",
-      plus: "New card",
-      plusTip: "New card. The planning model decides where it starts.",
+      sent: "Proposed in Seshat. Apply it to plan the issue.",
+      plus: "New issue",
+      plusTip: "New issue. The planning model decides where it starts.",
     });
     expect(JSON.stringify(QUICK_CREATE_COPY)).not.toMatch(/CLI|terminal|sekhemet plan|command/i);
   });

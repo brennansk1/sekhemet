@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 54 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 55 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,60 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 55 — 2026-09-28 (compliance fixes: the Phase B audit's majors, against the research and the reviews)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. One workflow, sized to a fresh 5-hour window: six groups one at a time, a sweep, one independent review with a compliance lens, and a fixer (10 agents, 2.42M tokens). One helper then built the admission gate the owner ruled on. The lead finished the steps the fixer could not, because the tool-permission classifier stopped giving verdicts.
+
+- **Evidence:** the compliance audit of B0–B4.6 (Entry 54): work that followed the specs but not the research, the reviews and the decisions behind them.
+- **Owner-approved downloads (DEC-44 picks, 2026-09-27):**
+  - `semver` 7.8.5 (ISC) and `marked` 18.0.14 (MIT), exact-pinned;
+  - `yaml` 2.9.1 (ISC), already in the store;
+  - `@types/semver` (MIT, development only), reported to the owner;
+  - gitleaks' rule file `config/gitleaks.toml` at v8.30.1 (MIT, sha256 `e163e53b…`, 222 rules), vendored with its licence, README, hash test and NOTICE.
+- **C1 versions and documents:**
+  - Before 1.0, a breaking change bumps the minor (RG-N4-1; DESIGN_RESEARCH_TEAMS_DATA_CHANGE decision 13); 1.0 is a person's tag.
+  - Version arithmetic and ordering, prereleases included, go through `semver`.
+  - Project documents, the architecture gate's invariants and register tables are read with `marked`: code blocks and wrapped items are handled, and the old readings are kept.
+- **C2 take-over scanning:**
+  - One CI reader (`ci_files.ts`, with `yaml`) covers GitHub Actions and GitLab CI: `run: |` blocks and shell blocks as one command, working directories, GitLab `!reference`, and includes and reusable workflows named when not read.
+  - The bundled secret scan is gitleaks' own rule set, compiled from Go to JavaScript regular expressions. It runs on the Node floor without RegExp modifiers and reports the same rule ids as the gitleaks program. The program now runs with the vendored file as its configuration.
+  - Redaction ignores gitleaks' allowlists, as it ignores the allow marker. A documentation key such as AWS's `…EXAMPLE` is still masked in what the harness persists or sends to the Research model (DS-N5-1). A test caught this regression; the lead fixed it.
+  - The security spec's stale rows are corrected.
+- **C3 the reuse survey:**
+  - Ranking is BM25-style relevance over every content word (`rank.ts`), with offline precision@1 at 17 of 34 and correct silence 10 of 10. Part of the gain from 14 is in-sample, as the spec records.
+  - deps.dev feeds age, licences and advisories as a research host, asked for once (DS-S8-8).
+  - The Planning model writes capability queries. **Owner ruling, 2026-09-28:** DS-S8-3 is amended so those queries may leave the machine, but the path stays off until `sekhemet research --reuse-eval --planner <model>` records that it beats the keyword queries (its PROMPT_STANDARD admission). Until then the keywords are sent. An admission holds only for the prompt hash it was measured with (rule 37). The gate (`reuseQueriesAdmitted`, the `research/reuse_queries_measured` event, 12 tests) was built by one helper. The owner allowed the measurement to use GitHub, npm, PyPI and api.deps.dev (2026-09-28).
+- **C4 the rest of DEC-31:** the CLI's person-facing output and the running copy say *issue* outside the board tile. The language scans cover the CLI and the web. Model-facing text is left for its A/B (NEW-dashboard-7 stays partial for that).
+- **C5 B4.2's remainder:**
+  - NEW-dashboard-1 (readable evidence: the grouped check strip) and NEW-dashboard-4 (Preferences' density, review capacity, project configuration) are built.
+  - NEW-dashboard-2 is built in part. DB-N2-8's remainder goes to B4.8 and DB-N2-10 (naming the running check) to B4.11.
+- **C6:**
+  - The Planning model's qualify route scores a malformed mock. Cause: a mistyped test fixture (tests are not type-checked), plus a fragile scorer.
+  - COVERAGE marks each committed change done with its commit, or partial as its spec row says, and MODERNIZATION_PLAN's status is true.
+  - RESEARCH_REGISTER R5 is updated, and IMPLEMENTATION_AUDIT gains its Phase B rows.
+- **Review:**
+  - 2 blockers: gitleaks' `(?i)` became RegExp modifier groups that the Node floor cannot run; a CLI string failed its own language scan.
+  - 3 majors: GitLab `!reference` was misread; GitHub working directories were dropped; model-facing text was changed against the brief. The model-facing text was reverted, and the new reuse-query prompt was gated as above.
+  - All were fixed, along with 12 minors. The re-check of the first blocker was static, because its runtime check could not run under the classifier. The lead then ran it: the gates package loads under `--no-js-regexp-modifiers`.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1,401 files), vitest 612 files, 4,706 passed, 37 skipped (three files re-formatted after the full run, their 39 tests re-run).
+- **Where the cards stop:**
+  - The compliance fixes are done.
+  - **Open, recorded:**
+    - Seven change ids are *not built* although their workstream is committed (M5, NEW-measurement-3, NEW-models-7, NEW-runtime-7, NEW-runtime-8, NEW-worker-loop-1, NEW-worker-loop-3). Each needs an owner or a spec row that defers it.
+    - `[machine] tier` is parsed but not applied.
+    - Test files are not type-checked (the qualify bug's root cause).
+    - `marked` is not yet used in the context, loop, planner or sync packages' Markdown readers.
+    - The kernel's SemVer regexes accept leading zeros.
+    - A slice's changelog starts at the last tag.
+    - COVERAGE and IMPLEMENTATION_AUDIT cite "compliance C1–C6" pending this commit's hash.
+  - **Model-facing changes awaiting their A/B:**
+    - the Coding model's issue titles (DEC-31);
+    - gitleaks' rule names in its write-contract observation;
+    - the invariant parser the architecture gate runs;
+    - the new reuse-query prompt.
+  - **Baseline:** paused at the owner's request during thinking-all round 2, which reruns on resume. Round 1 is complete (ref 20, thinking-surgical 22, thinking-all 21, strict 18, fixed-tools 18, evidence-gate 18 of 30); round 2 has ref 18 and thinking-surgical 21. One trial per arm and round: no arm is established over ref yet.
+  - **Next:** Sprint 3's prompt A/Bs on the model from a frozen build of this commit, beside B4.8's workflow on main.
 
 ### Entry 54 — 2026-09-27 (B4.7 done: professional language (DEC-31), Status, Projects, starting a project without a terminal, Tips; the compliance audit)
 

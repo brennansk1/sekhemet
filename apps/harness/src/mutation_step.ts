@@ -189,7 +189,7 @@ export async function runQueuedMutations(
     const run: NightlyMutationRun = { queue, ...(cardId ? { cardId } : {}) };
     runs.push(run);
     if (!cardId) {
-      run.skipped = "the queue names no card";
+      run.skipped = "the queue names no issue";
       continue;
     }
     const worktree = join(repo, ".sekhemet", "worktrees", cardId);
@@ -207,7 +207,7 @@ export async function runQueuedMutations(
       }
     }
     if (!tree) {
-      run.skipped = "neither the card's worktree nor an accepted commit to run on";
+      run.skipped = "neither the issue's worktree nor an accepted commit to run on";
       continue;
     }
     const root = tree;

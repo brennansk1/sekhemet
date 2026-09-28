@@ -122,7 +122,7 @@ export function pointsText(points: number): string {
   return `${points} ${points === 1 ? "pt" : "pts"}`;
 }
 
-const FULL = "Full. The agent holds finished cards until you clear one.";
+const FULL = "Full. The agent holds finished issues until you clear one.";
 
 /** The In review limit and its derivation, whatever its size (DB-P3-9). */
 export function reviewLimitText(f: ReviewLimitFacts, now: { count: number; held: number }): string {
@@ -133,18 +133,18 @@ export function reviewLimitText(f: ReviewLimitFacts, now: { count: number; held:
     const basis =
       (f.reviews ?? 0) > 0
         ? `the median of ${plural(f.reviews ?? 0, "review")}`
-        : "the starting estimate until you review a card";
+        : "the starting estimate until you review an issue";
     parts.push(
-      `Limit ${f.limit}, from ${f.minutesPerDay} review minutes a day at ~${Math.round(f.minutesPerCard)} min per card (${basis}).`,
+      `Limit ${f.limit}, from ${f.minutesPerDay} review minutes a day at ~${Math.round(f.minutesPerCard)} min per issue (${basis}).`,
     );
   } else {
     parts.push(`Limit ${f.limit}.`);
   }
   if (now.count > f.limit) parts.push("Over the limit.");
   else if (now.count === f.limit) parts.push(FULL);
-  if (now.held === 1) parts.push("An accepted card waiting on its pull request does not count.");
+  if (now.held === 1) parts.push("An accepted issue waiting on its pull request does not count.");
   else if (now.held > 1)
-    parts.push(`${now.held} accepted cards waiting on their pull requests do not count.`);
+    parts.push(`${now.held} accepted issues waiting on their pull requests do not count.`);
   return parts.join(" ");
 }
 

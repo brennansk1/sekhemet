@@ -116,7 +116,7 @@ describe("S10: a command line scripts can trust", () => {
       } else {
         // The Worker was reached and ran out of turns; nothing refused it.
         expect(r.stdout).toMatch(/turn: \(no tool calls\)/);
-        expect(r.stdout).toMatch(/Card c1 stopped: /);
+        expect(r.stdout).toMatch(/Issue c1 stopped: /);
         expect(status).not.toBe("review");
         expect(status).not.toBe("done");
         expect(r.status, r.stdout + r.stderr).toBe(1);

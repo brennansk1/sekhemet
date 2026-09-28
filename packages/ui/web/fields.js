@@ -43,7 +43,7 @@ function patchJSON(path, body) {
 
 function why(r) {
   if (r.status === 404 || r.status === 405)
-    return `The server returned ${r.status}: this server can't edit cards yet.`;
+    return `The server returned ${r.status}: this server can't edit issues yet.`;
   if (r.status === 403) return "This action must come from the dashboard. Reload the page.";
   if (r.status === 0) return "Sekhemet is not reachable.";
   return r.data?.error ?? `The server returned ${r.status}.`;
@@ -66,7 +66,7 @@ export async function setField(ids, field, value) {
       text: blocked === "readonly" ? "Read-only." : "Offline.",
       detail:
         blocked === "readonly"
-          ? "This server was started without triage. Restart with sekhemet serve to edit cards."
+          ? "This server was started without triage. Restart with sekhemet serve to edit issues."
           : "Edits are disabled until Sekhemet is reachable.",
     });
     return;
@@ -108,7 +108,7 @@ export async function setField(ids, field, value) {
       text:
         n === 1
           ? `Set ${label} to ${shown} on ${shortName(ids[0])}`
-          : `Set ${label} to ${shown} on ${n} cards`,
+          : `Set ${label} to ${shown} on ${n} issues`,
     });
   } else if (failed.length === n) {
     toast({
@@ -116,7 +116,7 @@ export async function setField(ids, field, value) {
       text:
         n === 1
           ? `Couldn't set ${label} on ${shortName(failed[0][0])}.`
-          : `Couldn't set ${label} on ${n} cards.`,
+          : `Couldn't set ${label} on ${n} issues.`,
       detail: why(failed[0][1]),
     });
   } else {
@@ -137,7 +137,7 @@ export function editField(field, cardIds, anchor) {
   const ids = cardIds.filter((id) => store.card(id));
   if (!ids.length || !anchor) return;
   const cur = common(ids, field);
-  const heading = `${EDITABLE.find((f) => f.field === field)?.label ?? field}${ids.length > 1 ? ` · ${ids.length} cards` : ""}`;
+  const heading = `${EDITABLE.find((f) => f.field === field)?.label ?? field}${ids.length > 1 ? ` · ${ids.length} issues` : ""}`;
   const s = store.state;
   switch (field) {
     case "priority":
@@ -303,7 +303,7 @@ export function fieldMenu(ids, anchor) {
         run: () => setTimeout(() => editField(f.field, ids, anchor), 0),
       }),
     ),
-    { heading: ids.length > 1 ? `Edit ${ids.length} cards` : "Edit field" },
+    { heading: ids.length > 1 ? `Edit ${ids.length} issues` : "Edit field" },
   );
 }
 

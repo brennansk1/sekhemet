@@ -56,6 +56,20 @@
       "longToolDescriptions": 0,
       "ruleCountMethod": "legacy_directives"
     },
+    "planner.reuse_queries.prompt": {
+      "capitalWords": 0,
+      "imperativeRules": null,
+      "negations": 0,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "planner.reuse_queries.system": {
+      "capitalWords": 0,
+      "imperativeRules": null,
+      "negations": 0,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
     "planner.slices.prompt": {
       "capitalWords": 0,
       "imperativeRules": null,

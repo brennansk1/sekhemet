@@ -136,7 +136,7 @@ it("takes the larger", () => { expect(larger(1, 2)).toBe(2); expect(larger(3, 1)
         runQueue: async () => 0,
         vulnScan: async () => ({ passed: true, skipped: "not in this test" }),
       });
-      expect(summary.stoppedBecause).toBe("no Ready cards left");
+      expect(summary.stoppedBecause).toBe("no Ready issues left");
       const queue = readMutationQueue(queuePath);
       // Every queued mutant was judged at night (none stillborn: the project
       // declares no typecheck), and the night's kills add to the card's.

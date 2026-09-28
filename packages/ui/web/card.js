@@ -14,7 +14,8 @@ import { mountIssue } from "./issue_view.js";
 import { tip as learnTip } from "./learn.js";
 import { ISSUE_COPY, ISSUE_TABS, issueEventsUrl, issueTab, oldestFirst } from "./lib/issue.js";
 import { kindTip } from "./lib/learn.js";
-import { columnLabel } from "./lib/vocabulary.js";
+import { stateBadge } from "./lib/strip.js";
+import { boardColumnLabel } from "./lib/vocabulary.js";
 import { renderPlan } from "./plan.js";
 import { acknowledgeFocused, focusNextFinding, reviewerHtml } from "./review_desk.js";
 import { setTopbar } from "./shell.js";
@@ -54,6 +55,7 @@ const PILL_ICON = {
   fail: icon("x", 12, "ic s12 i-fail"),
   parked: icon("pause", 12, "ic s12 i-park"),
   blocked: icon("link", 12, "ic s12 i-blk"),
+  planning: icon("pencil", 12, "ic s12"),
   neutral: "",
 };
 
@@ -110,7 +112,7 @@ function renderHead() {
   const project = store.state.meta?.project ?? "";
   setTopbar({
     title: "Issue",
-    crumb: `${project ? `${project} › ` : ""}${columnLabel(card.status)}`,
+    crumb: `${project ? `${project} › ` : ""}${boardColumnLabel(card.status)}`,
   });
   const d = ui.detail;
   const triage = triageBarHtml(card, d?.evidence, { hint: false, detail: d }).replace(
@@ -128,7 +130,9 @@ function renderHead() {
     },
   };
   const typeTip = learnTip("type", kindTip(kindFacts.card).term, kindFacts);
-  const pill = `<span class="pill">${PILL_ICON[card.display?.tone ?? "neutral"] ?? ""}${esc(columnLabel(card.status))}</span>${typeTip}`;
+  // One badge for the issue's state: never a failure mark on a stage's name (DB-N1-3).
+  const badge = stateBadge(card.status, card.display?.tone ?? "neutral");
+  const pill = `<span class="pill">${PILL_ICON[badge.mark ?? badge.tone] ?? ""}${esc(badge.text)}</span>${typeTip}`;
   const headHtml = ui.pane.headHtml(card, d, { attempt: ui.attempt, withTitle: false });
   const next = `<div class="line"><div style="min-width:0;flex:1 1 420px">${headHtml
     .replace(
@@ -166,7 +170,7 @@ function renderPanel({ keepScroll = true } = {}) {
   ui.tabCtl?.destroy?.();
   ui.tabCtl = null;
   if (!card) {
-    body.innerHTML = `<div class="ev-scroll"><div class="ev-empty">${icon("alert", 24, "ic s24")}<b>No card ${esc(ui.id)}.</b><span>It may have been removed. <a href="#/board">Back to the board</a></span></div></div>`;
+    body.innerHTML = `<div class="ev-scroll"><div class="ev-empty">${icon("alert", 24, "ic s24")}<b>No issue ${esc(ui.id)}.</b><span>It may have been removed. <a href="#/board">Back to the board</a></span></div></div>`;
     return;
   }
   const d = ui.detail;

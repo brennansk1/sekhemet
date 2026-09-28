@@ -85,7 +85,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     measuresModel: true,
     goesTo: "Parked; Planning with the failures when the gates ran",
     nextAction:
-      "By the budget that ran out: steps — raise the step budget for the class or split the card; context — the prompt reached 95% of its budget, so split the card or narrow its scope (raising the step budget cannot help).",
+      "By the budget that ran out: steps — raise the step budget for the class or split the issue; context — the prompt reached 95% of its budget, so split the issue or narrow its scope (raising the step budget cannot help).",
   },
   token_budget_exhausted: {
     class: "budget_exhausted",
@@ -97,7 +97,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     halts: false,
     measuresModel: true,
     goesTo: "Parked; Planning with the failures when the gates ran",
-    nextAction: "Tokens used of the budget: raise it for the class or split the card.",
+    nextAction: "Tokens used of the budget: raise it for the class or split the issue.",
   },
   time_budget_exhausted: {
     class: "budget_exhausted",
@@ -109,7 +109,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     halts: false,
     measuresModel: true,
     goesTo: "Parked; Planning with the failures when the gates ran",
-    nextAction: "Seconds used of the budget: raise it for the class or split the card.",
+    nextAction: "Seconds used of the budget: raise it for the class or split the issue.",
   },
   no_progress: {
     class: "no_progress",
@@ -172,7 +172,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     measuresModel: false,
     goesTo: "Parked, before any step",
     nextAction:
-      "A characterize, refactor or upgrade card's tests fail on the base: they must pass there before the card can start. Fix the tests, or plan the card as a fix.",
+      "A characterize, refactor or upgrade issue's tests fail on the base: they must pass there before the issue can start. Fix the tests, or plan the issue as a fix.",
   },
   done_pending_gates: {
     class: "done_pending_gates",
@@ -196,7 +196,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     halts: false,
     measuresModel: true,
     goesTo: "Verify",
-    nextAction: "See the file it tried to change, and widen the scope if it belongs to the card.",
+    nextAction: "See the file it tried to change, and widen the scope if it belongs to the issue.",
   },
   git_metadata_tampered: {
     class: "scope_violation",
@@ -209,7 +209,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     measuresModel: true,
     goesTo: "Parked; the worktree is discarded",
     nextAction:
-      "Compare the gitdir the .git pointer names with the harness's record (no git command ran), and inspect before re-queuing the card from Ready.",
+      "Compare the gitdir the .git pointer names with the harness's record (no git command ran), and inspect before re-queuing the issue from Ready.",
   },
   repair_exhausted: {
     class: "capability_ceiling",
@@ -233,7 +233,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     halts: false,
     measuresModel: true,
     goesTo: "Parked",
-    nextAction: "See what was tried after the re-plan; split the card or use a stronger model.",
+    nextAction: "See what was tried after the re-plan; split the issue or use a stronger model.",
   },
   replan_requested: {
     class: "capability_ceiling",
@@ -294,7 +294,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     halts: true,
     measuresModel: false,
     goesTo: "Parked",
-    nextAction: "See the hook and its reason; change the hook or the card, then unpark.",
+    nextAction: "See the hook and its reason; change the hook or the issue, then unpark.",
   },
   error: {
     class: "environment",

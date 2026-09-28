@@ -1,4 +1,5 @@
 import { detectGateTemplate } from "@sekhemet/gates";
+import type { LocalInferenceAdapter } from "@sekhemet/models";
 import {
   type LibraryCandidate,
   type LibraryHit,
@@ -8,7 +9,10 @@ import {
   screenLibraries,
   screenRepos,
 } from "../pm/libraries.js";
-import { builtInNeed, queryFor, relevant } from "./keywords.js";
+import { type QueryOrigin, capabilityQueries } from "./capability_queries.js";
+import { type DepsDevVersion, withDepsDev } from "./deps_dev.js";
+import { builtInNeed, relevanceTermsFor } from "./keywords.js";
+import { rankByRelevance } from "./rank.js";
 import type { Hit } from "./web.js";
 
 export { builtInNeed, queryFor } from "./keywords.js";
@@ -32,7 +36,11 @@ export {
  * and a candidate with no licence is dropped silently; a search that could
  * not run is reported as not searched, never as "nothing found".
  *
- * Only short keyword queries leave the machine, never the spec or the code.
+ * Only short queries leave the machine, never the spec or the code: the
+ * Planning model's capability queries, or the need's keywords without one
+ * (`capabilityQueries`). Candidates are ranked by BM25 over their names,
+ * descriptions and keywords (`rankByRelevance`), and in research mode
+ * deps.dev supplies each one's release date, licences and advisories.
  */
 
 export interface ReuseFinding {
@@ -48,6 +56,13 @@ export interface ReuseFinding {
   unsearched: string[];
   /** The language itself covers this need: no package is needed, none was searched (DS-P7-6). */
   noneNeeded?: boolean;
+  /** What was searched for it, and who wrote the queries (design-stage §2.5 item 1). */
+  queries?: string[];
+  origin?: QueryOrigin;
+  /** Usable packages not recommended: deps.dev knows advisories on the version found, as "name (ids)". */
+  advised?: string[];
+  /** Why deps.dev was not asked about this need's packages, when it was not (DEC-44). */
+  depsDevNotChecked?: string;
 }
 
 /** A project's language, as the survey searches for it (DS-P7-5). */
@@ -59,6 +74,15 @@ export interface ReuseDeps {
   /** GitHub results, in the project's language when it has one (DS-P7-5). */
   repos: (query: string, language?: string) => Promise<RepoCandidate[]>;
   papers?: (query: string) => Promise<Hit[]>;
+  /**
+   * deps.dev's record of a package version (DEC-44), undefined when it does
+   * not know it; omitted, the registry's own facts stand.
+   */
+  depsDev?: (
+    ecosystem: "npm" | "pypi",
+    name: string,
+    version: string,
+  ) => Promise<DepsDevVersion | undefined>;
   /** Each query sent, for the ledger's `research/query` (design-stage DS-S8-3). */
   record?: (q: ResearchQuery) => void | Promise<void>;
 }
@@ -66,8 +90,10 @@ export interface ReuseDeps {
 /** One query the survey sent: its source, the keywords, the names it found. */
 export interface ResearchQuery {
   source: string;
-  /** The need's keywords, nothing else (DS-S8-3). */
+  /** The need's keywords, or a capability query the Planning model wrote (DS-S8-3). */
   query: string;
+  /** Who wrote the query; a name looked up is its search's. */
+  origin?: QueryOrigin;
   /** The search's language qualifier, when the project has one (DS-P7-5). */
   language?: string;
   results: string[];
@@ -111,21 +137,34 @@ export function reuseStack(repoPath: string, stated: ReuseStack): ReuseStack {
   }
 }
 
+/** Candidates enriched from deps.dev per need, at most: one request each. */
+const DEPS_DEV_PER_NEED = 6;
+
 /**
  * Look for what already exists for each need, in the project's own
  * ecosystem (DS-P7-5), and keep what passes the one set of filters the
- * `find_library` tools also apply (DS-P7-9): relevance, popularity, licence
- * and maintenance. A need the language itself covers is not searched: no
- * package is needed, and the finding says so (DS-P7-6).
+ * `find_library` tools also apply (DS-P7-9): relevance (BM25), popularity,
+ * licence, maintenance and, with deps.dev, advisories. A need the language
+ * itself covers is not searched: no package is needed, and the finding says
+ * so (DS-P7-6). With a Planning model (`planner`), each need is searched by
+ * its capability queries; the registry takes each of them, GitHub the first
+ * only (its unauthenticated search allows ten a minute).
  */
 export async function reuseSurvey(
   needs: readonly string[],
   deps: ReuseDeps,
-  options: { now?: Date; perNeed?: number; stack?: ReuseStack } = {},
+  options: {
+    now?: Date;
+    perNeed?: number;
+    stack?: ReuseStack;
+    /** The Planning model, which writes the capability queries; omitted, the keywords are sent. */
+    planner?: LocalInferenceAdapter;
+  } = {},
 ): Promise<ReuseFinding[]> {
   const now = options.now ?? new Date();
   const keep = options.perNeed ?? 3;
-  const { ecosystem, language } = SEARCH[options.stack ?? "typescript"];
+  const stack = options.stack ?? "typescript";
+  const { ecosystem, language } = SEARCH[stack];
   const findings: ReuseFinding[] = [];
   for (const need of needs) {
     if (builtInNeed(need)) {
@@ -141,38 +180,51 @@ export async function reuseSurvey(
       });
       continue;
     }
-    // DS-S8-4: only the need's keywords leave the machine; a need with none
-    // left sends no query at all.
-    const q = queryFor(need);
-    if (!q) continue;
+    // DS-S8-4: a need with no query left sends nothing at all.
+    const { queries, origin } = await capabilityQueries(need, {
+      ...(options.planner ? { planner: options.planner } : {}),
+      stack,
+    });
+    const first = queries[0];
+    if (!first) continue;
     const unsearched: string[] = [];
     const attempt = async <T>(
       label: string,
+      q: string,
       run: () => Promise<T[]>,
       name: (hit: T) => string,
     ): Promise<T[]> => {
-      const sent = { source: label, query: q, ...(language ? { language } : {}) };
+      const sent = { source: label, query: q, origin, ...(language ? { language } : {}) };
       try {
         const hits = await run();
         await deps.record?.({ ...sent, results: hits.map(name), ok: true });
         return hits;
       } catch {
-        unsearched.push(label);
+        if (!unsearched.includes(label)) unsearched.push(label);
         await deps.record?.({ ...sent, results: [], ok: false });
         return [];
       }
     };
     // Rust and Go have no registry search here: GitHub, in the language, only.
-    const libs = ecosystem
-      ? await attempt(
+    // A Python registry search is a GitHub search: the first query only.
+    const registryQueries = ecosystem === "npm" ? queries : [first];
+    const libs: LibraryCandidate[] = [];
+    if (ecosystem) {
+      for (const q of registryQueries) {
+        for (const l of await attempt(
           "registries",
+          q,
           () => deps.libraries(q, ecosystem),
-          (l) => l.name,
-        )
-      : [];
+          (x) => x.name,
+        )) {
+          if (!libs.some((x) => x.name === l.name)) libs.push(l);
+        }
+      }
+    }
     const repos = await attempt(
       "GitHub",
-      () => deps.repos(q, language),
+      first,
+      () => deps.repos(first, language),
       (r) => r.fullName,
     );
     const searchPapers = deps.papers;
@@ -180,15 +232,27 @@ export async function reuseSurvey(
       searchPapers && needsLiterature(need)
         ? await attempt(
             "literature",
-            () => searchPapers(q),
+            first,
+            () => searchPapers(first),
             (p) => p.title,
           )
         : [];
 
+    // deps.dev, for the candidates the filters would consider: the release
+    // date, the licences and the advisories of the version found (DEC-44).
+    const extra = origin === "planning-model" ? queries : [];
+    const { enriched, notChecked } = await withDepsDevFacts(
+      screenLibraries(need, libs, now, extra).candidates,
+      libs,
+      deps,
+    );
     // Every licence is judged there, by the classifier, whatever the search said.
-    const libsOn = screenLibraries(need, libs, now);
-    const reposOn = screenRepos(need, repos, now);
-    const papersOn = papers.filter((p) => relevant(need, `${p.title} ${p.snippet}`, 1));
+    const libsOn = screenLibraries(need, enriched, now, extra);
+    const reposOn = screenRepos(need, repos, now, extra);
+    const papersOn = rankByRelevance([relevanceTermsFor(need), ...extra], papers, {
+      text: (p) => ({ name: p.title, description: p.snippet }),
+      minimum: 1,
+    });
     // DS-P7-2: weak copyleft flagged, the rest excluded and named, absent dropped.
     const named = (action: LicenceJudgement["action"]) => [
       ...libsOn.candidates
@@ -206,9 +270,54 @@ export async function reuseSurvey(
       excluded: named("exclude"),
       flagged: named("flag"),
       unsearched,
+      queries,
+      origin,
+      ...(libsOn.advised.length
+        ? {
+            advised: libsOn.advised.map((l) => `${l.name} (${(l.advisories ?? []).join(", ")})`),
+          }
+        : {}),
+      ...(notChecked ? { depsDevNotChecked: notChecked } : {}),
     });
   }
   return findings;
+}
+
+/**
+ * The candidates with deps.dev's facts, best first, at most
+ * `DEPS_DEV_PER_NEED` asked; the rest, and every one when deps.dev cannot
+ * be asked, keep the registry's. The first failure stops the asking: a host
+ * awaiting a yes, or unreachable, is said once for the need.
+ */
+async function withDepsDevFacts(
+  ranked: readonly LibraryCandidate[],
+  all: readonly LibraryCandidate[],
+  deps: ReuseDeps,
+): Promise<{ enriched: LibraryCandidate[]; notChecked?: string }> {
+  const lookup = deps.depsDev;
+  if (!lookup || ranked.length === 0) return { enriched: [...all] };
+  const facts = new Map<string, LibraryCandidate>();
+  let notChecked: string | undefined;
+  for (const c of ranked.slice(0, DEPS_DEV_PER_NEED)) {
+    const sent = { source: "deps.dev", query: c.name };
+    try {
+      const d = await lookup(c.ecosystem, c.name, c.version);
+      await deps.record?.({ ...sent, results: d ? [`${c.name}@${d.version}`] : [], ok: true });
+      if (d) facts.set(c.name, withDepsDev(c, d));
+    } catch (err) {
+      await deps.record?.({ ...sent, results: [], ok: false });
+      // A refusal by the network policy says why; anything else is an outage.
+      const refused = /^network policy refused [^:]+: (.+)$/s.exec(
+        err instanceof Error ? err.message : "",
+      );
+      notChecked = refused?.[1] ?? "unreachable";
+      break;
+    }
+  }
+  return {
+    enriched: all.map((c) => facts.get(c.name) ?? c),
+    ...(notChecked ? { notChecked } : {}),
+  };
 }
 
 const libLine = (l: LibraryHit) =>
@@ -237,7 +346,15 @@ export function priorArtLines(findings: readonly ReuseFinding[]): string[] {
         `  - weak copyleft, check with the team before depending on it: ${f.flagged.join(", ")}`,
       );
     if (f.excluded.length) lines.push(`  - excluded for their licence: ${f.excluded.join(", ")}`);
+    if (f.advised?.length)
+      lines.push(
+        `  - not recommended, known security advisories on the latest version: ${f.advised.join(", ")}`,
+      );
     for (const s of f.unsearched) lines.push(`  - ${s}: not searched (unreachable)`);
+    if (f.depsDevNotChecked)
+      lines.push(
+        `  - release dates, licences and advisories not checked on deps.dev: ${f.depsDevNotChecked}`,
+      );
     if (!f.libraries.length && !f.repos.length && !f.papers.length && !f.unsearched.length) {
       lines.push("  - nothing suitable found; this is written here.");
     }
@@ -306,7 +423,7 @@ export function deepPriorArtLines(outcome: { answer: DeepAnswer } | { skipped: s
   }
   const text = a.answer.replace(/\s+/g, " ").trim().slice(0, 1500);
   return [
-    `- **The Researcher's deep answer**: ${text}`,
+    `- **The Research model's deep answer**: ${text}`,
     `  - sources: ${a.sources.map((s, i) => `[${i + 1}] ${s}`).join("; ")}`,
   ];
 }

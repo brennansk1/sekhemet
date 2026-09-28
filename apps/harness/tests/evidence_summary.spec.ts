@@ -64,7 +64,7 @@ describe("the evidence summary (RG-S5-18)", () => {
   it("is the pull request's body on the App path too, with nothing invented when there is no evidence", () => {
     expect(prBody(card, ev)).toContain("- pass unit (1430 ms)");
     const bare = prBody(card, undefined);
-    expect(bare).toContain("_No gate results were recorded._");
+    expect(bare).toContain("_No check results were recorded._");
     expect(bare).not.toContain("pass");
   });
 });

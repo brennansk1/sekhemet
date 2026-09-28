@@ -204,7 +204,9 @@ function renderTopbar() {
   const shown = visibleCards().length;
   const project = store.state.meta?.project ?? "";
   const count =
-    shown === total ? `${total} ${total === 1 ? "card" : "cards"}` : `${shown} of ${total} cards`;
+    shown === total
+      ? `${total} ${total === 1 ? "issue" : "issues"}`
+      : `${shown} of ${total} issues`;
   setTopbar({ title: "Board", crumb: `${project}${project ? " · " : ""}${count}` });
   paintViewBar(ui.barHost, ui.cycHost, "board");
 }
@@ -369,7 +371,7 @@ function fillList(list, col, cards) {
   if (cards.length === 0) {
     patchList(list, []);
     const label = formatQuery(effectiveFilter());
-    const text = label ? `No cards match “${label}”.` : col.empty;
+    const text = label ? `No issues match “${label}”.` : col.empty;
     if (!empty) {
       const li = document.createElement("li");
       li.className = "empty";
@@ -412,7 +414,7 @@ function render() {
   if (s.loaded && s.cards.length === 0) {
     ui.layoutKey = "";
     // DS-TO-16 (dashboard item 10): start from a brief, or take over a repository someone left.
-    ui.root.innerHTML = `<div class="board-empty">${brandMark(24)}<b>No cards yet.</b><span class="board-empty-acts"><button type="button" class="btn primary" data-empty-action="start">Start a project</button> <button type="button" class="btn" data-empty-action="takeover">Take over a project</button></span><span>Take over reads a repository someone else left, runs what it can once you trust it, and proposes a plan in Seshat.</span><span>From the terminal: <code>sekhemet plan "Build a tamper-evident ledger"</code></span></div>`;
+    ui.root.innerHTML = `<div class="board-empty">${brandMark(24)}<b>No issues yet.</b><span class="board-empty-acts"><button type="button" class="btn primary" data-empty-action="start">Start a project</button> <button type="button" class="btn" data-empty-action="takeover">Take over a project</button></span><span>Take over reads a repository someone else left, runs what it can once you trust it, and proposes a plan in Seshat.</span><span>From the terminal: <code>sekhemet plan "Build a tamper-evident ledger"</code></span></div>`;
     return;
   }
   $(".board-empty", ui.root)?.remove();

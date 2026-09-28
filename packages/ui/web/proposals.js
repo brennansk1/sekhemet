@@ -72,7 +72,7 @@ function cardsList(p) {
       ]
         .filter(Boolean)
         .join(" · ");
-      return `<li><span class="n tnum">${i + 1}</span><span class="t">${esc(c.title ?? "Untitled card")}</span><span class="meta">${esc(meta)}</span></li>`;
+      return `<li><span class="n tnum">${i + 1}</span><span class="t">${esc(c.title ?? "Untitled issue")}</span><span class="meta">${esc(meta)}</span></li>`;
     })
     .join("");
   return `<ol class="pcards">${items}</ol>`;

@@ -1,9 +1,10 @@
 /**
  * What a need is about, in words that may leave the machine (design-stage
- * S8, P7): the keyword query the survey and `find_library` send, the
- * relevance test every candidate must pass, and the needs the language
- * itself covers, for which no package is looked for at all (DS-P7-6).
- * A leaf module: the survey and the registry search both read it.
+ * S8, P7): the keyword query the survey sends when no Planning model writes
+ * capability queries (`capability_queries.ts`), and that relevance ranking
+ * always reads (`rank.ts`), and the needs the language itself covers, for
+ * which no package is looked for at all (DS-P7-6). A leaf module: the
+ * survey and the registry search both read it.
  */
 
 const STOP = new Set(
@@ -38,8 +39,6 @@ const BUILT_IN = new Set(
   ),
 );
 
-const stem = (w: string): string => w.slice(0, 5);
-
 /** Content words of a text, lower-cased, without stop or generic words. */
 function contentWords(text: string): string[] {
   return text
@@ -49,31 +48,18 @@ function contentWords(text: string): string[] {
     .filter((w) => w.length > 2 && !STOP.has(w) && !GENERIC.has(w));
 }
 
-/** A short keyword query: what leaves the machine is this, not the spec. */
+/** A short keyword query: the fallback that leaves the machine, never the spec. */
 export function queryFor(need: string): string {
   return contentWords(need).slice(0, 4).join(" ");
 }
 
-/** Stems of a text's words, with hyphenated words also read joined. */
-function stems(text: string): Set<string> {
-  const lower = text.toLowerCase();
-  const words = [...lower.split(/[^a-z]+/), ...lower.replace(/-/g, "").split(/[^a-z]+/)].filter(
-    (w) => w.length > 2,
-  );
-  return new Set(words.map(stem));
-}
-
 /**
- * Does a candidate share what the need is about? At least two of the need's
- * content words (one, when it has only one), by stem, in its name or
- * description. A candidate that matched only a popular keyword is not one.
+ * Every content word of a need, for ranking on this machine (`rank.ts`):
+ * nothing of it is sent, so a need's fifth and later words count toward
+ * relevance too, unlike the four-word query that leaves (fix review C3).
  */
-export function relevant(need: string, text: string, minimum = 2): boolean {
-  const wanted = [...new Set(queryFor(need).split(" ").filter(Boolean).map(stem))];
-  if (!wanted.length) return false;
-  const have = stems(text);
-  const overlap = wanted.filter((w) => have.has(w)).length;
-  return overlap >= Math.min(minimum, wanted.length);
+export function relevanceTermsFor(need: string): string {
+  return [...new Set(contentWords(need))].join(" ");
 }
 
 /**

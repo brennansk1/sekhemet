@@ -3,10 +3,11 @@
 import { errorCode, isAcceptanceTest, matchesAny } from "./diff_parse.js";
 import { MOD, copyText, esc, icon, kbd, postJSON } from "./dom.js";
 import { ISSUE_COPY, lineCommentLabel, sendBackBody } from "./lib/issue.js";
+import { acceptVerdict } from "./lib/review_desk.js";
 import { gateLabel } from "./lib/vocabulary.js";
 import { placeUnder, pushOverlay } from "./overlay.js";
 import { acknowledgedIds, deskBlocker } from "./review_desk.js";
-import { ledgerAltered, store } from "./store.js";
+import { store } from "./store.js";
 import { toast } from "./toast.js";
 
 const GRACE_MS = 3000;
@@ -24,21 +25,14 @@ export const READ_ONLY_DETAIL =
  */
 export function acceptState(card, evidence, detail) {
   const s = store.state;
-  if (s.meta && s.meta.triage === false) return { ok: false, reason: "Read-only." };
-  if (s.connection === "offline") return { ok: false, reason: "Offline." };
-  if (ledgerAltered(s)) {
-    return {
-      ok: false,
-      reason: `Ledger altered at entry #${s.verification.corruptedSeq}. Inspect before accepting.`,
-    };
-  }
-  if (!evidence) return { ok: false, reason: "Accept needs evidence from a run." };
-  if (!evidence.passed) return { ok: false, reason: "Accept needs every check passing." };
-  if (!card || card.status !== "review")
-    return { ok: false, reason: "Only cards in Review can be accepted." };
-  const desk = deskBlocker(card, detail);
-  if (desk) return { ok: false, reason: desk };
-  return { ok: true, reason: "" };
+  const ctx = {
+    triage: s.meta?.triage !== false,
+    offline: s.connection === "offline",
+    ledger: s.verification,
+  };
+  // The desk's reason is only worked out when nothing earlier refuses.
+  const first = acceptVerdict(ctx, card, evidence);
+  return first.ok ? acceptVerdict(ctx, card, evidence, deskBlocker(card, detail)) : first;
 }
 
 export function mutationsBlocked() {
@@ -276,7 +270,7 @@ export function openPark(anchor, card, { onDone } = {}) {
   pop.className = "park-pop";
   pop.setAttribute("role", "dialog");
   pop.setAttribute("aria-label", "Park");
-  pop.innerHTML = `<label for="park-reason">Why park it? <span class="sec" style="font-weight:400">Optional</span></label><input id="park-reason" autocomplete="off" placeholder="Sets the card aside. Nothing runs until you unpark it."><div class="chips">${PRESETS.map((p) => `<button type="button" class="chip" data-preset>${esc(p)}</button>`).join("")}</div><div class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("park")}Park ${kbd("↵")}</button></div>`;
+  pop.innerHTML = `<label for="park-reason">Why park it? <span class="sec" style="font-weight:400">Optional</span></label><input id="park-reason" autocomplete="off" placeholder="Sets the issue aside. Nothing runs until you unpark it."><div class="chips">${PRESETS.map((p) => `<button type="button" class="chip" data-preset>${esc(p)}</button>`).join("")}</div><div class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("park")}Park ${kbd("↵")}</button></div>`;
   document.getElementById("overlay-root").append(pop);
   placeUnder(pop, anchor);
   const input = pop.querySelector("input");

@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import type { CardStore } from "@sekhemet/kernel";
+import { ModelRegistry } from "@sekhemet/models";
 import { McpHub, loadMcpConfig } from "../mcp_client.js";
-import { sharedModelAccess } from "../model_access.js";
+import { ModelAccess, sharedModelAccess } from "../model_access.js";
 import { runnerLease } from "../runner_lease.js";
 import { renderDisagreements } from "./claims.js";
 import { crawl4aiInstalled } from "./crawl4ai.js";
 import { RESEARCH_EFFORTS, parseEffort } from "./effort.js";
-import { runReuseEval } from "./reuse_eval.js";
+import { measureReuseQueries, runReuseEval } from "./reuse_eval.js";
 import { ResearchService, researchSources, researcherModel } from "./service.js";
 
 export const CRAWL4AI_CREDIT =
@@ -14,16 +15,16 @@ export const CRAWL4AI_CREDIT =
 
 export const RESEARCH_USAGE = `Usage: sekhemet research "<question>" [options]
 
-Ask the Researcher. It gathers evidence with its tools (papers, docs, the web,
+Ask the Research model. It gathers evidence with its tools (papers, docs, the web,
 GitHub, package registries, this repository) and answers with sources.
 
 Options
   --deep            Decompose, research each part, merge (the same as --effort standard)
   --effort <level>  quick, standard or exhaustive: sub-questions, pages read per
                     sub-question and critique depth; exhaustive runs overnight
-  --model <name>    Researcher model: apodex (default) or an Ollama tag
+  --model <name>    Research model: apodex (default) or an Ollama tag
   --web / --offline Override the project's research web setting
-  --card <id>       Record the answer on the card's dossier
+  --card <id>       Record the answer on the issue's dossier
   --fresh           Research again even if memory has an answer
   --rounds <n>      Model turns per question
   --json            Print the full result as JSON
@@ -31,7 +32,10 @@ Options
   --status          Show which sources are available, then exit
   --reuse-eval      Measure the reuse survey on its labelled set (precision@1 and
                     correct silence) against the real registries; needs research
-                    consent. Add --baseline to record the run as the baseline
+                    consent. Add --baseline to record the run as the baseline.
+                    Add --planner <model> to measure that Planning model's
+                    queries against the keyword queries: plan sends its
+                    queries only once this measurement admits it
 
 Web pages are read with Crawl4AI when installed.
 ${CRAWL4AI_CREDIT}`;
@@ -51,7 +55,9 @@ export async function runResearchCommand(
     argv.find(
       (a, i) =>
         !a.startsWith("--") &&
-        !["--model", "--card", "--rounds", "--batch", "--effort"].includes(argv[i - 1] ?? ""),
+        !["--model", "--card", "--rounds", "--batch", "--effort", "--planner"].includes(
+          argv[i - 1] ?? "",
+        ),
     ) ?? (argv.includes("--batch") ? "(batch)" : undefined);
   if (argv.includes("--reuse-eval")) {
     // DS-P7-7: refused, with nothing sent, without the person's research consent.
@@ -59,11 +65,15 @@ export async function runResearchCommand(
       console.log("No ledger here to record the measurement: run sekhemet init first.");
       return 1;
     }
+    const offline = argv.includes("--offline") || process.env.SEKHEMET_OFFLINE === "1";
+    if (argv.includes("--planner")) {
+      return reuseQueriesCommand(flag(argv, "--planner"), repoPath, log, offline);
+    }
     const r = await runReuseEval({
       repoPath,
       log,
       print: (l) => console.log(l),
-      offline: argv.includes("--offline") || process.env.SEKHEMET_OFFLINE === "1",
+      offline,
       baseline: argv.includes("--baseline"),
     });
     return "refused" in r ? 1 : r.belowBaseline ? 2 : 0;
@@ -84,10 +94,10 @@ export async function runResearchCommand(
   const holder = effort === "exhaustive" ? runnerLease(repoPath) : undefined;
   if (holder) {
     const what = holder.cardId
-      ? `card ${holder.cardId} is running`
+      ? `issue ${holder.cardId} is running`
       : `a ${holder.kind ?? "run"} holds the machine`;
     console.log(
-      `Exhaustive research is refused while ${what} (pid ${holder.pid}): it would hold the Researcher for hours.\nRun it in the overnight window instead: add a card labelled "research" and "effort:exhaustive" with this question, and sekhemet overnight runs it when the machine is free; or ask again when the run ends.`,
+      `Exhaustive research is refused while ${what} (pid ${holder.pid}): it would hold the Research model for hours.\nRun it in the overnight window instead: add an issue labelled "research" and "effort:exhaustive" with this question, and sekhemet overnight runs it when the machine is free; or ask again when the run ends.`,
     );
     return 1;
   }
@@ -182,5 +192,55 @@ export async function runResearchCommand(
     // unload it now; nothing may keep the CLI alive afterwards.
     await model.release().catch(() => undefined);
     mcp?.close();
+  }
+}
+
+/**
+ * `sekhemet research --reuse-eval --planner <model>` (DS-S8-3 as the owner
+ * amended it on 2026-09-28): the keyword queries and the model's measured on
+ * the labelled set, the model loaded the way `plan` loads its Planning model
+ * — after consent, only for its own run — and unloaded after. Exit 1 when
+ * refused, 2 when the model is not admitted.
+ */
+async function reuseQueriesCommand(
+  name: string | undefined,
+  repoPath: string,
+  log: import("@sekhemet/kernel").EventLog,
+  offline: boolean,
+): Promise<number> {
+  if (!name || name.startsWith("--")) {
+    console.log("--planner takes the name of a model in the model registry.");
+    return 1;
+  }
+  const registry = new ModelRegistry();
+  if (!registry.get(name)) {
+    console.log(`${name} is not in the model registry; nothing was measured.`);
+    return 1;
+  }
+  // MD-N9-4: the Planner's model through its own scheduler, as `plan` loads it.
+  const access = ModelAccess.forQueues([{ queue: "plan", role: "planner", name }], {
+    registry,
+    ledger: log,
+  });
+  let loaded: { unload?: () => Promise<void> } | undefined;
+  try {
+    const r = await measureReuseQueries({
+      repoPath,
+      log,
+      print: (l) => console.log(l),
+      offline,
+      loadPlanner: async () => {
+        await access.measure();
+        const adapter = await access.use("plan");
+        loaded = adapter;
+        return adapter;
+      },
+    });
+    return "refused" in r ? 1 : r.admitted ? 0 : 2;
+  } finally {
+    if (loaded) {
+      await access.release("plan").catch(() => undefined);
+      await loaded.unload?.().catch(() => undefined);
+    }
   }
 }

@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { compareVersions } from "@sekhemet/sync";
 import { ResearchCache } from "./polite.js";
 
 /**
@@ -180,21 +181,9 @@ export function issueSearch(query: string, r?: RepoRef, limit = 15): string {
   }
 }
 
-const semver = (t: string): number[] =>
-  (
-    t
-      .replace(/^v/, "")
-      .split(/[.\-+]/)
-      .map(Number)
-      .filter(Number.isFinite) as number[]
-  ).concat([0, 0, 0]);
-
+/** `a` is a later version than `b`, by SemVer precedence (DEC-44: the semver library). */
 function newer(a: string, b: string): boolean {
-  const [x, y] = [semver(a), semver(b)];
-  for (let i = 0; i < 3; i++) {
-    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
-  }
-  return false;
+  return compareVersions(a, b) > 0;
 }
 
 /**

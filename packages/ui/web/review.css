@@ -306,6 +306,13 @@ h3.sh .sec {
 .g-seg .nm {
   flex: none;
 }
+/* A family's failed gates (DB-N1-1): cut, never overlapping the next segment. */
+.g-seg .fl {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--state-fail);
+}
 .g-seg .t {
   margin-left: auto;
   font-size: var(--text-xs);
@@ -617,6 +624,34 @@ dl.kv dd {
 @container (max-width: 760px) {
   .triage .hint {
     display: none;
+  }
+}
+/* On a phone the strip is a vertical list, one gate or family a row (DB-N1-2). */
+@media (max-width: 599px) {
+  .g-strip {
+    flex-direction: column;
+  }
+  .g-seg {
+    height: auto;
+    min-height: 32px;
+    padding: 6px 12px;
+    white-space: normal;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .g-seg:first-child {
+    border-radius: 3px 3px 0 0;
+  }
+  .g-seg:last-child {
+    border-bottom: 0;
+    border-radius: 0 0 3px 3px;
+  }
+  .g-seg .fl {
+    overflow: visible;
+  }
+  .g-seg .pop {
+    width: auto;
+    max-width: calc(100vw - 32px);
   }
 }
 .triage.readonly {

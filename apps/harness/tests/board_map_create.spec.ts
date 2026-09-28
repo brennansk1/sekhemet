@@ -253,7 +253,7 @@ describe("the burn-up and quick create on a real server (DB-P3-12, DB-P3-14)", (
   it("POST /api/pm/create-card: a create proposal in Seshat's thread, applied through the planner", async () => {
     const refused = await post("/api/pm/create-card", { title: "  " });
     expect(refused.status).toBe(400);
-    expect(await refused.json()).toEqual({ error: "A card needs a title." });
+    expect(await refused.json()).toEqual({ error: "An issue needs a title." });
 
     const r = await post("/api/pm/create-card", {
       title: "Export the monthly totals as CSV",
@@ -312,7 +312,9 @@ describe("the burn-up and quick create on a real server (DB-P3-12, DB-P3-14)", (
     const tile = tileModel(board.cards.find((c) => c.id === made?.id) as never, {
       now: Date.now(),
     });
-    expect(tile.blocker?.text).toContain("approval of its criteria: open the card to approve them");
+    expect(tile.blocker?.text).toContain(
+      "approval of its criteria: open the issue to approve them",
+    );
     expect(tile.blocker?.text).not.toMatch(/CLI|terminal|sekhemet /i);
   });
 });

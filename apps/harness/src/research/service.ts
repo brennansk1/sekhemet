@@ -383,7 +383,7 @@ export class ResearchService {
       const model = await this.deps.model();
       if (opts.localOnly && model.remote === true) {
         throw new Error(
-          `Refusing to research this question on ${model.modelId}: its server is not on this machine, and the question carries a card's spec and a gate's output, which stay here.`,
+          `Refusing to research this question on ${model.modelId}: its server is not on this machine, and the question carries an issue's description and a check's output, which stay here.`,
         );
       }
       // DS-N2-9: the pipeline the latest golden-set run recommends for this model.

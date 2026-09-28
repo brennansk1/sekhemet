@@ -75,7 +75,7 @@ describe("slash commands in Seshat's chat (H16)", () => {
     expect(loads).toBe(0);
     const replies = (await pm.thread()).filter((m) => m.role === "pm").map((m) => m.text);
     expect(replies[0]).toMatch(/`\/research <question>`/);
-    expect(replies[1]).toMatch(/open card\(s\)/);
+    expect(replies[1]).toMatch(/open issue\(s\)/);
     expect(replies[2]?.length).toBeGreaterThan(0);
   });
 
@@ -92,7 +92,7 @@ describe("slash commands in Seshat's chat (H16)", () => {
     expect((await cards.getCard("card_chron_hasher"))?.status).toBe("parked");
     await pm.appendUserMessage("/park nosuchcard");
     await run();
-    expect((await lastReply())?.text).toMatch(/No card matches "nosuchcard"/);
+    expect((await lastReply())?.text).toMatch(/No issue matches "nosuchcard"/);
     expect(loads).toBe(0);
   });
 
@@ -117,7 +117,7 @@ describe("slash commands in Seshat's chat (H16)", () => {
     expect(text).toMatch(/1\. https:\/\/nodejs\.org\/api\/sqlite\.html/);
     await pm.appendUserMessage("/research x");
     await run();
-    expect((await lastReply())?.text).toMatch(/No Researcher is configured/);
+    expect((await lastReply())?.text).toMatch(/No Research model is configured/);
   });
 
   it("PM-P1-1: /plan runs the one planner, not a free-form request to Seshat", async () => {
@@ -171,7 +171,7 @@ describe("slash commands in Seshat's chat (H16)", () => {
         { name: "ready", args: "secret_widget" },
         { cardStore: cards, pmStore: pm, repoPath: repo, audience, asker: ASKER },
       );
-      expect(hidden).toEqual({ reply: 'No card matches "secret_widget".' });
+      expect(hidden).toEqual({ reply: 'No issue matches "secret_widget".' });
       expect((await cards.getCard("card_secret_widget"))?.status).toBe("backlog");
       const visible = await runSlash(
         { name: "ready", args: "hasher" },

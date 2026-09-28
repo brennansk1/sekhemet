@@ -155,7 +155,7 @@ export function createBenchmarkApi(ctx: BenchmarkApiContext) {
       const list = Array.isArray(body.combinations) ? body.combinations.map(combinationOf) : [];
       if (list.some((c) => !c))
         return ctx.json(res, 400, {
-          error: "Each combination names at least a worker and a planner.",
+          error: "Each combination names at least a Coding model and a Planning model.",
         });
       const combinations = list as Combination[];
       const principal = ctx.principalOf?.(req);

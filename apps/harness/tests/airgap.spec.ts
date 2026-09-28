@@ -317,8 +317,8 @@ describe("X14: the air-gap self-test", () => {
       knownQuery: "StatementSync",
     });
     const by = Object.fromEntries(r.checks.map((c) => [c.name, c.ok]));
-    expect(by["gate unit runnable"]).toBe(true);
-    expect(by["gate lint runnable"]).toBe(false);
+    expect(by["check unit runnable"]).toBe(true);
+    expect(by["check lint runnable"]).toBe(false);
     expect(by["docs index answers a known query"]).toBe(true);
     expect(typeof by["no outbound connections"]).toBe("boolean");
     expect(r.ok).toBe(false);
@@ -473,13 +473,13 @@ describe("NEW-security-2: the self-test watches a card's own commands (SEC-33)",
         },
       ],
     });
-    const check = noisy.checks.find((c) => c.name === "gates make no outbound attempt");
+    const check = noisy.checks.find((c) => c.name === "checks make no outbound attempt");
     expect(check?.ok).toBe(false);
     expect(check?.detail).toMatch(/telemetry\.example\.com/);
     const quiet = await airgapSelfTest(repo, {
       gateRuns: [{ id: "unit", command: process.execPath, args: ["-e", "process.exit(0)"] }],
     });
-    expect(quiet.checks.find((c) => c.name === "gates make no outbound attempt")?.ok).toBe(true);
+    expect(quiet.checks.find((c) => c.name === "checks make no outbound attempt")?.ok).toBe(true);
   }, 30_000);
 });
 
@@ -579,7 +579,7 @@ describe("B1 review: pinned docs and the self-test prove what they claim", () =>
     const t = await airgapSelfTest(tmp(), {
       gateRuns: [{ id: "missing", command: "definitely-not-a-command-xyz", args: [] }],
     });
-    const check = t.checks.find((c) => c.name === "gates make no outbound attempt");
+    const check = t.checks.find((c) => c.name === "checks make no outbound attempt");
     expect(check?.ok).toBe(false);
     expect(check?.detail).toMatch(/not proven/);
   });

@@ -29,3 +29,11 @@ and entries were filtered; see packages/gates/data/scancode-licensedb/README.md.
 It depends on spdx-exceptions (CC-BY-3.0) and spdx-ranges (MIT AND
 CC-BY-3.0), data from the SPDX License List, Copyright The Linux
 Foundation, https://spdx.org/licenses/, packaged by Kyle E. Mitchell.
+
+The bundled offline secret rules (packages/gates/data/gitleaks/gitleaks.toml)
+are gitleaks' default rule file, v8.30.1, Copyright (c) 2019 Zachary Rice,
+https://github.com/gitleaks/gitleaks, licensed under the MIT License; the
+licence text is in packages/gates/data/gitleaks/LICENSE and the file's source
+and hashes in the README beside it. The file is unmodified; Sekhemet's
+scanner (packages/gates/src/gitleaks_rules.ts) reads it and rewrites its Go
+patterns for JavaScript in memory.

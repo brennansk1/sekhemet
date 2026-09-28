@@ -164,7 +164,7 @@ describe("push notifications (H20)", () => {
     await cards.updateCardStatus("card_new", "verify", "test setup", "harness", { override: true });
     await cards.updateCardStatus("card_new", "review", "gates passed");
     expect(await n.tick()).toBe(1);
-    expect(bodies).toEqual(["card_new passed its gates and waits for you."]);
+    expect(bodies).toEqual(["card_new passed its checks and waits for you."]);
     // The same card reaching review again within ten minutes is not re-pushed.
     await cards.updateCardStatus("card_new", "in_progress", "sent back");
     await cards.updateCardStatus("card_new", "verify", "attempt ended");

@@ -117,7 +117,7 @@ describe("MD-N10-3: run and queue take the person's assigned Worker", () => {
     expect(assigned.status).toBe(0);
 
     const run = sekhemet(["run", "c1", "--repo", repo]);
-    expect(run.stdout).toMatch(/Worker: assigned-worker:latest/);
+    expect(run.stdout).toMatch(/Coding model: assigned-worker:latest/);
     expect(run.stderr).toMatch(
       /Refusing to run cards on assigned-worker:latest: measured prefill 20\.0 tok\/s \(required 40\)/,
     );

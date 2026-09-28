@@ -231,7 +231,7 @@ describe("PM-P1-7: a split gives each part only its own tests; the parent is rej
     const after = await s.cardStore.getCard(parent.id);
     expect(after?.status).toBe("rejected");
     const moved = (await s.cardStore.cardEvents(parent.id, ["card/status_changed"])).at(-1);
-    expect((moved?.payload as { reason?: string }).reason).toMatch(/^Split into 2 cards/);
+    expect((moved?.payload as { reason?: string }).reason).toMatch(/^Split into 2 issues/);
     for (const p of parts) expect((moved?.payload as { reason?: string }).reason).toContain(p.id);
   });
 

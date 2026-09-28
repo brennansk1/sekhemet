@@ -85,3 +85,37 @@ describe("research/golden_run is registered (kernel rule 33)", () => {
     expect(() => checkEventPayload("research/golden_run", badPipeline, undefined)).toThrow();
   });
 });
+
+// Design-stage DS-S8-3 (amended by the owner, 2026-09-28): the measurement
+// that admits a Planning model's reuse queries is a registered event, all
+// structural — the model, the prompt's and the set's hashes, both arms' rates.
+describe("research/reuse_queries_measured is registered (kernel rule 33)", () => {
+  const measured = () => ({
+    model: "seshat-planner",
+    promptHash: SHA,
+    setHash: SHA,
+    n: 44,
+    keywords: { p1: 0.5, silence: 1, measured: 44 },
+    modelQueries: { p1: null, silence: 0.9, measured: 40 },
+    fromModel: 31,
+    admitted: false,
+  });
+
+  it("is in the registry and accepts a measurement", () => {
+    expect(PAYLOAD_SCHEMAS["research/reuse_queries_measured"]).toBeDefined();
+    expect(() =>
+      checkEventPayload("research/reuse_queries_measured", measured(), undefined),
+    ).not.toThrow();
+  });
+
+  it("refuses a query's words in the payload and a rate above one", () => {
+    const withQueries = { ...measured(), queries: ["email sending"] };
+    expect(() =>
+      checkEventPayload("research/reuse_queries_measured", withQueries, undefined),
+    ).toThrow();
+    const badRate = { ...measured(), keywords: { p1: 1.5, silence: 1, measured: 44 } };
+    expect(() =>
+      checkEventPayload("research/reuse_queries_measured", badRate, undefined),
+    ).toThrow();
+  });
+});

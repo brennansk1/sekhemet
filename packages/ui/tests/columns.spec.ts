@@ -453,7 +453,7 @@ describe("DB-P3-6: the blocker flag", () => {
       { now: NOW },
     );
     expect(t.blocker).toEqual({
-      text: "Blocked · Criterion c2 has no staged test case. Waiting on a person's approval of its criteria: open the card to approve them.",
+      text: "Blocked · Criterion c2 has no staged test case. Waiting on a person's approval of its criteria: open the issue to approve them.",
     });
   });
 });
@@ -503,14 +503,14 @@ describe("DB-P3-9: headers carry count, limit with its derivation, and points", 
         { limit: 3, minutesPerDay: 60, minutesPerCard: 20, reviews: 4, fixed: false },
         { count: 1, held: 0 },
       ),
-    ).toBe("Limit 3, from 60 review minutes a day at ~20 min per card (the median of 4 reviews).");
+    ).toBe("Limit 3, from 60 review minutes a day at ~20 min per issue (the median of 4 reviews).");
     expect(
       reviewLimitText(
         { limit: 25, minutesPerDay: 375, minutesPerCard: 15, reviews: 0, fixed: false },
         { count: 25, held: 1 },
       ),
     ).toBe(
-      "Limit 25, from 375 review minutes a day at ~15 min per card (the starting estimate until you review a card). Full. The agent holds finished cards until you clear one. An accepted card waiting on its pull request does not count.",
+      "Limit 25, from 375 review minutes a day at ~15 min per issue (the starting estimate until you review an issue). Full. The agent holds finished issues until you clear one. An accepted issue waiting on its pull request does not count.",
     );
     expect(reviewLimitText({ limit: 2, fixed: true }, { count: 3, held: 0 })).toBe(
       "Limit 2, set by [review] wip in the project configuration. Over the limit.",
@@ -539,7 +539,7 @@ describe("DB-P3-9: headers carry count, limit with its derivation, and points", 
       state: "full",
       text: "2 / 2",
       derivation:
-        "Limit 2, from 60 review minutes a day at ~30 min per card (the median of 3 reviews). Full. The agent holds finished cards until you clear one. An accepted card waiting on its pull request does not count.",
+        "Limit 2, from 60 review minutes a day at ~30 min per issue (the median of 3 reviews). Full. The agent holds finished issues until you clear one. An accepted issue waiting on its pull request does not count.",
     });
     expect(byId.in_review?.pointsText).toBe("8 pts");
     expect(byId.backlog?.pointsText).toBe("1 pt");
@@ -572,7 +572,7 @@ describe("DB-P3-10: empty columns are chips; Done is a column whenever it has ca
     expect(m.columns.map((c) => c.id)).toEqual(["done"]);
     expect(m.chips.map((c) => [c.label, c.count, c.empty])).toEqual([
       ["Backlog", 0, "Ideas and split-off work."],
-      ["To do", 0, "Cards whose dependencies are done, and cards being planned."],
+      ["To do", 0, "Issues whose dependencies are done, and issues being planned."],
       ["In progress", 0, "No agent running."],
       ["In review", 0, "Nothing waiting for you."],
     ]);

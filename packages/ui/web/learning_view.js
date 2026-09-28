@@ -178,7 +178,7 @@ export function bindLearning(root, ui, rerender) {
           {
             value: "project",
             label: "This project",
-            detail: "Only this repository's cards",
+            detail: "Only this repository's issues",
             plain: true,
           },
           {

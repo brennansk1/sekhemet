@@ -127,7 +127,7 @@ function renderTriage() {
 function renderEmpty() {
   const readyCount = store.state.cards.filter((c) => c.status === "ready").length;
   $(".ev-scroll", ui.root).innerHTML =
-    `<div class="ev-empty">${brandMark(24)}<b>Nothing to review.</b><span>Issues land here when every check passes.</span>${readyCount ? `<span>${readyCount} ${readyCount === 1 ? "card is" : "cards are"} ready to run: <code>sekhemet queue</code></span>` : ""}</div>`;
+    `<div class="ev-empty">${brandMark(24)}<b>Nothing to review.</b><span>Issues land here when every check passes.</span>${readyCount ? `<span>${readyCount} ${readyCount === 1 ? "issue is" : "issues are"} ready to run: <code>sekhemet queue</code></span>` : ""}</div>`;
   $("[data-facts]", ui.root).innerHTML = "";
   $("[data-triage]", ui.root).innerHTML = "";
   ui.triageHtml = "";
@@ -257,7 +257,7 @@ function runAction(key, card = selectedCard()) {
     if (!ev) {
       toast({
         text: "Nothing to send back yet.",
-        detail: "This card has no attempt to respond to.",
+        detail: "This issue has no attempt to respond to.",
       });
       return true;
     }

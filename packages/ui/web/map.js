@@ -93,7 +93,7 @@ function tileOpts() {
 function tilesHtml(cards, visible) {
   const shown = cards.filter((c) => visible.has(c.id));
   if (shown.length === 0) return "";
-  return `<ul class="list smap-cards" role="listbox" aria-label="Cards">${shown
+  return `<ul class="list smap-cards" role="listbox" aria-label="Issues">${shown
     .map((c) => tileHtml(c, tileOpts()).replace(' role="option"', ' role="option" tabindex="0"'))
     .join("")}</ul>`;
 }

@@ -145,7 +145,7 @@ export function overnightWindow(o: {
       ...shape,
     };
   if (o.cardRunning)
-    return { open: false, reason: "reserved", why: "a card holds the runner", ...shape };
+    return { open: false, reason: "reserved", why: "an issue holds the runner", ...shape };
   if (open)
     return {
       open: true,
@@ -851,7 +851,7 @@ function resultLines(r: QuickResult): string[] {
   });
   if (r.endToEnd)
     lines.push(
-      `End-to-end check: ${r.endToEnd.passed}/${r.endToEnd.total} cards passed (beside the scores, not folded in).`,
+      `End-to-end check: ${r.endToEnd.passed}/${r.endToEnd.total} issues passed (beside the scores, not folded in).`,
     );
   for (const c of r.comparisons)
     lines.push(

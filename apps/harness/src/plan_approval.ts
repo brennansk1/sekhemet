@@ -286,7 +286,7 @@ export async function approveCommand(
   const ledger = ledgerOf(k);
   const card = await k.cardStore.getCard(id);
   if (!card) {
-    print(`No card ${id}.`);
+    print(`No issue ${id}.`);
     return 1;
   }
   const profile = projectDepthProfile(k.cardStore, card.projectId);
@@ -305,7 +305,7 @@ export async function approveCommand(
   const principal = k.cardStore.localPrincipal();
   const out = await approvePlan(ledger, id, principal, { profile, expectedSha256: view.sha256 });
   print(
-    `Approved ${out.approved.length} card(s) under the ${profile} profile; ${out.released.length} left Planning.`,
+    `Approved ${out.approved.length} issue(s) under the ${profile} profile; ${out.released.length} left Planning.`,
   );
   for (const h of out.held) print(`  ${h.id} stays in Planning: ${h.reason}`);
   return 0;
@@ -366,7 +366,7 @@ export async function handlePlanApprovalRoute(
   const card = await store.getCard(id);
   // PM-N9-8: a card the person cannot see answers exactly as a missing one.
   if (!card || !(ctx.canSee?.(req, card.projectId) ?? true)) {
-    json(res, 404, { error: `No card ${id}` });
+    json(res, 404, { error: `No issue ${id}` });
     return true;
   }
   const ledger: PlannerLedger = { store, log: ctx.log, board: ctx.boardService };
@@ -425,8 +425,8 @@ export async function upgradeCommand(
     const { created } = await planUpgradeFixes(ledger, cardId);
     print(
       created.length === 0
-        ? `No new failing file under ${cardId}: no fix card planned.`
-        : `Planned ${created.length} fix card(s): ${created.join(", ")}. Approve them with: sekhemet approve ${cardId}`,
+        ? `No new failing file under ${cardId}: no fix issue planned.`
+        : `Planned ${created.length} fix issue(s): ${created.join(", ")}. Approve them with: sekhemet approve ${cardId}`,
     );
     return 0;
   }
@@ -450,7 +450,7 @@ export async function upgradeCommand(
     to,
     ...(changelog ? { changelog } : {}),
   });
-  print(`Planned ${cardId}: the tool step is \`${command.join(" ")}\`, then the gates.`);
+  print(`Planned ${cardId}: the tool step is \`${command.join(" ")}\`, then the checks.`);
   print(
     entries.length > 0
       ? `Changelog entries between ${from} and ${to}: ${entries.map((e) => e.version).join(", ")}.`

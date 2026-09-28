@@ -37,7 +37,9 @@ import {
 } from "@sekhemet/planner";
 import { type ProcessSandbox, confinedSandbox } from "@sekhemet/sandbox";
 import {
+  type Bump,
   NodeGitSyncAdapter,
+  compareVersions,
   gitEnvFor,
   keepAChangelogSection,
   nextVersion,
@@ -198,7 +200,7 @@ export async function checkMain(
       const run =
         testGate && files.length > 0
           ? await runAcceptanceTests(sandbox, cwd, testGate, files)
-          : { unavailable: "no blocking test gate" };
+          : { unavailable: "no blocking test check" };
       return {
         gates: gateResult,
         results: "results" in run ? run.results : [],
@@ -272,11 +274,7 @@ export async function acceptSliceAndRelease(
   for (const s of await k.cardStore.slices.list(slice?.projectId)) {
     proposed.push(...(await k.cardStore.slices.releases(s.id)).map((r) => r.version));
   }
-  const latest = proposed.sort(compareVersions).at(-1);
-  let version = plan.nextVersion.replace(/^v/, "");
-  if (latest && compareVersions(version, latest) <= 0) {
-    version = nextVersion(latest, plan.bump === "none" ? "patch" : plan.bump).replace(/^v/, "");
-  }
+  const version = sliceReleaseVersion(plan, proposed);
   try {
     const r = await proposeSliceRelease(ledger, {
       sliceId,
@@ -332,7 +330,7 @@ export async function acceptSliceAndRelease(
 export async function extendRefusal(k: Kernel, sliceId: string): Promise<string | undefined> {
   const ledger = ledgerOf(k);
   const status = await sliceStatus(ledger, sliceId, mainHead(k.repoPath).sha);
-  if (!status) return `No slice ${sliceId}`;
+  if (!status) return `No release ${sliceId}`;
   const open = (await sliceCards(ledger, sliceId)).filter((c) => c.status !== "done");
   const unred = open.filter(
     (c) =>
@@ -342,7 +340,7 @@ export async function extendRefusal(k: Kernel, sliceId: string): Promise<string 
   );
   const unplanned = (status.slice.requirements ?? []).filter((r) => r.state === "unplanned");
   if (unplanned.length) {
-    return `${unplanned.map((r) => r.id).join(", ")} ${unplanned.length === 1 ? "has" : "have"} no card; extending is not offered`;
+    return `${unplanned.map((r) => r.id).join(", ")} ${unplanned.length === 1 ? "has" : "have"} no issue; extending is not offered`;
   }
   if (unred.length) {
     return `${unred.map((c) => c.id).join(", ")} ${unred.length === 1 ? "has" : "have"} no red test yet; extending is not offered`;
@@ -350,11 +348,23 @@ export async function extendRefusal(k: Kernel, sliceId: string): Promise<string 
   return undefined;
 }
 
-function compareVersions(a: string, b: string): number {
-  const n = (v: string) => v.replace(/^v/, "").split(/[.-]/).slice(0, 3).map(Number);
-  const [x, y] = [n(a), n(b)];
-  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0);
-  return 0;
+/**
+ * A slice's release version, without the `v` (RG-N4-1, PM-P13-13): the one
+ * the squashes give, or, when a release at or above it was already proposed
+ * in the project, the next after the latest of those by the same bump, so
+ * two slices never share a version. SemVer's rules come from `semver`
+ * (DEC-44) through `nextVersion` and `compareVersions`: a breaking change
+ * bumps minor while the version is 0.y.z, and a prerelease sorts before its
+ * release.
+ */
+export function sliceReleaseVersion(
+  plan: { nextVersion: string; bump: Bump },
+  proposed: readonly string[],
+): string {
+  const latest = [...proposed].sort(compareVersions).at(-1);
+  const planned = plan.nextVersion.replace(/^v/, "");
+  if (!latest || compareVersions(planned, latest) > 0) return planned;
+  return nextVersion(latest, plan.bump === "none" ? "patch" : plan.bump).replace(/^v/, "");
 }
 
 /**
@@ -376,7 +386,7 @@ export async function reviseAndPropose(
   if (out.changeCards.length > 0) {
     await new PmStore(k.log).appendReply({
       replyTo: [],
-      text: `${requirementId} was revised to version ${out.version}. ${out.changeCards.length === 1 ? "One done card was" : `${out.changeCards.length} done cards were`} built against the earlier version; suggested: a change card for each. Why: until one is accepted, or you re-confirm the link, ${requirementId} is suspect and its slice unproven.${out.held.length ? ` Held in Planning: ${out.held.join(", ")}.` : ""}${out.running.length ? ` Running, re-checked when it stops: ${out.running.join(", ")}.` : ""}`,
+      text: `${requirementId} was revised to version ${out.version}. ${out.changeCards.length === 1 ? "One done issue was" : `${out.changeCards.length} done issues were`} built against the earlier version; suggested: a change issue for each. Why: until one is accepted, or you re-confirm the link, ${requirementId} is suspect and its release not done.${out.held.length ? ` Held in Planning: ${out.held.join(", ")}.` : ""}${out.running.length ? ` Running, re-checked when it stops: ${out.running.join(", ")}.` : ""}`,
       proposals: out.changeCards.map((c) => ({
         kind: "create_card" as const,
         summary: changeCardSummary(c.cardId, c.requirementId, c.version),
@@ -558,14 +568,14 @@ export async function releaseSubcommand(
           },
           principal,
         );
-        print(`${a} extended; its cards are scheduled again.`);
+        print(`${a} extended; its issues are scheduled again.`);
         return 0;
       }
       case "revise": {
         if (!a || !b) return fail("Usage: sekhemet release revise <REQ> <revision.json>");
         const r = await reviseAndPropose(k, a, readJson(b) as RequirementRevision, principal);
         print(
-          `${a} is now version ${r.version}.${r.held.length ? ` Held in Planning: ${r.held.join(", ")}.` : ""}${r.changeCards.length ? ` Seshat proposes change cards for ${r.changeCards.map((x) => x.cardId).join(", ")}.` : ""}`,
+          `${a} is now version ${r.version}.${r.held.length ? ` Held in Planning: ${r.held.join(", ")}.` : ""}${r.changeCards.length ? ` Seshat proposes change issues for ${r.changeCards.map((x) => x.cardId).join(", ")}.` : ""}`,
         );
         await exportAfter(k, principal, a, print);
         return 0;
@@ -586,7 +596,7 @@ export async function releaseSubcommand(
       case "report": {
         if (!a) return fail("Usage: sekhemet release report <SLICE>");
         const s = await sliceStatus(ledger, a, mainHead(k.repoPath).sha);
-        if (!s) return fail(`No slice ${a}`);
+        if (!s) return fail(`No release ${a}`);
         print(releaseReport(s.map, a).text);
         return 0;
       }
@@ -861,7 +871,7 @@ export async function handleProjectDoneRoute(
       slice && visible(slice.projectId)
         ? await sliceStatus(ledgerOf(k), report[1] as string, mainHead(k.repoPath).sha)
         : undefined;
-    if (!s) json(res, 404, { error: `No slice ${report[1]}` });
+    if (!s) json(res, 404, { error: `No release ${report[1]}` });
     else json(res, 200, releaseReport(s.map, report[1] as string));
     return true;
   }
@@ -938,7 +948,7 @@ export async function handleProjectDoneRoute(
       }
       case "requirements/confirm":
         if ((body.from !== "card" && body.from !== "test") || typeof body.ref !== "string") {
-          json(res, 400, { error: "confirm needs from (card or test) and ref" });
+          json(res, 400, { error: "confirm needs from (issue or test) and ref" });
           return true;
         }
         await k.cardStore.requirements.confirm(

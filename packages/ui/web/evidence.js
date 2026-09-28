@@ -194,7 +194,7 @@ export class EvidencePane {
     const at = card.display?.enteredColumnAt
       ? Date.parse(card.display.enteredColumnAt)
       : Date.now();
-    return `<div class="notice" role="status">${icon("alert", 14, "ic s14")}<span>This card moved to ${esc(columnLabel(card.status))} ${esc(formatWait(Date.now() - at))} ago. Evidence may be out of date.</span><button type="button" data-reload-ev>Reload</button></div>`;
+    return `<div class="notice" role="status">${icon("alert", 14, "ic s14")}<span>This issue moved to ${esc(columnLabel(card.status))} ${esc(formatWait(Date.now() - at))} ago. Evidence may be out of date.</span><button type="button" data-reload-ev>Reload</button></div>`;
   }
 
   /**

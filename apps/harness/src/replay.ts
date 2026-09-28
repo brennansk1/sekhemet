@@ -92,7 +92,7 @@ export function formatTrajectory(t: Trajectory): string {
   const head = `Attempt ${t.attemptNumber} (${t.attemptId}) on ${t.modelId}${t.forkedFrom ? `, forked from ${t.forkedFrom.attemptId} at step ${t.forkedFrom.step}` : ""}: ${t.outcome}, ${t.steps.length} step(s), ${t.steps.reduce((n, s) => n + s.tokens, 0)} tokens`;
   const rows = t.steps.map((s) => {
     const gate = s.gate
-      ? ` | gates ${s.gate.passed ? "pass" : `FAIL ${s.gate.failed.join(",")}`}`
+      ? ` | checks ${s.gate.passed ? "pass" : `FAIL ${s.gate.failed.join(",")}`}`
       : "";
     const calls = s.calls
       .map((c) => `${c.name}${c.target ? ` ${c.target}` : ""}${c.ok === false ? " ✗" : ""}`)

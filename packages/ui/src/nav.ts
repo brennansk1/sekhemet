@@ -232,7 +232,7 @@ export const KEY_GROUPS: readonly KeyGroup[] = [
     name: "Global",
     rows: rows([
       ["Command palette", ["Mod+K"]],
-      ["Search cards", ["/"]],
+      ["Search issues", ["/"]],
       ["Keyboard shortcuts", ["?"]],
       ["Close or cancel", ["Esc"]],
     ]),
@@ -254,7 +254,7 @@ export const KEY_GROUPS: readonly KeyGroup[] = [
       ["Zoom", ["+", "−"]],
       ["Fit the graph", ["f"]],
       ["Actual size", ["0"]],
-      ["Open the focused card", ["↵"]],
+      ["Open the focused issue", ["↵"]],
     ]),
   },
   {
@@ -263,20 +263,20 @@ export const KEY_GROUPS: readonly KeyGroup[] = [
       ["Open or close the panel", ["Mod+J"]],
       ["Send", ["↵"]],
       ["New line", ["⇧", "↵"]],
-      ["Mention a card", ["@"]],
+      ["Mention an issue", ["@"]],
       ["Apply or discard a proposal", ["y", "n"]],
       ["Apply all in a group", ["⇧", "Y"]],
     ]),
   },
   {
-    name: "Cards",
+    name: "Board",
     views: ["board"],
     rows: rows([
       ["Move between columns", ["h", "l"]],
       ["Move within a column", ["j", "k"]],
       ["First or last in column", ["Home", "End"]],
       ["Peek", ["Space"]],
-      ["Open card", ["↵"]],
+      ["Open issue", ["↵"]],
       ["Select", ["x"]],
       ["Extend selection (list)", ["⇧", "J"]],
       ["Priority, points, labels", ["⇧", "P"]],
@@ -286,7 +286,7 @@ export const KEY_GROUPS: readonly KeyGroup[] = [
       ["Group into swimlanes", ["⇧", "S"]],
       ["Pipeline stages", ["⇧", "V"]],
       ["Filter", ["/"]],
-      ["New card", ["c"]],
+      ["New issue", ["c"]],
     ]),
   },
   {
@@ -298,8 +298,8 @@ export const KEY_GROUPS: readonly KeyGroup[] = [
       ["Park", ["p"]],
       ["Acknowledge the focused finding", ["x"]],
       ["Undo accept", ["z"]],
-      ["Next or previous card", ["j", "k"]],
-      ["Open card", ["o"]],
+      ["Next or previous issue", ["j", "k"]],
+      ["Open issue", ["o"]],
       ["Previous or next attempt", ["[", "]"]],
       ["Next or previous annotation", ["n", "N"]],
       ["Expand file", ["Space"]],
@@ -309,7 +309,7 @@ export const KEY_GROUPS: readonly KeyGroup[] = [
     ]),
   },
   {
-    name: "Card and lists",
+    name: "Issue and lists",
     views: ["card", "ledger", "runs", "machine"],
     rows: rows([
       // The issue page's tabs (dashboard DB-N8-1), in `issue.ts` ISSUE_TABS order.

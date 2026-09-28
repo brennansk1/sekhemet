@@ -6,6 +6,7 @@ import { createInterface } from "node:readline";
 import { runConfined } from "@sekhemet/sandbox";
 import { HARDENED_GIT_CONFIG, HARDENED_GIT_PINS, hardenedGitEnv } from "@sekhemet/sync";
 import { onPath } from "./builtin.js";
+import { gitleaksRulesText, rulesNotRunNote } from "./gitleaks_rules.js";
 import { scanSecrets } from "./secrets.js";
 
 /**
@@ -16,9 +17,10 @@ import { scanSecrets } from "./secrets.js";
  * - by gitleaks (MIT) as a confined subprocess when it is installed, with
  *   its history read through `--log-opts` carrying `--no-ext-diff
  *   --no-textconv` and item 19's hardened git environment;
- * - otherwise by the bundled offline rule set of `secrets.ts` (the same rule
- *   ids the diff gate reports), over `git log -p --no-ext-diff --no-textconv`
- *   in the same hardened environment.
+ * - otherwise by the bundled offline rule set of `secrets.ts` — gitleaks'
+ *   own rule file, vendored (DEC-44), so the rule ids are gitleaks' and the
+ *   diff gate's — over `git log -p --no-ext-diff --no-textconv` in the same
+ *   hardened environment, one fragment per hunk as gitleaks reads it.
  *
  * Both run only after the item 21 preflight over the repository's own git
  * config; when it refuses, nothing is scanned and the reason is returned
@@ -175,7 +177,12 @@ function gitReason(stderr: string | Buffer | undefined): string {
 
 const COMMIT_MARK = "@@sekhemet-commit ";
 
-/** The bundled rules over every commit's added lines, streamed (a large history never sits in memory). */
+/**
+ * The bundled rules over every commit's added lines, streamed (a large
+ * history never sits in memory): each hunk's added lines are one fragment,
+ * as gitleaks reads a commit, so a multi-line private key is found; a
+ * binary file added is judged by its path alone.
+ */
 async function builtinScan(root: string, timeoutMs: number): Promise<HistorySecretFinding[]> {
   const child = spawn(
     "git",
@@ -201,22 +208,41 @@ async function builtinScan(root: string, timeoutMs: number): Promise<HistorySecr
   const out: HistorySecretFinding[] = [];
   let commit = "";
   let path = "";
+  let added: string[] = [];
+  const report = (text: string, file: string) => {
+    for (const f of scanSecrets(text, file, 1, commit)) {
+      const key = `${commit}\0${file}\0${f.rule}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ commit, path: file, rule: f.rule });
+    }
+  };
+  const flush = () => {
+    if (added.length > 0 && path && commit) report(added.join("\n"), path);
+    added = [];
+  };
   const lines = createInterface({ input: child.stdout, crlfDelay: Number.POSITIVE_INFINITY });
   for await (const line of lines) {
     if (line.startsWith(COMMIT_MARK)) {
+      flush();
       commit = line.slice(COMMIT_MARK.length).trim();
       path = "";
+    } else if (line.startsWith("diff --git ")) {
+      flush();
+      path = "";
     } else if (line.startsWith("+++ ")) {
+      flush();
       path = line === "+++ /dev/null" ? "" : line.replace(/^\+\+\+ (b\/)?/, "");
+    } else if (line.startsWith("@@ ")) {
+      flush();
     } else if (line.startsWith("+") && path && commit) {
-      for (const f of scanSecrets(line.slice(1), path)) {
-        const key = `${commit}\0${path}\0${f.rule}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push({ commit, path, rule: f.rule });
-      }
+      added.push(line.slice(1));
+    } else if (commit) {
+      const binary = /^Binary files .* and b\/(.+) differ$/.exec(line);
+      if (binary) report("", binary[1] as string);
     }
   }
+  flush();
   const status = await new Promise<number | null>((resolve) => {
     if (child.exitCode !== null) resolve(child.exitCode);
     else child.once("close", (code) => resolve(code));
@@ -228,10 +254,6 @@ async function builtinScan(root: string, timeoutMs: number): Promise<HistorySecr
     throw new Error(`git log exited ${status ?? "on a signal"}${gitReason(stderr)}`);
   return out;
 }
-
-/** The harness-owned gitleaks configuration: gitleaks' own default rules, nothing of the repository's. */
-const GITLEAKS_CONFIG =
-  "# Sekhemet: gitleaks' default rules only (review M3).\n[extend]\nuseDefault = true\n";
 
 /** gitleaks, confined, over the whole history; undefined when it could not give a verdict. */
 async function gitleaksScan(
@@ -260,11 +282,13 @@ async function gitleaksScan(
     );
     // Review M3: gitleaks reads none of the repository's own configuration.
     // An explicit config outranks the repository's `.gitleaks.toml` (a
-    // harness-owned file holding exactly gitleaks' default rules), and the
+    // harness-owned file: the vendored gitleaks v8.30.1 rule file, so the
+    // program reports the bundled scan's rule ids whatever version is
+    // installed, not that binary's own built-in rules; C2b), and the
     // ignore path is an empty directory of ours, not the repository's
     // `.gitleaksignore`.
     const config = join(home, "gitleaks.toml");
-    writeFileSync(config, GITLEAKS_CONFIG, { mode: 0o600 });
+    writeFileSync(config, gitleaksRulesText(), { mode: 0o600 });
     const ignoreDir = join(home, "ignore");
     mkdirSync(ignoreDir);
     const report = join(home, "gitleaks.json");
@@ -386,13 +410,15 @@ export async function scanHistorySecrets(
     // gitleaks gave no verdict: the bundled rules still scan, and say why.
     gitleaksReason = `gitleaks: ${r.error}`;
   }
+  // Rules of the vendored file JavaScript cannot run are named, never skipped silently.
+  const reason = [gitleaksReason, rulesNotRunNote()].filter(Boolean).join("; ");
   try {
     const findings = await builtinScan(root, timeoutMs);
     return {
       scanner: "builtin",
       commits,
       findings,
-      ...(gitleaksReason ? { reason: gitleaksReason } : {}),
+      ...(reason ? { reason } : {}),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

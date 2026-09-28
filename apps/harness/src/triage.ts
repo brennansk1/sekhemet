@@ -94,12 +94,12 @@ export async function sendBack(
   const stored = (await ctx.cardStore.getCard(card.id)) ?? card;
   if (stored.status === "in_progress" || stored.status === "verify") {
     throw new Error(
-      `${card.id} is ${stored.status === "verify" ? "being verified" : "running"}; stop it with \`sekhemet abort ${card.id}\` first. A send-back is for a card in Review or Parked.`,
+      `${card.id} is ${stored.status === "verify" ? "being verified" : "running"}; stop it with \`sekhemet abort ${card.id}\` first. A send-back is for an issue in Review or Parked.`,
     );
   }
   if (stored.status !== "review" && stored.status !== "parked") {
     throw new Error(
-      `${card.id} is in '${stored.status}'; a send-back is for a card in Review or Parked`,
+      `${card.id} is in '${stored.status}'; a send-back is for an issue in Review or Parked`,
     );
   }
   await decidedInReview(ctx, stored, "send_back");
@@ -192,7 +192,7 @@ export async function reject(ctx: TriageContext, card: CardRecord, reason: strin
   const stored = (await ctx.cardStore.getCard(card.id)) ?? card;
   if (!["review", "parked", "ready", "backlog"].includes(stored.status)) {
     throw new Error(
-      `${card.id} is in '${stored.status}'; a card is rejected from Review, Parked, Ready or Backlog`,
+      `${card.id} is in '${stored.status}'; an issue is rejected from Review, Parked, Ready or Backlog`,
     );
   }
   await decidedInReview(ctx, stored, "reject");

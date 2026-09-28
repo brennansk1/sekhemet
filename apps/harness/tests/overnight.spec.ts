@@ -182,7 +182,7 @@ describe("sekhemet overnight", () => {
       rounds: 1,
       cardsRun: 1,
       passed: 1,
-      stoppedBecause: "no Ready cards left",
+      stoppedBecause: "no Ready issues left",
     });
     expect((await log.getEventsByTypes([GOVERNANCE_EVENTS.usage])).length).toBe(1);
   });

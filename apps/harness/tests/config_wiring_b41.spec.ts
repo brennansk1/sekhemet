@@ -222,14 +222,25 @@ describe("Load, Unload and Qualify to assign on the dashboard (DB-N6-4, rule 20a
     const { call } = await serve({
       qualifyAdapter: (model, role) => {
         asked.push(`${role}:${model}`);
-        // Answers every case with plain text: it does not qualify.
-        return new MockInferenceAdapter(model, ["I cannot help with that."]);
+        // Answers every case with plain text and no tool call: it does not qualify.
+        return new MockInferenceAdapter(model, [
+          {
+            text: "I cannot help with that.",
+            toolCalls: [],
+            usage: { promptTokens: 10, completionTokens: 8, durationMs: 5 },
+          },
+        ]);
       },
     });
     const r = await call("POST", "/api/config/roles/planner/qualify", { model: "fake-planner" });
     expect(r.status).toBe(200);
     expect(r.body.qualified).toBe(false);
-    expect(String(r.body.reason)).toMatch(/verifies it on this machine/);
+    // Scored, not crashed: the reason is the score against the bar (compliance
+    // C6; the old pattern also matched "could not run" and hid a crash).
+    expect(String(r.body.reason)).toMatch(
+      /^\d+% of the check that verifies it on this machine passed; it needs \d+%\.$/,
+    );
+    expect(String(r.body.reason)).not.toMatch(/could not run/);
     expect(asked).toEqual(["planner:fake-planner"]);
   }, 60_000);
 });

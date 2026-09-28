@@ -51,7 +51,7 @@ export function render(root, cards, { group, sortCards, tileOpts, columns }) {
     .map((g) => {
       const key = `${group}:${g.key}`;
       const shut = collapsed.has(key);
-      const h = `<header class="lane-h"><button class="chev" type="button" data-lane-toggle="${esc(key)}" aria-expanded="${!shut}" aria-label="${esc(`${shut ? "Expand" : "Collapse"} ${g.label}`)}">${icon(shut ? "chevron-right" : "chevron-down", 14, "ic s14")}</button><b>${esc(g.label)}</b><span class="sec tnum">${g.cards.length} ${g.cards.length === 1 ? "card" : "cards"}${g.points && showsPoints(store.state.estimation) ? ` · ${g.points} pts` : ""}</span>${progressHtml(g)}</header>`;
+      const h = `<header class="lane-h"><button class="chev" type="button" data-lane-toggle="${esc(key)}" aria-expanded="${!shut}" aria-label="${esc(`${shut ? "Expand" : "Collapse"} ${g.label}`)}">${icon(shut ? "chevron-right" : "chevron-down", 14, "ic s14")}</button><b>${esc(g.label)}</b><span class="sec tnum">${g.cards.length} ${g.cards.length === 1 ? "issue" : "issues"}${g.points && showsPoints(store.state.estimation) ? ` · ${g.points} pts` : ""}</span>${progressHtml(g)}</header>`;
       if (shut) return `<section class="lane shut" data-lane="${esc(key)}">${h}</section>`;
       const cells = cols
         .map((d) => {
@@ -64,7 +64,7 @@ export function render(root, cards, { group, sortCards, tileOpts, columns }) {
       return `<section class="lane" data-lane="${esc(key)}" aria-label="${esc(g.label)}">${h}<div class="lane-row" style="--cols:${cols.length}">${cells}</div></section>`;
     })
     .join("");
-  const html = `<div class="lanes" role="region" aria-label="${esc(`Board grouped by ${group}`)}">${head}${body || '<p class="empty">No cards match this filter.</p>'}</div>`;
+  const html = `<div class="lanes" role="region" aria-label="${esc(`Board grouped by ${group}`)}">${head}${body || '<p class="empty">No issues match this filter.</p>'}</div>`;
   if (html === last && root.querySelector(".lanes")) return;
   const active = document.activeElement?.closest?.(".tile")?.dataset.id;
   const scroll = root.querySelector(".lanes");

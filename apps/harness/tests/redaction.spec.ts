@@ -28,7 +28,7 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-// A fake GitHub token: the scanner's `github-token` shape, never a real one.
+// A fake GitHub token: gitleaks' `github-pat` shape, never a real one.
 const TOKEN = `ghp_${"Z9y8X7w6V5u4T3s2R1q0".repeat(2).slice(0, 36)}`;
 
 function filesUnder(dir: string): string[] {

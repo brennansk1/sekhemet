@@ -150,7 +150,7 @@ export async function buildSnapshot(
   const daily = cfd.slice(1).map((d, i) => Math.max(0, d.done - (cfd[i]?.done ?? 0)));
   const fc = partial ? undefined : monteCarloForecast(daily, remaining);
   const forecast = fc
-    ? `${remaining} cards left: 50% likely within ${fc.p50Days} day(s), 85% within ${fc.p85Days} (from ${fc.samples} days of history).`
+    ? `${remaining} issues left: 50% likely within ${fc.p50Days} day(s), 85% within ${fc.p85Days} (from ${fc.samples} days of history).`
     : undefined;
   const storyMap = partial
     ? undefined

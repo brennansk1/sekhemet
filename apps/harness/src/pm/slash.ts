@@ -35,18 +35,18 @@ export const SLASH_HELP: { cmd: string; does: string }[] = [
   },
   {
     cmd: "/capability",
-    does: "The Worker's measured pass rate by card kind, and its size horizon.",
+    does: "The Coding model's measured pass rate by issue type, and its size horizon.",
   },
-  { cmd: "/research <question>", does: "Ask the Researcher; the answer comes with sources." },
+  { cmd: "/research <question>", does: "Ask the Research model; the answer comes with sources." },
   { cmd: "/deep <question>", does: "Deep research: a team of sub-researchers and a verifier." },
   {
     cmd: "/plan <feature>",
-    does: "The planner splits a feature into cards, each checked by INVEST, the criterion lint and the scope bound.",
+    does: "The Planning model splits a feature into issues, each checked by INVEST, the criterion lint and the scope bound.",
   },
   { cmd: "/update", does: "A draft of this week's project update, for you to edit and post." },
-  { cmd: "/ready <card>", does: "Move a card to Ready." },
-  { cmd: "/park <card> [reason]", does: "Park a card." },
-  { cmd: "/backlog <card>", does: "Move a card back to Backlog." },
+  { cmd: "/ready <issue>", does: "Move an issue to Ready." },
+  { cmd: "/park <issue> [reason]", does: "Park an issue." },
+  { cmd: "/backlog <issue>", does: "Move an issue back to Backlog." },
   { cmd: "/compact", does: "Fold the conversation into Seshat's summary." },
 ];
 
@@ -130,7 +130,7 @@ export async function runSlash(cmd: SlashCommand, deps: SlashDeps): Promise<Slas
           cmd.args,
           deps.planner ? { adapter: deps.planner } : {},
         );
-        return { reply: r.report || "The planner created no card." };
+        return { reply: r.report || "The Planning model created no issue." };
       } catch (err) {
         if (err instanceof PipelineRefusal) return { reply: err.message };
         throw err;
@@ -155,8 +155,8 @@ export async function runSlash(cmd: SlashCommand, deps: SlashDeps): Promise<Slas
       const q = await pmQuality(deps.pmStore.log, open.length, () => undefined);
       return {
         reply: q.forecast
-          ? `${open.length} open card(s). At the recent throughput, 50% likely done in ${q.forecast.p50Days} day(s), 85% likely in ${q.forecast.p85Days} (Monte Carlo over ${q.forecast.samples} days of history). A range, not a promise.`
-          : `${open.length} open card(s). Not enough history for a forecast yet: it needs at least five days of completed work.`,
+          ? `${open.length} open issue(s). At the recent throughput, 50% likely done in ${q.forecast.p50Days} day(s), 85% likely in ${q.forecast.p85Days} (Monte Carlo over ${q.forecast.samples} days of history). A range, not a promise.`
+          : `${open.length} open issue(s). Not enough history for a forecast yet: it needs at least five days of completed work.`,
       };
     }
     case "capability":
@@ -171,7 +171,7 @@ export async function runSlash(cmd: SlashCommand, deps: SlashDeps): Promise<Slas
       if (!deps.researcher)
         return {
           reply:
-            "No Researcher is configured (start the queue or the dashboard with --researcher apodex).",
+            "No Research model is configured (start the queue or the dashboard with --researcher apodex).",
         };
       const r = await deps.researcher(cmd.args, { deep: cmd.name === "deep" });
       const verdict = r.grounded
@@ -185,10 +185,10 @@ export async function runSlash(cmd: SlashCommand, deps: SlashDeps): Promise<Slas
     case "park":
     case "backlog": {
       const id = await resolveCard(deps.cardStore, cmd.args, deps);
-      if (!id) return { reply: `No card matches "${cmd.args.split(/\s+/)[0] ?? ""}".` };
+      if (!id) return { reply: `No issue matches "${cmd.args.split(/\s+/)[0] ?? ""}".` };
       const reason = cmd.args.split(/\s+/).slice(1).join(" ") || `/${cmd.name} from the chat`;
       const card = await deps.cardStore.getCard(id);
-      if (!card) return { reply: `No card ${id}.` };
+      if (!card) return { reply: `No issue ${id}.` };
       const board = deps.board ?? new BoardServiceImpl(deps.cardStore, { entryConditions: true });
       await board.transitionCard({
         cardId: id,

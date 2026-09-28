@@ -23,7 +23,9 @@ import { gitleaksAllowedPaths, scanSecrets } from "../src/secrets.js";
 
 const REPO = join(import.meta.dirname, "..", "..", "..");
 const FIXTURES = "packages/gates/rules/semgrep/fixtures";
-const AWS_EXAMPLE = 'AWS_ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE"\n'; // gitleaks:allow
+// An AWS key id gitleaks flags (its rule allowlists AWS's documented
+// `…EXAMPLE` id), built at run time so this file holds none.
+const AWS_KEY = `AWS_ACCESS_KEY_ID = "${"ASIA"}Y34FZKBOKMUTVV7A"\n`;
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -98,11 +100,11 @@ describe("the secrets gate on a card's diff honours the base's .gitleaks.toml", 
     writeFileSync(join(root, path), text);
   };
 
-  it("passes AWS's example key in the fixtures path, and fails it anywhere else", async () => {
+  it("passes an AWS key id in the fixtures path, and fails it anywhere else", async () => {
     const root = repoWithAllowlist();
-    add(root, `${FIXTURES}/new-rule.py`, AWS_EXAMPLE);
+    add(root, `${FIXTURES}/new-rule.py`, AWS_KEY);
     expect((await gate(root)).failures).toEqual([]);
-    add(root, "src/settings.py", AWS_EXAMPLE);
+    add(root, "src/settings.py", AWS_KEY);
     const r = await gate(root);
     expect(r.failures.map((f) => f.location?.file)).toEqual(["src/settings.py"]);
   });
@@ -110,7 +112,7 @@ describe("the secrets gate on a card's diff honours the base's .gitleaks.toml", 
   it("does not let a card allowlist its own credential in the same change", async () => {
     const root = repoWithAllowlist();
     add(root, ".gitleaks.toml", "[extend]\nuseDefault = true\n[allowlist]\npaths = ['''src/''']\n");
-    add(root, "src/settings.py", AWS_EXAMPLE);
+    add(root, "src/settings.py", AWS_KEY);
     expect((await gate(root)).failures.map((f) => f.gate)).toEqual(["secrets"]);
   });
 });

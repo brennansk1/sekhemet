@@ -401,9 +401,9 @@ function combosHtml(c) {
       .join("<br>");
     return `<tr><td>${models}</td><td>${x.floorsMet ? "Met" : "Not met"}</td><td>${graded(e.timePerCardMs, mins)}</td><td>${graded(e.expectedSwaps, (v) => v.toFixed(1))}</td><td>${graded(x.peakBytes, gb)}</td><td>${graded(e.acceptedPerNight, (v) => String(v))}</td></tr>`;
   };
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-combos"><h3 id="cfg-h-combos">Combinations</h3><p class="sec">Ordered by each role's quality floor, then the least time per card including swaps, then the smaller footprint. No combined score.</p>${
+  return `<section class="cfg-sec" aria-labelledby="cfg-h-combos"><h3 id="cfg-h-combos">Combinations</h3><p class="sec">Ordered by each role's quality floor, then the least time per issue including swaps, then the smaller footprint. No combined score.</p>${
     kept.length
-      ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Models</th><th>Quality floors</th><th>Time per card</th><th>Swaps per card</th><th>Peak memory</th><th>Cards per night</th></tr></thead><tbody>${kept.map(row).join("")}</tbody></table></div>`
+      ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Models</th><th>Quality floors</th><th>Time per issue</th><th>Swaps per issue</th><th>Peak memory</th><th>Issues per night</th></tr></thead><tbody>${kept.map(row).join("")}</tbody></table></div>`
       : '<p class="sec">No combination to compare yet.</p>'
   }${
     excluded.length

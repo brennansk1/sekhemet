@@ -261,7 +261,7 @@ export function agentPanel(
         state: "taken_over",
         label: "paused",
         sentence:
-          "Taken over by a person. Work in the card's worktree; the agent's work so far is on its branch.",
+          "Taken over by a person. Work in the issue's worktree; the agent's work so far is on its branch.",
         controls: ["submit", "hand_back"],
         messageBox: false,
       };

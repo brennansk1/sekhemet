@@ -591,7 +591,7 @@ describe("the record, the advice and the adoption on the ledger (DS-N2-9, MD-N11
     };
     out.length = 0;
     expect(await runResearchBakeoffCommand([], k, io)).toBe(1);
-    expect(out.join("\n")).toMatch(/apodex-1\.1-mini is not qualified/);
+    expect(out.join("\n")).toMatch(/apodex-1\.1-mini is not verified on this machine/);
     expect(out.join("\n")).toMatch(/sekhemet qualify --models apodex-1\.1-mini/);
 
     // Qualified on an old build: Spark needs b10828.
@@ -652,7 +652,7 @@ describe("the record, the advice and the adoption on the ledger (DS-N2-9, MD-N11
     // Each model's server released when its run ended (a measurement run).
     expect(unloaded).toEqual(["apodex-1.1-mini", "spark-x2.5-4b", "neohorse-1-4b"]);
     expect(await k.log.getEventsByTypes([MEASURE_BENCHMARKED])).toHaveLength(3);
-    expect(out.join("\n")).toMatch(/spark-x2\.5-4b adopted as the Researcher default/);
+    expect(out.join("\n")).toMatch(/spark-x2\.5-4b adopted as the Research model default/);
     expect(out.join("\n")).toMatch(/sekhemet models restore researcher --default/);
     expect(currentAssignment(registry, "host-a", "researcher", "default")?.model).toBe(
       "spark-x2.5-4b",
@@ -699,7 +699,7 @@ describe("the record, the advice and the adoption on the ledger (DS-N2-9, MD-N11
     );
     expect(code).toBe(0);
     expect(out.join("\n")).toMatch(/failed on 25 question/);
-    expect(out.at(-1)).toMatch(/The Researcher stays apodex-1\.1-mini/);
+    expect(out.at(-1)).toMatch(/The Research model stays apodex-1\.1-mini/);
     expect(currentAssignment(registry, "host-a", "researcher", "default")?.model).toBe(
       "apodex-1.1-mini",
     );
@@ -731,7 +731,7 @@ describe("the record, the advice and the adoption on the ledger (DS-N2-9, MD-N11
       adapterFor: (c) => c.create(`/models/${c.modelId}.gguf`, "/bin/llama-server"),
     });
     expect(code).toBe(1);
-    expect(out.at(-1)).toMatch(/spark-x2\.5-4b is not qualified .*\(invalidated\)/);
+    expect(out.at(-1)).toMatch(/spark-x2\.5-4b is not verified on this machine .*\(invalidated\)/);
     expect(currentAssignment(registry, "host-a", "researcher", "default")).toBeUndefined();
     expect(await k.log.getEventsByTypes(["models/assigned"])).toHaveLength(0);
   });
@@ -770,7 +770,7 @@ describe("the record, the advice and the adoption on the ledger (DS-N2-9, MD-N11
     expect(out.at(-1)).toMatch(/another host/);
     expect(await runResearchBakeoffCommand(["--adopt-from", rec.runEventId], k, io)).toBe(0);
     // An inconclusive comparison with lower memory: allowed, quality not established.
-    expect(out.at(-1)).toMatch(/neohorse-1-4b adopted as the Researcher default/);
+    expect(out.at(-1)).toMatch(/neohorse-1-4b adopted as the Research model default/);
     const [run] = await k.log.getEventsByTypes([RESEARCH_GOLDEN_RUN]);
     expect(run?.payload).toMatchObject({
       adoption: { verdicts: [{ model: "neohorse-1-4b", quality: "not established" }] },

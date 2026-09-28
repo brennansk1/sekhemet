@@ -67,6 +67,21 @@ export function setTheme(choice) {
   applyTheme();
 }
 
+/**
+ * Compact (88 px tiles) or comfortable (112 px: the spec line, the token and
+ * time bars, difficulty); this browser's, like the theme (DB-N4-1).
+ */
+export function setDensity(value) {
+  const next = value === "comfortable" ? "comfortable" : "compact";
+  document.documentElement.dataset.density = next;
+  try {
+    localStorage.setItem("sekhemet-density", next);
+  } catch {
+    // Private mode: this page only.
+  }
+  window.dispatchEvent(new CustomEvent("sekhemet:refresh-view"));
+}
+
 /** The palette's Switch theme: from what shows now to the other one. */
 export function toggleTheme() {
   setTheme(document.documentElement.dataset.theme === "sand" ? "dark" : "light");
@@ -292,13 +307,13 @@ function renderBar() {
     const head = m.memoryPercent
       ? `Paused for memory: ${m.memoryPercent}% used.`
       : pausedCard
-        ? "Paused for memory on 1 card."
+        ? "Paused for memory on 1 issue."
         : stopReasonLabel("memory_pressure").short;
     html = `<div class="bar" role="status">${icon("pause")}<span><b>${esc(head)}</b> <span class="sec">${esc(sentence)}</span></span><a class="link-btn" href="#/machine">Machine</a></div>`;
   } else if (s.backpressureActive) {
     const limit = s.wipLimits.review;
     const n = s.cards.filter((c) => c.status === "review").length;
-    html = `<div class="bar" role="status">${icon("pause")}<span><b>Review is full (${n} of ${esc(limit)}).</b> <span class="sec">Finished cards will wait in Checking until you clear one.</span></span><a class="link-btn" href="#/review">Open review</a></div>`;
+    html = `<div class="bar" role="status">${icon("pause")}<span><b>Review is full (${n} of ${esc(limit)}).</b> <span class="sec">Finished issues will wait in Checking until you clear one.</span></span><a class="link-btn" href="#/review">Open review</a></div>`;
   } else if (s.pm.status?.workerPaused && s.pm.status.phase !== "idle") {
     // PM_DESIGN §2.5: nothing is wrong, so the running rule, not amber.
     const step = s.pm.step;

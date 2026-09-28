@@ -73,20 +73,25 @@ describe("parseTitle", () => {
   it("strips the SPIDR suffix into kind tags", () => {
     expect(parseTitle("Implement canonical JSON and SHA-256 hash chaining (SPIDR: Rule)")).toEqual({
       title: "Implement canonical JSON and SHA-256 hash chaining",
-      kinds: ["rules"],
+      kinds: ["rule"],
     });
-    expect(parseTitle("Define contract types (SPIDR: Interface)").kinds).toEqual(["contract"]);
-    expect(parseTitle("x (SPIDR: Data)").kinds).toEqual(["storage"]);
-    expect(parseTitle("x (SPIDR: Path)").kinds).toEqual(["flow"]);
-    expect(parseTitle("x (SPIDR: Spike)").kinds).toEqual(["research"]);
-    expect(parseTitle("x (SPIDR: Visual)").kinds).toEqual(["ui"]);
-    expect(parseTitle("x (SPIDR: Integration)").kinds).toEqual(["wiring"]);
+    // DB-N2-4: the kernel's stored kinds, never a second enumeration; UI and
+    // Wiring are refinements of an `implement` card (NAMING).
+    expect(parseTitle("Define contract types (SPIDR: Interface)").kinds).toEqual(["interface"]);
+    expect(parseTitle("x (SPIDR: Data)").kinds).toEqual(["data"]);
+    expect(parseTitle("x (SPIDR: Path)").kinds).toEqual(["implement"]);
+    expect(parseTitle("x (SPIDR: Spike)").kinds).toEqual(["spike"]);
+    expect(parseTitle("x (SPIDR: Visual)").kinds).toEqual(["implement"]);
+    expect(parseTitle("x (SPIDR: Integration)").kinds).toEqual(["implement"]);
   });
 
   it("keeps at most two kinds, primary first, for combined slices", () => {
-    expect(parseTitle("x (SPIDR: Rule & Path)").kinds).toEqual(["rules", "flow"]);
-    expect(parseTitle("x (SPIDR: Rule/Interface)").kinds).toEqual(["rules", "contract"]);
-    expect(parseTitle("x (SPIDR: Interface & Integration)").kinds).toEqual(["contract", "wiring"]);
+    expect(parseTitle("x (SPIDR: Rule & Path)").kinds).toEqual(["rule", "implement"]);
+    expect(parseTitle("x (SPIDR: Rule/Interface)").kinds).toEqual(["rule", "interface"]);
+    expect(parseTitle("x (SPIDR: Interface & Integration)").kinds).toEqual([
+      "interface",
+      "implement",
+    ]);
     expect(parseTitle("x (SPIDR: Rule, Path, Data)").kinds).toHaveLength(2);
   });
 
@@ -318,7 +323,7 @@ describe("statusLine and describeCard", () => {
   it("hasher in Checking: title, kind and the failing gate", () => {
     const d = describeCard(card({}), { now, evidence: hasherEvidence });
     expect(d.title).toBe("Implement canonical JSON and SHA-256 hash chaining");
-    expect(d.kinds).toEqual(["rules"]);
+    expect(d.kinds).toEqual(["rule"]);
     expect(d.type).toBe("story");
     expect(d.shortId).toBe("hasher");
     expect(d.statusLine).toBe("Types failed · 3 errors");
@@ -340,11 +345,12 @@ describe("statusLine and describeCard", () => {
     expect(line({ status: "planning" }).text).toBe("Being planned");
     // Suite run 5: a card that failed and went back to Planning showed
     // "Planner is writing the plan" — work in progress, when nothing was
-    // working on it. A failed attempt is shown as one.
+    // working on it. A failed attempt is shown as one, its state first and
+    // with no failure mark on the stage (DB-N1-3).
     expect(line({ status: "planning" }, { evidence: hasherEvidence })).toEqual({
-      text: "Types failed · 3 errors · needs a new plan",
-      tone: "fail",
-      mark: "fail",
+      text: "Needs a new plan · Types failed · 3 errors",
+      tone: "blocked",
+      mark: "planning",
     });
     // DB-N7-3: no step count on the board; the issue carries it (`budgetText`).
     expect(line({ status: "in_progress", stepsUsed: 5 })).toMatchObject({
@@ -700,7 +706,7 @@ describe("PM-P1-10: the board's kind tag comes from the card's stored kind", () 
     const d = describeCard(card({ title: "Store the order", kind: "data" }), {
       now: new Date("2026-09-26T12:00:00Z"),
     });
-    expect(d.kinds).toEqual(["storage"]);
+    expect(d.kinds).toEqual(["data"]);
     expect(d.title).toBe("Store the order");
   });
 
@@ -708,7 +714,7 @@ describe("PM-P1-10: the board's kind tag comes from the card's stored kind", () 
     const d = describeCard(card({ title: "Check totals (SPIDR: Data)", kind: "rule" }), {
       now: new Date("2026-09-26T12:00:00Z"),
     });
-    expect(d.kinds).toEqual(["rules"]);
+    expect(d.kinds).toEqual(["rule"]);
     expect(d.title).toBe("Check totals");
   });
 });

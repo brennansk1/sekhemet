@@ -121,7 +121,7 @@ export function burnupChart(
       empty:
         s.scope === "cycle" && s.startsOn
           ? `${s.name ?? "The sprint"} starts on ${formatShortDate(s.startsOn)}.`
-          : "No cards yet.",
+          : "No issues yet.",
     };
   }
   const issues = s.unit === "issues";
@@ -186,7 +186,7 @@ export function burnupChart(
       : "") + (extras.target ? ` Target ${formatShortDate(extras.target)}.` : "");
   const unest =
     !issues && s.unestimated > 0
-      ? ` ${s.unestimated} ${s.unestimated === 1 ? "card" : "cards"} unestimated, counted as 1 pt each.`
+      ? ` ${s.unestimated} ${s.unestimated === 1 ? "issue" : "issues"} unestimated, counted as 1 pt each.`
       : "";
   return {
     title,

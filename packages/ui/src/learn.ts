@@ -361,7 +361,7 @@ const LESSONS: Record<string, Lesson> = {
   ),
   "column:on_hold": column(
     "On hold",
-    "Issues stopped for something only a person can clear: a question, a failed attempt or a missing tool. Each one says why on its card.",
+    "Issues stopped for something only a person can clear: a question, a failed attempt or a missing tool. Each one says why on the board.",
     KANBAN,
   ),
   "column:wont_do": column(

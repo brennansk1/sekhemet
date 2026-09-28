@@ -147,7 +147,7 @@ export async function mayRun(
     verdict = {
       ok: false,
       breaker: "failures",
-      reason: `${state.consecutiveFailures} cards in a row ended without passing; a person should look before more run`,
+      reason: `${state.consecutiveFailures} issues in a row ended without passing; a person should look before more run`,
     };
   }
   if (verdict.ok && (opts.thermal ?? (() => thermalState()))() === "throttled") {

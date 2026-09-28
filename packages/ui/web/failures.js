@@ -92,7 +92,7 @@ export function failuresHtml(failures, { card, gatesConfig, limit } = {}) {
   });
   const more =
     limit && groups.length > limit
-      ? `<div class="sec" style="font-size:var(--text-xs)">${groups.length - limit} more in the card view</div>`
+      ? `<div class="sec" style="font-size:var(--text-xs)">${groups.length - limit} more on the issue page</div>`
       : "";
   return `<div class="fails">${blocks.join("")}${more}</div>`;
 }

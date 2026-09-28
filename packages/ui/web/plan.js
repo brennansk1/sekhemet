@@ -67,7 +67,7 @@ function html(ctx) {
     `<section><h3 class="sh">Spec</h3>${full.spec ? `<p class="prose">${esc(full.spec)}</p>` : '<p class="sec">No spec recorded. The agent works from the title and the criteria.</p>'}${type ? `<p class="sec kind-why"><b>${esc(type.label)}</b>: ${esc(type.tooltip)}</p>` : ""}</section>`,
   );
   parts.push(
-    `<section><h3 class="sh">Done when <span class="sec">${criteria.length ? `${criteria.length} criteria` : ""}</span></h3>${criteria.length ? `<ul class="crit">${criteria.map((c) => `<li><span class="bul" aria-hidden="true"></span><span>${esc(c)}</span></li>`).join("")}</ul>` : '<p class="sec">No criteria recorded for this card.</p>'}</section>`,
+    `<section><h3 class="sh">Done when <span class="sec">${criteria.length ? `${criteria.length} criteria` : ""}</span></h3>${criteria.length ? `<ul class="crit">${criteria.map((c) => `<li><span class="bul" aria-hidden="true"></span><span>${esc(c)}</span></li>`).join("")}</ul>` : '<p class="sec">No criteria recorded for this issue.</p>'}</section>`,
   );
   const scope = (full.scopeFiles ?? [])
     .map(
@@ -88,7 +88,7 @@ function html(ctx) {
     `<section><h3 class="sh">Budget</h3><dl class="kv budget-kv"><dt>Steps</dt><dd>${meter(full.stepsUsed, full.stepBudget, String, " steps")}</dd><dt>Tokens</dt><dd>${meter(tokensUsed, full.tokenBudget, formatTokens)}</dd><dt>Time</dt><dd>${meter(secondsUsed, full.secondsBudget, (s) => formatDuration(s * 1000))}</dd><dt>Difficulty</dt><dd class="diff-row">${difficultyHtml(full.difficulty)}</dd></dl></section>`,
   );
   parts.push(
-    `<div class="two"><section><h3 class="sh">Waits on</h3>${linkList(waitsOn, "Nothing. This card can run as soon as it is Ready.")}</section><section><h3 class="sh">Unblocks</h3>${linkList(unblocks, "No card waits on this one.")}</section></div>`,
+    `<div class="two"><section><h3 class="sh">Waits on</h3>${linkList(waitsOn, "Nothing. This issue can run as soon as it is Ready.")}</section><section><h3 class="sh">Unblocks</h3>${linkList(unblocks, "No issue waits on this one.")}</section></div>`,
   );
   const plansHtml = plans.length
     ? plans

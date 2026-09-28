@@ -72,7 +72,7 @@ function claimSummary(claims: Claim[] | undefined): string[] {
     ...(executable.length
       ? [
           "",
-          "Executable, pending the claim gate:",
+          "Executable, pending the claim check:",
           ...executable.map((c) => `- [${c.id}] ${c.text}`),
         ]
       : []),
@@ -193,7 +193,7 @@ export async function runResearchCard(
     if (card.scopeFiles.length === 0) {
       await cardStore.updateCard(card.id, { scopeFiles: [noteRel] }, "researcher");
     }
-    await move("in_progress", "research: the Researcher started");
+    await move("in_progress", "research: the Research model started");
   }
   const answer = await ask(researchQuestion(card), card.id);
   const dir = join(repoPath, ".sekhemet", "research");
@@ -220,7 +220,7 @@ export async function runResearchCard(
         eligible: claimGate.failures.length === 0,
         reason:
           claimGate.failures.length === 0
-            ? "the claim gate passed"
+            ? "the claim check passed"
             : claimGate.failures.map((f) => f.errorExcerpt).join("; "),
       }
     : (() => {
@@ -230,7 +230,7 @@ export async function runResearchCard(
             .map((c) => [c.id, "documented" as const]),
         );
         const e = reviewEligible(answer.claims ?? [], documented);
-        return { ...e, reason: `${e.reason} (no claim gate declared in gates.toml)` };
+        return { ...e, reason: `${e.reason} (no claim check declared in gates.toml)` };
       })();
   const passed = answer.grounded && answer.badCitations.length === 0 && eligible.eligible;
   const evDir = join(repoPath, ".sekhemet", "evidence");

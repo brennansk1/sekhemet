@@ -9,6 +9,7 @@
  *
  * The browser loads the compiled module as `/app/lib/live.js`.
  */
+import { formatWait } from "./vocabulary.js";
 
 /** The most output a row keeps: the server's own tail length. */
 export const LIVE_TEXT_LIMIT = 2000;
@@ -95,4 +96,18 @@ export function liveRow(
     waiting: text ? "" : LIVE_STEP_COPY.waiting,
     label: LIVE_STEP_COPY.label(at.step),
   };
+}
+
+/**
+ * A run in progress on Runs (DB-N2-11): *Running · 2 of 6 issues · 4m*,
+ * from `/api/runs`' `running` and the run's start; "" for a finished run.
+ */
+export function runningRunText(
+  run: { startedAt: string; running?: { finished: number; total: number } },
+  now = Date.now(),
+): string {
+  if (!run.running) return "";
+  const { finished, total } = run.running;
+  const elapsed = formatWait(now - Date.parse(run.startedAt));
+  return `Running · ${finished} of ${total} ${total === 1 ? "issue" : "issues"} · ${elapsed}`;
 }

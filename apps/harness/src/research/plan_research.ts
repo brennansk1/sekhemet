@@ -17,6 +17,7 @@ import {
   unaskedResearchHosts,
 } from "../research_consent.js";
 import { runnerLease } from "../runner_lease.js";
+import { DEPS_DEV_HOST, depsDevVersion } from "./deps_dev.js";
 import type { ResearchDeps } from "./researcher.js";
 import {
   type DeepAnswer,
@@ -114,7 +115,7 @@ export async function planResearch(o: PlanResearchOptions): Promise<ReuseDeps | 
       hosts: RESEARCH_HOSTS,
       ask: () =>
         ask(
-          `Look for existing packages, repositories and papers before planning? A yes lets Sekhemet's own research reach ${RESEARCH_HOSTS.join(", ")} (short keyword queries only, each logged); card commands still get no network. [y/N] `,
+          `Look for existing packages, repositories and papers before planning? A yes lets Sekhemet's own research reach ${RESEARCH_HOSTS.join(", ")} (short keyword queries only, each logged); the commands an issue runs still get no network. [y/N] `,
         ),
     });
     allowed = answer === "yes";
@@ -131,7 +132,7 @@ export async function planResearch(o: PlanResearchOptions): Promise<ReuseDeps | 
   const unasked = unaskedResearchHosts(networkConfigs(o.repoPath).user);
   if (unasked.length && o.newProject && o.ask) {
     const yes = await o.ask(
-      `Research may also reach ${unasked.join(", ")}, which your earlier yes to research did not name (short keyword queries only, each logged; card commands still get no network). Allow ${unasked.length === 1 ? "it" : "them"} too? [y/N] `,
+      `Research may also reach ${unasked.join(", ")}, which your earlier yes to research did not name (short keyword queries only, each logged; the commands an issue runs still get no network). Allow ${unasked.length === 1 ? "it" : "them"} too? [y/N] `,
     );
     recordResearchHostsAnswer(yes, unasked);
   }
@@ -156,7 +157,12 @@ export async function planResearch(o: PlanResearchOptions): Promise<ReuseDeps | 
       .append({
         actor: "harness",
         type: "research/query",
-        payload: { source: q.source, ok: q.ok, count: q.results.length },
+        payload: {
+          source: q.source,
+          ok: q.ok,
+          count: q.results.length,
+          ...(q.origin ? { origin: q.origin } : {}),
+        },
         private: {
           query: q.query,
           ...(q.language ? { language: q.language } : {}),
@@ -186,6 +192,14 @@ export async function planResearch(o: PlanResearchOptions): Promise<ReuseDeps | 
     ),
     repos: (q, language) => searchRepos(q, json, language),
     papers: (q) => searchPapers(q, { fetch: (u, i) => f(u, i) }),
+    // DEC-44: deps.dev through the same policy; refused before sending while
+    // the person's yes does not name it (DS-S8-8).
+    depsDev: (ecosystem, name, version) => {
+      const reason = researchHostRefusal(DEPS_DEV_HOST, user);
+      return reason
+        ? Promise.reject(new ResearchHostAwaitsYes(DEPS_DEV_HOST, reason))
+        : depsDevVersion(ecosystem, name, version, json);
+    },
     record,
   };
 }
@@ -255,15 +269,15 @@ export function deepPriorArtFor(o: {
   if (!o.researcher)
     return {
       skipped:
-        "no Researcher is configured (name one with --researcher or SEKHEMET_RESEARCHER, or assign one with sekhemet models assign researcher <model>)",
+        "no Research model is configured (name one with --researcher or SEKHEMET_RESEARCHER, or assign one with sekhemet models assign researcher <model>)",
     };
   const busy = () => {
     const holder = runnerLease(o.repoPath);
     if (!holder) return undefined;
     const what = holder.cardId
-      ? `card ${holder.cardId} is running`
+      ? `issue ${holder.cardId} is running`
       : `a ${holder.kind ?? "run"} holds the machine`;
-    return `${what} (pid ${holder.pid}), and the Researcher would compete with it for memory; plan again when it ends`;
+    return `${what} (pid ${holder.pid}), and the Research model would compete with it for memory; plan again when it ends`;
   };
   const now = busy();
   if (now) return { skipped: now };

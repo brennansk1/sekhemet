@@ -10,6 +10,7 @@ import {
 import { homedir, platform, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 import { gateTemplate } from "@sekhemet/gates";
+import { type CiCommand, readCiSteps } from "./ci_files.js";
 
 /**
  * The first run's pieces (surface items 5–8, P10), shared by the bare
@@ -24,8 +25,10 @@ import { gateTemplate } from "@sekhemet/gates";
  *   `packageManager` field or the lockfile (npm when neither says), a
  *   typecheck gate when TypeScript is a dependency, the project's lint and
  *   test scripts, the team's own linter and formatter configurations
- *   (item 9a), and every CI step — multi-line `run: |` blocks included —
- *   each listed with the gate it became or why it did not (item 9b);
+ *   (item 9a), and every CI step — GitHub Actions and GitLab CI, read with
+ *   a YAML parser (`ci_files.ts`, DEC-44), multi-line `run: |` blocks
+ *   included — each listed with the gate it became or why it did not
+ *   (item 9b);
  * - the writes: `.sekhemet/config.toml`, `.sekhemet/gates.toml` and one
  *   marked `.gitignore` block that ignores `.sekhemet/` by default and
  *   re-includes only the files a team shares (item 5.6, SUR-34). A file that
@@ -183,7 +186,7 @@ export function recommendRoster(totalBytes = totalmem()): Roster {
       manager: "qwen3.8-27b",
       reviewer: "mistral-small3.2:24b",
       researcher: "apodex",
-      note: "All four roles stay resident; use the Q8_0 Researcher (SEKHEMET_RESEARCHER_GGUF).",
+      note: "All four roles stay resident; use the Q8_0 Research model (SEKHEMET_RESEARCHER_GGUF).",
     };
   }
   if (gb >= 48) {
@@ -193,7 +196,7 @@ export function recommendRoster(totalBytes = totalmem()): Roster {
       manager: "qwen3.8-27b",
       reviewer: "mistral-small3.2:24b",
       researcher: "apodex",
-      note: "Worker and manager resident together; reviewer and Researcher swap in.",
+      note: "The Coding and Planning models resident together; the Review and Research models swap in.",
     };
   }
   return {
@@ -202,7 +205,7 @@ export function recommendRoster(totalBytes = totalmem()): Roster {
     manager: "qwen3.8-27b",
     reviewer: "mistral-small3.2:24b",
     researcher: "apodex",
-    note: "One large model at a time: the Worker stays resident; manager, reviewer and Researcher swap in by role batch.",
+    note: "One large model at a time: the Coding model stays resident; the Planning, Review and Research models swap in by role batch.",
   };
 }
 
@@ -252,7 +255,15 @@ export type CiReason =
   | "needs_secret"
   | "matrix"
   | "unknown_tool"
-  | "not_a_check";
+  | "not_a_check"
+  /** The CI file is not YAML (its parser's message in `detail`). */
+  | "unreadable"
+  /** Something the reader cannot follow: a GitLab `include:`, a missing `!reference`, a working directory set by an expression (`detail` says which). */
+  | "not_read"
+  /** A GitHub Actions job that calls a reusable workflow (`detail` says whether its jobs are read). */
+  | "reusable_workflow"
+  /** Shell control flow over several lines (`if … fi`, a loop): the check runs only under it. */
+  | "shell_block";
 
 /** One CI command, with the gate it became or the reason it did not. */
 export interface CiStep {
@@ -262,6 +273,10 @@ export interface CiStep {
   command: string;
   gate?: string;
   reason?: CiReason;
+  /** Why, in words, when the reason needs them (`unreadable`, `not_read`, `reusable_workflow`). */
+  detail?: string;
+  /** The directory the command runs in (GitHub Actions' `working-directory`); absent at the root. */
+  directory?: string;
 }
 
 export interface DerivedGates {
@@ -544,136 +559,9 @@ function normalise(cmd: string): string {
     .replace(/^npm (test|start)\b/, "npm $1");
 }
 
-interface RawStep {
-  file: string;
-  line: number;
-  command?: string;
-  uses?: string;
-  secret: boolean;
-  service: boolean;
-}
-
-const indentOf = (l: string) => l.length - l.trimStart().length;
-
-/**
- * The steps of a GitHub Actions workflow, read by indentation (no YAML
- * library is taken for this): each `uses:`, and each command of each `run:`
- * — a block scalar (`|`, `>`) is split into its lines, a trailing `\`
- * joining a line to the next.
- */
-function workflowSteps(file: string, text: string): RawStep[] {
-  const lines = text.split("\n");
-  const out: RawStep[] = [];
-  const jobsAt = lines.findIndex((l) => /^jobs:\s*$/.test(l));
-  if (jobsAt === -1) return out;
-  const jobIndent = lines.slice(jobsAt + 1).find((l) => l.trim() && !l.trim().startsWith("#"));
-  const ji = jobIndent ? indentOf(jobIndent) : 2;
-  let i = jobsAt + 1;
-  while (i < lines.length) {
-    const l = lines[i] as string;
-    if (!(indentOf(l) === ji && /^\s*[\w-]+:\s*$/.test(l))) {
-      i++;
-      continue;
-    }
-    // One job: from here to the next line at its indent or less.
-    let end = i + 1;
-    while (
-      end < lines.length &&
-      (!(lines[end] as string).trim() || indentOf(lines[end] as string) > ji)
-    )
-      end++;
-    const job = lines.slice(i + 1, end);
-    const childIndent = Math.min(...job.filter((x) => x.trim()).map(indentOf));
-    const service = job.some((x) => indentOf(x) === childIndent && /^\s*services:\s*$/.test(x));
-    const stepsRel = job.findIndex((x) => indentOf(x) === childIndent && /^\s*steps:\s*$/.test(x));
-    if (stepsRel !== -1) {
-      const from = i + 1 + stepsRel + 1;
-      let itemIndent = -1;
-      let item: { start: number; lines: number[] } | undefined;
-      const flush = () => {
-        if (item) out.push(...stepCommands(file, lines, item.lines, service));
-      };
-      for (let k = from; k < end; k++) {
-        const x = lines[k] as string;
-        if (!x.trim()) {
-          item?.lines.push(k);
-          continue;
-        }
-        const ind = indentOf(x);
-        if (ind <= childIndent) break;
-        if (/^\s*-\s/.test(x) && (itemIndent === -1 || ind === itemIndent)) {
-          itemIndent = ind;
-          flush();
-          item = { start: k, lines: [k] };
-        } else item?.lines.push(k);
-      }
-      flush();
-    }
-    i = end;
-  }
-  return out;
-}
-
-function stepCommands(
-  file: string,
-  lines: readonly string[],
-  idx: readonly number[],
-  service: boolean,
-): RawStep[] {
-  const text = idx.map((k) => lines[k] as string);
-  const secret = text.some((l) => /\$\{\{\s*secrets\./.test(l));
-  const out: RawStep[] = [];
-  for (let n = 0; n < idx.length; n++) {
-    const raw = text[n] as string;
-    const uses = /^\s*(?:-\s+)?uses:\s*(.+?)\s*$/.exec(raw);
-    if (uses) {
-      out.push({
-        file,
-        line: (idx[n] as number) + 1,
-        uses: unquote(uses[1] as string),
-        secret,
-        service,
-      });
-      continue;
-    }
-    const run = /^(\s*)(?:-\s+)?run:\s*(.*?)\s*$/.exec(raw);
-    if (!run) continue;
-    const value = run[2] as string;
-    if (/^[|>][-+0-9]*$/.test(value)) {
-      const keyIndent = indentOf(raw) + (/^\s*-\s/.test(raw) ? 2 : 0);
-      let pending: { line: number; text: string } | undefined;
-      for (let m = n + 1; m < idx.length; m++) {
-        const b = text[m] as string;
-        if (b.trim() && indentOf(b) <= keyIndent) break;
-        const t = b.trim();
-        if (!t || t.startsWith("#")) continue;
-        const line = (idx[m] as number) + 1;
-        const joined = pending
-          ? { line: pending.line, text: `${pending.text} ${t}` }
-          : { line, text: t };
-        if (joined.text.endsWith("\\")) {
-          pending = { line: joined.line, text: joined.text.slice(0, -1).trim() };
-          continue;
-        }
-        pending = undefined;
-        out.push({ file, line: joined.line, command: joined.text, secret, service });
-      }
-    } else if (value) {
-      out.push({ file, line: (idx[n] as number) + 1, command: unquote(value), secret, service });
-    }
-  }
-  return out;
-}
-
-const unquote = (v: string) => v.replace(/^(["'])(.*)\1$/, "$2");
-
-function ciSteps(repo: string): RawStep[] {
-  const dir = join(repo, ".github", "workflows");
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((n) => /\.ya?ml$/.test(n))
-    .sort()
-    .flatMap((n) => workflowSteps(`.github/workflows/${n}`, readFileSync(join(dir, n), "utf8")));
+/** A word for `sh`, quoted only when it needs to be. */
+export function shellWord(w: string): string {
+  return /^[\w./@%+=:,-]+$/.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`;
 }
 
 /** A CI command as a gate's command and arguments; shell syntax goes through `sh -c`. */
@@ -684,18 +572,69 @@ function commandOf(cmd: string): [string, string[]] {
   return [first, rest];
 }
 
-function classifyCi(steps: readonly RawStep[], gates: DerivedGate[]): CiStep[] {
+function classifyCi(steps: readonly CiCommand[], gates: DerivedGate[]): CiStep[] {
   const out: CiStep[] = [];
   const counters: Partial<Record<CheckKind, number>> = {};
   const known = () =>
     new Map(gates.map((g) => [normalise(`${g.command} ${g.args.join(" ")}`), g.id]));
   for (const s of steps) {
+    if (s.error !== undefined) {
+      // A CI file that is not YAML: named, so its checks are not lost silently.
+      out.push({
+        file: s.file,
+        line: s.line,
+        command: s.file,
+        reason: "unreadable",
+        detail: s.error,
+      });
+      continue;
+    }
+    if (s.unread !== undefined) {
+      out.push({
+        file: s.file,
+        line: s.line,
+        command: s.file,
+        reason: "not_read",
+        detail: s.unread,
+      });
+      continue;
+    }
+    if (s.uses && s.reusable) {
+      const local = s.uses.startsWith("./");
+      out.push({
+        file: s.file,
+        line: s.line,
+        command: s.uses,
+        reason: "reusable_workflow",
+        detail: local
+          ? `its jobs are read from ${s.uses.slice(2)}`
+          : "a workflow in another repository is not read",
+      });
+      continue;
+    }
     if (s.uses) {
       out.push({ file: s.file, line: s.line, command: s.uses, reason: "action" });
       continue;
     }
     const cmd = s.command as string;
-    const step = { file: s.file, line: s.line, command: cmd };
+    const dir = s.directory;
+    const step = { file: s.file, line: s.line, command: cmd, ...(dir ? { directory: dir } : {}) };
+    if (dir?.includes("${{")) {
+      out.push(
+        /\$\{\{\s*matrix\./.test(dir)
+          ? { ...step, reason: "matrix" }
+          : {
+              ...step,
+              reason: "not_read",
+              detail: `its working directory is set by an expression (${dir})`,
+            },
+      );
+      continue;
+    }
+    if (/^(?:if|for|while|until|case|select)\b|^\{|\(\)\s*\{/.test(cmd)) {
+      out.push({ ...step, reason: "shell_block" });
+      continue;
+    }
     const tool = (cmd.split(/\s+/)[0] ?? "").replace(/^\.\//, "./");
     const kind = checkKind(cmd);
     if (/\$\{\{\s*matrix\./.test(cmd)) out.push({ ...step, reason: "matrix" });
@@ -705,13 +644,16 @@ function classifyCi(steps: readonly RawStep[], gates: DerivedGate[]): CiStep[] {
     else if (s.secret && kind) out.push({ ...step, reason: "needs_secret" });
     else if (!kind || kind === "build") out.push({ ...step, reason: "not_a_check" });
     else {
-      const same = known().get(normalise(cmd));
+      // A command in a subdirectory runs there (`cd web && npm test`): never
+      // the root's own check of the same words.
+      const run = dir ? `cd ${shellWord(dir)} && ${cmd}` : cmd;
+      const same = known().get(normalise(run));
       if (same) out.push({ ...step, gate: same });
       else {
         const n = (counters[kind] ?? 0) + 1;
         counters[kind] = n;
         const id = `ci-${kind}-${n}`;
-        const [command, args] = commandOf(cmd);
+        const [command, args] = commandOf(run);
         gates.push({
           id,
           rung: kind === "test" ? "test" : kind === "typecheck" ? "typecheck" : "lint",
@@ -739,7 +681,7 @@ function renderToml(gates: readonly DerivedGate[]): string {
   const q = (v: string) => JSON.stringify(v);
   return [
     DERIVED_GATES_HEADER,
-    "# Edit freely; the hash of this file is pinned when a card starts.",
+    "# Edit freely; the hash of this file is pinned when an issue starts.",
     "[project]",
     "max_files = 3",
     "max_diff_lines = 200",
@@ -789,7 +731,7 @@ export function deriveGates(repo: string): DerivedGates {
   } else if (existsSync(join(repo, "go.mod"))) {
     gates = templateGates(repo, "go");
   }
-  const ci = classifyCi(ciSteps(repo), gates);
+  const ci = classifyCi(readCiSteps(repo), gates);
   return {
     toml: renderToml(gates),
     gates: gates.map((g) => `${g.id}: ${g.command} ${g.args.join(" ")}`),
@@ -847,7 +789,7 @@ export function configToml(roster: Roster): string {
     `planner = "${roster.manager}"`,
     "",
     "[network]",
-    "# offline, allowlist or open. The Researcher's web access is also switched in Integrations.",
+    "# offline, allowlist or open. The Research model's web access is also switched in Integrations.",
     'mode = "offline"',
     "",
     "[review]",
@@ -926,7 +868,7 @@ export function installGates(
  * a start by conversation with Seshat, instead of only "No gates found".
  */
 export const START_BY_CONVERSATION =
-  "Nothing here yet, so there are no gates to find. Start a project by conversation: tell Seshat on the board what you want built, in one sentence. It proposes the plan — card zero sets the project up with its ecosystem's own generator, and the gates come from what that makes — and nothing is created until you apply it.";
+  "Nothing here yet, so there are no checks to find. Start a project by conversation: tell Seshat on the board what you want built, in one sentence. It proposes the plan — a setup issue first runs the ecosystem's own generator, and the checks come from what that makes — and nothing is created until you apply it.";
 
 /** Files a new, empty project may hold without being a project yet. */
 const NOT_A_PROJECT = new Set([".git", ".sekhemet", ".gitignore", ".DS_Store"]);
@@ -984,7 +926,7 @@ export function runInit(
     `Machine: ${Math.round((opts.totalBytes ?? totalmem()) / 1024 ** 3)} GB, tier ${roster.tier}. ${roster.note}`,
   );
   say(
-    `Roster: Worker ${roster.worker}, Seshat ${roster.manager}, Reviewer ${roster.reviewer}, Researcher ${roster.researcher}.`,
+    `Models: Coding model ${roster.worker}, Planning model (Seshat) ${roster.manager}, Review model ${roster.reviewer}, Research model ${roster.researcher}.`,
   );
   for (const c of checks)
     say(
@@ -992,10 +934,10 @@ export function runInit(
     );
   say(
     gates.length
-      ? `Gates from this project: ${gates.join("; ")}.`
+      ? `Checks from this project: ${gates.join("; ")}.`
       : isEmptyProject(repo)
         ? START_BY_CONVERSATION
-        : "No gates found: add typecheck, lint and test scripts, then rerun with --force.",
+        : "No checks found: add typecheck, lint and test scripts, then rerun with --force.",
   );
   if (wrote.length) say(`Wrote ${wrote.join(", ")}.`);
   if (kept.length) say(`Kept existing ${kept.join(", ")} (use --force to regenerate).`);

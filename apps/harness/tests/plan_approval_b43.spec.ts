@@ -73,7 +73,7 @@ describe("PM-N7-5 in the product: sekhemet plan, then sekhemet approve", () => {
 
     const said: string[] = [];
     expect(await runWave2Command("approve", [r.epicId], k, { print: (l) => said.push(l) })).toBe(0);
-    expect(said.join("\n")).toMatch(/Approved \d+ card\(s\) under the internal tool profile/);
+    expect(said.join("\n")).toMatch(/Approved \d+ issue\(s\) under the internal tool profile/);
     for (const c of await k.cardStore.listCards({ parentId: r.epicId })) {
       expect(k.cardStore.stagedTests.criteriaApproval(c.id).approved).toBe(true);
       // Out of Planning unless something else holds it, and then it says what.

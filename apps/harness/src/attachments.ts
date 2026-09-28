@@ -69,7 +69,7 @@ export async function attachImage(
   cardId: string,
   input: { name: string; bytes: Uint8Array },
 ): Promise<Attachment> {
-  if (!(await store.getCard(cardId))) throw new Error(`No card ${cardId}`);
+  if (!(await store.getCard(cardId))) throw new Error(`No issue ${cardId}`);
   if (input.bytes.length > MAX_IMAGE_BYTES)
     throw new Error(`${input.name} is over ${MAX_IMAGE_BYTES / 1024 / 1024} MB`);
   const mime = sniffImage(input.bytes);
@@ -219,7 +219,7 @@ export async function visionPrePass(
   if (pending.length === 0) return 0;
   if (!deps.modelName) {
     deps.say?.(
-      `${pending.length} card(s) have images but no vision model is configured ([models] vision, or a registry entry with the vision role): ${pending.map((c) => c.id).join(", ")}`,
+      `${pending.length} issue(s) have images but no vision model is configured ([models] vision, or a registry entry with the vision role): ${pending.map((c) => c.id).join(", ")}`,
     );
     return 0;
   }

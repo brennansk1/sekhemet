@@ -5,6 +5,7 @@ export * from "./parsers.js";
 export * from "./config.js";
 export * from "./evidence.js";
 export * from "./secrets.js";
+export * from "./gitleaks_rules.js";
 export * from "./builtin.js";
 export * from "./mutation.js";
 export * from "./mutation_tools.js";

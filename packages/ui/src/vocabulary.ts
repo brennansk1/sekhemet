@@ -10,17 +10,11 @@
  *
  * This module must stay free of runtime imports: the browser loads it as-is.
  */
-import type { CardRecord, CardStatus } from "@sekhemet/kernel";
+import type { CardKind, CardRecord, CardStatus } from "@sekhemet/kernel";
 
 // ---------------------------------------------------------------------------
 // Issue types (DEC-31): what a person reads for a card's kind and change
 // ---------------------------------------------------------------------------
-
-/**
- * The older display ids a card's planner title suffix maps to (`(SPIDR: …)`).
- * Internal: nothing shows them; a card is shown by its issue type.
- */
-export type CardKind = "contract" | "storage" | "flow" | "rules" | "research" | "ui" | "wiring";
 
 /** The standard issue types Jira, Linear and GitHub use (DEC-31). */
 export type IssueType = "story" | "task" | "bug" | "spike" | "epic";
@@ -57,7 +51,7 @@ export function issueTypeOf(card: {
 }): IssueType {
   if (card.tier === "epic" || card.tier === "initiative") return "epic";
   const legacy = card.kind ? [] : parseTitle(card.title ?? "").kinds;
-  if (card.kind === "spike" || card.kind === "research" || legacy[0] === "research") return "spike";
+  if (card.kind === "spike" || card.kind === "research" || legacy[0] === "spike") return "spike";
   if (card.change === "fix") return "bug";
   if (card.change === "refactor" || card.change === "upgrade" || card.change === "characterize")
     return "task";
@@ -65,17 +59,22 @@ export function issueTypeOf(card: {
   return "story";
 }
 
+/**
+ * An older card's `(SPIDR: …)` title suffix, read as the kernel's stored
+ * kinds (DB-N2-4: the dashboard declares no kind enumeration of its own).
+ * *Visual* and *Integration* are refinements of an `implement` card (NAMING).
+ */
 const SPIDR_KINDS: Record<string, CardKind> = {
-  interface: "contract",
-  interfaces: "contract",
-  data: "storage",
-  path: "flow",
-  paths: "flow",
-  rule: "rules",
-  rules: "rules",
-  spike: "research",
-  visual: "ui",
-  integration: "wiring",
+  interface: "interface",
+  interfaces: "interface",
+  data: "data",
+  path: "implement",
+  paths: "implement",
+  rule: "rule",
+  rules: "rule",
+  spike: "spike",
+  visual: "implement",
+  integration: "implement",
 };
 
 const SPIDR_SUFFIX = /\s*\(SPIDR:([^)]*)\)\s*$/i;
@@ -138,12 +137,12 @@ const COLUMN_LABELS: Record<CardStatus, string> = {
 /** What an empty column is for, shown at its top instead of "No cards". */
 export const COLUMN_EMPTY: Record<CardStatus, string> = {
   backlog: "Ideas and split-off work.",
-  ready: "Cards whose dependencies are done.",
+  ready: "Issues whose dependencies are done.",
   planning: "The planning model is writing plans and tests.",
   in_progress: "No agent running.",
   verify: "Nothing being checked.",
   review: "Nothing waiting for you.",
-  done: "Accepted cards appear here.",
+  done: "Accepted issues appear here.",
   parked: "Nothing parked.",
   rejected: "Nothing rejected.",
 };
@@ -205,7 +204,7 @@ export const BOARD_COLUMNS: readonly BoardColumnDef[] = [
     id: "todo",
     label: "To do",
     states: ["ready", "planning"],
-    empty: "Cards whose dependencies are done, and cards being planned.",
+    empty: "Issues whose dependencies are done, and issues being planned.",
     queue: false,
     onlyWithCards: false,
   },
@@ -229,7 +228,7 @@ export const BOARD_COLUMNS: readonly BoardColumnDef[] = [
     id: "done",
     label: "Done",
     states: ["done"],
-    empty: "Accepted cards appear here.",
+    empty: "Accepted issues appear here.",
     queue: false,
     onlyWithCards: false,
   },
@@ -262,6 +261,17 @@ export const PIPELINE_COLUMNS: readonly BoardColumnDef[] = BOARD_COLUMN_ORDER.ma
   queue: s === "review" || s === "parked",
   onlyWithCards: false,
 }));
+
+/**
+ * A stored state by its default board column's name (*To do*, *In review*,
+ * *On hold*, *Won't do*): the issue's status as Jira and Linear show it.
+ */
+export function boardColumnLabel(status: string): string {
+  if (status === "rejected") return WONT_DO_COLUMN.label;
+  return (
+    BOARD_COLUMNS.find((c) => c.states.includes(status as CardStatus))?.label ?? columnLabel(status)
+  );
+}
 
 /** The default board's column for a stored state; `wont_do` for Rejected. */
 export function boardColumnOf(status: string): BoardColumnId | "wont_do" | undefined {
@@ -308,11 +318,24 @@ const GATE_LABELS: Record<string, string> = {
   bounds: "Size",
   size: "Size",
   visual: "Visual",
+  osv: "OSV",
 };
 
 /** Gate id or rung -> the word a person reads. The id itself stays in mono. */
 export function gateLabel(idOrRung: string): string {
   return GATE_LABELS[String(idOrRung).toLowerCase()] ?? humanize(idOrRung);
+}
+
+/**
+ * Rungs that name a family of gates rather than one check: a gate on one of
+ * these is named by its own id (*Gitleaks*, *Licenses*), so four security
+ * gates are never all called *Security* (DB-N1-1, domain17 §2).
+ */
+const FAMILY_RUNGS = new Set(["security", "hygiene", "robustness"]);
+
+/** A gate's name: its rung's word, or its id's where the rung names a family. */
+export function gateNameOf(id: string, rung?: string): string {
+  return rung && !FAMILY_RUNGS.has(rung) ? gateLabel(rung) : gateLabel(id);
 }
 
 /** `unavailable`: the gate could not produce a verdict (gates rule 9) — not a pass, not a failure of the work. */
@@ -724,7 +747,7 @@ export function gateSummary(
     const first = firstLine(mine);
     out.push({
       id,
-      label: gateLabel(rung ?? id),
+      label: gateNameOf(id, rung ?? r?.rung),
       state,
       ...(r && !r.skipped && r.durationMs !== undefined ? { durationMs: r.durationMs } : {}),
       failures: mine.length,
@@ -951,9 +974,10 @@ export function statusLine(
       return { text: `Ready · ${budget}`, tone: "neutral", mark: "none", quiet: true };
     case "planning":
       // A card whose attempt failed comes back to Planning; nothing is
-      // working on it until it is re-planned, so say what failed.
+      // working on it until it is re-planned. Its state leads, then what
+      // failed; never a failure mark on the stage (DB-N1-3, domain17 §2).
       if (ev && !ev.passed)
-        return { text: `${failText} · needs a new plan`, tone: "fail", mark: "fail" };
+        return { text: `Needs a new plan · ${failText}`, tone: "blocked", mark: "planning" };
       return { text: "Being planned", tone: "neutral", mark: "planning" };
     case "in_progress": {
       // What the agent is doing now. Its step count is the issue's, never the
@@ -1011,26 +1035,12 @@ export function statusLine(
   }
 }
 
-/**
- * The board's tag for a card's stored kind (PM-P1-10, DEC-26); `review` has
- * no tag yet. NAMING's full map, with UI and Wiring, is NEW-dashboard-2's.
- */
-const STORED_KINDS: Partial<Record<NonNullable<CardRecord["kind"]>, CardKind>> = {
-  interface: "contract",
-  data: "storage",
-  implement: "flow",
-  rule: "rules",
-  spike: "research",
-  research: "research",
-};
-
 /** Everything the board and the review queue show about a card, derived once. */
 export function describeCard(card: CardRecord, ctx: DisplayContext = {}): CardDisplay {
   const parsed = parseTitle(card.title);
   const title = parsed.title;
   // The stored kind decides; an older card's title suffix is read only when none is stored.
-  const stored = card.kind ? STORED_KINDS[card.kind] : undefined;
-  const kinds = card.kind ? (stored ? [stored] : []) : parsed.kinds;
+  const kinds: CardKind[] = card.kind ? [card.kind] : parsed.kinds;
   const line = statusLine(card, ctx);
   const ev = ctx.evidence;
   const started = card.stepsUsed > 0 && card.status !== "done";
@@ -1427,12 +1437,12 @@ export function checkFixHint(name: string, status: string, detail = ""): string 
         : "Pull or load a Coding model so the agent has one to use.";
     case "Sandbox confinement":
       return /WROTE OUTSIDE/.test(detail)
-        ? "Stop: the sandbox let a command write outside its worktree. Do not run cards until this passes."
+        ? "Stop: the sandbox let a command write outside its worktree. Do not run issues until this passes."
         : "Commands run unconfined on this system. Use restricted mode only where confinement exists.";
     case "Git worktree isolation":
       return "Run Sekhemet from inside a git repository with at least one commit.";
     case "Unified memory":
-      return "Close other apps or unload an idle model. Cards resume below 85% memory.";
+      return "Close other apps or unload an idle model. Issues resume below 85% memory.";
     default:
       return undefined;
   }

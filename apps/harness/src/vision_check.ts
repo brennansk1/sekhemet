@@ -97,7 +97,7 @@ export function cardVision(
     }
     if (!load) {
       return {
-        visionNotRun: `${entry.id} has qualified, but no vision model can be loaded in this run`,
+        visionNotRun: `${entry.id} is verified on this machine, but no vision model can be loaded in this run`,
       };
     }
     return {
@@ -107,7 +107,7 @@ export function cardVision(
   return {
     visionNotRun:
       visionModels.length === 0
-        ? `no vision model in the registry has qualified on checklist ${VISION_CHECKLIST_VERSION}`
-        : `no vision model has qualified on checklist ${VISION_CHECKLIST_VERSION} (${tried.join("; ")})`,
+        ? `no vision model in the registry is verified on this machine on checklist ${VISION_CHECKLIST_VERSION}`
+        : `no vision model is verified on this machine on checklist ${VISION_CHECKLIST_VERSION} (${tried.join("; ")})`,
   };
 }

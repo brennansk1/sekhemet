@@ -65,9 +65,9 @@ export const REVIEW_DESK_COPY = {
   whoMay: (names: string[]) =>
     `Who may accept: ${names.length ? names.join(", ") : "no other Accept-holder yet"}.`,
   notIndependent: (because: "built" | "delegated") =>
-    `You ${because === "built" ? "built this card" : "delegated this card to the agent"}; on a team another Accept-holder accepts it.`,
+    `You ${because === "built" ? "built this issue" : "delegated this issue to the agent"}; on a team another Accept-holder accepts it.`,
   notPermitted: "You do not hold the Accept permission on this project.",
-  notCodeOwner: "This project needs a code owner's accept, and you own none of this card's files.",
+  notCodeOwner: "This project needs a code owner's accept, and you own none of this issue's files.",
   noCodeOwner: "no code owner is named in CODEOWNERS for these files",
   builtBy: (name: string) => `Built by ${name} (person)`,
   builtByFact: (name: string) => `${name} (person)`,
@@ -283,6 +283,43 @@ export type AcceptVerdict =
     };
 
 /** DB-N5-9: why this viewer may not accept, naming who may; empty when they may. */
+/** What Accept's state reads from the page (`store.state`). */
+export interface AcceptContext {
+  /** False when the server was started without triage. */
+  triage?: boolean;
+  offline?: boolean;
+  /** The ledger's verification (`/api/events`' `verification`); null before the first. */
+  ledger?: { valid?: boolean; corruptedSeq?: number } | null;
+}
+
+/**
+ * Whether Accept is allowed, and the plain reason beside it when it is not
+ * (DB-N2-2, DB-P12-3). A ledger that fails verification disables it first,
+ * on every surface that offers Accept. `deskReason` is the review desk's own
+ * blocker (who may accept, unacknowledged findings, files not yet shown).
+ */
+export function acceptVerdict(
+  ctx: AcceptContext,
+  card: { status?: string } | null | undefined,
+  evidence: { passed?: boolean } | null | undefined,
+  deskReason = "",
+): { ok: boolean; reason: string } {
+  if (ctx.ledger && ctx.ledger.valid === false) {
+    return {
+      ok: false,
+      reason: `Ledger altered at entry #${ctx.ledger.corruptedSeq ?? "?"}. Inspect before accepting.`,
+    };
+  }
+  if (ctx.triage === false) return { ok: false, reason: "Read-only." };
+  if (ctx.offline) return { ok: false, reason: "Offline." };
+  if (!evidence) return { ok: false, reason: "Accept needs evidence from a run." };
+  if (!evidence.passed) return { ok: false, reason: "Accept needs every check passing." };
+  if (!card || card.status !== "review")
+    return { ok: false, reason: "Only issues in Review can be accepted." };
+  if (deskReason) return { ok: false, reason: deskReason };
+  return { ok: true, reason: "" };
+}
+
 export function acceptPermissionText(v: AcceptVerdict): string {
   if (v.may) return "";
   const names = v.who.map((w) => w.name || w.principal);

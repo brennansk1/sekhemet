@@ -92,7 +92,7 @@ export function profileForRun(argv: string[], env: Record<string, string | undef
   for (const [key, source] of Object.entries(profile.sources)) {
     if (!RUN_HONOURS.has(key) && source !== "default")
       throw new RunProfileRefusal(
-        `sekhemet run does not run ${key} (it runs one card with the Worker); it is a queue setting (from ${source}).`,
+        `sekhemet run does not run ${key} (it runs one issue with the Coding model); it is a queue setting (from ${source}).`,
       );
   }
   return profile;
@@ -166,10 +166,10 @@ export function autoAcceptRefusal(
   // review-git §2.5.6, RG-S5-9 (DEC-35): never in the Team setup — no marker
   // or setting enables it there.
   if (teamMode === "team") {
-    return "--auto-accept is not available in the Team setup: on a team every card is accepted by a person (DEC-35).";
+    return "--auto-accept is not available in the Team setup: on a team every issue is accepted by a person (DEC-35).";
   }
   if (readMeasurementMarker(repoPath)) return undefined;
-  return "--auto-accept merges cards no person accepted, so it runs only in a repository a measured run prepared (the frozen suite, m0), which carries .sekhemet/measurement.json. Here a person accepts each card: the human is the rate limiter.";
+  return "--auto-accept merges issues no person accepted, so it runs only in a repository a measured run prepared (the frozen suite, m0), which carries .sekhemet/measurement.json. Here a person accepts each issue: the human is the rate limiter.";
 }
 
 /**
@@ -396,7 +396,7 @@ function notComparable(r: SuiteRunResult, c: AdoptedChange): string | undefined 
   if ((r.mode ?? "sequential") !== c.baselineMode)
     return `it ran ${r.mode ?? "sequential"}, the baseline ${c.baselineMode}`;
   if (c.baselineWorker !== r.worker)
-    return `its Worker is ${r.worker ?? "unrecorded"}, the baseline's ${c.baselineWorker ?? "unrecorded"}`;
+    return `its Coding model is ${r.worker ?? "unrecorded"}, the baseline's ${c.baselineWorker ?? "unrecorded"}`;
   const hash = r.runProfile ? runProfileHash(r.runProfile) : undefined;
   if (hash !== c.baselineProfileHash) return "its RunProfile differs from the baseline's";
   return undefined;
@@ -604,8 +604,8 @@ export async function runMeasureCommand(
       const r = rescoreSuiteResult(resultPath, work, ...(outFlag ? [outFlag] : []));
       print(
         r.profileMismatch.length
-          ? `${r.profileMismatch.length} of ${r.cards} card(s) ran with a different profile: ${r.profileMismatch.map((c) => `${c} (${(r.differences[c] ?? []).join(", ")})`).join("; ")}`
-          : `all ${r.cards} card(s) ran with the run's settings plus their repository's configuration`,
+          ? `${r.profileMismatch.length} of ${r.cards} issue(s) ran with a different profile: ${r.profileMismatch.map((c) => `${c} (${(r.differences[c] ?? []).join(", ")})`).join("; ")}`
+          : `all ${r.cards} issue(s) ran with the run's settings plus their repository's configuration`,
       );
       print(`was ${r.previous.length} named; rescored result in ${r.out}`);
       return 0;

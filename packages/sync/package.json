@@ -10,9 +10,11 @@
   },
   "dependencies": {
     "@sekhemet/kernel": "workspace:*",
-    "@sekhemet/sandbox": "workspace:*"
+    "@sekhemet/sandbox": "workspace:*",
+    "semver": "7.8.5"
   },
   "devDependencies": {
-    "@types/node": "^22.13.4"
+    "@types/node": "^22.13.4",
+    "@types/semver": "7.8.0"
   }
 }

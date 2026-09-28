@@ -44,7 +44,7 @@ export function approvalHtml(view) {
   if (waiting.length === 0) return "";
   const n = waiting.length;
   return `<section class="apv" aria-labelledby="apv-h"><h3 id="apv-h" class="apv-h">Waiting on your approval of its criteria</h3><p class="apv-note" id="apv-note">${
-    n === 1 ? "This card stays" : `These ${n} cards stay`
+    n === 1 ? "This issue stays" : `These ${n} issues stay`
   } in Planning until a person approves what is shown here (the ${esc(view.profile)} profile). Approving records your name against exactly this content.</p><ul class="apv-list">${waiting
     .map(cardHtml)
     .join(

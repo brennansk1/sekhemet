@@ -168,6 +168,7 @@ describe("DS-S8-8: a yes covers exactly the hosts it named", () => {
     expect(networkConfigs(repo).user.researchHosts).toContain("pypi.org");
     expect(researchConsentCheck(repo).detail).not.toMatch(/await/);
     writeFileSync(userConfig, '[network]\nresearch = "yes"\n');
-    expect(researchConsentCheck(repo).detail).toMatch(/pypi\.org awaits a yes/);
+    // The hosts added since the unlisted yes: pypi.org (B4.5) and api.deps.dev (C3, DEC-44).
+    expect(researchConsentCheck(repo).detail).toMatch(/pypi\.org, api\.deps\.dev await a yes/);
   });
 });

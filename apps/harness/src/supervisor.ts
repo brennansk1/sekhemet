@@ -208,10 +208,10 @@ export function describeSupervisorStart(start: SupervisorStart): string[] {
   if (r?.skipped) lines.push(`Retention: ${r.skipped}.`);
   if (r && r.pruned.length > 0) {
     lines.push(
-      `Retention: pruned ${r.removed.packs} pack(s), ${r.removed.observations} observation(s), ${r.removed.transcripts} transcript(s) of ${r.closedCards.length} closed card(s), recorded as ledger/erased seq ${r.erasedBySeq}.`,
+      `Retention: pruned ${r.removed.packs} pack(s), ${r.removed.observations} observation(s), ${r.removed.transcripts} transcript(s) of ${r.closedCards.length} closed issue(s), recorded as ledger/erased seq ${r.erasedBySeq}.`,
     );
     for (const item of r.pruned) {
-      lines.push(`   ${item.cardId ?? "(no card)"}: ${item.kind} ${item.id}`);
+      lines.push(`   ${item.cardId ?? "(no issue)"}: ${item.kind} ${item.id}`);
     }
   }
   if (start.slotsErased.length > 0) {
