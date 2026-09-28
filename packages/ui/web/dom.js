@@ -1,5 +1,5 @@
 // Small DOM and network helpers shared by every view.
-export { icon } from "./lib/icons.js";
+export { aiBadge, brandLockup, brandMark, icon, teammateName } from "./lib/icons.js";
 
 // Card titles, notes, file paths and error text are written by a model or a
 // person, so every interpolation into markup goes through esc(). Never assign

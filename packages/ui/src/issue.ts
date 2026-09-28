@@ -40,7 +40,7 @@ export const ISSUE_COPY = {
     unproven: "Not proven while the tests fail",
   },
   criteriaNotRun: "Checked when the agent's work runs its tests.",
-  criteriaNoTestGate: "No test gate ran on the latest attempt, so no criterion is proven yet.",
+  criteriaNoTestGate: "No test check ran on the latest attempt, so no criterion is proven yet.",
   agent: "Agent",
   aiBadge: "AI",
   aiBadgeLabel: "AI teammate",
@@ -311,7 +311,7 @@ export function agentPanel(
   }
   const idle: Record<string, [AgentLabel, string]> = {
     ready: ["queued", "Queued: the agent starts this issue when a slot is free."],
-    planning: ["queued", "Queued: the planner is preparing this issue for the agent."],
+    planning: ["queued", "Queued: the planning model is preparing this issue for the agent."],
     review: ["needs you", "The agent's work is waiting for your review."],
     parked: ["needs you", "On hold until a person unparks it."],
     done: ["done", "Done. The agent's work is merged."],
@@ -491,7 +491,7 @@ export function activityItems(input: {
           ai: false,
           text: s.gate.passed
             ? `passed on step ${turn}`
-            : `ran on step ${turn}: ${failed.join(", ") || "Gates"} failed${errors}`,
+            : `ran on step ${turn}: ${failed.join(", ") || "Checks"} failed${errors}`,
           tone: s.gate.passed ? "pass" : "fail",
           steps: [turn, turn],
         });

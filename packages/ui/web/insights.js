@@ -4,6 +4,7 @@
 // and a data table.
 import { burnupHtml, loadBurnup } from "./burnup.js";
 import { copyText, esc, getJSON, icon } from "./dom.js";
+import { tip as learnTip } from "./learn.js";
 import { loadLearning } from "./learning.js";
 import { burnupTarget } from "./lib/burnup.js";
 import {
@@ -19,7 +20,7 @@ import {
   stackCfd,
   tuningSummary,
 } from "./lib/pm.js";
-import { columnLabel } from "./lib/vocabulary.js";
+import { BOARD_COLUMNS, boardColumnOf, columnLabel } from "./lib/vocabulary.js";
 import { openPeek } from "./peek.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
@@ -89,8 +90,16 @@ function pctLine(v, max, label, cls) {
   return `<line class="pct ${cls}" x1="${M.l}" x2="${W - M.r}" y1="${y}" y2="${y}"/><text class="pl" x="${W - M.r + 6}" y="${y + 3.5}">${esc(label)}</text>`;
 }
 
-function figure(title, question, caption, svg, table) {
-  return `<figure class="chart"><header><h2>${esc(question)}</h2><span class="sec">${esc(title)}</span></header><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(caption)}">${svg}</svg><figcaption>${esc(caption)}</figcaption><details class="data"><summary>Data table</summary>${table}</details></figure>`;
+/** This period's flow, for the Tips lessons' own lines (DB-P4-3). */
+let flow = {};
+
+/** Tips: the `?` beside a chart or number, reading this period's flow (DB-P4-2). */
+function metricTip(metric, term) {
+  return metric ? learnTip(`metric:${metric}`, term, flow) : "";
+}
+
+function figure(title, question, caption, svg, table, metric = "") {
+  return `<figure class="chart"><header><h2>${esc(question)}</h2>${metricTip(metric, title)}<span class="sec">${esc(title)}</span></header><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(caption)}">${svg}</svg><figcaption>${esc(caption)}</figcaption><details class="data"><summary>Data table</summary>${table}</details></figure>`;
 }
 
 function tableHtml(head, rows) {
@@ -142,7 +151,14 @@ function agingChart(wip, stats) {
     ["Card", "Column", "Age"],
     wip.map((w) => [w.shortId, columnLabel(w.status), formatHours(w.hours)]),
   );
-  return figure("Aging work in progress", "What is getting old?", caption, parts.join(""), table);
+  return figure(
+    "Aging work in progress",
+    "What is getting old?",
+    caption,
+    parts.join(""),
+    table,
+    "work_item_age",
+  );
 }
 
 function cycleChart(entries, stats) {
@@ -183,7 +199,14 @@ function cycleChart(entries, stats) {
       e.doneAt ? formatShortDate(e.doneAt) : "–",
     ]),
   );
-  return figure("Cycle time", "How long do cards take?", caption, parts.join(""), table);
+  return figure(
+    "Cycle time",
+    "How long do cards take?",
+    caption,
+    parts.join(""),
+    table,
+    "cycle_time",
+  );
 }
 
 function throughputChart(rows) {
@@ -220,7 +243,7 @@ function throughputChart(rows) {
     ["Date", "Done", "7-day avg"],
     rows.map((r, i) => [formatShortDate(r.date), String(r.done), avg[i].toFixed(1)]),
   );
-  return figure("Throughput", "How much finishes?", caption, parts.join(""), table);
+  return figure("Throughput", "How much finishes?", caption, parts.join(""), table, "throughput");
 }
 
 function cfdChart(rows) {
@@ -272,10 +295,14 @@ function cfdChart(rows) {
     ["Date", ...CFD_KEYS.map((k) => CFD_LABEL[k])],
     rows.map((r) => [formatShortDate(r.date), ...CFD_KEYS.map((k) => String(r[k] ?? 0))]),
   );
-  return figure("Cumulative flow", "Where do queues form?", caption, parts.join(""), table).replace(
-    "</svg>",
-    `</svg>${legend}`,
-  );
+  return figure(
+    "Cumulative flow",
+    "Where do queues form?",
+    caption,
+    parts.join(""),
+    table,
+    "cumulative_flow",
+  ).replace("</svg>", `</svg>${legend}`);
 }
 
 /* ---------- Worker capability (GET /api/capability) ---------- */
@@ -337,18 +364,18 @@ function sizeCurve(curve, horizon) {
 
 function capabilityHtml() {
   const head = (sub) =>
-    `<header class="cap-h"><h2>Worker capability</h2><span class="sec">${esc(sub)}</span></header>`;
+    `<header class="cap-h"><h2>Coding model capability</h2><span class="sec">${esc(sub)}</span></header>`;
   if (!ui.capStatus) return "";
   if (ui.capStatus === 404) {
-    return `<section class="capab">${head("Pass rates by kind of card and by change size")}<p class="cap-empty">${icon("insights", 14, "ic s14")}<span><b>Worker capability isn't on this server yet.</b> <code>GET /api/capability</code> returned 404. Once it exists, this shows how often the Worker passes each kind of card and how that falls as changes grow, each with its uncertainty.</span></p></section>`;
+    return `<section class="capab">${head("Pass rates by kind of issue and by change size")}<p class="cap-empty">${icon("insights", 14, "ic s14")}<span><b>Coding model capability isn't on this server yet.</b> <code>GET /api/capability</code> returned 404. Once it exists, this shows how often the agent passes each kind of issue and how that falls as changes grow, each with its uncertainty.</span></p></section>`;
   }
   if (ui.capStatus !== 200 || !ui.cap) {
-    return `<section class="capab">${head("")}<p class="cap-empty">${icon("alert", 14, "ic s14 i-fail")}<span><b>Couldn't load Worker capability.</b> The server returned ${esc(ui.capStatus > 0 ? ui.capStatus : "no response")}.</span></p></section>`;
+    return `<section class="capab">${head("")}<p class="cap-empty">${icon("alert", 14, "ic s14 i-fail")}<span><b>Couldn't load Coding model capability.</b> The server returned ${esc(ui.capStatus > 0 ? ui.capStatus : "no response")}.</span></p></section>`;
   }
   const c = ui.cap;
   const rows = capabilityRows(c.types);
   if (!c.sampleSize || rows.length === 0) {
-    return `<section class="capab">${head("")}<p class="cap-empty">${icon("insights", 14, "ic s14")}<span><b>No finished attempts yet.</b> Pass rates appear once the Worker has run some cards.</span></p></section>`;
+    return `<section class="capab">${head("")}<p class="cap-empty">${icon("insights", 14, "ic s14")}<span><b>No finished attempts yet.</b> Pass rates appear once the agent has run some issues.</span></p></section>`;
   }
   const few = rows.filter((r) => !r.trusted).length;
   const sub = `${c.sampleSize} attempts · bars show the pass rate and its 95% interval`;
@@ -366,7 +393,7 @@ function capabilityHtml() {
   );
   const escModel = escalated.find((e) => e.model)?.model ?? q?.escalationModel;
   const escNote = escalated.length
-    ? `<p class="cap-note">${icon("runs", 14, "ic s14")}<span>${escalated.length} ${escalated.length === 1 ? "retry" : "retries"} in the last run used the escalation model${escModel ? ` (<span class="mono">${esc(escModel)}</span>)` : ""}, not the Worker. They aren't counted in these rates.</span></p>`
+    ? `<p class="cap-note">${icon("runs", 14, "ic s14")}<span>${escalated.length} ${escalated.length === 1 ? "retry" : "retries"} in the last run used the escalation model${escModel ? ` (<span class="mono">${esc(escModel)}</span>)` : ""}, not the Coding model. They aren't counted in these rates.</span></p>`
     : "";
   return `<section class="capab">${head(sub)}<div class="charts${ui.perRow === 1 ? " one" : ""}">${rowsFig}${curveFig}</div>${c.note ? `<p class="cap-note">${esc(c.note)}</p>` : ""}${escNote}</section>`;
 }
@@ -406,7 +433,7 @@ function tuningHtml() {
           ]),
       )}</details>`
     : "";
-  return `<section class="capab tune"><header class="cap-h"><h2>Stopping policy</h2><span class="sec">From replaying recorded runs${esc(when)}</span></header><div class="chart"><p class="tune-head">${esc(sum.headline)}</p>${sum.same ? "" : `<p class="sec">${esc(`Saves ${sum.savedText} on these cards and keeps ${sum.firstTryKept} first-try passes. Nothing changes until you run with the new cap.`)}</p>`}${table}${cmd}<p class="tune-caveat">${icon("alert", 12, "ic s12")}<span>Replay only stops a recorded run earlier than it really stopped. It never credits a pass the Worker didn't make, so it can't overstate what a tighter cap keeps. It can't tell you whether a looser cap would have rescued a failure.</span></p>${grid}</div></section>`;
+  return `<section class="capab tune"><header class="cap-h"><h2>Stopping policy</h2><span class="sec">From replaying recorded runs${esc(when)}</span></header><div class="chart"><p class="tune-head">${esc(sum.headline)}</p>${sum.same ? "" : `<p class="sec">${esc(`Saves ${sum.savedText} on these cards and keeps ${sum.firstTryKept} first-try passes. Nothing changes until you run with the new cap.`)}</p>`}${table}${cmd}<p class="tune-caveat">${icon("alert", 12, "ic s12")}<span>Replay only stops a recorded run earlier than it really stopped. It never credits a pass the agent didn't make, so it can't overstate what a tighter cap keeps. It can't tell you whether a looser cap would have rescued a failure.</span></p>${grid}</div></section>`;
 }
 
 /* ---------- View ---------- */
@@ -416,9 +443,34 @@ function numbers(stats, throughput, wip) {
   const perDay = total / Math.max(1, throughput.length);
   const old = wip.filter((w) => agingClass(w.hours, stats) === "old").length;
   const oldest = [...wip].sort((a, b) => b.hours - a.hours)[0];
-  const block = (k, v, d = "") =>
-    `<div class="num"><div class="k">${esc(k)}</div><div class="v tnum">${v}</div>${d ? `<div class="d">${d}</div>` : ""}</div>`;
-  return `<div class="nums">${block("Cycle time, 85th percentile", esc(formatHours(stats.p85)), `Half finish within ${esc(formatHours(stats.p50))}`)}${block("Throughput", `${perDay.toFixed(1)} <small>a day</small>`, `${total} in ${throughput.length} days`)}${block("Work in progress", `${wip.length} <small>cards</small>`, old ? `<span class="warn">${old} older than 85%</span>` : "None older than 85%")}${block("Oldest in progress", oldest ? esc(formatHours(oldest.hours)) : "–", oldest ? esc(oldest.shortId) : "")}</div>`;
+  const block = (k, v, d = "", metric = "", term = k) =>
+    `<div class="num"><div class="k">${esc(k)}${metricTip(metric, term)}</div><div class="v tnum">${v}</div>${d ? `<div class="d">${d}</div>` : ""}</div>`;
+  return `<div class="nums">${block("Cycle time, 85th percentile", esc(formatHours(stats.p85)), `Half finish within ${esc(formatHours(stats.p50))}`, "sle", "Service level expectation")}${block("Throughput", `${perDay.toFixed(1)} <small>a day</small>`, `${total} in ${throughput.length} days`, "throughput")}${block("Work in progress", `${wip.length} <small>cards</small>`, old ? `<span class="warn">${old} older than 85%</span>` : "None older than 85%", "wip")}${block("Oldest in progress", oldest ? esc(formatHours(oldest.hours)) : "–", oldest ? esc(oldest.shortId) : "", "work_item_age", "Work item age")}</div>`;
+}
+
+/** The numbers each Insights lesson reads: this period's, and the board's today. */
+function flowFacts(stats, cycle, throughput, wip) {
+  const total = throughput.reduce((a, r) => a + r.done, 0);
+  const columns = {};
+  for (const col of BOARD_COLUMNS) {
+    const n = store.state.cards.filter((c) => boardColumnOf(c.status) === col.id).length;
+    if (n) columns[col.label] = n;
+  }
+  const days = ui.burn?.data?.days ?? [];
+  const last = days[days.length - 1];
+  return {
+    cycleTime: { p50Hours: stats.p50, p85Hours: stats.p85, finished: cycle.length },
+    throughputPerDay: Math.round((total / Math.max(1, throughput.length)) * 10) / 10,
+    wip: {
+      count: wip.length,
+      olderThanP85: wip.filter((w) => agingClass(w.hours, stats) === "old").length,
+      ...(wip.length ? { oldestHours: Math.max(...wip.map((w) => w.hours)) } : {}),
+    },
+    columns,
+    ...(last
+      ? { burnup: { done: last.done, scope: last.scope, unit: ui.burn.data.unit ?? "points" } }
+      : {}),
+  };
 }
 
 function render() {
@@ -429,7 +481,11 @@ function render() {
         `<button class="filter" type="button" data-days="${d}" aria-pressed="${ui.days === d}">${d} days</button>`,
     )
     .join("");
-  setTopbar({ title: "Insights", crumb: "Flow metrics and Worker capability", filters: daysSel });
+  setTopbar({
+    title: "Insights",
+    crumb: "Flow metrics and Coding model capability",
+    filters: daysSel,
+  });
   // Charts are drawn 1:1 at the panel's real width: two a row from 1100px of
   // content, one below that.
   const inner = Math.min(1400, ui.root.clientWidth) - 48;
@@ -478,8 +534,9 @@ function render() {
         : null;
     })
     .filter((w) => w && w.status !== "done" && w.status !== "backlog");
+  flow = flowFacts(stats, cycle, d.throughput ?? [], wip);
   paint(
-    `${numbers(stats, d.throughput ?? [], wip)}<div class="charts${perRow === 1 ? " one" : ""}">${agingChart(wip, stats)}${cycleChart(cycle, stats)}${throughputChart(d.throughput ?? [])}${cfdChart(d.cfd ?? [])}${burnupHtml(ui.burn, W)}</div>`,
+    `${numbers(stats, d.throughput ?? [], wip)}<div class="charts${perRow === 1 ? " one" : ""}">${agingChart(wip, stats)}${cycleChart(cycle, stats)}${throughputChart(d.throughput ?? [])}${cfdChart(d.cfd ?? [])}${burnupHtml(ui.burn, W, undefined, { tip: metricTip("burnup", "Burn-up") })}</div>`,
   );
 }
 
@@ -500,6 +557,7 @@ async function loadBurn() {
     { terms: [], text: "" },
     Date.now(),
     store.state.project?.id,
+    store.state.estimation,
   );
   ui.burn = await loadBurnup(target.url);
   render();

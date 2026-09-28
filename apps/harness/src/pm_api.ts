@@ -39,6 +39,7 @@ import { draftWeeklyUpdate, postWeeklyUpdate } from "./pm/weekly.js";
 import { seshatWait } from "./pm/while_worker.js";
 import { oneShotResearcher } from "./research/service.js";
 import { quickAnswererFor } from "./smart_swap.js";
+import { statusFacts } from "./status_api.js";
 import { modelRegistry, ruleGateVerdict } from "./wave2.js";
 
 export interface PmApiContext {
@@ -256,7 +257,7 @@ export function createPmApi(ctx: PmApiContext) {
         // The queue answers after the Worker's current step.
         await pmStore.setStatus({
           phase: "waiting_for_step",
-          detail: "Pausing the Worker after its current step",
+          detail: "Pausing the agent after its current step",
           model: lease.pmModel ?? pmModel,
           workerPaused: false,
         });
@@ -288,7 +289,7 @@ export function createPmApi(ctx: PmApiContext) {
       const underEpic = epic && epic.tier === "epic" ? epic : null;
       const reply = await pmStore.appendReply({
         replyTo: [],
-        text: `A new card from the board: “${title}”. Apply it and the planner sizes it, writes its acceptance criteria and bounds its scope.`,
+        text: `A new card from the board: “${title}”. Apply it and the planning model sizes it, writes its acceptance criteria and bounds its scope.`,
         proposals: [
           {
             kind: "create_card",
@@ -423,6 +424,25 @@ export function createPmApi(ctx: PmApiContext) {
       return true;
     }
 
+    // --- Status (dashboard §2.8, DB-N9-1..4, -8; DEC-37) ---------------------
+    if (url === "/api/status" && req.method === "GET") {
+      if (!ctx.cardStore) {
+        ctx.json(res, 501, { error: "This server was started read-only" });
+        return true;
+      }
+      const project = query.get("project") ?? undefined;
+      ctx.json(res, 200, {
+        facts: await statusFacts({
+          cardStore: ctx.cardStore,
+          log: ctx.log,
+          me: personOf(req),
+          project,
+          audience: audience(),
+        }),
+      });
+      return true;
+    }
+
     // --- The weekly project update (planner-pm PM-N9-7; teams item 29) -------
     if (url === "/api/pm/update-draft" && req.method === "GET") {
       if (!ctx.cardStore) {
@@ -482,7 +502,7 @@ export function createPmApi(ctx: PmApiContext) {
         typeof b.endsOn !== "string" ||
         !iso.test(b.endsOn)
       ) {
-        ctx.json(res, 400, { error: "A cycle needs a name, startsOn and endsOn (YYYY-MM-DD)" });
+        ctx.json(res, 400, { error: "A sprint needs a name, startsOn and endsOn (YYYY-MM-DD)" });
         return true;
       }
       const cycle = await pmStore.createCycle({
@@ -507,7 +527,7 @@ export function createPmApi(ctx: PmApiContext) {
         patch.state = b.state;
       }
       const updated = await pmStore.updateCycle(cycleMatch[1] as string, patch);
-      if (!updated) ctx.json(res, 404, { error: "No such cycle" });
+      if (!updated) ctx.json(res, 404, { error: "No such sprint" });
       else ctx.json(res, 200, { cycle: updated });
       return true;
     }
@@ -673,7 +693,7 @@ export function createPmApi(ctx: PmApiContext) {
       const id = query.get("cycle");
       const cycle = id ? (await pmStore.cycles()).find((c) => c.id === id) : undefined;
       if (id && !cycle) {
-        ctx.json(res, 404, { error: `No cycle ${id}` });
+        ctx.json(res, 404, { error: `No sprint ${id}` });
         return true;
       }
       // One project's cards when the board is scoped to one; in the Team
@@ -686,6 +706,8 @@ export function createPmApi(ctx: PmApiContext) {
         200,
         await burnupMetrics(ctx.log, cycle, new Date(), {
           ...(project ? { project } : {}),
+          // DB-N7-2: issues, unless the project's estimation is story points.
+          ...(query.get("unit") === "issues" ? { unit: "issues" as const } : {}),
           ...(a.setup === "team" ? { canSee: (p: string | undefined) => a.canSee(me, p) } : {}),
         }),
       );

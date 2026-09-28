@@ -1,5 +1,6 @@
 // Sidebar, topbar and the four shell bars (FRONTEND_DESIGN §2.2, §2.4).
-import { MOD, esc, icon, kbd, tip } from "./dom.js";
+import { MOD, brandLockup, esc, icon, kbd, tip } from "./dom.js";
+import { tipsToggleHtml } from "./learn.js";
 import { ACCOUNT_COPY, accountHeader, initials, themeChoice, themeFor } from "./lib/account.js";
 import { bottomBar, navNameOf, visibleNav } from "./lib/nav.js";
 import { stopReasonLabel } from "./lib/vocabulary.js";
@@ -79,7 +80,7 @@ export function setActiveNav(name) {
 /** The topbar belongs to the view: title, a quiet crumb, filters. Search is always on the right. */
 export function setTopbar({ title, crumb = "", filters = "" }) {
   const top = document.getElementById("top");
-  const html = `<h1 id="view-title">${esc(title)}</h1>${crumb ? `<span class="crumb">${esc(crumb)}</span>` : ""}${filters}<div class="right"><button class="search" type="button" data-palette aria-label="Search or run a command" aria-keyshortcuts="${MOD === "⌘" ? "Meta+K" : "Control+K"}" title="Search or run a command (${MOD}K)">${icon("search", 14, "ic s14")}<span class="lbl">Search or run a command</span>${kbd(`${MOD}K`)}</button></div>`;
+  const html = `<h1 id="view-title">${esc(title)}</h1>${crumb ? `<span class="crumb">${esc(crumb)}</span>` : ""}${filters}<div class="right">${tipsToggleHtml()}<button class="search" type="button" data-palette aria-label="Search or run a command" aria-keyshortcuts="${MOD === "⌘" ? "Meta+K" : "Control+K"}" title="Search or run a command (${MOD}K)">${icon("search", 14, "ic s14")}<span class="lbl">Search or run a command</span>${kbd(`${MOD}K`)}</button></div>`;
   if (top.dataset.html !== html) {
     top.innerHTML = html;
     top.dataset.html = html;
@@ -225,17 +226,17 @@ function renderSide() {
         `<a class="row" href="#/machine" ${tip(`Memory pressure ${m.memoryLevel || "normal"}. ${m.memoryPercent}% used, including cache the system can reclaim.`)}><span class="dot${memCls}" aria-hidden="true"></span><span class="lbl">Memory ${esc(m.memoryLevel || "normal")}</span><span class="lbl sec tnum mem-pct">${m.memoryPercent}% used</span></a>`
       : `<div class="row">${icon("memory", 14, "ic s14")}<span class="lbl">Memory: checking…</span></div>`;
   const working = s.cards.some((c) => c.status === "in_progress");
-  // The Worker from Sekhemet's roster; the served-model probe is the fallback.
+  // The Coding model from Sekhemet's roster; the served-model probe is the fallback.
   const worker = (s.roster ?? s.machine?.roster ?? []).find((r) => r.role === "worker");
   const modelName = worker?.model
-    ? `Worker ${worker.model}`
+    ? `Coding model ${worker.model}`
     : m.model || (m.inferenceUp === false ? "No model server" : "Model: checking…");
   const model = `<div class="row" title="${esc(modelName)}"><span class="dot ${working ? "run" : "idle"}"></span><span class="lbl${m.model || worker?.model ? " mono" : ""}">${esc(modelName)}${m.model || worker?.model ? ` · ${working ? "working" : "idle"}` : ""}</span></div>`;
   // Theme and Keys live in the account menu (§2.2.6); the account closes the sidebar.
   const head = accountHeader(getSession());
   const account = `<button class="account-btn" type="button" data-account aria-haspopup="menu"><span class="avatar" aria-hidden="true">${esc(initials(head.name))}</span><span class="lbl">${esc(head.name)}</span><span class="sr-only">, ${esc(ACCOUNT_COPY.account)}</span></button>`;
 
-  const html = `<div class="brand">${icon("glyph", 18)}<b class="lbl">Sekhemet</b>${kbd(`${MOD}K`)}</div><div class="nav">${nav}</div><div class="foot">${live}${mem}${model}<div class="nav">${bottom}</div>${account}</div>`;
+  const html = `<div class="brand">${brandLockup(18)}${kbd(`${MOD}K`)}</div><div class="nav">${nav}</div><div class="foot">${live}${mem}${model}<div class="nav">${bottom}</div>${account}</div>`;
   if (html !== lastSide) {
     side.innerHTML = html;
     lastSide = html;
@@ -287,7 +288,7 @@ function renderBar() {
   ) {
     const sentence = pausedCard
       ? `Sekhemet stopped “${pausedCard.display.title}” safely${pausedCard.stepsUsed ? ` at step ${pausedCard.stepsUsed}` : ""}. It can resume below 85% memory.`
-      : "Sekhemet stopped the Worker safely before the system would swap. Work resumes below 85%.";
+      : "Sekhemet stopped the agent safely before the system would swap. Work resumes below 85%.";
     const head = m.memoryPercent
       ? `Paused for memory: ${m.memoryPercent}% used.`
       : pausedCard
@@ -301,10 +302,10 @@ function renderBar() {
   } else if (s.pm.status?.workerPaused && s.pm.status.phase !== "idle") {
     // PM_DESIGN §2.5: nothing is wrong, so the running rule, not amber.
     const step = s.pm.step;
-    const head = `Worker paused${step ? ` after step ${step}` : ""} while Seshat replies.`;
+    const head = `Agent paused${step ? ` after step ${step}` : ""} while Seshat replies.`;
     const tail =
       s.pm.status.phase === "resuming_worker"
-        ? "Reloading the Worker now."
+        ? "Reloading the agent now."
         : `It continues from ${step ? `step ${step + 1}` : "its next step"} when the reply is in.`;
     html = `<div class="bar run" role="status">${icon("pause")}<span><b>${esc(head)}</b> <span class="sec">${esc(tail)}</span></span>${s.route?.name === "pm" ? "" : '<button class="link-btn" type="button" data-open-pm>Open Seshat</button>'}</div>`;
   }

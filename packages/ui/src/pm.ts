@@ -62,13 +62,37 @@ export function priorityIcon(value: unknown): string {
 /** Fibonacci points; anything bigger is a card the Planner should split. */
 export const ESTIMATES = [1, 2, 3, 5, 8] as const;
 
+/**
+ * Preferences → Estimation (DEC-31, DB-N7-2), kept per project: *Off*, the
+ * default, shows no points on cards, columns or reports, and counts work in
+ * issues; *Story points* shows them as Jira does.
+ */
+export type Estimation = "off" | "points";
+
+export const ESTIMATION_LABELS: Record<Estimation, string> = {
+  off: "Off",
+  points: "Story points",
+};
+
+/** Whether points show: only when the team turned on story points. */
+export function showsPoints(estimation: unknown): boolean {
+  return estimation === "points";
+}
+
+/** `3 issues` with estimation off, `3 pts` with it on: how much work, in the team's unit. */
+export function amountText(n: number, estimation: unknown): string {
+  return showsPoints(estimation)
+    ? `${n} ${n === 1 ? "pt" : "pts"}`
+    : `${n} ${n === 1 ? "issue" : "issues"}`;
+}
+
 export function formatPoints(n: unknown): string {
   if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) return "None";
   return `${n} ${n === 1 ? "pt" : "pts"}`;
 }
 
 export function assigneeLabel(a: unknown): string {
-  if (a === "worker") return "Worker";
+  if (a === "worker") return "Agent";
   if (a === "human") return "You";
   if (typeof a === "string" && a.trim()) return a;
   return "Unassigned";
@@ -126,6 +150,7 @@ export interface PmCardLike {
   display?: {
     title?: string;
     kinds?: string[];
+    type?: string;
     shortId?: string;
     needsYou?: boolean;
     mark?: string;
@@ -159,7 +184,7 @@ export const FIELD_LABELS: Record<string, string> = {
   estimate: "Points",
   labels: "Labels",
   epicId: "Epic",
-  cycleId: "Cycle",
+  cycleId: "Sprint",
   assignee: "Assignee",
   dueDate: "Due",
   status: "State",
@@ -279,8 +304,8 @@ export const PROPOSAL_KINDS: Record<string, { label: string; icon: string }> = {
   split_card: { label: "Split", icon: "split" },
   reorder: { label: "Reorder", icon: "layers" },
   move_card: { label: "Move", icon: "arrow-right" },
-  create_cycle: { label: "Create cycle", icon: "cycle" },
-  assign_cycle: { label: "Assign to cycle", icon: "cycle" },
+  create_cycle: { label: "Create sprint", icon: "cycle" },
+  assign_cycle: { label: "Add to sprint", icon: "cycle" },
   park: { label: "Park", icon: "park" },
   unpark: { label: "Unpark", icon: "undo" },
 };
@@ -447,7 +472,7 @@ export const FILTER_FIELDS = [
   "cycle",
   "owner",
   "delegate",
-  "kind",
+  "type",
   "state",
   "is",
 ] as const;
@@ -477,7 +502,10 @@ const FIELD_ALIASES: Record<string, FilterField> = {
   assignee: "owner",
   owner: "owner",
   delegate: "delegate",
-  kind: "kind",
+  // DEC-31: the issue type; `kind:` is the older spelling.
+  type: "type",
+  issuetype: "type",
+  kind: "type",
   state: "state",
   status: "state",
   is: "is",
@@ -526,10 +554,26 @@ function quoteValue(v: string): string {
   return /[\s,"]/.test(v) ? `"${v.replace(/"/g, "")}"` : v;
 }
 
+/** The key a person reads and types for a field (DEC-31: `sprint:`, never `cycle:`). */
+export const FILTER_KEYS: Record<FilterField, string> = {
+  priority: "priority",
+  label: "label",
+  epic: "epic",
+  cycle: "sprint",
+  owner: "owner",
+  delegate: "delegate",
+  type: "type",
+  state: "state",
+  is: "is",
+};
+
 export function formatQuery(f: CardFilter): string {
   const parts = f.terms
     .filter((t) => t.values.length)
-    .map((t) => `${t.negate ? "-" : ""}${t.field}:${t.values.map(quoteValue).join(",")}`);
+    .map(
+      (t) =>
+        `${t.negate ? "-" : ""}${FILTER_KEYS[t.field] ?? t.field}:${t.values.map(quoteValue).join(",")}`,
+    );
   if (f.text.trim()) parts.push(f.text.trim());
   return parts.join(" ");
 }
@@ -617,8 +661,10 @@ function termMatches(card: PmCardLike, t: FilterTerm, ctx: MatchContext): boolea
       return vals.some((v) => ownerMatches(card, v, ctx));
     case "delegate":
       return vals.some((v) => delegateMatches(card, v, ctx));
-    case "kind":
-      return vals.some((v) => (card.display?.kinds ?? []).includes(v));
+    case "type": {
+      // The server's display carries the issue type (DEC-31); a card without one is a Story.
+      return vals.includes(card.display?.type ?? "story");
+    }
     case "state": {
       const s = card.status ?? "";
       const label = ctx.statusLabel ? ctx.statusLabel(s).toLowerCase() : s;
@@ -677,12 +723,12 @@ function ownerMatches(card: PmCardLike, v: string, ctx: MatchContext): boolean {
   );
 }
 
-/** DB-N5-5: `delegate:` — `worker`, a person (`@me` the viewer), or `none`. */
+/** DB-N5-5: `delegate:` — `agent` (`worker`, the older word), a person (`@me` the viewer), or `none`. */
 function delegateMatches(card: PmCardLike, v: string, ctx: MatchContext): boolean {
   const d = card.delegate;
   const legacyWorker = !d && (card.assignee ?? "").toLowerCase() === "worker";
   if (v === "none") return !d && !legacyWorker;
-  if (v === "worker") return d?.kind === "worker" || legacyWorker;
+  if (v === "agent" || v === "worker") return d?.kind === "worker" || legacyWorker;
   if (d?.kind !== "person") return false;
   if (ME.has(v)) return ctx.me !== undefined && d.id === ctx.me;
   return personIs(v, d.id, card.display?.delegateName);
@@ -767,7 +813,7 @@ export function groupCards<C extends PmCardLike>(
       g.label = PRIORITY_LABELS[priorityOf(Number(key))];
     } else if (by === "cycle") {
       g.cycle = ctx.cycles?.find((c) => c.id === key);
-      g.label = key ? (g.cycle?.name ?? key) : "No cycle";
+      g.label = key ? (g.cycle?.name ?? key) : "No sprint";
     }
     return g;
   });
@@ -832,6 +878,7 @@ export function cycleProgress(
   cycle: CycleLike,
   cards: PmCardLike[],
   now = Date.now(),
+  estimation?: Estimation,
 ): CycleProgress {
   const start = dayStart(cycle.startsOn);
   const end = dayStart(cycle.endsOn) + DAY; // the end date is inclusive
@@ -839,14 +886,16 @@ export function cycleProgress(
   const elapsedRatio = Math.min(1, Math.max(0, (now - start) / (end - start)));
   const daysLeft = Math.max(0, Math.ceil((end - now) / DAY));
   const inCycle = cards.filter((c) => c.cycleId === cycle.id && c.status !== "rejected");
+  // With estimation off (the default, DB-N7-2) every issue counts as one.
   const pts = (c: PmCardLike) =>
-    typeof c.estimate === "number" && c.estimate > 0 ? c.estimate : 1;
+    showsPoints(estimation) && typeof c.estimate === "number" && c.estimate > 0 ? c.estimate : 1;
   const points = { done: 0, started: 0, notStarted: 0, total: 0 };
   let doneCards = 0;
   let unestimated = 0;
   for (const c of inCycle) {
     const p = pts(c);
-    if (!(typeof c.estimate === "number" && c.estimate > 0)) unestimated++;
+    if (showsPoints(estimation) && !(typeof c.estimate === "number" && c.estimate > 0))
+      unestimated++;
     points.total += p;
     if (c.status === "done") {
       points.done += p;
@@ -865,6 +914,29 @@ export function cycleProgress(
     unestimated,
     behindBy,
     atRisk,
+  };
+}
+
+/** The sprint header's words in the team's unit: issues, or points with estimation on (DB-N7-2). */
+export function sprintHeaderText(
+  p: CycleProgress,
+  estimation?: Estimation,
+): { done: string; aria: string; pace: string; unestimated: string } {
+  const n = p.points;
+  const amount = (x: number) => amountText(x, estimation);
+  return {
+    done: `${n.done} of ${amount(n.total)} done`,
+    aria: `${n.done} of ${amount(n.total)} done, ${n.started} in progress, ${n.notStarted} not started`,
+    pace:
+      p.behindBy > 0
+        ? `Behind the linear pace by ${amount(p.behindBy)}.`
+        : p.behindBy < 0
+          ? `Ahead of the linear pace by ${amount(-p.behindBy)}.`
+          : "On the linear pace.",
+    unestimated:
+      showsPoints(estimation) && p.unestimated > 0
+        ? ` · ${p.unestimated} unestimated, counted as 1 pt`
+        : "",
   };
 }
 
@@ -1025,8 +1097,8 @@ export function pmSteps(
       case "waiting_for_step":
         label =
           state === "done"
-            ? `Paused the Worker${step ? ` after step ${step}` : ""}`
-            : `Pausing the Worker${step ? ` after step ${step}` : " at its next step"}`;
+            ? `Paused the agent${step ? ` after step ${step}` : ""}`
+            : `Pausing the agent${step ? ` after step ${step}` : " at its next step"}`;
         break;
       case "loading_pm":
         label =
@@ -1036,7 +1108,7 @@ export function pmSteps(
         label = state === "done" ? "Replied" : "Thinking";
         break;
       case "resuming_worker":
-        label = state === "done" ? "Resumed the Worker" : "Resuming the Worker";
+        label = state === "done" ? "Resumed the agent" : "Resuming the agent";
         break;
       default:
         label = phase;
@@ -1096,9 +1168,9 @@ export function capabilityRows(types: CapabilityType[] | undefined): CapabilityR
 /** The headline sentence for the size curve. */
 export function horizonSentence(lines: number | undefined): string {
   if (typeof lines !== "number" || !Number.isFinite(lines) || lines <= 0) {
-    return "Not enough attempts yet to say how large a change the Worker handles reliably.";
+    return "Not enough attempts yet to say how large a change the agent handles reliably.";
   }
-  return `The Worker passes 80% of cards that change up to about ${Math.round(lines)} lines.`;
+  return `The agent passes 80% of issues that change up to about ${Math.round(lines)} lines.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1121,7 +1193,7 @@ export interface LearnedRuleLike {
 }
 
 export const RULE_SOURCE_LABELS: Record<string, string> = {
-  struggle: "From a fix that took the Worker several tries",
+  struggle: "From a fix that took the agent several tries",
   send_back: "From your send-back note",
   reflection: "From Seshat's end-of-run review",
   seed: "Seeded with the project",
@@ -1294,25 +1366,25 @@ export const ROSTER_ROLES: { role: string; aliases: string[]; label: string; doe
   {
     role: "worker",
     aliases: ["worker", "executor"],
-    label: "Worker",
-    does: "Writes the code for one card at a time, inside its worktree, until the gates pass.",
+    label: "Coding model",
+    does: "Writes the code for one issue at a time, inside its worktree, until its checks pass.",
   },
   {
     role: "manager",
     aliases: ["manager", "pm", "seshat", "planner"],
-    label: "Seshat · Project manager",
-    does: "Plans cycles, answers you, and proposes changes you approve.",
+    label: "Planning model · Seshat",
+    does: "Plans sprints, answers you, and proposes changes you approve.",
   },
   {
     role: "reviewer",
     aliases: ["reviewer", "adversarial", "adversarial_reviewer", "critic"],
-    label: "Adversarial reviewer",
-    does: "Reviews passing work. A different model family, so it catches what the worker's family misses.",
+    label: "Review model",
+    does: "Reviews passing work. A different model family, so it catches what the coding model's family misses.",
   },
   {
     role: "researcher",
     aliases: ["researcher", "research"],
-    label: "Researcher",
+    label: "Research model",
     does: "Evidence-gathering: papers, docs, registries, the project's history; every answer cites sources.",
   },
 ];

@@ -1,8 +1,9 @@
 // The conversation with Seshat (PM_DESIGN §2.4–2.6): messages, proposals, the
 // waiting procedure, the context chip and the composer. Mounted twice: in the
 // right-side panel and in the full #/pm view. Both render the one thread.
-import { $, esc, icon, isTyping, kbd } from "./dom.js";
+import { $, esc, icon, isTyping, kbd, teammateName } from "./dom.js";
 import { formatClock, pmSteps, renderPmMarkdown, sourceCites, statusEtaSeconds } from "./lib/pm.js";
+import { composerCostLine, composerHint, composerStarters } from "./lib/seshat.js";
 import { columnLabel } from "./lib/vocabulary.js";
 import { cardChip } from "./marks.js";
 import { openPeek } from "./peek.js";
@@ -95,12 +96,12 @@ function messageHtml(m) {
           : "";
     const err =
       m.state === "error"
-        ? `<div class="msg pm error">${avatar()}<div><p><b>${PM_NAME} couldn't reply.</b> <span class="sec">The manager model did not answer this message.</span></p><button class="btn sm" type="button" data-retry="${esc(m.id)}">${icon("refresh", 12, "ic s12")}Retry</button></div></div>`
+        ? `<div class="msg pm error">${avatar()}<div><p><b>${PM_NAME} couldn't reply.</b> <span class="sec">The Planning model did not answer this message.</span></p><button class="btn sm" type="button" data-retry="${esc(m.id)}">${icon("refresh", 12, "ic s12")}Retry</button></div></div>`
         : "";
     return `<article class="msg user" data-msg="${esc(m.id)}"><div class="bubble md">${md(m.text)}</div><div class="meta tnum">${esc(time(m.createdAt))}${note}</div></article>${err}`;
   }
   const proposals = proposalGroupHtml(m.proposals ?? [], { groupId: m.id });
-  return `<article class="msg pm" data-msg="${esc(m.id)}"><header>${avatar()}<b>${PM_NAME}</b><time class="tnum">${esc(time(m.createdAt))}</time></header><div class="md">${md(m.text)}</div>${proposals}${sourcesHtml(m.cites)}${citesHtml(m.cites)}</article>`;
+  return `<article class="msg pm" data-msg="${esc(m.id)}"><header>${avatar()}${teammateName(PM_NAME, "seshat")}<time class="tnum">${esc(time(m.createdAt))}</time></header><div class="md">${md(m.text)}</div>${proposals}${sourcesHtml(m.cites)}${citesHtml(m.cites)}</article>`;
 }
 
 /* ---------- Waiting (PM_DESIGN §2.5) ---------- */
@@ -116,7 +117,7 @@ function pendingHtml(user) {
   const status = pm.status ?? { phase: "idle" };
   const started = Date.parse(user.createdAt) || pm.phaseSeenAt.queued || Date.now();
   if (status.phase === "idle") {
-    return `<div class="msg pm pending" aria-busy="true">${avatar()}<div class="pend"><header><b>${PM_NAME}</b><span class="clock tnum" data-since="${started}"></span></header><p class="note">Queued. ${PM_NAME} starts as soon as the server picks it up.</p></div></div>`;
+    return `<div class="msg pm pending" aria-busy="true">${avatar()}<div class="pend"><header>${teammateName(PM_NAME, "seshat")}<span class="clock tnum" data-since="${started}"></span></header><p class="note">Queued. ${PM_NAME} starts as soon as the server picks it up.</p></div></div>`;
   }
   const rows = pmSteps(status, { workerInvolved: pm.workerInvolved, step: pm.step });
   const eta = statusEtaSeconds(status);
@@ -143,21 +144,21 @@ function pendingHtml(user) {
   let note = "";
   switch (status.phase) {
     case "waiting_for_step":
-      note = `Waiting for ${step ? `step ${step}` : "the current step"} to finish. The Worker is never stopped mid-edit.`;
+      note = `Waiting for ${step ? `step ${step}` : "the current step"} to finish. The agent is never stopped mid-edit.`;
       break;
     case "loading_pm":
       note = pm.workerInvolved
-        ? `Only one model fits in memory, so the Worker waits at a safe step boundary and continues from ${next} once ${PM_NAME} has replied. You can keep working; the reply lands here.`
+        ? `Only one model fits in memory, so the agent waits at a safe step boundary and continues from ${next} once ${PM_NAME} has replied. You can keep working; the reply lands here.`
         : `${PM_NAME} runs on this machine. You can keep working; the reply lands here.`;
       break;
     case "thinking":
       note = "Reading the board, the runs and the ledger.";
       break;
     case "resuming_worker":
-      note = `Reloading the Worker; ${next} starts next.`;
+      note = `Reloading the agent; ${next} starts next.`;
       break;
   }
-  return `<div class="msg pm pending" aria-busy="true" data-phase="${esc(status.phase)}" data-phase-since="${seen[status.phase] ?? Date.now()}">${avatar()}<div class="pend"><header><b>${PM_NAME}</b><span class="clock tnum" data-since="${started}"></span></header><ol class="steps-pm">${items}</ol><p class="note" data-note>${esc(note)}</p></div></div>`;
+  return `<div class="msg pm pending" aria-busy="true" data-phase="${esc(status.phase)}" data-phase-since="${seen[status.phase] ?? Date.now()}">${avatar()}<div class="pend"><header>${teammateName(PM_NAME, "seshat")}<span class="clock tnum" data-since="${started}"></span></header><ol class="steps-pm">${items}</ol><p class="note" data-note>${esc(note)}</p></div></div>`;
 }
 
 /** Once a second: clocks, the ETA bar and the over-time notes. Text changes; nothing moves. */
@@ -232,32 +233,33 @@ function contextHtml(ctx, dismissed) {
   return `<div class="ctx"><span class="sec">Looking at:</span>${what}<button class="icon-btn" type="button" data-ctx-dismiss aria-label="Don't send this context">${icon("x", 12, "ic s12")}</button></div>`;
 }
 
+/** DB-P5-5: what sending does, in plain words; no API path, no model name or id. */
 function costLine() {
   const s = store.state;
-  if (s.meta && s.meta.triage === false)
-    return "Read-only server. Restart with sekhemet serve to talk to Seshat.";
-  if (s.connection === "offline") return `Offline. Your message would not reach ${PM_NAME}.`;
   const running = s.cards.find((c) => c.status === "in_progress");
-  if (running) {
-    const step = running.stepsUsed
-      ? `on step ${running.stepsUsed} of ${running.stepBudget}`
-      : "starting a card";
-    return `The Worker is ${step}. Sending pauses it at the next step while ${PM_NAME} loads (about 40s).`;
-  }
-  // The chat panel names no model (DB-N6-14): Configuration names every role's.
-  return `${PM_NAME} runs locally on this machine. Replies take about a minute.`;
+  return composerCostLine({
+    unavailable: s.pm.available === false,
+    readOnly: Boolean(s.meta && s.meta.triage === false),
+    offline: s.connection === "offline",
+    ...(running
+      ? {
+          agent: running.stepsUsed ? { step: running.stepsUsed, budget: running.stepBudget } : {},
+        }
+      : {}),
+  });
 }
 
+/** The starters (§2.7 item 6): Start a new project among them, and one for the issue in focus. */
 function starters() {
-  const out = ["Standup", "What's at risk this week?", "Plan the next cycle"];
   const focused = store.card(currentContext().cardId ?? store.state.focusedId);
-  if (focused) {
-    const short = focused.display?.shortId ?? focused.id;
-    if (focused.display?.tone === "fail" || focused.display?.evidence?.passed === false)
-      out.push(`Why did @${short} fail?`);
-    else if ((focused.estimate ?? 0) > 5) out.push(`Split @${short}`);
-  }
-  return out;
+  if (!focused) return composerStarters();
+  return composerStarters({
+    focused: {
+      key: focused.display?.shortId ?? focused.id,
+      failed: focused.display?.tone === "fail" || focused.display?.evidence?.passed === false,
+      estimate: focused.estimate ?? 0,
+    },
+  });
 }
 
 function disabledReason() {
@@ -305,7 +307,7 @@ function matchCards(q) {
  * Returns { focus(), prefill(text), destroy() }.
  */
 export function mountThread(host, { variant = "panel" } = {}) {
-  host.innerHTML = `<div class="pm-thread ${variant}"><div class="pm-log" role="log" aria-live="off" aria-label="Conversation with ${PM_NAME}" tabindex="0"></div><div class="pm-compose"><div class="starters" data-starters></div><div data-ctx></div><div class="box"><textarea rows="1" aria-label="Message ${PM_NAME}" placeholder="Ask ${PM_NAME} about the board, a card or a run… (/ for commands)"></textarea><button class="send" type="button" data-send aria-label="Send (Enter)">${icon("send", 14, "ic s14")}</button><div class="picker" role="listbox" hidden></div></div><p class="cost" data-cost></p></div></div>`;
+  host.innerHTML = `<div class="pm-thread ${variant}"><div class="pm-log" role="log" aria-live="off" aria-label="Conversation with ${PM_NAME}" tabindex="0"></div><div class="pm-compose"><div class="starters" data-starters></div><div data-ctx></div><div class="box"><textarea rows="1" aria-label="Message ${PM_NAME}" placeholder="Ask ${PM_NAME} about the board, a card or a run… (/ for commands)"></textarea><button class="send" type="button" data-send aria-label="Send (Enter)">${icon("send", 14, "ic s14")}</button><div class="picker" role="listbox" hidden></div></div><p class="hint" data-hint hidden></p><p class="cost" data-cost></p></div></div>`;
   const log = $(".pm-log", host);
   const ta = $("textarea", host);
   const picker = $(".picker", host);
@@ -329,7 +331,7 @@ export function mountThread(host, { variant = "panel" } = {}) {
         '<div class="pm-skel"><div class="sk sk-line"></div><div class="sk sk-line"></div><div class="sk sk-line" style="width:60%"></div></div>';
     } else {
       const project = store.state.meta?.project ?? "this project";
-      const intro = `<article class="msg pm intro">${avatar()}<div><header><b>${PM_NAME}</b><span class="sec">Project manager</span></header><div class="md"><p>I'm ${PM_NAME}, the project manager for ${esc(project)}. I read the board, the runs and the ledger, and I propose changes you approve. I never change the board myself.</p></div></div></article>`;
+      const intro = `<article class="msg pm intro">${avatar()}<div><header>${teammateName(PM_NAME, "seshat")}<span class="sec">Project manager</span></header><div class="md"><p>I'm ${PM_NAME}, the project manager for ${esc(project)}. I read the board, the runs and the ledger, and I propose changes you approve. I never change the board myself.</p></div></div></article>`;
       const pending = pendingMessage(pm.messages);
       const parts = pm.messages.map((m) => messageHtml(m) + (m === pending ? pendingHtml(m) : ""));
       html = (pm.messages.length ? "" : intro) + parts.join("");
@@ -366,7 +368,7 @@ export function mountThread(host, { variant = "panel" } = {}) {
         ? starters()
             .map(
               (t) =>
-                `<button class="starter" type="button" data-starter="${esc(t)}">${esc(t)}</button>`,
+                `<button class="starter" type="button" data-starter="${esc(t.text)}">${esc(t.label)}</button>`,
             )
             .join("")
         : "";
@@ -377,9 +379,18 @@ export function mountThread(host, { variant = "panel" } = {}) {
     const why = disabledReason();
     ta.disabled = Boolean(why);
     $("[data-send]", host).disabled = Boolean(why);
-    const cost = why === "unavailable" ? `${PM_NAME} needs a newer Sekhemet server.` : costLine();
+    const cost = costLine();
     const costEl = $("[data-cost]", host);
     if (costEl.textContent !== cost) costEl.textContent = cost;
+    renderHint();
+  }
+
+  /** While a person starts a project, what to write and that nothing is created yet (DB-P5-3). */
+  function renderHint() {
+    const hint = composerHint(ta.value);
+    const el = $("[data-hint]", host);
+    if (el.textContent !== hint) el.textContent = hint;
+    el.hidden = !hint;
   }
 
   function render() {
@@ -394,6 +405,7 @@ export function mountThread(host, { variant = "panel" } = {}) {
     const ctx = dismissed || (here.view === "pm" && !here.cardId) ? undefined : here;
     ta.value = "";
     autosize();
+    renderHint();
     closePicker();
     const ok = await sendMessage(text, ctx);
     if (!ok) {
@@ -444,6 +456,7 @@ export function mountThread(host, { variant = "panel" } = {}) {
   ta.addEventListener("input", () => {
     autosize();
     renderPicker();
+    renderHint();
   });
   ta.addEventListener("keydown", (e) => {
     if (!picker.hidden) {
@@ -491,6 +504,7 @@ export function mountThread(host, { variant = "panel" } = {}) {
     else if (t.closest("[data-starter]")) {
       ta.value = t.closest("[data-starter]").dataset.starter;
       autosize();
+      renderHint();
       ta.focus();
       ta.setSelectionRange(ta.value.length, ta.value.length);
     } else if (t.closest("[data-ctx-dismiss]")) {
@@ -534,6 +548,7 @@ export function mountThread(host, { variant = "panel" } = {}) {
     prefill(text) {
       ta.value = text;
       autosize();
+      renderHint();
       if (!ta.disabled) {
         ta.focus();
         ta.setSelectionRange(text.length, text.length);

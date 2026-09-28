@@ -755,6 +755,8 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
       v.record(v.picklist(["label", "priority", "duplicate", "split"]), v.boolean()),
       true,
     ),
+    // DEC-31, dashboard DB-N7-2: Preferences → Estimation, the project's.
+    estimation: s(v.picklist(["off", "points"]), true),
   },
   // teams TEAM-4, integrations INT-22: a refused request, by the person's principal.
   "access/refused": {

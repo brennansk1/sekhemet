@@ -14,7 +14,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
-import { CardStore, EventLog, initSchema, readGeneratedHeader } from "@sekhemet/kernel";
+import {
+  CardStore,
+  EventLog,
+  type Requirement,
+  initSchema,
+  readGeneratedHeader,
+} from "@sekhemet/kernel";
 import { DecisionStore, type PlannerLedger, acceptBrief } from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter, readBranchFile } from "@sekhemet/sync";
@@ -23,7 +29,12 @@ import { acceptCard, recordReviewOpened } from "../src/accept.js";
 import { main } from "../src/index.js";
 import { recordLedgerRun } from "../src/ledger_evidence.js";
 import { PmStore } from "../src/pm/store.js";
-import { docsLayout, exportProjectDocuments } from "../src/project_docs.js";
+import {
+  diffRequirements,
+  docsLayout,
+  exportProjectDocuments,
+  moscowOf,
+} from "../src/project_docs.js";
 import {
   acceptSliceAndRelease,
   checkMain,
@@ -172,16 +183,22 @@ describe("DS-N3-1: the documents are generated from the ledger and committed ont
     expect(briefText).toContain("Recipes live in a shared spreadsheet");
     expect(briefText).toMatch(/### SLICE-1 — Walking skeleton/);
     expect(briefText).toContain("Accepted by Jane Doe");
+    // DEC-31: the documents speak MoSCoW, releases and the project's Type, never Kano.
+    expect(briefText).toContain("## Releases");
+    expect(briefText).toContain("## Type");
+    expect(briefText).toContain("- REQ-2 — Tag a recipe (Could have)");
+    expect(briefText).not.toMatch(/kano|nice-to-have|must-have|Depth profile|## Slices/i);
 
     const reqs = onMain("docs/product/requirements.md") as string;
     expect(readGeneratedHeader(reqs)).toBe(r.seq);
     expect(reqs).toContain("### REQ-1 — Save a recipe");
     expect(reqs).toContain(
-      "version: 1 · kano: must-be · must: yes · slice: SLICE-1 · status: unplanned · dependsOn: none",
+      "version: 1 · priority: Must have · release: SLICE-1 · status: unplanned · dependsOn: none",
     );
     expect(reqs).toContain("- `save.1` WHEN a recipe is saved THE SYSTEM SHALL list it");
     expect(reqs).toContain("### REQ-2 — Tag a recipe");
-    expect(reqs).toMatch(/kano: attractive · must: no/);
+    expect(reqs).toMatch(/version: 1 · priority: Could have · release: SLICE-1/);
+    expect(reqs).not.toMatch(/kano|must-have|nice-to-have/i);
 
     const madr = onMain("docs/decisions/0001-which-store-keeps-the-recipes.md") as string;
     expect(readGeneratedHeader(madr)).toBe(r.seq);
@@ -217,7 +234,7 @@ describe("DS-N3-1: the documents are generated from the ledger and committed ont
     const third = await exportProjectDocuments(ctx(), { principal });
     expect(third.written).toEqual(["docs/product/brief.md", "docs/product/requirements.md"]);
     expect(onMain("docs/product/requirements.md")).toContain("### REQ-1 — Save and name a recipe");
-    expect(onMain("docs/product/requirements.md")).toMatch(/version: 2 · kano: must-be/);
+    expect(onMain("docs/product/requirements.md")).toMatch(/version: 2 · priority: Must have/);
   });
 
   it("is triggered by a person's Accept of a card: the documents follow the squash", async () => {
@@ -584,5 +601,52 @@ describe("RG-S5-2: a checkout on the integration branch is told how to catch up 
     await decision();
     expect(await releaseSubcommand(k, ["docs"], (l) => out.push(l))).toBe(0);
     expect(out.join("\n")).toMatch(/Your checkout .* is on main, which moved to .*read-tree -m -u/);
+  });
+});
+
+describe("DEC-31: a requirements document speaks MoSCoW, and a changed priority is read back", () => {
+  const req = (patch: Partial<Requirement>): Requirement =>
+    ({
+      id: "REQ-2",
+      title: "Tag a recipe",
+      version: 1,
+      mustHave: false,
+      kano: "attractive",
+      sliceId: "SLICE-1",
+      dependsOn: [],
+      criteria: [],
+      ...patch,
+    }) as Requirement;
+  const doc = (priority: string) =>
+    `### REQ-2 — Tag a recipe\n\nversion: 1 · priority: ${priority} · release: SLICE-1 · status: planned · dependsOn: none\n`;
+
+  it("names each requirement Must have, Should have or Could have", () => {
+    expect(moscowOf(req({ mustHave: true, kano: "performance" }))).toBe("Must have");
+    expect(moscowOf(req({ kano: "performance" }))).toBe("Should have");
+    expect(moscowOf(req({ kano: "attractive" }))).toBe("Could have");
+    expect(moscowOf(req({ kano: undefined }))).toBe("Could have");
+  });
+
+  it("proposes nothing for an unchanged priority, and the must-have and class for a changed one", () => {
+    expect(diffRequirements(doc("Could have"), [req({})])).toEqual([]);
+    expect(diffRequirements(doc("Could have"), [req({ kano: undefined })])).toEqual([]);
+    expect(diffRequirements(doc("Must have"), [req({})])).toEqual([
+      {
+        kind: "changed",
+        target: "requirement",
+        targetId: "REQ-2",
+        field: "must_have",
+        proposed: "yes",
+      },
+    ]);
+    expect(diffRequirements(doc("Should have"), [req({})])).toEqual([
+      {
+        kind: "changed",
+        target: "requirement",
+        targetId: "REQ-2",
+        field: "kano",
+        proposed: "performance",
+      },
+    ]);
   });
 });

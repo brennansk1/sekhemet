@@ -132,6 +132,8 @@ export interface BurnupCycle {
  * as 1 point, as the cycle header counts it. `project` keeps one project's
  * cards; `canSee` keeps the cards of the projects a person may see (Team,
  * PM-N9-8), so no one reads the counts of a project hidden from them.
+ * `unit: "issues"` counts every issue as one, for a project whose
+ * Preferences → Estimation is off (DEC-31, dashboard DB-N7-2).
  */
 export function burnupFromEvents(
   events: readonly { type: string; cardId?: string | null; payload: unknown; createdAt: string }[],
@@ -140,9 +142,11 @@ export function burnupFromEvents(
     now: Date;
     project?: string;
     canSee?: (project: string | undefined) => boolean;
+    unit?: "points" | "issues";
   },
 ): {
   scope: "cycle" | "project";
+  unit: "points" | "issues";
   cycleId?: string;
   name?: string;
   startsOn?: string;
@@ -177,7 +181,9 @@ export function burnupFromEvents(
     r.status !== "rejected" &&
     (!opts.cycle || r.cycleId === opts.cycle.id) &&
     inScope(r);
-  const points = (r: Row) => (typeof r.estimate === "number" && r.estimate > 0 ? r.estimate : 1);
+  const unit = opts.unit ?? "points";
+  const points = (r: Row) =>
+    unit === "points" && typeof r.estimate === "number" && r.estimate > 0 ? r.estimate : 1;
   const totals = () => {
     let done = 0;
     let scope = 0;
@@ -239,6 +245,7 @@ export function burnupFromEvents(
   ).length;
   return {
     scope: opts.cycle ? "cycle" : "project",
+    unit,
     ...(opts.cycle
       ? {
           cycleId: opts.cycle.id,
@@ -257,7 +264,11 @@ export async function burnupMetrics(
   log: EventLog,
   cycle: BurnupCycle | undefined,
   now = new Date(),
-  scope: { project?: string; canSee?: (project: string | undefined) => boolean } = {},
+  scope: {
+    project?: string;
+    canSee?: (project: string | undefined) => boolean;
+    unit?: "points" | "issues";
+  } = {},
 ): Promise<ReturnType<typeof burnupFromEvents>> {
   const types = ["card/created", "card/status_changed", "card/updated"];
   // Every card event, page by page: a long ledger is never cut short.

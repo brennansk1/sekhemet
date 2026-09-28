@@ -393,8 +393,12 @@ export interface StoryMap {
   projectDone: boolean;
 }
 
+/**
+ * The count a person reads (DEC-31): the Must have requirements proven on
+ * main, as *requirements done* ("Release 1 · 5 of 11 requirements done").
+ */
 export function provenLine(n: { proven: number; total: number }): string {
-  return `${n.proven} of ${n.total} must-have${n.total === 1 ? "" : "s"} proven`;
+  return `${n.proven} of ${n.total} requirement${n.total === 1 ? "" : "s"} done`;
 }
 
 function requirementView(
@@ -432,7 +436,7 @@ function requirementView(
     tests,
   };
   const at = (state: RequirementState, why: string): RequirementView => ({ ...base, state, why });
-  if (r.cut) return at("cut", "A person cut it from its slice.");
+  if (r.cut) return at("cut", "A person cut it from its release.");
   const suspect = links.filter((l) => l.suspect);
   if (suspect.length > 0) {
     return at(
@@ -548,13 +552,13 @@ function sliceView(
   const blockers: string[] = [];
   // A slice with no must-have requirements at all has nothing proven: it is
   // not "vacuously" done just because there is nothing left to fail.
-  if (must.length === 0) blockers.push("It has no must-have requirements traced to it.");
+  if (must.length === 0) blockers.push("It has no Must have requirements traced to it.");
   for (const v of must.filter((x) => x.state !== "proven")) {
     blockers.push(`${v.id} is ${v.state.replace(/_/g, " ")}: ${v.why}`);
   }
-  if (!main) blockers.push("The project gates have not run on main yet.");
-  else if (stale) blockers.push("Main moved since the project gates last ran there.");
-  else if (!main.gatesPassed) blockers.push("The project gates fail on main.");
+  if (!main) blockers.push("The project's checks have not run on main yet.");
+  else if (stale) blockers.push("Main moved since the project's checks last ran there.");
+  else if (!main.gatesPassed) blockers.push("The project's checks fail on main.");
   const proven = blockers.length === 0;
   return {
     id: s.id,
@@ -883,12 +887,14 @@ export function guardCompletionClaim(
   const lines = [
     `Not done: ${map.provenLine}.`,
     ...(unproven.length
-      ? [`Unproven: ${unproven.map((r) => `${r.id} (${r.state.replace(/_/g, " ")})`).join(", ")}.`]
+      ? [
+          `Not done yet: ${unproven.map((r) => `${r.id} (${r.state.replace(/_/g, " ")})`).join(", ")}.`,
+        ]
       : []),
     ...(unproven.length === 0 && undone.length
       ? [`Waiting for a person to accept: ${undone.map((s) => s.id).join(", ")}.`]
       : []),
-    "Only tests passing on main and a person's acceptance mark a slice or a release done.",
+    "Only tests passing on main and a person's acceptance mark a release done.",
   ];
   return { text: [kept, lines.join(" ")].filter(Boolean).join("\n\n"), guarded: true };
 }
@@ -935,7 +941,7 @@ export function releaseReport(map: StoryMap, sliceId: string): ReleaseReport {
   const text = [
     `Release report for ${slice.id}${slice.title ? ` (${slice.title})` : ""}: ${slice.provenLine}.`,
     `Compared with what you had before: ${map.baseline ?? "no baseline was stated in the brief"}.`,
-    "Proven:",
+    "Done:",
     ...(proven.length ? proven.map(item) : ["- none"]),
     "Cut:",
     ...(cut.length ? cut.map(item) : ["- none"]),

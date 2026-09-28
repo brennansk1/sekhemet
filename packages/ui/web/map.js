@@ -6,7 +6,8 @@
 // states are the requirement graph's (`GET /api/story-map`).
 import { burnupHtml, loadBurnup } from "./burnup.js";
 import { openCreate } from "./create.js";
-import { $, $$, esc, getJSON, icon, tip } from "./dom.js";
+import { $, $$, esc, getJSON, icon } from "./dom.js";
+import { tip as learnTip } from "./learn.js";
 import { burnupTarget } from "./lib/burnup.js";
 import { epicFromFilter } from "./lib/create.js";
 import { storyMapModel } from "./lib/storymap.js";
@@ -55,6 +56,7 @@ async function loadBurn(force = false) {
     effectiveFilter(),
     store.state.now,
     store.state.project?.id,
+    store.state.estimation,
   );
   if (!force && target.url === ui.burnUrl && ui.burn) return;
   ui.burnUrl = target.url;
@@ -84,6 +86,7 @@ function tileOpts() {
     now: store.state.now,
     epics: store.state.epics,
     pmPaused: Boolean(store.state.pm?.status?.workerPaused),
+    estimation: store.state.estimation,
   };
 }
 
@@ -97,7 +100,17 @@ function tilesHtml(cards, visible) {
 
 function requirementHtml(r, visible) {
   const tone = r.tone ? ` i-${r.tone}` : "";
-  return `<li class="sreq"><div class="sreq-h"><span class="rst${tone}">${icon(r.icon, 12, "ic s12")}<span>${esc(r.label)}</span></span><span class="sreq-id tnum">${esc(r.id)}</span>${r.mustHave ? "" : '<span class="sec">Nice-to-have</span>'}</div><p class="sreq-t">${esc(r.title)}</p><p class="sreq-why">${esc(r.why)}</p>${tilesHtml(r.cards, visible)}</li>`;
+  return `<li class="sreq"><div class="sreq-h"><span class="rst${tone}">${icon(r.icon, 12, "ic s12")}<span>${esc(r.label)}</span></span><span class="sreq-id tnum">${esc(r.id)}</span><span class="sec">${esc(r.moscow)}</span></div><p class="sreq-t">${esc(r.title)}</p><p class="sreq-why">${esc(r.why)}</p>${tilesHtml(r.cards, visible)}</li>`;
+}
+
+/** Tips: the burn-up's `?`, reading its last day (DB-P4-2). */
+function burnTip() {
+  const days = ui.burn?.data?.days ?? [];
+  const last = days[days.length - 1];
+  const burnup = last
+    ? { done: last.done, scope: last.scope, unit: ui.burn.data.unit ?? "points" }
+    : undefined;
+  return learnTip("metric:burnup", "Burn-up", burnup ? { burnup } : undefined);
 }
 
 function mapHtml(m, visible) {
@@ -113,8 +126,24 @@ function mapHtml(m, visible) {
     .join("");
   const bands = m.bands
     .map((b) => {
+      // Tips explain a release, and the first one, where they appear (DB-P4-2,
+      // §2.9.2); the teaching is theirs, not a hover title's.
       const mark = b.skeleton
-        ? `<span class="skel" ${tip("The walking skeleton: the thinnest journey through the whole backbone that works end to end.")}>${icon("arrow-right", 12, "ic s12")}First slice</span>`
+        ? `<span class="skel">${icon("arrow-right", 12, "ic s12")}First release</span>`
+        : "";
+      // A requirement is done when proven on main; a cut one is out of the count.
+      const reqs = b.cells.flatMap((c) => c.requirements).filter((r) => r.state !== "cut");
+      const release = {
+        heading: b.heading,
+        done: reqs.filter((r) => r.state === "proven").length,
+        total: reqs.length,
+      };
+      const why = b.stateText
+        ? learnTip(
+            b.skeleton ? "first_release" : "release",
+            b.skeleton ? "First release" : "Release",
+            { release },
+          )
         : "";
       const cells = b.cells
         .map((c) => {
@@ -127,7 +156,7 @@ function mapHtml(m, visible) {
           return `<td>${body}</td>`;
         })
         .join("");
-      return `<tbody class="smap-band${b.skeleton ? " skeleton" : ""}"><tr><th scope="rowgroup" colspan="${n}" class="smap-band-h"><span class="smap-band-t">${esc(b.heading)}</span>${mark}${b.stateText ? `<span class="sec">${esc(b.stateText)}</span>` : ""}</th></tr><tr>${cells}</tr></tbody>`;
+      return `<tbody class="smap-band${b.skeleton ? " skeleton" : ""}"><tr><th scope="rowgroup" colspan="${n}" class="smap-band-h"><span class="smap-band-t">${esc(b.heading)}</span>${mark}${why}${b.stateText ? `<span class="sec">${esc(b.stateText)}</span>` : ""}</th></tr><tr>${cells}</tr></tbody>`;
     })
     .join("");
   const note = m.note
@@ -156,7 +185,7 @@ function render() {
     body = mapHtml(storyMapModel({ map: ui.map, cards: s.cards, epics: s.epics }), visible);
   }
   const width = Math.max(320, Math.min(900, (ui.root.clientWidth || 900) - 48));
-  const html = `<div class="smap-host">${body}<section class="smap-burn" aria-label="Burn-up">${burnupHtml(ui.burn, width)}</section></div>`;
+  const html = `<div class="smap-host">${body}<section class="smap-burn" aria-label="Burn-up">${burnupHtml(ui.burn, width, undefined, { tip: burnTip() })}</section></div>`;
   if (html === ui.html) return;
   const scroller = $(".smap-scroll", ui.root);
   const keep = scroller ? [scroller.scrollLeft, scroller.scrollTop] : null;

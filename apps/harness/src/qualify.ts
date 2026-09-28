@@ -191,8 +191,8 @@ export function qualificationRefusal(
   const look = registry.lookupQualification(adapter.modelId, combination);
   // A person's recorded override lets the failed combination run (rule 27, MD-N4-4).
   if (look.status === "qualified" || look.status === "overridden") return undefined;
-  const state = look.status === "missing" ? "not qualified" : look.status;
-  return `Refusing ${adapter.modelId} as the Worker: ${state} for this combination on this host (${look.reason}). Qualify it with: sekhemet qualify --models ${name}`;
+  const state = look.status === "missing" ? "not verified on this machine" : look.status;
+  return `Refusing ${adapter.modelId} as the Coding model: ${state} for this combination on this host (${look.reason}). Verify it on this machine with: sekhemet qualify --models ${name}`;
 }
 
 /** The override the Worker's exact combination runs under, if a person recorded one (MD-N4-4). */

@@ -32,7 +32,7 @@ const group = () => ({
     constraints: ["Generator: npm init, tsc --init and Vitest"],
     priorArt: ["Not researched."],
     riskiest: ["Sign-in is secure."],
-    doneMeans: ["Every card passes the gates."],
+    doneMeans: ["Every issue passes its checks."],
   },
   type: { profile: "production", reason: "People sign in to it." },
   stack: { language: "typescript", name: "TypeScript on Node with Vitest", stated: false },
@@ -111,7 +111,10 @@ describe("DS-P2-6: Review plan, before anything exists", () => {
     expect(html).toMatch(/50%[^<]*3 days/);
     expect(html).toMatch(/85%[^<]*6 days/);
     expect(html).toContain("TypeScript on Node with Vitest.");
-    expect(html).toContain("1 project, 1 epic, 3 issues, the brief and card zero");
+    expect(html).toContain("1 project, 1 epic, 3 issues, the brief and its setup issue");
+    // DEC-31: *issue*, never *card*, outside the board's tile.
+    expect(html).toMatch(/2 candidates, about 5 issues/);
+    expect(html.replace(/<[^>]*>/g, " ")).not.toMatch(/\bcards?\b|card zero/i);
     expect(html).toContain("Nothing exists until you create it");
     expect(html).toContain("a recipe &lt;site&gt;");
     // The on-screen words never head a list "requirements" (design-stage §2.2.6).
@@ -180,6 +183,8 @@ describe("DS-P2-1..3 on the card's Plan tab", () => {
     const { startCardNote } = await import("../web/review_plan_view.js");
     expect(startCardNote({ labels: ["card-zero"] })).toContain("generator");
     expect(startCardNote({ labels: ["card-one"] })).toContain("fails at an assertion");
+    for (const l of ["card-zero", "card-one"])
+      expect(startCardNote({ labels: [l] })).not.toMatch(/\bcards?\b|\bgates?\b/i);
     expect(startCardNote({ labels: [] })).toBe("");
   });
 });

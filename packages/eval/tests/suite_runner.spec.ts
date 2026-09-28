@@ -156,9 +156,30 @@ describe("the suite runner module, on the product's queue path (MS-M9-3, MS-M9-1
     );
     expect(ranAnyway.outcomes[1]?.blocked).toBe(true);
     expect(ranAnyway.outcomes[1]?.stopReason).toMatch(
-      /^blocked: src\/a never built \(an earlier card failed\); the queue ran it: gates_failed$/,
+      /^blocked: src\/a never built \(no earlier card merged it\); the queue ran it: gates_failed$/,
     );
     expect(unmetDependencies(repo, INFO.card_b as CardInfo)).toEqual(["src/a"]);
+  });
+
+  it("does not say an earlier card failed when it was never run (live-test F21)", async () => {
+    // The memory watchdog stopped the queue before card_a started: a is not
+    // run, and b, which needs src/a, is blocked behind it, not behind a failure.
+    const r = await runFrozenSuite(
+      suite,
+      suiteQueueRunner(driver(fixtureRepo(), { entries: [entry("card_c", 1, true)] }), {
+        tasks: TASKS,
+        cardTimeoutMs: 60_000,
+      }),
+    );
+    expect(r.outcomes[0]).toMatchObject({
+      notRun: true,
+      stopReason: "not run: the queue finished without running it",
+    });
+    expect(r.outcomes[1]).toMatchObject({
+      blocked: true,
+      stopReason:
+        "blocked: src/a never built (no earlier card merged it); the queue did not run it",
+    });
   });
 
   it("says when a passing card was not accepted, so later cards could not build on it", async () => {

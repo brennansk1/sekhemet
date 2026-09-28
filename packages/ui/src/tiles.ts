@@ -7,15 +7,17 @@
  */
 import { initials } from "./account.js";
 import type { IconName } from "./icons.js";
-import { formatPoints, priorityOf } from "./pm.js";
+import { type Estimation, formatPoints, priorityOf, showsPoints } from "./pm.js";
 import {
   type BoardColumnId,
   type CardDisplay,
+  ISSUE_TYPE_LABELS,
+  type IssueType,
   type StatusMark,
   type Tone,
   boardColumnOf,
   formatWait,
-  humanize,
+  issueTypeOf,
   parseTitle,
   shortId,
 } from "./vocabulary.js";
@@ -26,6 +28,8 @@ export interface TileCardLike {
   status: string;
   title?: string;
   tier?: string;
+  kind?: string;
+  change?: string;
   /** The issue key (`CHR-12`, kernel rule 5), once the kernel assigns one. */
   key?: string;
   estimate?: number;
@@ -45,8 +49,10 @@ export interface TileContext {
   now: number;
   /** The board's epics (`/api/board`'s `epics`), for the epic chip. */
   epics?: readonly { id: string; title: string }[];
-  /** The Worker waits at a step boundary while Seshat replies (PM_DESIGN §2.5). */
+  /** The agent waits at a step boundary while Seshat replies (PM_DESIGN §2.5). */
   pmPaused?: boolean;
+  /** Preferences → Estimation, the project's (DB-N7-2): points only with story points. */
+  estimation?: Estimation;
 }
 
 export interface TileStatus {
@@ -67,7 +73,7 @@ export interface TileModel {
   points?: string;
   /** A person's avatar: a monogram, with the name as its words. */
   owner?: { initials: string; name: string };
-  /** Who builds it, as a text chip; the Worker never has an avatar (DB-P3-5). */
+  /** Who builds it, as a text chip; the agent never has an avatar (DB-P3-5). */
   delegate?: { text: string; worker: boolean };
   title: string;
   /** 0 is *No priority*: no glyph. */
@@ -81,19 +87,27 @@ export interface TileModel {
   blocker?: { text: string };
   /** Work item age, on In progress and In review. */
   age?: string;
-  /** The step budget, only in In progress. */
-  budget?: { text: string; ratio: number; level: "" | "run" | "warn" | "over" };
-  /** Gate pips beside the status. */
+  /** Check pips beside the status. No step counter: that is the issue's (DB-N7-3). */
   pips: boolean;
 }
 
-const TYPES: Record<string, { icon: IconName; label: string }> = {
-  initiative: { icon: "layers", label: "Initiative" },
-  epic: { icon: "layers", label: "Epic" },
-  feature: { icon: "type-feature", label: "Feature" },
-  story: { icon: "type-story", label: "Story" },
-  task: { icon: "type-task", label: "Task" },
+/** The type icon and word (DEC-31): the standard issue types; containers by their tier. */
+const TYPE_ICONS: Record<IssueType, IconName> = {
+  story: "type-story",
+  task: "type-task",
+  bug: "type-bug",
+  spike: "type-spike",
+  epic: "layers",
 };
+
+function typeOf(card: TileCardLike): { icon: IconName; label: string } {
+  if (card.tier === "initiative") return { icon: "layers", label: "Initiative" };
+  const type = (card.display?.type as IssueType | undefined) ?? issueTypeOf(card);
+  return {
+    icon: TYPE_ICONS[type] ?? "type-story",
+    label: ISSUE_TYPE_LABELS[type]?.label ?? "Story",
+  };
+}
 
 /** One line at the narrowest column (200 px) holds about this many characters. */
 const ONE_LINE = 30;
@@ -113,7 +127,7 @@ function statusOf(card: TileCardLike, ctx: TileContext): TileStatus | undefined 
   const held = card.status === "review" && card.hold?.kind === "awaitingMerge";
   let text = d.statusLine ?? "";
   if (ctx.pmPaused && card.status === "in_progress") {
-    text = `Paused for Seshat${card.stepsUsed ? ` · step ${card.stepsUsed} of ${card.stepBudget}` : ""}`;
+    text = "Paused for Seshat";
   } else if (held) {
     text = `Accepted · PR #${card.hold?.pr ?? "?"} open`;
   } else if (card.status === "review" && entered !== undefined) {
@@ -165,24 +179,21 @@ export function tileModel(card: TileCardLike, ctx: TileContext): TileModel {
     id: card.id,
     column,
     key: card.key ?? d.shortId ?? shortId(card.id),
-    type: TYPES[card.tier ?? "story"] ?? {
-      icon: "type-story",
-      label: humanize(card.tier ?? ""),
-    },
+    type: typeOf(card),
     title: d.title ?? parseTitle(card.title ?? "").title,
     priority: priorityOf(card.priority),
     labels: labels.slice(0, 2),
     moreLabels: labels.slice(2),
     pips: (d.mark === "pips" || d.mark === "wait") && (d.evidence?.gates.length ?? 0) > 0,
   };
-  if (points !== "None") model.points = points;
+  if (points !== "None" && showsPoints(ctx.estimation)) model.points = points;
   if (card.owner) {
     const name = d.ownerName?.trim();
     model.owner = name
       ? { initials: initials(name), name }
       : { initials: "?", name: "An unnamed person" };
   }
-  if (card.delegate?.kind === "worker") model.delegate = { text: "Worker", worker: true };
+  if (card.delegate?.kind === "worker") model.delegate = { text: "Agent", worker: true };
   else if (card.delegate?.kind === "person")
     model.delegate = { text: d.delegateName?.trim() || "A person", worker: false };
   if (epic) model.epic = { id: epic.id, title: parseTitle(epic.title).title };
@@ -192,15 +203,6 @@ export function tileModel(card: TileCardLike, ctx: TileContext): TileModel {
   if (column === "in_progress" || column === "in_review") {
     const age = since(d.startedAt ?? d.enteredColumnAt, ctx.now);
     if (age !== undefined) model.age = formatWait(age);
-  }
-  if (column === "in_progress" && d.budgetText) {
-    const ratio = d.budgetRatio ?? 0;
-    model.budget = {
-      text: d.budgetText,
-      ratio,
-      level:
-        ratio >= 1 ? "over" : ratio >= 0.75 ? "warn" : card.status === "in_progress" ? "run" : "",
-    };
   }
   return model;
 }

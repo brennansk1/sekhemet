@@ -1,0 +1,269 @@
+/* Status (dashboard §2.8, DEC-37): one reading column, like a project
+   overview; state is colour paired with words, everything else neutral.
+   One column at 400 px (§2.8.13). Tokens only. */
+.stp {
+  max-width: 960px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.stp-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.stp-headline {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.stp-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.stp-health,
+.stp-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.stp-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  flex: none;
+}
+.stp-dot.t-pass {
+  background: var(--state-pass);
+  border-color: var(--state-pass);
+}
+.stp-dot.t-parked {
+  background: var(--state-parked);
+  border-color: var(--state-parked);
+}
+.stp-dot.t-fail {
+  background: var(--state-fail);
+  border-color: var(--state-fail);
+}
+.stp-dot.t-running {
+  background: var(--state-running);
+  border-color: var(--state-running);
+}
+.stp-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  border-left: 2px solid var(--state-parked);
+  padding-left: 8px;
+}
+.stp-update,
+.stp-editor,
+.stp-notice {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+  padding: 12px 16px;
+}
+.stp-by {
+  font-size: var(--text-xs);
+  margin-bottom: 4px;
+}
+.stp-text {
+  white-space: pre-wrap;
+  font-size: var(--text-sm);
+}
+.stp-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.stp-editor label {
+  font-weight: 600;
+}
+.stp-editor textarea {
+  width: 100%;
+  font: inherit;
+  font-size: var(--text-sm);
+  padding: 8px;
+  border-radius: var(--radius-control);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  resize: vertical;
+}
+.stp-editor .acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.stp-editor .err {
+  color: var(--state-fail);
+  font-size: var(--text-xs);
+}
+.stp-sec {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.stp-sec h2 {
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.stp-sec h3 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin-top: 4px;
+}
+.stp-nums {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
+  gap: 8px;
+}
+.stp-num {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+  padding: 8px 12px;
+}
+.stp-num dt {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.stp-num dd {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stp-v {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.stp-d {
+  font-size: var(--text-xs);
+}
+.stp-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+.stp-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-sm);
+}
+.stp-list > li:last-child {
+  border-bottom: 0;
+}
+.stp-risks > li {
+  flex-direction: column;
+  align-items: flex-start;
+}
+.stp-acts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.stp-acts .why {
+  font-size: var(--text-xs);
+}
+.stp-extend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.stp-extend input {
+  width: 96px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: var(--radius-control);
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+.stp-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+.stp-flow {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+.stp-flow a {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.stp-flow a:hover {
+  background: var(--bg-overlay);
+}
+.stp-flow .sec {
+  font-size: var(--text-xs);
+}
+.stp-ask {
+  display: flex;
+  gap: 8px;
+}
+.stp-ask input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: var(--radius-control);
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+.stp-start {
+  align-self: flex-start;
+}
+.stp-empty {
+  font-size: var(--text-sm);
+}
+
+/* The burn-up's forecast range and target on Status (§2.8.3). */
+.chart .bu-band {
+  fill: var(--tint-running);
+}
+.chart .bu-target {
+  stroke: var(--text-primary);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 3;
+}
+.bu-sw-band {
+  background: var(--tint-running);
+}
+.bu-sw-target {
+  background: var(--text-primary);
+}
+
+@media (max-width: 767px) {
+  .stp {
+    padding: 16px;
+  }
+  .stp-nums,
+  .stp-flow {
+    grid-template-columns: 1fr;
+  }
+}

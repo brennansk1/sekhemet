@@ -153,14 +153,14 @@ describe("DB-N8-1: acceptance criteria with each one's check state", () => {
     expect(r.items.map((i) => i.state)).toEqual(["none", "fail"]);
   });
 
-  it("are not checked when no test gate ran (a type error stopped the run first)", () => {
+  it("are not checked when no test check ran (a type error stopped the run first)", () => {
     const r = criteriaChecks(card, {
       passed: false,
       rungResults: [rung("typecheck", false), rung("test", false, { skipped: true })],
       failures: [],
     });
     expect(r.items.map((i) => i.state)).toEqual(["none", "none", "none"]);
-    expect(r.note).toBe("No test gate ran on the latest attempt, so no criterion is proven yet.");
+    expect(r.note).toBe("No test check ran on the latest attempt, so no criterion is proven yet.");
   });
 
   it("says so when the card has none", () => {
@@ -379,7 +379,7 @@ describe("DB-N8-1, DB-N8-3: Activity interleaves the agent and the people in tim
     expect(
       items.map((i) => [i.kind, i.who, i.ai, i.text, i.quote ?? "", i.meta ?? "", i.tone]),
     ).toEqual([
-      ["event", "Worker", false, "moved from To do to In progress", "", "", "neutral"],
+      ["event", "Agent", false, "moved from To do to In progress", "", "", "neutral"],
       ["plan", "Agent", true, "noted its plan", "Add appendEvent, reuse hashEvent", "", "neutral"],
       ["steps", "Agent", true, "took steps 2–3 · last editing src/ledger.ts", "", "", "neutral"],
       ["checks", "Checks", false, "ran on step 4: Tests failed · 2 errors", "", "", "fail"],

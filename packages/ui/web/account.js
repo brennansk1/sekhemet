@@ -4,6 +4,7 @@
 // (created with an expiry, shown once, revocable) and this browser's session.
 import { openCheatsheet } from "./cheatsheet.js";
 import { announce, copyText, esc, getJSON, icon, sendJSON } from "./dom.js";
+import { setTips, tipsOn } from "./learn.js";
 import {
   ACCOUNT_COPY as T,
   accountHeader,
@@ -41,6 +42,14 @@ export function openAccountMenu(anchor) {
           label: `${T.theme}: ${label}`,
           checked: choice === c,
           run: () => setTheme(c),
+        });
+      // Tips beside the theme: this browser's, like it (§2.9.1).
+      items.push("-");
+      for (const on of [true, false])
+        items.push({
+          label: `Tips: ${on ? "On" : "Off"}`,
+          checked: tipsOn() === on,
+          run: () => setTips(on),
         });
       items.push("-");
     } else if (item.id === "shortcuts") {

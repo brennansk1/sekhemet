@@ -2,7 +2,7 @@
 // description, the acceptance criteria with each one's check state, and the
 // agent — its state in words and the controls it offers. Every word and every
 // rule comes from `/app/lib/issue.js`; this module only renders and posts.
-import { esc, icon, postJSON } from "./dom.js";
+import { aiBadge, esc, icon, postJSON, teammateName } from "./dom.js";
 import { ISSUE_COPY, agentPanel, criteriaChecks } from "./lib/issue.js";
 import { toast } from "./toast.js";
 import { blockedToast } from "./triage.js";
@@ -13,10 +13,8 @@ const MARK = {
   none: () => '<span class="cc-none" aria-hidden="true"></span>',
 };
 
-/** The AI badge beside the agent's name (DEC-36): words, not only a shape. */
-export function aiBadge() {
-  return `<span class="ai-badge"><span aria-hidden="true">${esc(ISSUE_COPY.aiBadge)}</span><span class="sr-only">${esc(ISSUE_COPY.aiBadgeLabel)}</span></span>`;
-}
+/** The AI badge beside an AI teammate's name (DEC-36, DB-N9-18): `icons.ts`'s one badge. */
+export { aiBadge };
 
 function criteriaHtml(card, evidence) {
   const c = criteriaChecks(card, evidence);
@@ -40,7 +38,7 @@ function agentHtml(panel, handBackOpen) {
     handBackOpen && panel.controls.includes("hand_back")
       ? `<form class="hb-form" data-handback><label for="hb-note">${esc(ISSUE_COPY.handBackNote)}</label><textarea id="hb-note" name="note" rows="2"></textarea><div class="acts"><button type="button" class="btn ghost" data-handback-cancel>${esc(ISSUE_COPY.cancel)}</button><button type="submit" class="btn">${icon("send", 14, "ic s14")}${esc(ISSUE_COPY.handBackConfirm)}</button></div></form>`
       : "";
-  return `<div class="agent-bar" role="group" aria-label="${esc(ISSUE_COPY.agent)}"><div class="ag-line"><span class="ag-who">${aiBadge()}<b>${esc(ISSUE_COPY.agent)}</b></span>${panel.label ? `<span class="ag-state ${esc(panel.state)}">${esc(panel.label)}</span>` : ""}<span class="ag-sentence">${esc(panel.sentence)}</span>${buttons ? `<span class="acts">${buttons}</span>` : ""}</div>${form}</div>`;
+  return `<div class="agent-bar" role="group" aria-label="${esc(ISSUE_COPY.agent)}"><div class="ag-line"><span class="ag-who">${teammateName(ISSUE_COPY.agent, "agent")}</span>${panel.label ? `<span class="ag-state ${esc(panel.state)}">${esc(panel.label)}</span>` : ""}<span class="ag-sentence">${esc(panel.sentence)}</span>${buttons ? `<span class="acts">${buttons}</span>` : ""}</div>${form}</div>`;
 }
 
 /**

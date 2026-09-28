@@ -228,9 +228,9 @@ describe("a Worker is refused until its exact combination has qualified (MD-N8-1
     await expect(
       queuePrelude(k, [], {
         print: () => undefined,
-        workerRefusal: "Refusing w as the Worker: never qualified",
+        workerRefusal: "Refusing w as the Coding model: never qualified",
       }),
-    ).rejects.toThrow("Refusing w as the Worker: never qualified");
+    ).rejects.toThrow("Refusing w as the Coding model: never qualified");
   });
 });
 
@@ -254,7 +254,9 @@ describe("sekhemet qualify records the combination (MD-N8-1)", () => {
       combinationDeps: deps,
     };
     expect(await runWave2Command("qualify", ["--check", "--models", "silent"], k, io)).toBe(1);
-    expect(out.at(-1)).toMatch(/Refusing silent as the Worker: not qualified .*never qualified/);
+    expect(out.at(-1)).toMatch(
+      /Refusing silent as the Coding model: not verified on this machine .*never qualified/,
+    );
     expect(await runWave2Command("qualify", ["--models", "silent"], k, io)).toBe(1);
     const reg = new ModelRegistry(process.env.SEKHEMET_MODEL_REGISTRY);
     const combo = qualificationCombination(io.model("silent"), deps);
@@ -461,7 +463,9 @@ describe("one gate for every path that runs the Worker (review medium 2)", () =>
     const reg = new ModelRegistry(join(tmp(), "models.json"));
     const a = managed(reg);
     const g = gateWorker(reg, a, "cyber-tiel", deps);
-    expect(g.refusal).toMatch(/Refusing cyber-tiel-mtp as the Worker: not qualified/);
+    expect(g.refusal).toMatch(
+      /Refusing cyber-tiel-mtp as the Coding model: not verified on this machine/,
+    );
     expect(g.override).toBeUndefined();
     expect(candidateSettings(a)).not.toHaveProperty("workerOverride");
   });

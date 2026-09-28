@@ -412,7 +412,7 @@ export async function projectDonePass(
     const r = await checkMain(k);
     if (r.check && !r.skipped) {
       lines.push(
-        `Checked main at ${r.check.sha.slice(0, 7)}: gates ${r.check.gatesPassed ? "pass" : "fail"}, ${Object.values(r.check.tests).filter((t) => t.result === "passed").length} of ${Object.keys(r.check.tests).length} linked tests pass.`,
+        `Checked main at ${r.check.sha.slice(0, 7)}: checks ${r.check.gatesPassed ? "pass" : "fail"}, ${Object.values(r.check.tests).filter((t) => t.result === "passed").length} of ${Object.keys(r.check.tests).length} linked tests pass.`,
       );
     }
   } catch (err) {
@@ -450,7 +450,7 @@ function printMap(map: StoryMap, print: (l: string) => void): void {
   );
   if (map.main) {
     print(
-      `Main ${map.main.sha.slice(0, 7)} (${map.main.branch}): gates ${map.main.gatesPassed ? "pass" : "fail"}${map.main.stale ? "; main moved since, run `sekhemet release check`" : ""}.`,
+      `Main ${map.main.sha.slice(0, 7)} (${map.main.branch}): checks ${map.main.gatesPassed ? "pass" : "fail"}${map.main.stale ? "; main moved since, run `sekhemet release check`" : ""}.`,
     );
   } else print("Main has not been checked yet: `sekhemet release check`.");
   for (const s of map.slices) {
@@ -459,12 +459,12 @@ function printMap(map: StoryMap, print: (l: string) => void): void {
     );
     for (const r of s.requirements) {
       print(
-        `  ${r.id} v${r.version}${r.mustHave ? "" : " ~"} ${r.title ?? ""}: ${r.state.replace(/_/g, " ")}. ${r.why}`,
+        `  ${r.id} v${r.version} ${r.mustHave ? "Must have" : "Could have"} ${r.title ?? ""}: ${r.state === "proven" ? "done" : r.state.replace(/_/g, " ")}. ${r.why}`,
       );
     }
   }
   if (map.unplanned.length)
-    print(`Unplanned must-haves: ${map.unplanned.map((r) => r.id).join(", ")}.`);
+    print(`Unplanned Must have requirements: ${map.unplanned.map((r) => r.id).join(", ")}.`);
 }
 
 /**
@@ -499,7 +499,7 @@ export async function releaseSubcommand(
         const r = await checkMain(k, { force: true });
         if (!r.check) return fail(`Main not checked: ${r.skipped}.`);
         print(
-          `Main ${r.check.sha.slice(0, 7)}: gates ${r.check.gatesPassed ? "pass" : "fail"}; ${
+          `Main ${r.check.sha.slice(0, 7)}: checks ${r.check.gatesPassed ? "pass" : "fail"}; ${
             Object.entries(r.check.tests)
               .map(([ref, t]) => `${ref} ${t.result}, strength ${t.strength}`)
               .join("; ") || "no linked test"

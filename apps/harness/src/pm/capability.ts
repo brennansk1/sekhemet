@@ -48,13 +48,18 @@ export function wilson(k: number, n: number, z = 1.96): { low: number; high: num
   return { low: round(Math.max(0, centre - half)), high: round(Math.min(1, centre + half)) };
 }
 
+/**
+ * The kind of work, in plain words for Insights' pass rates (DEC-31: never the
+ * retired labels Contract, Storage, Flow, Rules). The rates stay per stored
+ * kind, the partition the capability model is fitted on.
+ */
 const KIND_LABEL: Record<string, string> = {
-  interface: "Contract",
-  data: "Storage",
-  implement: "Flow",
-  rule: "Rules",
-  spike: "Spike",
-  review: "Review",
+  interface: "Interfaces",
+  data: "Data changes",
+  implement: "Behaviour",
+  rule: "Validation rules",
+  spike: "Spikes",
+  review: "Reviews",
   research: "Research",
 };
 

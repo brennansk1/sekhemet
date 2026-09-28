@@ -1,10 +1,14 @@
 // Command palette (FRONTEND_DESIGN §2.5.10): grouped, fuzzy, with shortcuts.
 import { openCheatsheet } from "./cheatsheet.js";
 import { MOD, copyText, esc, icon, kbd } from "./dom.js";
+import { tipsOn, toggleTips } from "./learn.js";
 import { ACCOUNT_COPY } from "./lib/account.js";
 import { paletteGoTo } from "./lib/nav.js";
-import { KIND_LABELS, columnLabel } from "./lib/vocabulary.js";
+import { paletteSeshat } from "./lib/seshat.js";
+import { ISSUE_TYPE_LABELS, columnLabel } from "./lib/vocabulary.js";
 import { pushOverlay, trapFocus } from "./overlay.js";
+import { askMerit, askSeshat } from "./pm_panel.js";
+import { currentContext } from "./pm_thread.js";
 import { getSession, signOutAndLeave } from "./session.js";
 import { currentNav, toggleTheme } from "./shell.js";
 import { store } from "./store.js";
@@ -90,7 +94,7 @@ function views() {
     },
     {
       label: "Go to Story map",
-      search: "Board story map slices walking skeleton requirements burn-up",
+      search: "Board story map releases requirements burn-up",
       run: goTo("#/board/map"),
     },
     {
@@ -123,6 +127,12 @@ function prefs() {
       label: "Switch density (compact or comfortable)",
       search: "density comfortable compact tile bars tokens difficulty",
       run: toggleDensity,
+    },
+    // Tips, the Learn layer (§2.9.1): explain each column, check and chart where it is.
+    {
+      label: tipsOn() ? "Turn tips off" : "Turn tips on",
+      search: "tips learn explain help beginner teach",
+      run: toggleTips,
     },
     { label: "Keyboard shortcuts", keys: ["?"], run: () => setTimeout(openCheatsheet, 0) },
     // The account menu's pages are in the palette, with no chord (§2.2.1).
@@ -177,10 +187,7 @@ function cardActions(actions) {
 function cardItems() {
   return store.state.cards.map((c) => {
     const d = c.display ?? {};
-    const kinds = (d.kinds ?? [])
-      .map((k) => KIND_LABELS[k]?.label)
-      .filter(Boolean)
-      .join(", ");
+    const kinds = ISSUE_TYPE_LABELS[d.type]?.label ?? "";
     return {
       label: d.title ?? c.title,
       search: `${d.title ?? c.title} ${d.shortId ?? ""}`,
@@ -238,6 +245,18 @@ function build(query, actions) {
     const pr = rank(prefs());
     if (pr.length) groups.push({ name: "Preferences", items: pr });
   }
+  // DB-P5-4: "new project" offers Start a new project, first; a query that
+  // matches nothing offers Ask Seshat: <query>.
+  const matched = groups.reduce((n, g) => n + g.items.length, 0);
+  const seshat = paletteSeshat(q, matched)
+    .filter((it) => it.kind === "ask" || only !== "cards")
+    .map((it) => ({
+      label: it.label,
+      hits: [],
+      run:
+        it.kind === "start" ? () => askMerit(it.text) : () => askSeshat(it.text, currentContext()),
+    }));
+  if (seshat.length) groups.unshift({ name: "Seshat", items: seshat });
   return groups;
 }
 

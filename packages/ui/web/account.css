@@ -37,10 +37,8 @@
   align-items: center;
   gap: 12px;
 }
-.auth-brand .ic {
-  width: 32px;
-  height: 32px;
-  color: var(--accent);
+.auth-brand .lockup {
+  gap: 12px;
 }
 .auth-brand b {
   font-size: var(--text-xl);

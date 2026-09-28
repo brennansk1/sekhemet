@@ -110,6 +110,11 @@ export interface ProjectSettings {
   require_resolved_threads?: boolean;
   lead?: string;
   auto_apply?: Record<string, boolean>;
+  /**
+   * Preferences → Estimation (DEC-31, dashboard DB-N7-2): `off`, the default,
+   * shows no points anywhere; `points` shows story points as Jira does.
+   */
+  estimation?: "off" | "points";
 }
 
 export interface TeamProjection {
@@ -489,6 +494,7 @@ const SETTING_PERMISSION: Record<keyof ProjectSettings, Permission> = {
   require_resolved_threads: "project.settings",
   lead: "project.lead",
   auto_apply: "auto_apply.enable",
+  estimation: "project.settings",
 };
 
 /** Parse a settings patch; throws naming the bad field. */
@@ -529,8 +535,16 @@ export function parseSettingsPatch(body: Record<string, unknown>): ProjectSettin
     }
     out.auto_apply = v as Record<string, boolean>;
   }
+  if ("estimation" in body) {
+    if (body.estimation !== "off" && body.estimation !== "points") {
+      throw new Error("estimation is off or points");
+    }
+    out.estimation = body.estimation;
+  }
   if (Object.keys(out).length === 0) {
-    throw new Error("Nothing to change: accept_rule, require_resolved_threads, lead or auto_apply");
+    throw new Error(
+      "Nothing to change: accept_rule, require_resolved_threads, lead, auto_apply or estimation",
+    );
   }
   return out;
 }
@@ -550,6 +564,9 @@ export function changedSettings(current: ProjectSettings, patch: ProjectSettings
     out.require_resolved_threads = patch.require_resolved_threads;
   }
   if (patch.lead && current.lead !== patch.lead) out.lead = patch.lead;
+  if (patch.estimation && (current.estimation ?? "off") !== patch.estimation) {
+    out.estimation = patch.estimation;
+  }
   if (patch.auto_apply) {
     const diff = Object.fromEntries(
       Object.entries(patch.auto_apply).filter(
@@ -656,7 +673,7 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
   ],
   [
     ["POST"],
-    new RegExp(`^/api/cards/(${CARD})/(return|park|reject|opened)$`),
+    new RegExp(`^/api/cards/(${CARD})/(return|park|unpark|reject|opened)$`),
     fixed("review", "card"),
   ],
   [["POST"], new RegExp(`^/api/cards/(${CARD})/(abort|pause)$`), fixed("agent.pause", "card")],

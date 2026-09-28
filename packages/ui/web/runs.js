@@ -66,12 +66,12 @@ function delta(cur, prev, { unit = "", better = "up", fmt = (n) => String(n) } =
 function numsHtml(run, s, prevS) {
   const retryNote = run.managerModel
     ? `${s.passedAfterRetry} of ${s.retried} retried`
-    : "No Planner model was set";
+    : "No Planning model was set";
   return `<div class="nums"><div class="num"><div class="k">Passed on the first try</div><div class="v">${s.firstTry} <small>of ${s.cards}</small></div><div class="d">${s.cards ? Math.round((s.firstTry / s.cards) * 100) : 0}% · <span class="mono">pass@1 ${(s.cards ? s.firstTry / s.cards : 0).toFixed(2)}</span></div><div class="d">${delta(
     s.cards ? Math.round((s.firstTry / s.cards) * 100) : 0,
     prevS ? (prevS.cards ? Math.round((prevS.firstTry / prevS.cards) * 100) : 0) : undefined,
     { unit: " pts" },
-  )}</div></div><div class="num"><div class="k">Passed after a Planner retry</div><div class="v">${s.passedAfterRetry} <small>of ${s.retried}</small></div><div class="d">${esc(retryNote)}</div></div><div class="num"><div class="k">Total time</div><div class="v">${esc(formatDuration(s.totalMs))}</div><div class="d">${s.failedMs ? `Failed cards used ${esc(formatDuration(s.failedMs))} (${Math.round((s.failedMs / Math.max(1, s.totalMs)) * 100)}%)` : "No time lost to failures"}</div><div class="d">${delta(s.totalMs, prevS?.totalMs, { better: "down", fmt: formatDuration })}</div></div><div class="num"><div class="k">Tokens</div><div class="v">${esc(formatTokens(s.promptTokens))} <small>in</small></div><div class="d">${esc(formatTokens(s.completionTokens))} out · ${s.tokensPerSecond.toFixed(1)} tok/s overall</div></div></div>`;
+  )}</div></div><div class="num"><div class="k">Passed after a Planning model retry</div><div class="v">${s.passedAfterRetry} <small>of ${s.retried}</small></div><div class="d">${esc(retryNote)}</div></div><div class="num"><div class="k">Total time</div><div class="v">${esc(formatDuration(s.totalMs))}</div><div class="d">${s.failedMs ? `Failed cards used ${esc(formatDuration(s.failedMs))} (${Math.round((s.failedMs / Math.max(1, s.totalMs)) * 100)}%)` : "No time lost to failures"}</div><div class="d">${delta(s.totalMs, prevS?.totalMs, { better: "down", fmt: formatDuration })}</div></div><div class="num"><div class="k">Tokens</div><div class="v">${esc(formatTokens(s.promptTokens))} <small>in</small></div><div class="d">${esc(formatTokens(s.completionTokens))} out · ${s.tokensPerSecond.toFixed(1)} tok/s overall</div></div></div>`;
 }
 
 function timelineHtml(run, s) {
@@ -207,7 +207,7 @@ function observations(run, s) {
 }
 
 function settingsHtml(run) {
-  return `<section><h3 class="sh">Run settings</h3><dl class="kv"><dt>Worker model</dt><dd class="mono">${esc(run.model)}</dd><dt>Planner model</dt><dd>${run.managerModel ? `<span class="mono">${esc(run.managerModel)}</span>` : '<span class="sec">None: failed cards were not retried</span>'}</dd><dt>Model swaps</dt><dd class="tnum">${run.modelSwaps ?? '<span class="sec">Not recorded</span>'}</dd><dt>Started</dt><dd class="tnum">${esc(when(run.startedAt, true))}</dd><dt>Report</dt><dd class="mono">${esc(run.id === "latest" ? ".sekhemet/queue_report.json" : `.sekhemet/runs/${run.id}.json`)}</dd></dl></section>`;
+  return `<section><h3 class="sh">Run settings</h3><dl class="kv"><dt>Coding model</dt><dd class="mono">${esc(run.model)}</dd><dt>Planning model</dt><dd>${run.managerModel ? `<span class="mono">${esc(run.managerModel)}</span>` : '<span class="sec">None: failed cards were not retried</span>'}</dd><dt>Model swaps</dt><dd class="tnum">${run.modelSwaps ?? '<span class="sec">Not recorded</span>'}</dd><dt>Started</dt><dd class="tnum">${esc(when(run.startedAt, true))}</dd><dt>Report</dt><dd class="mono">${esc(run.id === "latest" ? ".sekhemet/queue_report.json" : `.sekhemet/runs/${run.id}.json`)}</dd></dl></section>`;
 }
 
 function scoreHtml() {
@@ -226,7 +226,7 @@ function scoreHtml() {
   const s = summarizeRun(run);
   const prevS = ui.prev ? summarizeRun(ui.prev) : null;
   const merged = run.entries.some((e) => e.accepted);
-  const sub = `${s.cards} Ready ${s.cards === 1 ? "card" : "cards"} on <span class="mono">${esc(run.model)}</span> · ${run.managerModel ? `Planner <span class="mono">${esc(run.managerModel)}</span> retried failures` : "no Planner retry configured"}${merged ? " · passing cards merged automatically" : ""}`;
+  const sub = `${s.cards} Ready ${s.cards === 1 ? "card" : "cards"} on <span class="mono">${esc(run.model)}</span> · ${run.managerModel ? `Planning model <span class="mono">${esc(run.managerModel)}</span> retried failures` : "no Planning model retry configured"}${merged ? " · passing cards merged automatically" : ""}`;
   const top = sc.scrollTop;
   sc.innerHTML = `<div class="sc-h"><h2>Run of ${esc(when(run.startedAt))}</h2><p>${sub}</p></div>${numsHtml(run, s, prevS)}${timelineHtml(run, s)}${tableHtml(run)}<div class="two">${stopsHtml(s)}${observations(run, s)}</div>${settingsHtml(run)}`;
   sc.scrollTop = top;

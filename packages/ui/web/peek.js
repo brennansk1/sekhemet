@@ -4,10 +4,11 @@ import { loadDetail } from "./data.js";
 import { esc, icon, kbd } from "./dom.js";
 import { failuresHeadline, failuresHtml } from "./failures.js";
 import { gatesStripHtml } from "./gates.js";
+import { checksTip } from "./learn.js";
 import { EMPTY_SHA256, gateSummary, outcomeSentence, stopReasonLabel } from "./lib/vocabulary.js";
 import { pushOverlay } from "./overlay.js";
 import { store } from "./store.js";
-import { kindTags } from "./tile.js";
+import { typeTag } from "./tile.js";
 import {
   accept,
   composerHtml,
@@ -35,7 +36,7 @@ export function closePeek() {
 
 function outcomeHtml(card, evidence, gates) {
   if (!evidence) {
-    return `${kindTags(card.display?.kinds)}<span>No attempts yet. Budget: ${esc(card.stepBudget)} steps.</span>`;
+    return `${typeTag(card.display?.type)}<span>No attempts yet. Budget: ${esc(card.stepBudget)} steps.</span>`;
   }
   const tone = evidence.passed
     ? "i-pass"
@@ -43,7 +44,7 @@ function outcomeHtml(card, evidence, gates) {
       ? "i-park"
       : "i-fail";
   const glyph = evidence.passed ? "check" : tone === "i-park" ? "pause" : "x";
-  return `${kindTags(card.display?.kinds)}${icon(glyph, 14, `ic s14 ${tone}`)}<span>${esc(outcomeSentence(evidence, gates))}</span>`;
+  return `${typeTag(card.display?.type)}${icon(glyph, 14, `ic s14 ${tone}`)}<span>${esc(outcomeSentence(evidence, gates))}</span>`;
 }
 
 function filesHtml(evidence) {
@@ -88,7 +89,7 @@ async function fill(id) {
   }
   if (ev) {
     body.push(
-      `<section><h4>Gates</h4>${gatesStripHtml(gates, { failures: ev.failures, config, emptyContract: ev.gatesConfigSha256 === EMPTY_SHA256, sha: ev.gatesConfigSha256 })}</section>`,
+      `<section><h4>Checks ${checksTip(gates)}</h4>${gatesStripHtml(gates, { failures: ev.failures, config, emptyContract: ev.gatesConfigSha256 === EMPTY_SHA256, sha: ev.gatesConfigSha256 })}</section>`,
     );
     if (ev.failures?.length) {
       body.push(

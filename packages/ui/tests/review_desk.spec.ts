@@ -40,7 +40,7 @@ describe("the Reviewer's findings (dashboard §2.5.3 4a)", () => {
 
   it("orders unmet, unclear, then met; titles with the counts; open ids are the unacknowledged unmet and unclear", () => {
     const m = reviewerFindings(entries, new Set(["f_unclear"]));
-    expect(m.title).toBe("Reviewer · 1 unmet, 1 unclear");
+    expect(m.title).toBe("AI review · 1 unmet, 1 unclear");
     expect(m.rows.map((r) => [r.id, r.verdict, r.acknowledged, r.needsAck])).toEqual([
       ["f_unmet", "unmet", false, true],
       ["f_unclear", "unclear", true, true],
@@ -53,7 +53,7 @@ describe("the Reviewer's findings (dashboard §2.5.3 4a)", () => {
 
   it("with only met findings the title counts them, and nothing is open", () => {
     const m = reviewerFindings([entries[0] as (typeof entries)[0]], new Set());
-    expect(m.title).toBe("Reviewer · 1 met");
+    expect(m.title).toBe("AI review · 1 met");
     expect(m.open).toEqual([]);
   });
 
@@ -106,7 +106,7 @@ describe("DB-N5-2: the Reviewer's coverage", () => {
   it("counts files read and changed lines cited by no finding, and lists both", () => {
     const cov = reviewCoverage(changed, entries, ["src/a.ts", "src/b.ts"]);
     expect(cov.line).toBe(
-      "Reviewer read 2 of 3 files; 4 of 9 changed lines are cited by no finding.",
+      "AI review read 2 of 3 files; 4 of 9 changed lines are cited by no finding.",
     );
     expect(cov.notRead).toEqual(["src/c.ts"]);
     expect(cov.uncited).toEqual(["src/a.ts:1–2", "src/a.ts:4", "src/b.ts:20"]);
@@ -115,7 +115,7 @@ describe("DB-N5-2: the Reviewer's coverage", () => {
   it("says so when the Reviewer recorded no files read", () => {
     const cov = reviewCoverage(changed, entries, undefined);
     expect(cov.line).toBe(
-      "The Reviewer did not record which files it read; 4 of 9 changed lines are cited by no finding.",
+      "AI review did not record which files it read; 4 of 9 changed lines are cited by no finding.",
     );
     expect(cov.notRead).toEqual([]);
   });
@@ -163,7 +163,7 @@ describe("DB-N5-9: independent accept names who may accept", () => {
     expect(
       acceptPermissionText({ may: false, code: "not_independent", because: "delegated", who: [] }),
     ).toBe(
-      "You delegated this card to the Worker; on a team another Accept-holder accepts it. Who may accept: no other Accept-holder yet.",
+      "You delegated this card to the agent; on a team another Accept-holder accepts it. Who may accept: no other Accept-holder yet.",
     );
   });
   it("a person without Accept is told who holds it; one who may accept is told nothing", () => {
@@ -189,7 +189,7 @@ describe("DB-N5-4: a person-built card says so", () => {
       fact: "Jane (person)",
     });
     expect(builtByLabel({ kind: "person", id: "p_jane" }).outcome).toBe("Built by p_jane (person)");
-    expect(builtByLabel(undefined)).toEqual({ outcome: "", fact: "Worker" });
+    expect(builtByLabel(undefined)).toEqual({ outcome: "", fact: "Agent" });
   });
 });
 

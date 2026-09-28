@@ -267,6 +267,15 @@ export function writeModelFolders(path: string, folders: readonly ModelFolderSet
 
 const gbText = (b: number) => `${(b / 1e9).toFixed(1)} GB`;
 
+/** A model role as a person reads it (DEC-31): the Coding, Planning, Review or Research model. */
+const ROLE_WORDS: Record<string, string> = {
+  worker: "Coding model",
+  planner: "Planning model",
+  reviewer: "Review model",
+  researcher: "Research model",
+};
+const roleWords = (role: string): string => ROLE_WORDS[role] ?? role;
+
 function matchRoute(
   method: string,
   url: string,
@@ -850,7 +859,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
     }
     for (const r of MODEL_ROLES) {
       if (!["qualified", "overridden"].includes(qualificationOf(key, r))) {
-        warnings.push(`Not qualified for the ${r} on this machine yet.`);
+        warnings.push(`Not verified on this machine for the ${roleWords(r)} yet.`);
       }
     }
     const licence = modelLicenceWarning(m.metadata.license);
@@ -1754,7 +1763,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
     } else if (!worker || !planner) {
       run.benchmark = {
         state: "not_run",
-        reason: "The quick benchmark needs a Worker and a Planner; one is missing.",
+        reason: "The quick benchmark needs a Coding model and a Planning model; one is missing.",
       };
     } else {
       const reviewer = usable(c.reviewer);
@@ -1804,7 +1813,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
         run.notAssigned.push({
           role,
           model,
-          reason: `${model} has not passed the ${role}'s qualification on this machine yet; Qualify to assign runs the check.`,
+          reason: `${model} is not verified on this machine as the ${roleWords(role)} yet; Verify on this machine to assign runs the check.`,
         });
         continue;
       }
@@ -2003,8 +2012,8 @@ export function createConfigApi(deps: ConfigApiDeps) {
           if (role === "reviewer" && (!family || (wf && family === wf))) {
             deps.json(res, 409, {
               error: !family
-                ? `${m?.name ?? id}'s family is unknown, so it cannot be shown to differ from the Worker's; the Reviewer needs another family.`
-                : `${m?.name ?? id} is of the Worker's family (${family}); the Reviewer needs another family.`,
+                ? `${m?.name ?? id}'s family is unknown, so it cannot be shown to differ from the Coding model's; the Review model needs another family.`
+                : `${m?.name ?? id} is of the Coding model's family (${family}); the Review model needs another family.`,
               needs: "other-family",
             });
             return true;
@@ -2040,7 +2049,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
             if (!deps.qualify) {
               deps.json(res, 409, {
                 error:
-                  "The qualification check runs where the models run; it is not available from this server yet.",
+                  "The check that verifies a model on this machine runs where the models run; it is not available from this server yet.",
                 needs: "qualification",
               });
               return true;
@@ -2059,7 +2068,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
           }
           if (!["qualified", "overridden"].includes(status)) {
             deps.json(res, 409, {
-              error: `${m?.name ?? id} has not passed the ${role}'s qualification on this machine (a check of a few minutes: tool calls, a multi-turn tool conversation, recall). Qualify to assign runs it.`,
+              error: `${m?.name ?? id} is not verified on this machine as the ${roleWords(role)} (a check of a few minutes: tool calls, a multi-turn tool conversation, recall). Verify on this machine to assign runs it.`,
               needs: "qualification",
             });
             return true;

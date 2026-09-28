@@ -92,7 +92,8 @@ describe("worker capability from evidence", () => {
     expect(r.types.map((t) => t.type)).not.toContain("Other");
     expect(r.horizon80Lines).toBe(50);
     expect(r.note).toMatch(/range/);
-    expect(capabilitySummary(r)).toContain("Rules 2/4 (95% CI 15-85%, rough)");
+    // DEC-31: the kinds in plain words, never the retired labels.
+    expect(capabilitySummary(r)).toContain("Validation rules 2/4 (95% CI 15-85%, rough)");
   });
 
   it("reports no attempts for a repository with no ledger", () => {
@@ -192,7 +193,7 @@ describe("NEW-planner-pm-3: Seshat's report reads the planner's fitted horizon",
     expect(rule?.rough).toBe(false);
     expect(rule?.horizon80Lines).toBeGreaterThan(0);
     expect(r.types.find((t) => t.type === "data")?.rough).toBe(true);
-    expect(capabilitySummary(r)).toMatch(/Rules 9\/12 .*80% up to ~\d+ lines/);
-    expect(capabilitySummary(r)).toMatch(/Storage 3\/3 .*rough/);
+    expect(capabilitySummary(r)).toMatch(/Validation rules 9\/12 .*80% up to ~\d+ lines/);
+    expect(capabilitySummary(r)).toMatch(/Data changes 3\/3 .*rough/);
   });
 });

@@ -18,12 +18,12 @@ export function bestDecode(m) {
 function modelsHtml(models) {
   if (models.length === 0)
     return `<p class="sec">No models registered yet. <code>sekhemet calibrate</code> and <code>sekhemet qualify</code> measure the models you run and record them here.</p>`;
-  return `<div class="tbl-wrap"><table class="tbl rg"><thead><tr><th>Model</th><th>Roles</th><th>Quant</th><th>Tool arm</th><th class="num">Decode</th><th>Qualification</th></tr></thead><tbody>${models
+  return `<div class="tbl-wrap"><table class="tbl rg"><thead><tr><th>Model</th><th>Roles</th><th>Quant</th><th>Tool arm</th><th class="num">Decode</th><th>Verified on this machine</th></tr></thead><tbody>${models
     .map((m) => {
       const q = m.qualification;
       const qual = q
         ? `<span class="rg-q ${q.status === "qualified" ? "pass" : "fail"}">${icon(q.status === "qualified" ? "check" : "x", 12, "ic s12")}${esc(q.status)} · ${pct(q.passRate)}</span><span class="sec"> ${esc(q.suiteVersion)} · ${esc(String(q.date).slice(0, 10))}</span>`
-        : '<span class="sec">Not qualified</span>';
+        : '<span class="sec">Not verified on this machine</span>';
       const dec = bestDecode(m);
       return `<tr><td><b class="mono">${esc(m.id)}</b>${m.family ? `<span class="sec"> ${esc(m.family)}</span>` : ""}</td><td>${(m.roles ?? []).map((r) => `<span class="rg-role">${esc(r)}</span>`).join(" ") || '<span class="sec">—</span>'}</td><td class="mono">${esc(m.quant ?? "—")}</td><td class="mono">${esc(m.toolArm ?? "—")}</td><td class="num tnum">${dec !== undefined ? `${dec.toFixed(1)} tok/s` : "—"}</td><td>${qual}</td></tr>`;
     })

@@ -225,7 +225,9 @@ export async function modelsAdd(
       print(
         `Record its model card's sampling with: sekhemet models add ${r.path} --id ${r.id} --sampling temperature=,top_p=,top_k=,min_p=`,
       );
-    print(`Qualify it before it runs as the Worker: sekhemet qualify --models ${r.id}`);
+    print(
+      `Verify it on this machine before it runs as the Coding model: sekhemet qualify --models ${r.id}`,
+    );
     return 0;
   } catch (err) {
     print(`Not registered: ${err instanceof Error ? err.message : String(err)}`);

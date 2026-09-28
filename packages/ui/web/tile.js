@@ -1,26 +1,23 @@
 // Card tile (dashboard §2.4.4). Returns markup; every model string is escaped.
-import { esc, icon, tip } from "./dom.js";
+import { aiBadge, esc, icon, tip } from "./dom.js";
 import { tileModel } from "./lib/tiles.js";
-import { GATE_STATE_LABELS, KIND_LABELS, formatDuration } from "./lib/vocabulary.js";
+import { GATE_STATE_LABELS, ISSUE_TYPE_LABELS, formatDuration } from "./lib/vocabulary.js";
 import { prioMark } from "./marks.js";
 
 const PIP_ICON = { pass: "check", fail: "x", skipped: "minus", running: "ring" };
 
-export function kindTags(kinds = [], extraClass = "kind") {
-  return kinds
-    .map((k) => {
-      const meta = KIND_LABELS[k];
-      if (!meta) return "";
-      // The explanation is reachable without hovering (DB-P12-6): `tip` sets it as the description too.
-      return `<span class="${extraClass}" ${tip(`${meta.label}: ${meta.tooltip.charAt(0).toLowerCase()}${meta.tooltip.slice(1)}`)}>${esc(meta.label)}</span>`;
-    })
-    .join("");
+/** The issue type as a tag (DEC-31: Story, Task, Bug, Spike, Epic), from the card's `display.type`. */
+export function typeTag(type, extraClass = "kind") {
+  const meta = ISSUE_TYPE_LABELS[type];
+  if (!meta) return "";
+  // The explanation is reachable without hovering (DB-P12-6): `tip` sets it as the description too.
+  return `<span class="${extraClass}" ${tip(`${meta.label}: ${meta.tooltip.charAt(0).toLowerCase()}${meta.tooltip.slice(1)}`)}>${esc(meta.label)}</span>`;
 }
 
 /** "Types failed, Tests failed, Size passed" — the words behind the pips. */
 export function gatesAria(gates) {
   if (gates.length > 0 && gates.every((g) => g.state === "pass")) {
-    return `All ${gates.length} gates passed`;
+    return `All ${gates.length} checks passed`;
   }
   return gates.map((g) => `${g.label} ${GATE_STATE_LABELS[g.state].toLowerCase()}`).join(", ");
 }
@@ -54,45 +51,6 @@ const MARK = {
   fail: () => icon("x", 12, "ic s12 i-fail"),
 };
 
-function kilo(n) {
-  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(Math.round(n));
-}
-
-/**
- * Token and seconds bars (§2.5.1, comfortable density): shown once the card
- * has used something against a budget it has.
- */
-export function usageBars(card) {
-  const rows = [];
-  const bar = (used, budget, text) => {
-    const ratio = budget > 0 ? Math.min(1, used / budget) : 0;
-    const cls =
-      used >= budget
-        ? " over"
-        : ratio >= 0.75
-          ? " warn"
-          : card.status === "in_progress"
-            ? " run"
-            : "";
-    rows.push(
-      `<div class="r5 comfy"><span class="budget${cls}"><i style="width:${Math.round(ratio * 100)}%"></i></span><span class="tnum">${esc(text)}</span></div>`,
-    );
-  };
-  if (card.tokenBudget && card.tokensUsed)
-    bar(
-      card.tokensUsed,
-      card.tokenBudget,
-      `${kilo(card.tokensUsed)} of ${kilo(card.tokenBudget)} tokens`,
-    );
-  if (card.secondsBudget && card.secondsUsed)
-    bar(
-      card.secondsUsed,
-      card.secondsBudget,
-      `${formatDuration(card.secondsUsed * 1000)} of ${formatDuration(card.secondsBudget * 1000)}`,
-    );
-  return rows.join("");
-}
-
 /** The planner's 1-10 difficulty, as a diamond and the number (comfortable density). */
 export function difficultyMark(card) {
   if (typeof card.difficulty !== "number") return "";
@@ -106,7 +64,12 @@ export function difficultyMark(card) {
  */
 export function tileHtml(card, opts = {}) {
   const now = opts.now ?? Date.now();
-  const t = tileModel(card, { now, epics: opts.epics ?? [], pmPaused: Boolean(opts.pmPaused) });
+  const t = tileModel(card, {
+    now,
+    epics: opts.epics ?? [],
+    pmPaused: Boolean(opts.pmPaused),
+    estimation: opts.estimation,
+  });
   const d = card.display ?? {};
   const st = t.status;
   const tone =
@@ -126,9 +89,10 @@ export function tileHtml(card, opts = {}) {
   const owner = t.owner
     ? `<span class="av" role="img" aria-label="${esc(`Owner: ${t.owner.name}`)}" ${tip(`Owner: ${t.owner.name}`)}>${esc(t.owner.initials)}</span><span class="av-name" aria-hidden="true">${esc(t.owner.name)}</span>`
     : "";
-  // The delegate is a text chip; the Worker never has an avatar (DB-P3-5).
+  // The delegate is a text chip; the Agent never has an avatar (DB-P3-5) and
+  // carries the AI badge after its name, a person never (DB-N9-18).
   const delegate = t.delegate
-    ? `<span class="dlg" ${tip(`Delegate: ${t.delegate.text}`)}>${esc(t.delegate.text)}</span>`
+    ? `<span class="dlg" ${tip(`Delegate: ${t.delegate.text}`)}>${esc(t.delegate.text)}${t.delegate.worker ? aiBadge() : ""}</span>`
     : "";
   const r1 = `<div class="r1">${sel}${type}${key}${just}<span class="r1-end">${pts}${owner}${delegate}</span></div>`;
 
@@ -163,15 +127,10 @@ export function tileHtml(card, opts = {}) {
     r4s = `<div class="r4s">${mark}${status}${age}</div>`;
   }
 
-  let budget = "";
-  if (t.budget) {
-    const b = t.budget;
-    budget = `<div class="r4"><span class="budget${b.level ? ` ${b.level}` : ""}"><i style="width:${Math.round(b.ratio * 100)}%"></i></span><span class="tnum">${esc(b.text)}</span></div>`;
-  }
-  const usage = card.status !== "done" ? usageBars(card) : "";
+  // No step, token or time budget on the card face (DEC-31, DB-N7-3): the issue shows them.
   const excerpt = card.spec
     ? `<p class="spec comfy">${esc(String(card.spec).split("\n")[0].slice(0, 160))}</p>`
     : "";
   const described = [t.blocker ? blkId : "", st ? stId : ""].filter(Boolean).join(" ");
-  return `<li class="${cls}" role="option" id="tile-${esc(card.id)}" data-id="${esc(card.id)}" aria-selected="${opts.selected ? "true" : "false"}"${described ? ` aria-describedby="${esc(described)}"` : ""}>${r1}<p class="title">${esc(t.title)}</p>${r3}${blocker}${r4s}${budget}${usage}${excerpt}</li>`;
+  return `<li class="${cls}" role="option" id="tile-${esc(card.id)}" data-id="${esc(card.id)}" aria-selected="${opts.selected ? "true" : "false"}"${described ? ` aria-describedby="${esc(described)}"` : ""}>${r1}<p class="title">${esc(t.title)}</p>${r3}${blocker}${r4s}${excerpt}</li>`;
 }

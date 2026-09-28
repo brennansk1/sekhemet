@@ -216,7 +216,11 @@ describe("@sekhemet/harness Dashboard Server", () => {
     expect(vocab.stopReasons.oscillation_detected.short).toBe("Looping");
     const icon = await fetch(`http://127.0.0.1:${serverInstance.port}/favicon.svg`);
     expect(icon.headers.get("content-type")).toContain("image/svg+xml");
-    expect(await icon.text()).toContain("#C8952A");
+    // DB-N9-19 (§2.13.6): an ink tile, cream pylons and a gold disc.
+    const svg = await icon.text();
+    expect(svg).toContain('fill="#1D1B17"');
+    expect(svg).toContain('fill="#F3EEE3"');
+    expect(svg).toContain('fill="#D9B45A"');
   });
 
   it("publishes design tokens as CSS and JSON for plugin panels", async () => {
@@ -448,6 +452,7 @@ describe("@sekhemet/harness Dashboard Server", () => {
     const hasher = board.cards.find((c) => c.id === "card_chron_hasher");
     expect(hasher?.display.title).toBe("Implement canonical JSON and SHA-256 hash chaining");
     expect(hasher?.display.kinds).toEqual(["rules"]);
+    expect(hasher?.display.type).toBe("story");
     expect(hasher?.display.statusLine).toBe("Types failed · 3 errors");
     expect(hasher?.display.stateLabel).toBe("Verify");
     expect(hasher?.display.needsYou).toBe(true);
@@ -594,10 +599,12 @@ describe("@sekhemet/harness Dashboard Server", () => {
     expect((live.body.steps as { turn: number }[]).map((s) => s.turn)).toEqual([3]);
 
     const board = await getJson("/api/board");
-    const tile = (board.body.cards as { id: string; display: { statusLine: string } }[]).find(
-      (c) => c.id === "card_ui_1",
-    );
-    expect(tile?.display.statusLine).toMatch(/^Step 3 of \d+ · editing src\/x\.ts$/);
+    const tile = (
+      board.body.cards as { id: string; display: { statusLine: string; budgetText?: string } }[]
+    ).find((c) => c.id === "card_ui_1");
+    // DB-N7-3: the board says what the agent does; the step count is the issue's.
+    expect(tile?.display.statusLine).toBe("Editing src/x.ts");
+    expect(tile?.display.budgetText).toMatch(/^3 of \d+ steps$/);
   });
 
   it("pages the ledger newest first, filtered by card, with a cursor", async () => {

@@ -49,7 +49,7 @@ describe("candidatesFor (MD-N12-4, models rule 3)", () => {
     const c = candidatesFor("reviewer", models, { workerFamily: "qwen" });
     expect(c.eligible.map((m) => m.name)).toEqual(["gemma-b"]);
     expect(Object.fromEntries(c.excluded.map((x) => [x.model, x.reason]))).toMatchObject({
-      "qwen-a": expect.stringMatching(/Worker's family/),
+      "qwen-a": expect.stringMatching(/Coding model's family/),
       mystery: expect.stringMatching(/family is unknown/),
       "llama-huge": expect.stringMatching(/Needs/),
     });
@@ -67,7 +67,7 @@ describe("recommendRole (MD-N12-4, MD-N12-5)", () => {
     expect(r.recommendation?.model).toBe("gemma-4-26b");
     expect(r.recommendation?.present).toBe(true);
     const reason = r.recommendation?.reason ?? "";
-    expect(reason).toMatch(/different family from the Worker, which the Reviewer needs/);
+    expect(reason).toMatch(/different family from the Coding model, which the Review model needs/);
     expect(reason).toMatch(/fits at 14\.0 GB/);
     expect(reason).toMatch(/no quick score yet/);
     expect(reason.split(/(?<=\.)\s/).length).toBe(1);
@@ -90,7 +90,7 @@ describe("recommendRole (MD-N12-4, MD-N12-5)", () => {
     expect(r.recommendation?.indistinguishableFrom).toEqual(["a"]);
     // Tied on the quick benchmark: the least time per card wins.
     expect(r.recommendation?.model).toBe("b");
-    expect(r.recommendation?.reason).toMatch(/indistinguishable on the quick benchmark/);
+    expect(r.recommendation?.reason).toMatch(/no clear difference on the quick benchmark/);
   });
 
   it("orders by score when the sign test rejects (one better on all six items)", () => {
@@ -170,7 +170,7 @@ describe("recommendRole (MD-N12-4, MD-N12-5)", () => {
       workerFamily: "qwen",
     });
     expect(r.recommendation).toBeUndefined();
-    expect(r.unfilledReason).toMatch(/No model outside the Worker's family/);
+    expect(r.unfilledReason).toMatch(/No model outside the Coding model's family/);
   });
 
   it("assigns, loads and downloads nothing: it is a pure function of its inputs (MD-N12-5)", () => {

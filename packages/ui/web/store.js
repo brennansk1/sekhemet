@@ -47,6 +47,11 @@ export const store = {
     epics: [],
     cycles: [],
     /**
+     * Preferences → Estimation, the project's (`/api/board`'s `estimation`,
+     * DB-N7-2): "off" (the default) shows no points; "points" shows story points.
+     */
+    estimation: "off",
+    /**
      * The project manager (PM_DESIGN §2). `available` is null until the first
      * thread fetch, false when the server has no /api/pm endpoints.
      */

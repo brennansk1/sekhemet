@@ -43,7 +43,7 @@ function render() {
   let html;
   if (!d.available && d.at === 0) html = '<div class="sk" style="height:160px"></div>';
   else if (items.length === 0)
-    html = `<div class="ib-empty">${icon("inbox", 24, "ic s24")}<b>No decisions waiting.</b><span>When the planner meets a question it should not answer alone, or a command needs your permission, it lands here, longest wait first.</span></div>`;
+    html = `<div class="ib-empty">${icon("inbox", 24, "ic s24")}<b>No decisions waiting.</b><span>When the planning model meets a question it should not answer alone, or a command needs your permission, it lands here, longest wait first.</span></div>`;
   else {
     ui.focus = Math.min(ui.focus, items.length - 1);
     html = `<ol class="ib-list">${items

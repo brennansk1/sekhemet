@@ -15,7 +15,7 @@ describe("invariants not enforced (GT-N1-1)", () => {
     ]);
     expect(w).toEqual({
       label: "2 invariants not enforced",
-      heading: "The architecture gate cannot check these lines of the brief.",
+      heading: "The architecture check cannot verify these lines of the brief.",
       lines: ["Amounts are integer cents.", "No stack traces"],
       forms: FORMS,
     });

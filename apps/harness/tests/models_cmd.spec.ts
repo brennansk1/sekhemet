@@ -78,7 +78,7 @@ describe("sekhemet models assign and restore (NEW-models-10)", () => {
   it("MD-N10-3: refuses an unqualified model, naming the missing qualification", async () => {
     const { k, io, out } = setup();
     expect(await runWave2Command("models", ["assign", "reviewer", "gemma-x"], k, io)).toBe(1);
-    expect(out.at(-1)).toMatch(/gemma-x is not qualified for the reviewer role on this host/);
+    expect(out.at(-1)).toMatch(/gemma-x is not verified on this machine for the Review model/);
   });
 
   /** A recorded benchmark of qwen-next as the Worker on host-a, as the kernel registry requires it. */

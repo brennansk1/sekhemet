@@ -80,7 +80,7 @@ describe("NEW-models-10: the baseline and defaults change by measurement; a pers
         qualification: "missing",
       }),
     ).toThrow(
-      /gemma-x is not qualified for the reviewer role on this host \(missing\).*sekhemet qualify/,
+      /gemma-x is not verified on this machine for the Review model \(missing\).*sekhemet qualify/,
     );
     expect(() =>
       assignRole(reg, {
@@ -193,7 +193,7 @@ describe("MD-N4-9: the Reviewer is of another family than the Worker", () => {
         model: "qwen-reviewer",
         families: { model: "qwen", worker: "qwen" },
       }),
-    ).toThrow(/qwen-reviewer is of the qwen family, the Worker's \(qwen\)/);
+    ).toThrow(/qwen-reviewer is of the qwen family, the Coding model's \(qwen\)/);
     expect(
       assignRole(reg, { ...input, model: "gemma-r", families: { model: "gemma", worker: "qwen" } })
         .assignment.model,

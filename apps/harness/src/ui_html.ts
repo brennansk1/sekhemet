@@ -1,4 +1,4 @@
-import { generateTokenCss, icon } from "@sekhemet/ui";
+import { brandLockup, generateTokenCss } from "@sekhemet/ui";
 
 /** Stylesheets under `/app/`, in cascade order. */
 const STYLES = [
@@ -14,6 +14,9 @@ const STYLES = [
   "account.css",
   "config.css",
   "map.css",
+  "status.css",
+  "projects.css",
+  "learn.css",
 ];
 
 /**
@@ -50,7 +53,7 @@ ${STYLES.map((s) => `<link rel="stylesheet" href="/app/${s}">`).join("\n")}
 <body>
 <a class="skip" href="#view">Skip to content</a>
 <nav class="side" id="side" aria-label="Primary">
-  <div class="brand">${icon("glyph", 18)}<b class="lbl">Sekhemet</b></div>
+  <div class="brand">${brandLockup(18)}</div>
 </nav>
 <main class="main" id="main">
   <header class="top" id="top"><h1 id="view-title">Loading</h1></header>

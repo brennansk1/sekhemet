@@ -436,7 +436,7 @@ function queueCardOutcome(
       return {
         passed: false,
         blocked: true,
-        stopReason: `blocked: ${unmet.join(", ")} never built (an earlier card failed); the queue ran it: ${last.stopReason}`,
+        stopReason: `blocked: ${unmet.join(", ")} never built (no earlier card merged it); the queue ran it: ${last.stopReason}`,
         wallClockSeconds: seconds,
         tokens,
         rungs,
@@ -487,7 +487,7 @@ function queueCardOutcome(
       blocked: true,
       stopReason: waiting.length
         ? `blocked: the queue deferred it; prerequisites ${waiting.join(", ")} did not merge`
-        : `blocked: ${unmet.join(", ")} never built (an earlier card failed); the queue did not run it`,
+        : `blocked: ${unmet.join(", ")} never built (no earlier card merged it); the queue did not run it`,
       wallClockSeconds: 0,
       tokens: 0,
       rungs: 0,

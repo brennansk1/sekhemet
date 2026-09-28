@@ -190,6 +190,46 @@ describe("PM-N9-7: the weekly update is a five-part draft with no health word", 
     // A draft is not a post: nothing was written.
     expect((await s.log.getLastEvent())?.seq ?? 0).toBe(before);
   });
+
+  it("DEC-31, dashboard DB-P5-2: the draft names issues by title, in plain words, with no id or stop-reason code", async () => {
+    const s = setup();
+    const stuck = await s.cardStore.createCard({
+      tier: "task",
+      title: "Export",
+      status: "ready",
+    });
+    await s.cardStore.updateCard(stuck.id, { stopReason: "budget_exhausted" });
+    await s.cardStore.createCard({ tier: "task", title: "Ledger", status: "ready" });
+    const draft = await draftWeeklyUpdate({
+      repoPath: s.repoPath,
+      cardStore: s.cardStore,
+      pmStore: s.pmStore,
+    });
+    expect(draft.parts.status).toBe(
+      "0 issues done in the last 7 days, 0 in progress, 0 waiting for review, 2 ready.",
+    );
+    expect(draft.parts.risks).toBe("- Export: Used every budgeted step without passing.");
+    expect(draft.parts.next).toBe("- Export\n- Ledger");
+    expect(draft.text).not.toMatch(/card_|\bcards?\b|budget_exhausted|in flight/);
+  });
+
+  it("DEC-31: a parked issue is On hold, and the ids in its reason become titles", async () => {
+    const s = setup();
+    const ledger = await s.cardStore.createCard({ tier: "task", title: "Ledger", status: "ready" });
+    await s.cardStore.createCard({
+      tier: "task",
+      title: "Export",
+      status: "parked",
+      blockedReason: `Waiting for ${ledger.id} and card_gone to land`,
+    });
+    const draft = await draftWeeklyUpdate({
+      repoPath: s.repoPath,
+      cardStore: s.cardStore,
+      pmStore: s.pmStore,
+    });
+    expect(draft.parts.risks).toBe("- Export is on hold: Waiting for Ledger and an issue to land");
+    expect(draft.text).not.toMatch(/card_|\bparked\b|\bledger\b/);
+  });
 });
 
 describe("PM-N9-8: Seshat uses only what the asker can see", () => {

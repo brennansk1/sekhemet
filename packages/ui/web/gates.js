@@ -90,7 +90,7 @@ export function gatesStripHtml(
   });
   if (emptyContract) {
     segs.push(
-      `<button class="g-seg warn" type="button" role="listitem" aria-label="Gate contract empty">${icon("alert")}<span class="nm">Gate contract empty</span><span class="pop" role="tooltip"><b>These results weren’t checked against a contract.</b>gates.toml hashed to <span class="mono">${esc(String(sha).slice(0, 8))}…</span>, the hash of an empty file.</span></button>`,
+      `<button class="g-seg warn" type="button" role="listitem" aria-label="Checks configuration empty">${icon("alert")}<span class="nm">Checks configuration empty</span><span class="pop" role="tooltip"><b>These results weren’t checked against a configuration.</b>gates.toml hashed to <span class="mono">${esc(String(sha).slice(0, 8))}…</span>, the hash of an empty file.</span></button>`,
     );
   }
   // GT-N1-1: the brief's invariants the architecture gate cannot check.
@@ -102,7 +102,7 @@ export function gatesStripHtml(
       `<button class="g-seg warn" type="button" role="listitem" aria-label="${esc(inv.label)}">${icon("alert")}<span class="nm">${esc(inv.label)}</span><span class="pop" role="tooltip"><b>${esc(inv.heading)}</b><ul>${lines}</ul><div style="margin-top:4px">Restate each as ${forms}.</div></span></button>`,
     );
   }
-  return `<div class="g-strip" role="list" aria-label="Gates">${segs.join("")}</div>`;
+  return `<div class="g-strip" role="list" aria-label="Checks">${segs.join("")}</div>`;
 }
 
 /** Loading state: four neutral boxes of the real geometry. */

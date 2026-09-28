@@ -41,13 +41,11 @@ function questionHtml(q, confirm) {
 }
 
 function rowHtml(item, confirm) {
-  const mark = item.ai
-    ? aiBadge()
-    : (TONE_ICON[item.tone]?.() ?? '<span class="tl-dot" aria-hidden="true"></span>');
+  const mark = TONE_ICON[item.tone]?.() ?? '<span class="tl-dot" aria-hidden="true"></span>';
   const steps = item.steps
     ? ` <a href="#" data-go-steps>${esc(item.steps[0] === item.steps[1] ? `Step ${item.steps[0]}` : "Steps")}</a>`
     : "";
-  return `<li class="th-row act-${esc(item.kind)}"><span class="th-mark">${mark}</span><div class="th-body"><div><b class="who">${esc(item.who)}</b> ${esc(item.text)}${steps}</div>${item.quote ? `<blockquote>${esc(item.quote)}</blockquote>` : ""}${item.question ? questionHtml(item.question, confirm) : ""}${item.meta ? `<div class="sec act-meta">${esc(item.meta)}</div>` : ""}</div><span class="th-meta"><span class="tnum">${esc(when(item.at))}</span></span></li>`;
+  return `<li class="th-row act-${esc(item.kind)}"><span class="th-mark">${mark}</span><div class="th-body"><div><b class="who">${esc(item.who)}</b>${item.ai ? aiBadge() : ""} ${esc(item.text)}${steps}</div>${item.quote ? `<blockquote>${esc(item.quote)}</blockquote>` : ""}${item.question ? questionHtml(item.question, confirm) : ""}${item.meta ? `<div class="sec act-meta">${esc(item.meta)}</div>` : ""}</div><span class="th-meta"><span class="tnum">${esc(when(item.at))}</span></span></li>`;
 }
 
 /** Mount the Activity tab into `host`. */

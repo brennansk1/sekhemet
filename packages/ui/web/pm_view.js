@@ -67,10 +67,9 @@ function railHtml() {
   } else if (l.status === 0) {
     learned = '<p class="sec">Checking…</p>';
   } else {
-    learned =
-      '<p class="sec">Arrives with an updated Sekhemet (<span class="mono">GET /api/learning</span>).</p>';
+    learned = '<p class="sec">Arrives with an updated Sekhemet.</p>';
   }
-  return `<section><h3>Open proposals <span class="sec tnum">${open.length}</span></h3>${props}</section><section><h3>Worker</h3>${worker}</section><section><h3>What ${PM_NAME} can see</h3>${sees}<p class="sec small">${PM_NAME} reads these and proposes changes. It never edits the board itself.</p></section><section><h3>What ${PM_NAME} has learned about you</h3>${learned}</section>`;
+  return `<section><h3>Open proposals <span class="sec tnum">${open.length}</span></h3>${props}</section><section><h3>Agent</h3>${worker}</section><section><h3>What ${PM_NAME} can see</h3>${sees}<p class="sec small">${PM_NAME} reads these and proposes changes. It never edits the board itself.</p></section><section><h3>What ${PM_NAME} has learned about you</h3>${learned}</section>`;
 }
 
 export function mount(view) {

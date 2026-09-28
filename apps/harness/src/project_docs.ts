@@ -188,15 +188,38 @@ const STATUS_WORDS: Record<RequirementView["state"], string> = {
   planned: "planned",
   failing: "failing",
   passing_strength_unmet: "passing with strength unmet",
-  proven: "proven",
+  proven: "done",
+};
+
+/** The project's *Type* as a person reads it (DEC-31): Prototype, Internal tool, Production, Regulated. */
+function typeLabel(profile: string): string {
+  return `${profile.charAt(0).toUpperCase()}${profile.slice(1)}`;
+}
+
+/**
+ * A requirement's priority in the words teams use (DEC-31: MoSCoW, never
+ * Kano): a must-have is *Must have*; of the rest, a performance feature is
+ * *Should have* and an attractive or unclassified one *Could have*.
+ */
+export type Moscow = "Must have" | "Should have" | "Could have";
+
+export function moscowOf(r: { mustHave: boolean; kano?: string | undefined }): Moscow {
+  if (r.mustHave) return "Must have";
+  return r.kano === "performance" ? "Should have" : "Could have";
+}
+
+/** The Kano class a MoSCoW priority stands for, when a person changes it in a document. */
+const KANO_OF: Record<Moscow, NonNullable<Requirement["kano"]>> = {
+  "Must have": "must-be",
+  "Should have": "performance",
+  "Could have": "attractive",
 };
 
 function metaLine(r: Requirement, status: string): string {
   return [
     `version: ${r.version}`,
-    `kano: ${r.kano ?? "unclassified"}`,
-    `must: ${r.mustHave ? "yes" : "no"}`,
-    `slice: ${r.sliceId ?? "none"}`,
+    `priority: ${moscowOf(r)}`,
+    `release: ${r.sliceId ?? "none"}`,
     `status: ${status}`,
     `dependsOn: ${r.dependsOn.length ? r.dependsOn.join(", ") : "none"}`,
   ].join(" · ");
@@ -247,17 +270,19 @@ async function renderBrief(
     "",
     data.baseline ?? "Not stated.",
     "",
-    "## Depth profile",
+    "## Type",
     "",
     profile.recorded
-      ? `${profile.profile}, chosen by ${await personLabel(ctx, profile.principal, noNames)}.`
-      : `${profile.profile} (no profile chosen yet; this one applies).`,
+      ? `${typeLabel(profile.profile)}, chosen by ${await personLabel(ctx, profile.principal, noNames)}.`
+      : `${typeLabel(profile.profile)} (no Type chosen yet; this one applies).`,
     "",
-    "## Slices",
+    "## Releases",
   ];
   for (const s of data.slices) {
     const appetite = [
-      s.appetite.cards !== undefined ? `${s.appetite.cards} cards` : "",
+      s.appetite.cards !== undefined
+        ? `${s.appetite.cards} ${s.appetite.cards === 1 ? "issue" : "issues"}`
+        : "",
       s.appetite.hours !== undefined ? `${s.appetite.hours} hours` : "",
     ]
       .filter(Boolean)
@@ -266,7 +291,7 @@ async function renderBrief(
     lines.push(`Appetite: ${appetite || "none"} · accepted: ${s.accepted ? "yes" : "no"}`, "");
     for (const id of s.requirementIds) {
       const r = titles.get(id);
-      lines.push(`- ${id} — ${r?.title ?? ""}${r && !r.mustHave ? " (nice-to-have)" : ""}`);
+      lines.push(`- ${id} — ${r?.title ?? ""}${r ? ` (${moscowOf(r)})` : ""}`);
     }
   }
   if (data.briefEvent) {
@@ -371,7 +396,7 @@ async function renderDecision(
     "",
     "### Confirmation",
     "",
-    `The cards planned under this decision prove it through their gates, starting with ${req.cardId}.`,
+    `The issues planned under this decision prove it through their checks, starting with ${req.cardId}.`,
   ].join("\n")}\n`;
 }
 
@@ -389,7 +414,7 @@ function renderReleaseNotes(
     "",
     release.notes?.trim() || "No notes were proposed for this release.",
     "",
-    `Requirements proven: ${release.requirementIds.join(", ") || "none"}.`,
+    `Requirements done: ${release.requirementIds.join(", ") || "none"}.`,
   ].join("\n")}\n`;
 }
 
@@ -398,6 +423,8 @@ function renderReleaseNotes(
 interface ParsedRequirement {
   id?: string;
   title: string;
+  /** `priority:` (MoSCoW, DEC-31); an older document's `kano:` and `must:` are read too. */
+  priority?: Moscow;
   kano?: string;
   must?: boolean;
   dependsOn?: string[];
@@ -422,6 +449,7 @@ export function parseRequirements(text: string): ParsedRequirement[] {
       for (const part of line.split(" · ")) {
         const [key, ...rest] = part.split(": ");
         const value = rest.join(": ").trim();
+        if (key === "priority" && value in KANO_OF) cur.priority = value as Moscow;
         if (key === "kano") cur.kano = value;
         if (key === "must") cur.must = value === "yes";
         if (key === "dependsOn")
@@ -470,6 +498,12 @@ export function diffRequirements(text: string, ledger: Requirement[]): DocumentD
       out.push({ kind: "changed", target: "requirement", targetId: r.id, field, proposed });
     if (p.title !== (r.title ?? "")) change("title", p.title);
     if (!sameCriteria(p.criteria, r.criteria)) change("criteria", JSON.stringify(p.criteria));
+    if (p.priority !== undefined && p.priority !== moscowOf(r)) {
+      // A changed MoSCoW priority: its must-have flag, and the class it stands for.
+      const must = p.priority === "Must have";
+      if (must !== r.mustHave) change("must_have", must ? "yes" : "no");
+      if (!must) change("kano", KANO_OF[p.priority]);
+    }
     if (p.kano !== undefined && p.kano !== (r.kano ?? "unclassified")) change("kano", p.kano);
     if (p.must !== undefined && p.must !== r.mustHave) change("must_have", p.must ? "yes" : "no");
     if (p.dependsOn !== undefined && p.dependsOn.join(",") !== r.dependsOn.join(",")) {

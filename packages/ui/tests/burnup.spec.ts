@@ -85,6 +85,27 @@ describe("the burn-up (DB-P3-14)", () => {
     );
   });
 
+  it("DB-N9-1, DB-N9-3: Status's burn-up adds the forecast range as a band and the target as a line", () => {
+    const c = burnupChart(series, 560, {
+      band: { from: "2026-09-29", to: "2026-10-02" },
+      target: "2026-09-30",
+    });
+    if ("empty" in c) throw new Error("expected a chart");
+    // The span reaches the band's far edge (Sep 21 to Oct 2: 12 days).
+    expect(c.scopePath).toBe("M44 105.3L85.8 105.3L127.6 65.3L169.5 65.3L211.3 38.7");
+    expect(c.band).toEqual({ x1: 378.5, x2: 504, label: "50% Sep 29 to 85% Oct 2" });
+    expect(c.target).toEqual({ x: 420.4, label: "Target Sep 30" });
+    expect(c.lastDate).toBe("Oct 2");
+    expect(c.caption).toBe(
+      "8 of 13 pts done by Sep 25. Scope grew by 5 pts since Sep 21. Forecast: 50% by Sep 29, 85% by Oct 2. Target Sep 30.",
+    );
+    // Without extras the chart is the board's, unchanged.
+    const plain = burnupChart(series, 560);
+    if ("empty" in plain) throw new Error("expected a chart");
+    expect(plain.band).toBeUndefined();
+    expect(plain.target).toBeUndefined();
+  });
+
   it("says when the cycle has not started, instead of drawing nothing", () => {
     expect(
       burnupChart({ ...series, startsOn: "2026-10-01", endsOn: "2026-10-14", days: [] }, 560),
@@ -109,24 +130,31 @@ describe("the cycle header and the burn-up's scope follow the filter (DB-P3-14)"
   });
 
   it("burns up the cycle in force, and the whole project under cycle:none", () => {
-    expect(burnupTarget(cycles, f(""), NOW)).toEqual({
+    // In story points when the team estimates; in issues otherwise (DB-N7-2).
+    expect(burnupTarget(cycles, f(""), NOW, undefined, "points")).toEqual({
       kind: "cycle",
       id: "cyc_3",
       url: "/api/metrics/burnup?cycle=cyc_3",
     });
-    expect(burnupTarget(cycles, f("cycle:none"), NOW)).toEqual({
+    expect(burnupTarget(cycles, f(""), NOW).url).toBe(
+      "/api/metrics/burnup?cycle=cyc_3&unit=issues",
+    );
+    expect(burnupTarget(cycles, f("cycle:none"), NOW, undefined, "points")).toEqual({
       kind: "project",
       url: "/api/metrics/burnup?scope=project",
     });
   });
 
   it("burns up only the project the board is scoped to, when it is scoped to one", () => {
-    expect(burnupTarget(cycles, f("cycle:none"), NOW, "proj_a b")).toEqual({
+    expect(burnupTarget(cycles, f("cycle:none"), NOW, "proj_a b", "points")).toEqual({
       kind: "project",
       url: "/api/metrics/burnup?scope=project&project=proj_a%20b",
     });
-    expect(burnupTarget(cycles, f("cycle:none"), NOW, null).url).toBe(
+    expect(burnupTarget(cycles, f("cycle:none"), NOW, null, "points").url).toBe(
       "/api/metrics/burnup?scope=project",
+    );
+    expect(burnupTarget(cycles, f("cycle:none"), NOW, "proj_a b").url).toBe(
+      "/api/metrics/burnup?scope=project&project=proj_a%20b&unit=issues",
     );
   });
 });

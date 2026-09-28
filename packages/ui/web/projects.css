@@ -1,0 +1,157 @@
+/* Projects (dashboard §2.11, DB-N9-9): a projects list like Linear's or
+   Jira's — the totals strip, one row per project, then Waiting on you and
+   the models on this server. State is colour paired with words; tokens only.
+   Below 768 px each row becomes a card with its labels shown. */
+.pj {
+  max-width: 1200px;
+  gap: 24px;
+}
+.pj-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+.pj-head > .btn {
+  flex: none;
+  margin-left: auto;
+}
+.pj-totals {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+.pj-total {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+  padding: 8px 12px;
+}
+.pj-total dt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.pj-total dd {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.pj-v {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.pj-d {
+  font-size: var(--text-xs);
+}
+.pj-tbl th {
+  vertical-align: bottom;
+}
+.pj-tbl td[data-col="name"] a {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.pj-tbl td[data-col="name"] a:hover,
+.pj-tbl td[data-col="name"] a:focus-visible {
+  text-decoration: underline;
+}
+.pj-state {
+  display: block;
+  font-size: var(--text-xs);
+}
+.pj-health,
+.pj-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pj-missing {
+  display: flex;
+  margin-top: 2px;
+  border-left: 2px solid var(--state-parked);
+  padding-left: 6px;
+  font-size: var(--text-xs);
+}
+.pj-rel {
+  display: block;
+}
+.pj-prog {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+}
+.pj-prog progress {
+  appearance: none;
+  width: 72px;
+  height: 6px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--bg-overlay);
+  overflow: hidden;
+}
+.pj-prog progress::-webkit-progress-bar {
+  background: var(--bg-overlay);
+}
+.pj-prog progress::-webkit-progress-value {
+  background: var(--state-pass);
+}
+.pj-prog progress::-moz-progress-bar {
+  background: var(--state-pass);
+}
+.pj-lbl {
+  display: none;
+}
+.pj-proj {
+  font-size: var(--text-xs);
+}
+.pj-mem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+}
+.pj-empty .btn {
+  margin-top: 8px;
+}
+
+@media (max-width: 767px) {
+  .pj {
+    padding: 16px;
+  }
+  .pj-head {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+  .pj-totals {
+    grid-template-columns: 1fr 1fr;
+  }
+  .pj-tbl thead {
+    display: none;
+  }
+  .pj-tbl,
+  .pj-tbl tbody,
+  .pj-tbl tr,
+  .pj-tbl td {
+    display: block;
+    width: 100%;
+  }
+  .pj-tbl tr {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-card);
+    margin-bottom: 8px;
+  }
+  .pj-tbl td {
+    border-bottom: 0;
+    padding: 4px 12px;
+  }
+  .pj-lbl {
+    display: flex;
+    align-items: center;
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+  }
+}

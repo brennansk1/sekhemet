@@ -29,6 +29,13 @@
 .pm-head .who b {
   font-weight: 600;
 }
+.pm-head .nm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
 .pm-head .line {
   font-size: var(--text-xs);
   color: var(--text-secondary);
@@ -433,6 +440,14 @@
   font-size: var(--text-xs);
   color: var(--text-secondary);
   line-height: var(--leading-normal);
+}
+.pm-compose .hint {
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  line-height: var(--leading-normal);
+}
+.pm-compose .hint[hidden] {
+  display: none;
 }
 .picker {
   position: absolute;

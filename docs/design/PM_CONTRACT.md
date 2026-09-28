@@ -296,12 +296,110 @@ changes until a person applies it (teams TEAM-18, TEAM-19).
   (`project.update`, checked centrally in `team/access.ts` before the route's
   own inline check ever runs; 403 otherwise); 400 without text.
 
+### Status (dashboard §2.8, NEW-dashboard-9; DEC-37)
+
+The page reads the board, `/api/story-map`, `/api/standup`,
+`/api/signals?project=`, `/api/queue/standing` and the project's
+`/api/metrics/burnup?scope=project&project=` (never a sprint's: the forecast
+band drawn on it is the project's) from their own routes, and
+builds every word with `statusModel` (`packages/ui/src/status.ts`). What only
+the server knows is one read:
+
+- `GET /api/status?project=` returns `{ facts: { setup: "solo" | "team",
+     project: { id, name } | null, isLead, canSetHealth, healthWritable,
+     health: { value: "on_track" | "at_risk" | "off_track", by, at } | null,
+     update: { text, by, at } | null, updateMissing, canPostUpdate, canUnpark,
+     forecast: { remaining, p50Days?, p85Days?, historyDays, finished, minimum },
+     acceptedThisWeek: { title, by, at }[],
+     flow: { days, cycleHours: number[], finished, sentBack,
+       firstTime: { passed, total } } } }` (`status_api.ts` `statusFacts`).
+  Scoped to the named project, or to the one project the person can see
+  when none is named; a project the person cannot see reads as none, and
+  only issues they can see count (PM-N9-8). `update` is the latest
+  `project/update_posted` of the project with its private text; `by` is the
+  person's name ("you" for the asker). `updateMissing` is true only in the
+  Team setup, for the project's lead, 7 days after the last update (or the
+  project's creation, when none was posted; teams TEAM-29). `canPostUpdate`
+  mirrors `POST /api/projects/:id/update`'s rule; `canUnpark` mirrors
+  `POST /api/cards/:id/unpark`'s (`review`, a Member's; always in Solo). The
+  forecast resamples
+  the project's own finished issues per day, from its first issue and at
+  most 60 days back (Monte Carlo, `monteCarloForecast`), and omits the two
+  dates below `minimum` (5) days of history or with none finished: a range
+  or nothing, never one date; each issue counts once, at its last move to
+  Done (an issue reverted and accepted again is one issue finished). The
+  forecast has no target: a release's target is not recorded yet, and a
+  sprint's end is not the project's. `flow` covers the last 30 days: each finished
+  issue's cycle time, the issues finished (each once), those sent back (a return), and
+  the issues whose first model attempt passed its checks. Health is not
+  recorded yet (teams NEW-teams-11): `healthWritable` is false and `health`
+  null until that route exists. Read-only; `501` on a read-only server.
+- `GET /api/signals?project=` returns `{ signals: { id, value, threshold?,
+     triggered, detail, epicId?, response: { action, mode, targets } }[] }`
+  (`status_api.ts` `projectSignals` over planner `computeSignals`): the live
+  signals of the named project's issues only, and of their events (moves,
+  check results, assumptions logged on them); a project the person cannot
+  see reads as no project, and with none named every project they can see
+  (PM-N9-8). The review-backlog signal's limit is the board's own In review
+  limit for that project (`reviewLimitFacts`, DB-P3-9), never a fixed number.
+  Status turns the fired ones into its risks (DB-N9-6).
+- `POST /api/cards/:id/unpark` (the dashboard's own, `x-sekhemet-action`)
+  returns `{ ok: true, status }`: the parked issue goes back where it was
+  parked from, or to Ready (`triage.ts` `unpark`, as `sekhemet unpark`);
+  `409 { error }` when it is not parked. In the Team setup it needs
+  `review`, like park (`team/access.ts`).
+
+### Projects (dashboard §2.11, DB-N9-9, DB-N9-21; teams item 5)
+
+The page builds every word with `projectsModel` (`packages/ui/src/projects.ts`)
+from one read:
+
+- `GET /api/projects/overview` returns `{ overview: { setup: "solo" | "team",
+     projects: { id, name, state: "active" | "idle" | "done" | "paused",
+       lead: string | null, health: { value, by, at } | null, updateMissing,
+       release: { name, done, total } | null,
+       forecast: { remaining, p50Days?, p85Days?, historyDays, finished, minimum },
+       target: string | null, waitingOnYou,
+       agent: { working: string[], queued } }[],
+     waiting: { projectId, project, cardId, title, kind: "review" | "decision" | "parked" | "plan",
+       question?, since }[],
+     shippedThisMonth, agentSecondsToday,
+     models: { roles: { role, model?, state }[],
+       slots: { inUse, capacity }, queue,
+       memory: { usedBytes, totalBytes } | null } } }`
+  (`projects_api.ts` `projectsOverview`). Only the projects the person can
+  see, never an archived one, and every total over those only (PM-N9-8).
+  Each project's `lead`, `updateMissing` and `forecast` are Status's
+  (`statusFacts`, above); `lead` is "you" for the asker and, in Solo, always
+  "you"; `release` is the story map's current release (Status's
+  `currentRelease`: the first not done), requirements done of those not cut;
+  `target` is null: a release's target date is not recorded yet, and a
+  sprint's end is not a project's target (DEC-37). `waiting` holds what waits on
+  the person — an issue in review, a pending decision on an issue, a parked
+  issue, a plan waiting for approval of its criteria (as Status's *Needs you*) — theirs, or unowned where they lead (in Solo, all), with when it
+  began waiting. `shippedThisMonth` counts issues moved to Done in the
+  current calendar month (UTC); `agentSecondsToday` sums the Agent's attempts
+  finished today (a person's take-over is not the Agent's). `models` is the
+  roster (`/api/models`' roles), the Coding model's qualified slots (RUN-35)
+  with the issues In progress, the Ready issues waiting (`/api/queue/standing`)
+  and the machine's memory. `health` stays null until teams NEW-teams-11
+  records it. Read-only; `501` on a read-only server.
+
 ### Board practices
 
 - `GET /api/board` gains per-card `priority`, `estimate`, `labels`, `epicId`,
   `cycleId`, `assignee`, `dueDate` and `externalRef`, plus top-level
   `epics: { id, title, progress: { done, total, points, pointsDone } }[]` and
-  `cycles: Cycle[]`.
+  `cycles: Cycle[]`, and `estimation: "off" | "points"` — the project's
+  Preferences → Estimation (DEC-31, dashboard DB-N7-2), present only when the
+  board is one project's (`?project=`, or the install's only project).
+- `GET /api/projects/:id/settings` returns `{ project, settings }`;
+  `PATCH /api/projects/:id/settings` with `{ estimation: "off" | "points" }`
+  (beside TEAM-32's `accept_rule`, `require_resolved_threads`, `lead`,
+  `auto_apply`) records `project/settings_changed` with only the changed
+  fields and returns `{ changed, settings }`; it needs `project.settings`
+  (the project's lead or an Admin; Solo's person is Admin), and any other
+  value is a 400 (`estimation is off or points`).
 - `PATCH /api/cards/:id` with any of the section 2 fields (inline editing).
 - `GET /api/cycles`, `POST /api/cycles`, `PATCH /api/cycles/:id`.
 - `GET /api/metrics/flow?days=30` returns
@@ -310,10 +408,12 @@ changes until a person applies it (teams TEAM-18, TEAM-19).
      wipAge: {cardId, hours}[] }`.
 - `GET /api/metrics/burnup?cycle=<id>` (a cycle's) or `?scope=project` (the
   project's; also with no query), with `&project=<id>` to count only that
-  project's cards (the board scoped to it) — in the Team setup only the
-  cards of projects the person can see are counted (PM-N9-8) — returns
-  `{ scope: "cycle" | "project", cycleId?, name?, startsOn?, endsOn?,
-     days: { date, done, scope }[], unestimated }` (dashboard DB-P3-14): done
+  project's cards (the board scoped to it) and `&unit=issues` to count each
+  issue as one (a project whose estimation is off, DB-N7-2) — in the Team
+  setup only the cards of projects the person can see are counted (PM-N9-8) —
+  returns `{ scope: "cycle" | "project", unit: "points" | "issues", cycleId?,
+     name?, startsOn?, endsOn?, days: { date, done, scope }[], unestimated }`
+  (dashboard DB-P3-14): done
   points and total scope at the end of each day, replayed from the card
   events — a cycle's from its start to today (none before it starts), the
   project's from the first card's day. Epics and initiatives are not
@@ -342,8 +442,9 @@ request's principal; a refusal is `409 { error }` naming what is unproven.
          why, cards: { id, status?, suspect }[],
          tests: { ref, suspect, result?, strength? }[] }[] }[],
      unplanned: { id, title?, sliceId? }[], mustHaves: { proven, total },
-     provenLine, projectDone }`. `provenLine` reads "9 of 11 must-haves
-  proven"; `projectDone` is true only after a person accepted the last slice.
+     provenLine, projectDone }`. `provenLine` reads "9 of 11 requirements
+  done" (DEC-31's words for the must-haves proven; "1 of 1 requirement done");
+  `projectDone` is true only after a person accepted the last slice.
 - `GET /api/slices/:id/report` returns
   `{ sliceId, baseline?, proven: {id, title?}[], cut: {id, title?}[],
      remaining: {id, title?, state}[], text }` (the release report, compared

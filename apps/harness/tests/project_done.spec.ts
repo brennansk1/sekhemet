@@ -316,7 +316,7 @@ describe("P13 fixture: eight requirements, two slices, one revised after its sli
     const pmStore = new PmStore(log);
     let snap = await buildSnapshot(root, store, pmStore, "stand-in");
     expect(ledgerStandup(snap)).toMatch(
-      /0 of 6 must-haves proven\. Unplanned: REQ-1, REQ-2, REQ-3, REQ-4, REQ-6, REQ-7\./,
+      /0 of 6 requirements done\. Unplanned: REQ-1, REQ-2, REQ-3, REQ-4, REQ-6, REQ-7\./,
     );
 
     // Slice 1 is built: code and tests on main, cards Done with their evidence.
@@ -342,7 +342,7 @@ describe("P13 fixture: eight requirements, two slices, one revised after its sli
     expect(req(m, "REQ-1")?.state).toBe("proven");
     expect(req(m, "REQ-4")?.state).toBe("passing_strength_unmet");
     expect(m.slices[0]?.state).toBe("unproven");
-    expect(m.slices[0]?.provenLine).toBe("3 of 4 must-haves proven");
+    expect(m.slices[0]?.provenLine).toBe("3 of 4 requirements done");
 
     // PM-P13-6: a model claiming the slice complete changes nothing; the reply gives the count.
     snap = await buildSnapshot(root, store, pmStore, "stand-in");
@@ -362,7 +362,7 @@ describe("P13 fixture: eight requirements, two slices, one revised after its sli
       ],
     );
     expect(reply.text).not.toMatch(/is complete|ready to ship/);
-    expect(reply.text).toContain("Not done: 3 of 6 must-haves proven.");
+    expect(reply.text).toContain("Not done: 3 of 6 requirements done.");
     expect(reply.text).toMatch(/REQ-4 \(passing strength unmet\)/);
     expect(await log.getEventsByTypes(["slice/accepted", "release/proposed"])).toEqual([]);
 

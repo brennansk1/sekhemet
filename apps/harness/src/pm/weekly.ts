@@ -1,4 +1,5 @@
 import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
+import { parseTitle, stopReasonLabel } from "@sekhemet/ui";
 import { type Audience, soloAudience } from "./audience.js";
 import { namedDecisions } from "./decisions.js";
 import type { PmStore } from "./store.js";
@@ -25,7 +26,12 @@ export interface WeeklyDraft {
 }
 
 const WEEK_MS = 7 * 24 * 3_600_000;
-const name = (c: CardRecord) => `${c.title} (${c.id})`;
+/**
+ * An issue as the update's reader knows it: its title, never its id or a
+ * stop-reason code (DEC-31; the draft is edited on Status, dashboard DB-P5-2).
+ */
+const name = (c: CardRecord) => parseTitle(c.title).title;
+const issues = (n: number) => `${n} ${n === 1 ? "issue" : "issues"}`;
 const list = (cards: CardRecord[], none: string) =>
   cards.length ? cards.map((c) => `- ${name(c)}`).join("\n") : none;
 
@@ -69,24 +75,31 @@ export async function draftWeeklyUpdate(deps: {
     audience,
     deps.asker,
   );
-  const status = `${done.length} ${done.length === 1 ? "card" : "cards"} done in the last 7 days, ${flight.length} in flight, ${review.length} waiting for review, ${by("ready").length} ready.`;
+  const status = `${issues(done.length)} done in the last 7 days, ${flight.length} in progress, ${review.length} waiting for review, ${by("ready").length} ready.`;
   // PM-N9-4: a parked reason may carry a model's own words (a suggestion's
   // "why", a planner's hold); guarded here, where the draft reads it.
+  // DEC-31: a parked issue is *On hold*; an issue its reason names is named by its
+  // title, one the reader cannot see only as "an issue" (DB-P5-2, PM-N9-8).
+  const titles = new Map(cards.map((c) => [c.id, name(c)]));
+  const withTitles = (text: string) =>
+    text.replace(/\bcard_[A-Za-z0-9_.:-]*[A-Za-z0-9]/g, (id) => titles.get(id) ?? "an issue");
   const risks = [
-    ...stopped.map((c) => `- ${name(c)} stopped on ${c.stopReason}`),
+    ...stopped.map((c) => `- ${name(c)}: ${stopReasonLabel(c.stopReason).sentence}`),
     ...parked.map(
-      (c) => `- ${name(c)} is parked: ${voiceGuard(c.blockedReason ?? "no reason recorded")}`,
+      (c) =>
+        `- ${name(c)} is on hold: ${withTitles(voiceGuard(c.blockedReason ?? "no reason recorded"))}`,
     ),
   ];
   const asks = [
-    ...decisions.map((d) => `- ${d}`),
+    // A decision's line names its issue by id for Seshat; the reader has the question.
+    ...decisions.map((d) => `- ${d.replace(/\s*\(card_[A-Za-z0-9_-]+\)/g, "")}`),
     ...(review.length ? [`- Review: ${review.map(name).join(", ")}`] : []),
   ];
   const parts = {
     status: withoutHealth(status),
     done: withoutHealth(list(done, "Nothing finished this week.")),
     next: withoutHealth(list(next, "Nothing is ready yet.")),
-    risks: withoutHealth(risks.length ? risks.join("\n") : "None seen in the ledger."),
+    risks: withoutHealth(risks.length ? risks.join("\n") : "None seen this week."),
     asks: withoutHealth(asks.length ? asks.join("\n") : "Nothing waits on a person."),
   };
   const text = [

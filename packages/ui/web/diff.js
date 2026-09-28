@@ -117,7 +117,7 @@ function newContent(file) {
 }
 
 /** A protected test, shown as excerpts around the lines failures point at. */
-function excerptHtml(path, content, fails, lead = "Unchanged by the Worker") {
+function excerptHtml(path, content, fails, lead = "Unchanged by the agent") {
   const lines = String(content).split("\n");
   if (lines[lines.length - 1] === "") lines.pop();
   const targets = [...new Set(fails.map((f) => f.location.line))].sort((a, b) => a - b);
@@ -217,7 +217,7 @@ export function changesHtml(
         : `<div class="diff" role="table" aria-label="Diff of ${esc(f.path)}">${mode === "split" ? splitHtml(f, anns, limit) : unifiedHtml(f, anns, limit)}${total > limit ? `<button class="more-lines" type="button" data-full="${esc(f.path)}">Show ${total - MAX_LINES} more lines</button>` : ""}</div>`;
     const note =
       role === "outside"
-        ? '<div class="note-row">The Worker edited a file this card may not touch.</div>'
+        ? '<div class="note-row">The agent edited a file this issue may not touch.</div>'
         : "";
     groups.push(
       `<div class="group ${role}${collapsed ? " collapsed" : ""}" data-file="${esc(f.path)}">${header({ path: f.path, role, added: f.added, removed: f.removed, collapsed, seen: seen.has(f.path), extra: fileFails.length ? `<span class="sec">${plural(fileFails.length, "annotation")} ·</span>` : "" })}${note}${body}</div>`,
@@ -239,7 +239,7 @@ export function changesHtml(
       .filter((_, i, a) => i < a.length - 1 || a[i] !== "").length;
     const body = fails.length
       ? `<div class="diff" role="table" aria-label="Excerpt of ${esc(src.path)} around the failures">${excerptHtml(src.path, src.content, fails)}</div>`
-      : `<div class="note-row">Unchanged by the Worker. ${plural(lines, "line")}.</div>`;
+      : `<div class="note-row">Unchanged by the agent. ${plural(lines, "line")}.</div>`;
     groups.push(
       `<div class="group acceptance${collapsed ? " collapsed" : ""}" data-file="${esc(src.path)}">${header({ path: src.path, role: "acceptance", added: null, removed: null, collapsed, extra })}${body}</div>`,
     );
@@ -250,7 +250,7 @@ export function changesHtml(
   if (ctx.acceptanceTests.length === 0) {
     const globs = ctx.protectedGlobs.length ? ctx.protectedGlobs : ["**/*.spec.ts"];
     groups.push(
-      `<div class="group"><div class="g-h">${icon("lock", 14, "ic s14")}<span>Acceptance tests</span><span class="sec">· none for this card</span></div><div class="note-row">This card is gated by the project’s gates and existing tests only. The Worker cannot edit files that match ${globs.map((g) => `<span class="mono">${esc(g)}</span>`).join(", ")}.</div></div>`,
+      `<div class="group"><div class="g-h">${icon("lock", 14, "ic s14")}<span>Acceptance tests</span><span class="sec">· none for this card</span></div><div class="note-row">This issue is checked by the project’s checks and existing tests only. The agent cannot edit files that match ${globs.map((g) => `<span class="mono">${esc(g)}</span>`).join(", ")}.</div></div>`,
     );
   }
 

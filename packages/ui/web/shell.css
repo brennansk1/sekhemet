@@ -15,10 +15,16 @@
   gap: 8px;
   padding: 4px 8px 12px;
 }
-.brand .ic {
-  width: 18px;
-  height: 18px;
-  color: var(--accent);
+/* The lockup (§2.13.6, DB-N9-19): the mark 8 px left of the wordmark. The
+   mark carries its own ink and gold; no rule here may recolour it. */
+.lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.brand-mark {
+  display: block;
+  flex: none;
 }
 .brand b {
   font-size: var(--text-md);

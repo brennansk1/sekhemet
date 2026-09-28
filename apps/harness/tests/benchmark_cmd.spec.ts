@@ -342,7 +342,7 @@ describe("the benchmark service (MS-N5-1, -6, -8, -9; PM_CONTRACT §3 Configurat
       (l) => out.push(l),
     );
     expect(code).toBe(0);
-    expect(out.join("\n")).toMatch(/Worker wa: 8 min/);
+    expect(out.join("\n")).toMatch(/Coding model wa: 8 min/);
     expect(out.join("\n")).toMatch(/--yes/);
     expect(runs).toBe(0);
     const ran = await benchmarkCommand(
@@ -351,7 +351,7 @@ describe("the benchmark service (MS-N5-1, -6, -8, -9; PM_CONTRACT §3 Configurat
       (l) => out.push(l),
     );
     expect(ran).toBe(0);
-    expect(out.join("\n")).toMatch(/Worker wa: 1 \(6 items/);
+    expect(out.join("\n")).toMatch(/Coding model wa: 1 \(6 items/);
   });
 });
 

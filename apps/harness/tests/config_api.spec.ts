@@ -365,7 +365,7 @@ describe("roles (DB-N6-4, DB-N6-5, MD-N12-4, MD-N12-5)", () => {
     const r = await call("PUT", "/api/config/roles/reviewer", { model: "tiny-llama" });
     expect(r.status).toBe(409);
     expect(r.body.needs).toBe("other-family");
-    expect(r.body.error).toMatch(/Worker's family/);
+    expect(r.body.error).toMatch(/Coding model's family/);
   });
 
   it("refuses to load when no residency scheduler is here, saying so", async () => {
@@ -517,7 +517,7 @@ describe("model details: every number graded (DB-NM14-1, DB-NM14-2)", () => {
     expect(a.body.model.identity.contextLength.grade).toBe("file");
     expect(a.body.speeds[0].decodeTokensPerSecond.grade).toBe("estimated");
     expect(a.body.loads.map((l: Json) => l.volume)).toEqual(["internal", "external"]);
-    expect(a.body.warnings.join(" ")).toMatch(/Not qualified for the worker/);
+    expect(a.body.warnings.join(" ")).toMatch(/Not verified on this machine for the Coding model/);
   });
 });
 
@@ -656,7 +656,7 @@ describe("combinations and residency (DB-NM14-6, DB-NM14-9)", () => {
     expect(all.length).toBeGreaterThan(0);
     for (const c of all) expect(Object.keys(c)).not.toContain("score");
     const sameFamily = all.find((c) => c.combination.worker === c.combination.reviewer);
-    expect(sameFamily?.excluded).toMatch(/Worker's family|does not fit/);
+    expect(sameFamily?.excluded).toMatch(/Coding model's family|does not fit/);
     const kept = all.filter((c) => !c.excluded);
     for (const c of kept)
       expect(["design", "estimated", "measured"]).toContain(c.estimate.timePerCardMs.grade);

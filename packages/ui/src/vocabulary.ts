@@ -13,20 +13,57 @@
 import type { CardRecord, CardStatus } from "@sekhemet/kernel";
 
 // ---------------------------------------------------------------------------
-// Kinds (the SPIDR slice, renamed for people)
+// Issue types (DEC-31): what a person reads for a card's kind and change
 // ---------------------------------------------------------------------------
 
+/**
+ * The older display ids a card's planner title suffix maps to (`(SPIDR: …)`).
+ * Internal: nothing shows them; a card is shown by its issue type.
+ */
 export type CardKind = "contract" | "storage" | "flow" | "rules" | "research" | "ui" | "wiring";
 
-export const KIND_LABELS: Record<CardKind, { label: string; tooltip: string }> = {
-  contract: { label: "Contract", tooltip: "Defines types and interfaces before behaviour." },
-  storage: { label: "Storage", tooltip: "Persists or shapes data." },
-  flow: { label: "Flow", tooltip: "Implements a working path end to end." },
-  rules: { label: "Rules", tooltip: "Adds validation, invariants or edge cases." },
-  research: { label: "Research", tooltip: "Removes an unknown; produces notes and a probe test." },
-  ui: { label: "UI", tooltip: "Builds something a person sees." },
-  wiring: { label: "Wiring", tooltip: "Connects finished parts." },
+/** The standard issue types Jira, Linear and GitHub use (DEC-31). */
+export type IssueType = "story" | "task" | "bug" | "spike" | "epic";
+
+export const ISSUE_TYPE_LABELS: Record<IssueType, { label: string; tooltip: string }> = {
+  story: { label: "Story", tooltip: "New behaviour a person can use." },
+  task: {
+    label: "Task",
+    tooltip:
+      "Work that adds no behaviour: a refactor, an upgrade, pinning today's behaviour, or a review.",
+  },
+  bug: { label: "Bug", tooltip: "A defect, fixed with a test that reproduces it first." },
+  spike: { label: "Spike", tooltip: "A question answered by research or throwaway code." },
+  epic: { label: "Epic", tooltip: "A larger piece of work that holds issues." },
 };
+
+export function issueTypeLabel(type: string): string {
+  return ISSUE_TYPE_LABELS[type as IssueType]?.label ?? humanize(type);
+}
+
+/**
+ * A card's issue type (DEC-31, NAMING's map): an epic or initiative is an
+ * *Epic*; a spike or research card a *Spike*; otherwise its change decides —
+ * a fix is a *Bug*, a refactor, upgrade or characterization a *Task*, a
+ * review card or a card of the `task` tier a *Task*, and new behaviour (the
+ * default) a *Story*. An older
+ * card with no stored kind is read from its title's `(SPIDR: …)` suffix.
+ */
+export function issueTypeOf(card: {
+  tier?: string;
+  kind?: string;
+  change?: string;
+  title?: string;
+}): IssueType {
+  if (card.tier === "epic" || card.tier === "initiative") return "epic";
+  const legacy = card.kind ? [] : parseTitle(card.title ?? "").kinds;
+  if (card.kind === "spike" || card.kind === "research" || legacy[0] === "research") return "spike";
+  if (card.change === "fix") return "bug";
+  if (card.change === "refactor" || card.change === "upgrade" || card.change === "characterize")
+    return "task";
+  if (card.kind === "review" || card.tier === "task") return "task";
+  return "story";
+}
 
 const SPIDR_KINDS: Record<string, CardKind> = {
   interface: "contract",
@@ -59,10 +96,6 @@ export function parseTitle(raw: string): { title: string; kinds: CardKind[] } {
     if (kind && !kinds.includes(kind)) kinds.push(kind);
   }
   return { title: text.slice(0, match.index).trim(), kinds: kinds.slice(0, 2) };
-}
-
-export function kindLabel(kind: string): string {
-  return KIND_LABELS[kind as CardKind]?.label ?? humanize(kind);
 }
 
 // ---------------------------------------------------------------------------
@@ -106,8 +139,8 @@ const COLUMN_LABELS: Record<CardStatus, string> = {
 export const COLUMN_EMPTY: Record<CardStatus, string> = {
   backlog: "Ideas and split-off work.",
   ready: "Cards whose dependencies are done.",
-  planning: "The Planner is writing plans and tests.",
-  in_progress: "No Worker running.",
+  planning: "The planning model is writing plans and tests.",
+  in_progress: "No agent running.",
   verify: "Nothing being checked.",
   review: "Nothing waiting for you.",
   done: "Accepted cards appear here.",
@@ -117,6 +150,26 @@ export const COLUMN_EMPTY: Record<CardStatus, string> = {
 
 export function columnLabel(status: string): string {
   return COLUMN_LABELS[status as CardStatus] ?? humanize(status);
+}
+
+/**
+ * A stored state in plain words, for Status and plain mode (dashboard §2.8.13,
+ * DB-P5-2): no column jargon, no stop-reason code.
+ */
+const PLAIN_STATUS: Record<CardStatus, string> = {
+  backlog: "Not started",
+  ready: "Ready to start",
+  planning: "Being planned",
+  in_progress: "Being built",
+  verify: "Being checked",
+  review: "Waiting for review",
+  done: "Done",
+  parked: "On hold",
+  rejected: "Won't do",
+};
+
+export function plainStatus(status: string): string {
+  return PLAIN_STATUS[status as CardStatus] ?? humanize(status);
 }
 
 /**
@@ -160,7 +213,7 @@ export const BOARD_COLUMNS: readonly BoardColumnDef[] = [
     id: "in_progress",
     label: "In progress",
     states: ["in_progress", "verify"],
-    empty: "No Worker running.",
+    empty: "No agent running.",
     queue: false,
     onlyWithCards: false,
   },
@@ -225,12 +278,12 @@ export function boardColumnOf(status: string): BoardColumnId | "wont_do" | undef
 // `executor` and `manager` are the pre-rename spellings, kept only so that
 // events already in a ledger still render. Nothing writes them.
 const ACTOR_LABELS: Record<string, string> = {
-  worker: "Worker",
-  executor: "Worker",
-  planner: "Planner",
-  manager: "Planner",
-  researcher: "Researcher",
-  reviewer: "Reviewer",
+  worker: "Agent",
+  executor: "Agent",
+  planner: "Planning model",
+  manager: "Planning model",
+  researcher: "Research model",
+  reviewer: "AI review",
   human: "You",
   harness: "Sekhemet",
   system: "Sekhemet",
@@ -298,7 +351,7 @@ export function invariantsNotEnforced(
   const n = notEnforced.length;
   return {
     label: `${n} ${n === 1 ? "invariant" : "invariants"} not enforced`,
-    heading: "The architecture gate cannot check these lines of the brief.",
+    heading: "The architecture check cannot verify these lines of the brief.",
     lines: notEnforced.map((l) => l.line),
     forms: [...(notEnforced[0]?.restate ?? [])],
   };
@@ -374,7 +427,7 @@ export function stopReasonLabel(
     case "gate_passed":
       return {
         short: "Passed",
-        sentence: ctx.step ? `All gates passed on step ${ctx.step}.` : "All gates passed.",
+        sentence: ctx.step ? `All checks passed on step ${ctx.step}.` : "All checks passed.",
         tone: "pass",
       };
     case "budget_exhausted":
@@ -397,8 +450,8 @@ export function stopReasonLabel(
       return {
         short: "Couldn't fix",
         sentence: ctx.repairs
-          ? `Tried ${ctx.repairs} repairs; the same gate kept failing.`
-          : "Tried every repair; the same gate kept failing.",
+          ? `Tried ${ctx.repairs} repairs; the same check kept failing.`
+          : "Tried every repair; the same check kept failing.",
         tone: "fail",
       };
     case "memory_pressure":
@@ -418,13 +471,13 @@ export function stopReasonLabel(
     case "error":
       return {
         short: "Harness error",
-        sentence: "Sekhemet failed, not the Worker. See the ledger entry.",
+        sentence: "Sekhemet failed, not the agent. See the issue's Activity.",
         tone: "fail",
       };
     case "scope_violation":
       return {
         short: "Out of scope",
-        sentence: "Tried to edit a file this card may not touch.",
+        sentence: "Tried to edit a file this issue may not touch.",
         tone: "fail",
       };
     case "capability_ceiling":
@@ -443,26 +496,26 @@ export function stopReasonLabel(
       };
     case "done_pending_gates":
       return {
-        short: "Done, gates not run",
-        sentence: "The Worker finished, but the gates could not run to confirm it.",
+        short: "Done, checks not run",
+        sentence: "The agent finished, but the checks could not run to confirm it.",
         tone: "blocked",
       };
     case "token_budget_exhausted":
       return {
         short: "Out of tokens",
-        sentence: "Spent the card's token budget without passing.",
+        sentence: "Spent the issue's token budget without passing.",
         tone: "fail",
       };
     case "time_budget_exhausted":
       return {
         short: "Out of time",
-        sentence: "Spent the card's time budget without passing.",
+        sentence: "Spent the issue's time budget without passing.",
         tone: "fail",
       };
     case "replan_requested":
       return {
         short: "Needs a new plan",
-        sentence: "Direct repairs did not work; the card went back to Planning.",
+        sentence: "Direct repairs did not work; the issue went back to Planning.",
         tone: "blocked",
       };
     case "rebase_conflict":
@@ -482,7 +535,7 @@ export function stopReasonLabel(
     case "integration_failed":
       return {
         short: "Breaks on main",
-        sentence: "Its gates passed alone but fail on top of the latest main.",
+        sentence: "Its checks passed alone but fail on top of the latest main.",
         tone: "fail",
       };
     case "vacuous_tests":
@@ -507,15 +560,15 @@ export function stopReasonLabel(
       };
     case "gate_suspected":
       return {
-        short: "Gate in question",
-        sentence: "The Worker holds that a gate, not its work, is wrong. A person decides which.",
+        short: "Check in question",
+        sentence: "The agent holds that a check, not its work, is wrong. A person decides which.",
         tone: "blocked",
       };
     case "hook_veto":
       return {
         short: "Stopped by a hook",
         sentence:
-          "A project hook vetoed the next step. Change the hook or the card, then unpark it.",
+          "A project hook vetoed the next step. Change the hook or the issue, then unpark it.",
         tone: "blocked",
       };
     case "crashed":
@@ -526,9 +579,14 @@ export function stopReasonLabel(
         tone: "parked",
       };
     default:
+      // A reason with no words yet: the tile keeps its name; the sentence stays worded (DB-P5-2).
       return reason
-        ? { short: humanize(reason), sentence: `Stopped: ${humanize(reason)}.`, tone: "neutral" }
-        : { short: "Not run", sentence: "This card has not run yet.", tone: "neutral" };
+        ? {
+            short: humanize(reason),
+            sentence: "It stopped before its checks passed.",
+            tone: "neutral",
+          }
+        : { short: "Not run", sentence: "This issue has not run yet.", tone: "neutral" };
   }
 }
 
@@ -748,6 +806,8 @@ export type StatusMark =
 export interface CardDisplay {
   title: string;
   kinds: CardKind[];
+  /** The issue type a person reads (DEC-31): Story, Task, Bug, Spike or Epic. */
+  type: IssueType;
   shortId: string;
   stateLabel: string;
   statusLine: string;
@@ -894,22 +954,25 @@ export function statusLine(
       // working on it until it is re-planned, so say what failed.
       if (ev && !ev.passed)
         return { text: `${failText} · needs a new plan`, tone: "fail", mark: "fail" };
-      return { text: "Planner is writing the plan", tone: "neutral", mark: "planning" };
+      return { text: "Being planned", tone: "neutral", mark: "planning" };
     case "in_progress": {
+      // What the agent is doing now. Its step count is the issue's, never the
+      // board's (DEC-31, DB-N7-3): `budgetText` carries it to the issue.
       const step = ctx.lastStep;
       if (step) {
+        const phrase = stepPhrase(step);
         return {
-          text: `Step ${step.turn} of ${card.stepBudget} · ${stepPhrase(step)}`,
+          text: `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}`,
           tone: "running",
           mark: "running",
         };
       }
       return card.stepsUsed > 0
-        ? { text: `Step ${card.stepsUsed} of ${card.stepBudget}`, tone: "running", mark: "running" }
-        : { text: `Starting · ${budget}`, tone: "running", mark: "running" };
+        ? { text: "Working", tone: "running", mark: "running" }
+        : { text: "Starting", tone: "running", mark: "running" };
     }
     case "verify":
-      if (!ev) return { text: "Running gates…", tone: "running", mark: "running" };
+      if (!ev) return { text: "Running checks…", tone: "running", mark: "running" };
       if (!ev.passed) return { text: failText, tone: "fail", mark: "pips" };
       return { text: "Holding for review", tone: "neutral", mark: "pips" };
     case "review":
@@ -974,6 +1037,7 @@ export function describeCard(card: CardRecord, ctx: DisplayContext = {}): CardDi
   const display: CardDisplay = {
     title,
     kinds,
+    type: issueTypeOf(card),
     shortId: shortId(card.id),
     stateLabel: columnLabel(card.status),
     statusLine: line.text,
@@ -1087,7 +1151,7 @@ export function eventSentence(
       if (keys.length === 1 && typeof patch.stepsUsed === "number") {
         return {
           ...base,
-          actor: "Worker",
+          actor: "Agent",
           verb: `finished step ${patch.stepsUsed} on`,
           tone: "neutral",
         };
@@ -1103,8 +1167,8 @@ export function eventSentence(
       const step = p as unknown as StepLike;
       const gate = step.gate
         ? step.gate.passed
-          ? " · gates passed"
-          : ` · ${(step.gate.failed ?? []).map(gateLabel).join(", ") || "gates"} failed`
+          ? " · checks passed"
+          : ` · ${(step.gate.failed ?? []).map(gateLabel).join(", ") || "checks"} failed`
         : "";
       return {
         ...base,
@@ -1157,7 +1221,7 @@ export function eventSentence(
       const asked = ((event.private ?? {}) as { question?: unknown }).question;
       return {
         ...base,
-        actor: "Researcher",
+        actor: "Research model",
         verb: p.fromMemory ? "answered from memory" : p.deep ? "researched in depth" : "researched",
         // The question is private (it can carry a card's spec and a gate's
         // output): quoted, first line only, from the private part when given.
@@ -1360,7 +1424,7 @@ export function checkFixHint(name: string, status: string, detail = ""): string 
     case "Local inference socket":
       return status === "fail"
         ? "Start Ollama or llama-server, then re-run the checks."
-        : "Pull or load a model so the Worker has one to use.";
+        : "Pull or load a Coding model so the agent has one to use.";
     case "Sandbox confinement":
       return /WROTE OUTSIDE/.test(detail)
         ? "Stop: the sandbox let a command write outside its worktree. Do not run cards until this passes."
@@ -1395,7 +1459,7 @@ export function vocabularyTables(
 ): Record<string, unknown> {
   const stops = Object.keys(stopTable);
   return {
-    kinds: KIND_LABELS,
+    types: ISSUE_TYPE_LABELS,
     columns: Object.fromEntries(
       BOARD_COLUMN_ORDER.map((s) => [s, { label: columnLabel(s), empty: COLUMN_EMPTY[s] }]),
     ),

@@ -56,7 +56,7 @@ const minutes = (ms: number) => Math.max(1, Math.round(ms / 60_000));
 export function waitInWords(w: SeshatWait): string {
   const n = minutes(w.waitMs);
   const why: string[] = [];
-  if (w.stepMs !== undefined && w.stepMs > 0) why.push("the Worker is finishing a step");
+  if (w.stepMs !== undefined && w.stepMs > 0) why.push("the agent is finishing a step");
   if (w.switchMs !== undefined && w.switchMs > 0)
     why.push(
       w.switchMs < 60_000

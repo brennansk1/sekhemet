@@ -348,3 +348,63 @@ describe("the board geometry the reach check lays out is the served one (DB-P3-1
     expect(LAYOUT.topbarH).toBe(px(G.topbar));
   });
 });
+
+/**
+ * dashboard DB-N9-19 (§2.13.6): the brand mark draws its own ink and gold, so
+ * no stylesheet may recolour it or set it on gold, and every place that draws
+ * the brand uses the one mark (the line glyph in accent is gone).
+ */
+describe("the brand mark and the AI badge in the page (DB-N9-19, DB-N9-18)", () => {
+  const source = (f: string) => readFileSync(join(WEB, f), "utf8");
+  const modules = readdirSync(WEB).filter((f) => f.endsWith(".js"));
+
+  it("DB-N9-19: no rule recolours the mark, and none puts the brand on gold", () => {
+    const touching = RULES.filter((r) =>
+      selectors(r).some((s) => /\.brand-mark|\.lockup|\.brand\b|\.auth-brand/.test(s)),
+    );
+    expect(touching.length).toBeGreaterThan(0);
+    for (const r of touching) {
+      for (const [k, v] of r.decls) {
+        if (/\.brand-mark/.test(r.selector))
+          expect(k, where(r)).not.toMatch(/^(fill|color|filter|opacity)$/);
+        expect(v, where(r)).not.toContain("--accent");
+      }
+    }
+  });
+
+  it("DB-N9-19: the sidebar, sign-in and empty states draw the one mark, never the old line glyph", () => {
+    for (const f of modules) expect(source(f), f).not.toMatch(/icon\("glyph"/);
+    expect(source("shell.js")).toContain("brandLockup(18)");
+    expect(source("signin.js")).toContain("brandLockup(32)");
+    for (const f of ["board.js", "evidence.js", "review.js"]) {
+      expect(source(f), f).toContain("brandMark(24)");
+    }
+  });
+
+  it("DB-N9-18: the badge's look is §2.13.8's", () => {
+    const badge = RULES.find((r) => r.file === "views.css" && r.selector === ".ai-badge");
+    expect(badge?.decls.get("margin-left")).toBe("4px");
+    expect(badge?.decls.get("font-size")).toBe("var(--text-xs)");
+    expect(badge?.decls.get("font-weight")).toBe("600");
+    expect(badge?.decls.get("color")).toBe("var(--text-secondary)");
+    expect(badge?.decls.get("border")).toBe("1px solid var(--border-subtle)");
+    expect(badge?.decls.get("border-radius")).toBe("3px");
+  });
+
+  it("DB-N9-18: Seshat and the Agent carry the badge where they are named; the Agent has no avatar", () => {
+    // Seshat in its thread and panel headers.
+    expect(source("pm_thread.js")).not.toContain("<b>${PM_NAME}</b>");
+    expect(source("pm_thread.js").match(/teammateName\(PM_NAME, "seshat"\)/g)?.length).toBe(4);
+    // The panel header is *Seshat · Project manager* (DB-P5-6, `seshatHeader`), the badge after it.
+    expect(source("pm_panel.js")).toContain("<b>${esc(st.title)}</b>${aiBadge()}");
+    // The Agent on the issue page, in Activity, and as a tile's delegate.
+    expect(source("issue_view.js")).toContain('teammateName(ISSUE_COPY.agent, "agent")');
+    expect(source("activity.js")).toContain('${item.ai ? aiBadge() : ""}');
+    expect(source("tile.js")).toContain('${t.delegate.worker ? aiBadge() : ""}');
+    // Projects: the Agent column and total, and Seshat's model.
+    expect(source("projects.js")).toContain("labelled(c.label, c.ai)");
+    expect(source("projects.js")).toContain("labelled(r.label, r.seshat)");
+    // No avatar is ever drawn for the Agent.
+    for (const f of modules) expect(source(f), f).not.toMatch(/avatar\([^)]*Agent/);
+  });
+});

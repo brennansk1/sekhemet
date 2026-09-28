@@ -280,7 +280,7 @@ export const KEY_GROUPS: readonly KeyGroup[] = [
       ["Select", ["x"]],
       ["Extend selection (list)", ["⇧", "J"]],
       ["Priority, points, labels", ["⇧", "P"]],
-      ["Cycle, assignee", ["⇧", "C"]],
+      ["Sprint, assignee", ["⇧", "C"]],
       ["Any field", ["."]],
       ["Board or list", ["v"]],
       ["Group into swimlanes", ["⇧", "S"]],

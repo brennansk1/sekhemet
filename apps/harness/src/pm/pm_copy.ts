@@ -99,7 +99,8 @@ export const NEW_PROJECT_REFUSAL = {
  * Worker through the card's spec and criteria (`card_zero.ts`).
  */
 export const CARD_ZERO_COPY = {
-  title: (generator: string) => `Card zero: set the project up with ${generator}`,
+  // DEC-31: the title is read on the board and the issue page, so no *card* in it.
+  title: (generator: string) => `Set the project up with ${generator}`,
   spec: (generator: string, steps: readonly string[], ignored: readonly string[]) =>
     [
       `Run the ecosystem's own generator, ${generator}, in the project root: each command below as its own tool step, in this order, exactly as written.`,
@@ -113,7 +114,7 @@ export const CARD_ZERO_COPY = {
 };
 
 export const CARD_ONE_COPY = {
-  title: (behaviour: string) => `Card one: a failing test for ${behaviour}`,
+  title: (behaviour: string) => `A failing test for ${behaviour}`,
   spec: (behaviour: string, file: string, reason: string) =>
     [
       `Write one test, ${file}, for the first behaviour of the first slice: ${behaviour}.`,

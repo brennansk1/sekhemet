@@ -22,7 +22,7 @@ const LEVEL = {
   normal: {
     label: "Normal",
     tone: "pass",
-    text: "Cards run normally. Sekhemet stops adding worktrees at 90% and pauses the Worker at 94%.",
+    text: "Issues run normally. Sekhemet stops adding worktrees at 90% and pauses the agent at 94%.",
   },
   warning: {
     label: "Warning",
@@ -32,7 +32,7 @@ const LEVEL = {
   critical: {
     label: "Critical",
     tone: "fail",
-    text: "Above 94%: the Worker is paused safely before the system would swap. Work resumes below 85%.",
+    text: "Above 94%: the agent is paused safely before the system would swap. Work resumes below 85%.",
   },
 };
 
@@ -50,7 +50,7 @@ function memoryHtml(m) {
   // legend under the gauge, never a hover title (DB-P12-6).
   const tick = (r, up = false) =>
     `<span class="tick${up ? " up" : ""}" style="left:${r * 100}%"><i></i><em class="tnum">${Math.round(r * 100)}%</em></span>`;
-  const legend = `<p class="sec mem-ticks tnum">${Math.round(t.warning * 100)}% warning · ${Math.round(t.throttle * 100)}% no new worktrees · ${Math.round(t.critical * 100)}% pause the Worker</p>`;
+  const legend = `<p class="sec mem-ticks tnum">${Math.round(t.warning * 100)}% warning · ${Math.round(t.throttle * 100)}% no new worktrees · ${Math.round(t.critical * 100)}% pause the agent</p>`;
   const kernel = m.kernelLevel
     ? ({ 1: "normal", 2: "warning", 4: "critical" }[m.kernelLevel] ?? String(m.kernelLevel))
     : null;
@@ -64,7 +64,7 @@ function modelHtml(d) {
     ? `<ul class="plain">${models.served.map((m) => `<li><span class="mono">${esc(m)}</span></li>`).join("")}</ul>`
     : '<p class="sec">No model is being served.</p>';
   const working = store.state.cards.some((c) => c.status === "in_progress");
-  return `<section class="mc-card"><h3 class="sh">Model <span class="sec">${models.reachable ? (working ? "Worker running" : "idle") : "server unreachable"}</span></h3><dl class="kv"><dt>Endpoint</dt><dd class="mono">${esc(models.endpoint ?? "—")}</dd><dt>Status</dt><dd>${models.reachable ? `${icon("check", 14, "ic s14 i-pass")} reachable` : `${icon("x", 14, "ic s14 i-fail")} not reachable`}</dd></dl><h4 class="sub">Models on the server</h4>${list}</section>`;
+  return `<section class="mc-card"><h3 class="sh">Model <span class="sec">${models.reachable ? (working ? "Agent running" : "idle") : "server unreachable"}</span></h3><dl class="kv"><dt>Endpoint</dt><dd class="mono">${esc(models.endpoint ?? "—")}</dd><dt>Status</dt><dd>${models.reachable ? `${icon("check", 14, "ic s14 i-pass")} reachable` : `${icon("x", 14, "ic s14 i-fail")} not reachable`}</dd></dl><h4 class="sub">Models on the server</h4>${list}</section>`;
 }
 
 /** The four-model roster (GET /api/models): who does what, and what is loaded. */
@@ -76,9 +76,9 @@ function rosterHtml() {
   if (r.status !== 200 || !r.data) {
     const why =
       r.status === 404
-        ? "<b>The model roster isn't on this server yet.</b> <code>GET /api/models</code> returned 404. It will list the Worker, Seshat, the adversarial reviewer and the Researcher, and which of them is loaded."
+        ? "<b>The model roster isn't on this server yet.</b> <code>GET /api/models</code> returned 404. It will list the Coding, Planning (Seshat), Review and Research models, and which of them is loaded."
         : `<b>Couldn't read the model roster.</b> The server returned ${esc(r.status > 0 ? r.status : "no response")}.`;
-    return `<section>${head("Worker, Seshat, reviewer, Researcher")}<p class="roster-empty">${icon("machine", 14, "ic s14")}<span>${why}</span></p></section>`;
+    return `<section>${head("Coding, Planning, Review and Research models")}<p class="roster-empty">${icon("machine", 14, "ic s14")}<span>${why}</span></p></section>`;
   }
   const rows = rosterRows(r.data.roles);
   const resident = rows.filter((x) => x.state === "resident").length;
@@ -179,7 +179,7 @@ const SERIES = [
     tone: "pass",
     min: 0,
     fmt: (v) => `${v.toFixed(1)} tok/s`,
-    basis: "per Worker step",
+    basis: "per agent step",
   },
   {
     key: "cacheHit",
@@ -188,7 +188,7 @@ const SERIES = [
     min: 0,
     max: 100,
     fmt: (v) => `${Math.round(v)}%`,
-    basis: "per Worker step; the target on tool-result steps is 98%",
+    basis: "per agent step; the target on tool-result steps is 98%",
   },
 ];
 

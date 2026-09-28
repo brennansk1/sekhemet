@@ -25,7 +25,7 @@ export function factsSections(card, evidence, detail) {
   const criteria = card?.acceptanceCriteria ?? [];
   const allPassed = evidence?.passed;
   const crit = criteria.length
-    ? `<ul class="crit">${criteria.map((c) => `<li><span class="bul" aria-hidden="true"></span><span>${esc(c)}</span></li>`).join("")}</ul>${allPassed ? '<p class="crit-note">All gates passed. Criteria are checked by the acceptance tests.</p>' : ""}`
+    ? `<ul class="crit">${criteria.map((c) => `<li><span class="bul" aria-hidden="true"></span><span>${esc(c)}</span></li>`).join("")}</ul>${allPassed ? '<p class="crit-note">All checks passed. Criteria are checked by the acceptance tests.</p>' : ""}`
     : '<p class="sec" style="font-size:var(--text-sm)">No criteria recorded for this card.</p>';
 
   let run = "";
@@ -55,7 +55,7 @@ export function factsSections(card, evidence, detail) {
     const sha = evidence.checkpointShas?.at?.(-1);
     const gc = evidence.gatesConfigSha256 ?? "";
     const empty = gc === EMPTY_SHA256;
-    prov = `<section><h3 class="sh">Provenance</h3><div class="prov">Evidence <span class="mono">${esc(evidence.id)}</span><span class="end">${copyBtn(evidence.id, "evidence id")}</span></div>${sha ? `<div class="prov">Checkpoint <span class="mono" title="${esc(sha)}">${esc(sha.slice(0, 7))}</span><span class="end">${copyBtn(sha, "checkpoint")}</span></div>` : ""}<div class="prov${empty ? " warn" : ""}" ${empty ? 'title="gates.toml hashed to the empty string. These results were not verified against a contract."' : ""}>Gate contract <span class="mono" title="${esc(gc)}">${esc(gc.slice(0, 8))}…</span><span class="end">${empty ? `${icon("alert", 14, "ic s14 i-park")}<span class="sr-only">Empty gate contract</span>` : ""}${copyBtn(gc, "gate contract hash")}</span></div></section>`;
+    prov = `<section><h3 class="sh">Provenance</h3><div class="prov">Evidence <span class="mono">${esc(evidence.id)}</span><span class="end">${copyBtn(evidence.id, "evidence id")}</span></div>${sha ? `<div class="prov">Checkpoint <span class="mono" title="${esc(sha)}">${esc(sha.slice(0, 7))}</span><span class="end">${copyBtn(sha, "checkpoint")}</span></div>` : ""}<div class="prov${empty ? " warn" : ""}" ${empty ? 'title="gates.toml hashed to the empty string. These results were not verified against a checks configuration."' : ""}>Checks configuration <span class="mono" title="${esc(gc)}">${esc(gc.slice(0, 8))}…</span><span class="end">${empty ? `${icon("alert", 14, "ic s14 i-park")}<span class="sr-only">Empty checks configuration</span>` : ""}${copyBtn(gc, "checks configuration hash")}</span></div></section>`;
   }
 
   return `<section><h3 class="sh">Done when</h3>${crit}</section>${run}${scope}${prov}`;

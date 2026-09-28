@@ -25,7 +25,7 @@ export interface QuestionCopy {
 
 export const DESIGN_COPY = {
   qualities: {
-    fast: "No latency target was given. Assumed: correct first; a benchmark card measures it, and the target is set from what it shows.",
+    fast: "No latency target was given. Assumed: correct first; a benchmark issue measures it, and the target is set from what it shows.",
     secure:
       "Assumed: secrets come only from the environment and never enter the repository, and every input is validated where it enters.",
     scalable:
@@ -34,7 +34,7 @@ export const DESIGN_COPY = {
     usable: "Assumed: every command explains itself with --help and every error says what to do.",
   },
 
-  /** What is at stake, and the question that most changes the cards when it is (DS-N1-4). */
+  /** What is at stake, and the question that most changes the issues when it is (DS-N1-4). */
   risks: {
     money: {
       riskiest:
@@ -145,7 +145,7 @@ export const DESIGN_COPY = {
       question: "Who calls it, and how?",
       answers: [
         {
-          answer: "HTTP with JSON, unauthenticated until a card asks for authentication",
+          answer: "HTTP with JSON, unauthenticated until an issue asks for authentication",
           cards: ["JSON routes"],
         },
         {
@@ -161,7 +161,7 @@ export const DESIGN_COPY = {
     typescript: {
       name: "TypeScript on Node with Vitest",
       assumed:
-        "TypeScript on Node with Vitest — the stack this harness verifies best. Say otherwise before the first card runs.",
+        "TypeScript on Node with Vitest — the stack Sekhemet verifies best. Say otherwise before the first issue runs.",
     },
     python: { name: "Python with pytest", assumed: "Python with pytest, as asked." },
     rust: { name: "Rust with cargo test", assumed: "Rust with cargo test, as asked." },
@@ -185,35 +185,35 @@ export const DESIGN_COPY = {
       `Building ${what}. Enough is at stake to write the decisions down: .sekhemet/brief.md.`,
     riskiest: (text: string) => `Riskiest assumption: ${text}`,
     firstQuestion: (question: string, dflt: string) =>
-      `First, the question that most changes the cards: ${question} Default: ${dflt}.`,
+      `First, the question that most changes the plan: ${question} Default: ${dflt}.`,
     constraint: (quality: string, dflt: string) => `  ${quality} — ${dflt}`,
     onDefaults:
-      "Proceeding on the defaults, recorded as assumptions — say otherwise before those cards run.",
+      "Proceeding on the defaults, recorded as assumptions — say otherwise before those issues run.",
     mustHold: (text: string) => `Must hold: ${text}`,
   },
 
   brief: {
     intro:
-      "Written by the design stage. Every *Assumed* line is a default the harness chose; edit it and the cards that depend on it should be re-planned.",
+      "Written by Seshat. Every *Assumed* line is a default Sekhemet chose; edit it and the issues that depend on it should be planned again.",
     notStated: "Not stated — assumed:",
     problem: (who: string, what: string) =>
       `For ${who}, who want ${what}. What they do today instead:`,
     problemToday: "by hand or with a general-purpose tool",
     outcome: (who: string, actions: string) =>
-      `${who} can ${actions}, end to end, checked by the gates below.`,
-    outcomeWhole: (what: string) => `${what} works end to end, checked by the gates below.`,
+      `${who} can ${actions}, end to end, verified by the checks below.`,
+    outcomeWhole: (what: string) => `${what} works end to end, verified by the checks below.`,
     nonGoalsAssumed:
-      "nothing beyond what the request names — no administration screens, no integrations and no second platform; each is a new card when asked for.",
+      "nothing beyond what the request names — no administration screens, no integrations and no second platform; each is a new issue when asked for.",
     stated: (text: string) => `- ${text} (as stated)`,
     priorArtNone:
-      "- Not researched. The Researcher answers how this is usually built, with sources, when asked; nothing here is recalled from a model's memory.",
+      "- Not researched. The Research model answers how this is usually built, with sources, when asked; nothing here is recalled from a model's memory.",
     riskNone: "None identified.",
     done: (gates: string) =>
-      `Every card passes: ${gates}, plus reachability, regression and architecture.`,
-    gatesFallback: "the gates in .sekhemet/gates.toml",
+      `Every issue passes: ${gates}, plus reachability, regression and architecture.`,
+    gatesFallback: "the checks in .sekhemet/gates.toml",
     depth: (profile: string, reason: string) => `Depth: ${profile} (proposed) — ${reason}`,
     invariantsComment: [
-      "<!-- Checked on every card. Two forms are enforced:",
+      "<!-- Checked on every issue. Two forms are enforced:",
       "- `src/db/` does not import `src/cli.ts`",
       "- `Money` is defined only in `src/types.ts`",
       "-->",
@@ -225,19 +225,19 @@ export const DESIGN_COPY = {
     regulated: (area: string) =>
       `It names a regulated area (${area}). Regulated selects stricter checks and your approval of every acceptance-test file; it claims no compliance with any standard or regulation.`,
     money:
-      "Money changes hands: production makes speed, compatibility and accessibility must-haves too, and you approve the example tables of each must-have.",
+      "Money changes hands: production marks speed, compatibility and accessibility as Must have too, and you approve the example tables of each.",
     identity:
-      "People sign in to it: production makes speed, compatibility and accessibility must-haves too, and you approve the example tables of each must-have.",
+      "People sign in to it: production marks speed, compatibility and accessibility as Must have too, and you approve the example tables of each.",
     personal:
-      "It keeps personal data: production makes speed, compatibility and accessibility must-haves too, and you approve the example tables of each must-have.",
+      "It keeps personal data: production marks speed, compatibility and accessibility as Must have too, and you approve the example tables of each.",
     public:
-      "People outside your team will use it: production makes speed, compatibility and accessibility must-haves too, and you approve the example tables of each must-have.",
+      "People outside your team will use it: production marks speed, compatibility and accessibility as Must have too, and you approve the example tables of each.",
     prototype:
       "A small new tool with nothing at stake: no quality checklist rows, and test strength advises rather than blocks.",
     prototypeAsked:
       "You called it a prototype: no quality checklist rows, and test strength advises rather than blocks.",
     internal:
-      "Something to use yourselves: working, reliable, secure and maintainable are must-haves, and weak tests block a card.",
+      "Something to use yourselves: working, reliable, secure and maintainable are marked Must have, and weak tests block an issue.",
     regulatedNote:
       "The regulated profile selects stricter checks and more of your approval. It claims no compliance with any standard or regulation.",
   },
@@ -252,7 +252,7 @@ export const DESIGN_COPY = {
     performance_efficiency: {
       title: "It responds within a measured budget",
       criterion:
-        "WHEN it runs under the stated load THE SYSTEM SHALL meet the latency and throughput target the benchmark card set.",
+        "WHEN it runs under the stated load THE SYSTEM SHALL meet the latency and throughput target the benchmark issue set.",
     },
     compatibility: {
       title: "It works beside what it is meant to run with",
@@ -277,7 +277,7 @@ export const DESIGN_COPY = {
     maintainability: {
       title: "The code stays easy to change",
       criterion:
-        "WHEN a card is accepted THE SYSTEM SHALL pass the project's lint, typecheck and architecture gates.",
+        "WHEN an issue is accepted THE SYSTEM SHALL pass the project's lint, typecheck and architecture checks.",
     },
     flexibility: {
       title: "It moves to a new environment without code changes",
@@ -361,11 +361,11 @@ export const DESIGN_COPY = {
   offer: {
     proposed: (profile: string, reason: string) => `Proposed depth: ${profile}. ${reason}`,
     until: (profile: string) =>
-      `Until you choose, cards plan as internal tool. Choose with: sekhemet depth ${profile}`,
+      `Until you choose, issues plan as an internal tool. Choose with: sekhemet depth ${profile}`,
     ask: (profile: string) =>
       `Plan this as ${profile}? Press Enter for yes, or name another (prototype, internal tool, production, regulated): `,
     chosen: (profile: string, rows: number) =>
-      `Depth: ${profile}, chosen.${rows > 0 ? ` Added ${rows} quality check${rows === 1 ? "" : "s"} as must-haves.` : ""}`,
+      `Depth: ${profile}, chosen.${rows > 0 ? ` Added ${rows} quality check${rows === 1 ? "" : "s"} as Must have.` : ""}`,
     inForce: (profile: string, recorded: boolean) =>
       recorded
         ? `Depth: ${profile}, chosen.`

@@ -13,24 +13,29 @@ import { refreshDecisions } from "./inbox.js";
 import * as insightsView from "./insights.js";
 import * as integrationsView from "./integrations.js";
 import { initKeys } from "./keys.js";
+import { initTips, showFirstRun, storage } from "./learn.js";
 import * as ledgerView from "./ledger.js";
 import { authDecision, refusalMessage } from "./lib/account.js";
+import { defaultRouteFor, firstRunDue, readRole } from "./lib/learn.js";
 import { navNameOf } from "./lib/nav.js";
 import * as machineView from "./machine.js";
 import * as playbookView from "./playbook.js";
 import { initPm, loadThread, onPmEvent } from "./pm_client.js";
 import { initPmPanel } from "./pm_panel.js";
 import * as pmView from "./pm_view.js";
+import * as projectsView from "./projects.js";
 import * as reviewView from "./review.js";
 import * as runsView from "./runs.js";
 import { getSession, loadSession } from "./session.js";
 import { initShell, setActiveNav, setNavViews } from "./shell.js";
 import { mountAuthPage } from "./signin.js";
+import * as statusView from "./status.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
-import * as workspaceView from "./workspace.js";
 
 const VIEWS = {
+  // Status, the project page for the stakeholder and the team (§2.8, DEC-37).
+  status: statusView,
   review: reviewView,
   board: boardView,
   card: cardView,
@@ -44,12 +49,12 @@ const VIEWS = {
   inbox: inboxView,
   graph: graphView,
   // P11 route names; the old ones keep opening the same views (§2.2.1).
-  // Projects shows the workspace rollup until its own page is built
-  // (NEW-dashboard-9). Configuration replaces Registry and Settings:
+  // Projects replaces the Workspace rollup, and `#/workspace` opens it
+  // (DB-N9-9). Configuration replaces Registry and Settings:
   // `#/registry` opens its Benchmark, `#/settings` This browser (DB-N6-1).
-  projects: workspaceView,
+  projects: projectsView,
   configuration: configurationView,
-  workspace: workspaceView,
+  workspace: projectsView,
   registry: configurationView,
   settings: configurationView,
   // The account menu's page (§2.2.6); in the palette, with no chord.
@@ -66,10 +71,51 @@ export function parseHash(hash = location.hash) {
   return { name, params: name ? parts.slice(1) : [] };
 }
 
+/**
+ * The page with no route (§2.2.5): Configuration › Models while no model is
+ * set up (DB-N6-2); then the first-run answer — or, in the Team setup, the
+ * profile label — and with no answer, Status for a person who has never
+ * accepted an issue.
+ */
 function defaultRoute() {
-  // DB-N6-2: with no role's weights in any model folder, Configuration › Models first.
-  if (store.state.modelSetup?.none) return "#/configuration/models";
-  return store.state.cards.some((c) => c.status === "review") ? "#/review" : "#/board";
+  const s = store.state;
+  const session = getSession();
+  return defaultRouteFor({
+    noModel: Boolean(s.modelSetup?.none),
+    team: session.mode === "team",
+    profileLabel: session.label,
+    role: readRole(storage()),
+    reviewWaiting: s.cards.some((c) => c.status === "review"),
+    everAccepted: s.cards.some((c) => c.status === "done"),
+  });
+}
+
+/** The route a page opened with no route landed on; an answer there takes the person home. */
+let landedOn = "";
+
+/** Tips on or off: the view mounts again, so its `?` buttons come or go (DB-P4-1). */
+function remount() {
+  if (!currentName) return;
+  // Focus stays on the control that changed Tips: the toggle, or a field by its id.
+  const toggle = document.activeElement?.closest?.("[data-tips-toggle]");
+  const id = document.activeElement?.id ?? "";
+  const parsed = parseHash();
+  if (!parsed.name) return;
+  current?.unmount?.();
+  const view = document.getElementById("view");
+  view.textContent = "";
+  currentName = parsed.name;
+  current = VIEWS[parsed.name].mount(view, parsed);
+  if (toggle) document.querySelector("#top [data-tips-toggle]")?.focus();
+  else if (id) setTimeout(() => document.getElementById(id)?.focus(), 0);
+}
+
+function askFirstRun() {
+  if (!firstRunDue(storage(), { noModel: Boolean(store.state.modelSetup?.none) })) return;
+  showFirstRun(() => {
+    remount();
+    if (landedOn && location.hash === landedOn) location.hash = defaultRoute();
+  });
 }
 
 /**
@@ -109,7 +155,7 @@ function showNoWorkerBar(show) {
   bar.className = "cfg-bar";
   bar.setAttribute("role", "status");
   bar.innerHTML =
-    'No Worker model: cards cannot run until one fits this machine. <a href="#/configuration/models">Set up models</a>';
+    'No Coding model: issues cannot run until one fits this machine. <a href="#/configuration/models">Set up models</a>';
   document.getElementById("view")?.before(bar);
 }
 
@@ -124,7 +170,8 @@ function route() {
   const parsed = parseHash();
   if (!parsed.name) {
     if (!store.state.loaded) return;
-    history.replaceState(null, "", defaultRoute());
+    landedOn = defaultRoute();
+    history.replaceState(null, "", landedOn);
     return route();
   }
   store.state.route = parsed;
@@ -164,6 +211,8 @@ function applyBoard(board) {
     backpressureActive: Boolean(board.backpressureActive),
     epics: board.epics ?? [],
     cycles: board.cycles ?? [],
+    // Named only when the board is one project's; an all-projects frame keeps it.
+    ...(board.estimation ? { estimation: board.estimation === "points" ? "points" : "off" } : {}),
     feed: store.state.feed,
     moved,
     now,
@@ -400,6 +449,8 @@ async function boot() {
   initShell();
   initKeys();
   initAccount();
+  initTips();
+  window.addEventListener("sekhemet:tips", remount);
   const note = setTimeout(() => {
     const el = document.getElementById("sk-note");
     if (el) {
@@ -419,6 +470,8 @@ async function boot() {
     refreshBoard();
   });
   route();
+  // The first-run question, once a model is set up (§2.2.5).
+  askFirstRun();
   refreshRoster();
   setInterval(refreshRoster, 30_000);
   initPm();

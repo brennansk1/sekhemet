@@ -6,7 +6,7 @@ import {
   BOARD_COLUMN_ORDER,
   EMPTY_SHA256,
   GATE_STATE_LABELS,
-  KIND_LABELS,
+  ISSUE_TYPE_LABELS,
   actorLabel,
   callPhrase,
   checkFixHint,
@@ -20,6 +20,7 @@ import {
   gateSummary,
   humanize,
   isEmptyGateContract,
+  issueTypeOf,
   loopRange,
   outcomeSentence,
   parseTitle,
@@ -116,7 +117,8 @@ describe("parseTitle", () => {
       const parsed = parseTitle(t);
       expect(parsed.title, t).not.toMatch(/SPIDR/);
       expect(parsed.kinds.length, t).toBeGreaterThan(0);
-      for (const k of parsed.kinds) expect(KIND_LABELS[k]).toBeDefined();
+      // Each older title reads as a standard issue type (DEC-31).
+      expect(ISSUE_TYPE_LABELS[issueTypeOf({ title: t })], t).toBeDefined();
     }
   });
 });
@@ -147,7 +149,7 @@ describe("stopReasonLabel", () => {
 
   it("labels every stop reason the kernel defines, including wave 1's", () => {
     const wave1: Record<string, [string, string]> = {
-      done_pending_gates: ["Done, gates not run", "blocked"],
+      done_pending_gates: ["Done, checks not run", "blocked"],
       token_budget_exhausted: ["Out of tokens", "fail"],
       time_budget_exhausted: ["Out of time", "fail"],
       replan_requested: ["Needs a new plan", "blocked"],
@@ -181,7 +183,7 @@ describe("stopReasonLabel", () => {
 
   it("puts numbers in the sentence when it has them", () => {
     expect(stopReasonLabel("gate_passed", { step: 3 }).sentence).toBe(
-      "All gates passed on step 3.",
+      "All checks passed on step 3.",
     );
     expect(stopReasonLabel("budget_exhausted", { stepBudget: 32 }).sentence).toBe(
       "Used all 32 budgeted steps without passing.",
@@ -192,6 +194,18 @@ describe("stopReasonLabel", () => {
   it("falls back to the humanised enum for an unknown reason", () => {
     expect(stopReasonLabel("disk_full").short).toBe("Disk full");
     expect(stopReasonLabel(undefined).short).toBe("Not run");
+    // The sentence reaches Status's Needs you: worded, never the code, and *issue* (DEC-31).
+    expect(stopReasonLabel("disk_full").sentence).toBe("It stopped before its checks passed.");
+    expect(stopReasonLabel(undefined).sentence).toBe("This issue has not run yet.");
+    const sentences = [
+      "scope_violation",
+      "token_budget_exhausted",
+      "time_budget_exhausted",
+      "replan_requested",
+      "hook_veto",
+      "error",
+    ].map((r) => stopReasonLabel(r).sentence);
+    expect(sentences.filter((t) => /\bcard\b|\bledger\b/i.test(t))).toEqual([]);
   });
 });
 
@@ -305,6 +319,7 @@ describe("statusLine and describeCard", () => {
     const d = describeCard(card({}), { now, evidence: hasherEvidence });
     expect(d.title).toBe("Implement canonical JSON and SHA-256 hash chaining");
     expect(d.kinds).toEqual(["rules"]);
+    expect(d.type).toBe("story");
     expect(d.shortId).toBe("hasher");
     expect(d.statusLine).toBe("Types failed · 3 errors");
     expect(d.tone).toBe("fail");
@@ -322,7 +337,7 @@ describe("statusLine and describeCard", () => {
     expect(
       line({ status: "backlog" }, { waitsOn: [{ id: "a", title: "Tamper detection" }] }),
     ).toEqual({ text: "Waits on Tamper detection", tone: "blocked", mark: "blocked" });
-    expect(line({ status: "planning" }).text).toBe("Planner is writing the plan");
+    expect(line({ status: "planning" }).text).toBe("Being planned");
     // Suite run 5: a card that failed and went back to Planning showed
     // "Planner is writing the plan" — work in progress, when nothing was
     // working on it. A failed attempt is shown as one.
@@ -331,11 +346,13 @@ describe("statusLine and describeCard", () => {
       tone: "fail",
       mark: "fail",
     });
+    // DB-N7-3: no step count on the board; the issue carries it (`budgetText`).
     expect(line({ status: "in_progress", stepsUsed: 5 })).toMatchObject({
-      text: "Step 5 of 32",
+      text: "Working",
       tone: "running",
     });
-    expect(line({ status: "verify" }).text).toBe("Running gates…");
+    expect(line({ status: "in_progress", stepsUsed: 0 }).text).toBe("Starting");
+    expect(line({ status: "verify" }).text).toBe("Running checks…");
     expect(line({ status: "review" }).text).toBe("Waiting 12m");
     expect(line({ status: "done" }).text).toBe("Accepted · 12m ago");
     expect(line({ status: "rejected" }).text).toBe("Rejected");
@@ -359,7 +376,10 @@ describe("statusLine and describeCard", () => {
 
   it("never lets an internal enum or tier through", () => {
     const d = describeCard(card({ status: "in_progress", tier: "story" }), { now });
-    expect(JSON.stringify(d)).not.toMatch(/in_progress|story|SPIDR/);
+    // `type` is the issue type's id; a person reads its label (ISSUE_TYPE_LABELS).
+    const { type, ...shown } = d;
+    expect(type).toBe("story");
+    expect(JSON.stringify(shown)).not.toMatch(/in_progress|story|SPIDR/);
   });
 });
 
@@ -377,7 +397,7 @@ describe("Phase 3 and 4 language", () => {
       },
     });
     expect(line).toEqual({
-      text: "Step 5 of 32 · editing src/hasher.ts",
+      text: "Editing src/hasher.ts",
       tone: "running",
       mark: "running",
     });
@@ -413,7 +433,7 @@ describe("Phase 3 and 4 language", () => {
       title,
     );
     expect(moved).toMatchObject({
-      actor: "Worker",
+      actor: "Agent",
       verb: "moved",
       title: "Implement canonical JSON",
       rest: "from In progress to Verify",
@@ -458,7 +478,7 @@ describe("Phase 3 and 4 language", () => {
         },
         title,
       ),
-    ).toMatchObject({ actor: "Worker", verb: "finished step 8 on" });
+    ).toMatchObject({ actor: "Agent", verb: "finished step 8 on" });
     expect(
       eventSentence({
         type: "card/created",
@@ -466,7 +486,7 @@ describe("Phase 3 and 4 language", () => {
         cardId: "c",
         payload: { title: "Hasher (SPIDR: Rule)" },
       }),
-    ).toMatchObject({ actor: "Planner", verb: "created", title: "Hasher" });
+    ).toMatchObject({ actor: "Planning model", verb: "created", title: "Hasher" });
     const step = eventSentence(
       {
         type: "card/step",
@@ -606,7 +626,7 @@ describe("ledger sentences for Seshat, research, reproducibility and compute", (
       quote: "The hasher is next.",
     });
   });
-  it("says what the Researcher, the reproducibility record and the breakers did", () => {
+  it("says what the Research model, the reproducibility record and the breakers did", () => {
     expect(
       eventSentence(
         ev("research/asked", "researcher", {
@@ -617,7 +637,7 @@ describe("ledger sentences for Seshat, research, reproducibility and compute", (
         }),
       ),
     ).toMatchObject({
-      actor: "Researcher",
+      actor: "Research model",
       verb: "researched",
       rest: "· grounded, confidence 0.60 · 2 source(s)",
       tone: "pass",
@@ -643,7 +663,7 @@ describe("ledger sentences for Seshat, research, reproducibility and compute", (
         ev("compute/breaker_tripped", "harness", { breaker: "energy", reason: "budget spent" }),
       ),
     ).toMatchObject({ tone: "fail", quote: "budget spent" });
-    expect(actorLabel("researcher")).toBe("Researcher");
+    expect(actorLabel("researcher")).toBe("Research model");
   });
 });
 

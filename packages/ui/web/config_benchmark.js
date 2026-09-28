@@ -9,10 +9,10 @@ import { esc, getJSON, postJSON, sendJSON } from "./dom.js";
 
 const ROLES = ["worker", "planner", "reviewer", "researcher"];
 const ROLE_NAMES = {
-  worker: "Worker",
-  planner: "Planner",
-  reviewer: "Reviewer",
-  researcher: "Researcher",
+  worker: "Coding model",
+  planner: "Planning model",
+  reviewer: "Review model",
+  researcher: "Research model",
 };
 
 /** DB-N6-9, MS-N5-4a: the page's one sentence about what each tier can tell. */
@@ -76,7 +76,7 @@ export function roleScoreText(s) {
 /** DB-N6-12: never ranked when the paired sign test does not reject. */
 export function comparisonLabel(c) {
   const counts = `${c.better} better, ${c.worse} worse, ${c.ties} tied; p = ${c.p.toFixed(3)}`;
-  if (c.indistinguishable) return `Indistinguishable (${counts})`;
+  if (c.indistinguishable) return `No clear difference (${counts})`;
   return `${c.better > c.worse ? c.a : c.b} ahead (${counts})`;
 }
 
@@ -100,7 +100,7 @@ export function runStateText(run) {
 export function assignAction(qualifiedByRole) {
   return Object.values(qualifiedByRole).every(Boolean)
     ? "Assign this combination"
-    : "Qualify to assign";
+    : "Verify on this machine to assign";
 }
 
 /* ---------- the section ---------- */
@@ -159,7 +159,7 @@ function resultHtml(r) {
     ? `<p>End-to-end check: ${esc(`${r.endToEnd.passed}/${r.endToEnd.total}`)} cards passed (beside the scores)</p>`
     : "";
   const tied = r.indistinguishableFrom?.length
-    ? `<p>Indistinguishable from ${esc(r.indistinguishableFrom.length)} other combination(s) on the ${esc(r.tier)} benchmark</p>`
+    ? `<p>No clear difference from ${esc(r.indistinguishableFrom.length)} other combination(s) on the ${esc(r.tier)} benchmark</p>`
     : "";
   const action = assignAction(qualifiedFor(r.combination));
   return `<article class="bench-result" data-id="${esc(r.combinationId)}">
@@ -289,7 +289,7 @@ async function onClick(e) {
       if (!r.ok) {
         ui.message =
           r.data?.error ||
-          `Could not ${qualified[role] ? "assign" : "qualify"} the ${ROLE_NAMES[role]}.`;
+          `Could not ${qualified[role] ? "assign" : "verify on this machine"} the ${ROLE_NAMES[role]}.`;
         break;
       }
     }

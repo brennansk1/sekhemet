@@ -142,7 +142,7 @@ function releasesHtml(group, state) {
       const when = r.forecast
         ? `50%: within ${plural(r.forecast.p50Days, "day")} · 85%: within ${plural(r.forecast.p85Days, "day")}`
         : "Not enough history yet";
-      return `<li><b>${esc(r.name)}</b> <span class="sec">${plural(n, "candidate")}, about ${plural(r.cards, "card")}</span> <span class="tnum">${esc(when)}</span></li>`;
+      return `<li><b>${esc(r.name)}</b> <span class="sec">${plural(n, "candidate")}, about ${plural(r.cards, "issue")}</span> <span class="tnum">${esc(when)}</span></li>`;
     })
     .join("")}</ul>`;
 }
@@ -175,7 +175,7 @@ function questionsHtml(group, state) {
 /** Review plan for one group and the person's choices so far. */
 export function reviewPlanHtml(group, state, { setup = "solo" } = {}) {
   const c = group.creates;
-  const counted = `${plural(c.project, "project")}, ${plural(c.epics, "epic")}, ${plural(c.issues, "issue")}, the brief and card zero`;
+  const counted = `${plural(c.project, "project")}, ${plural(c.epics, "epic")}, ${plural(c.issues, "issue")}, the brief and its setup issue`;
   // TEAM-20's Send for approval is not built: in the Team setup the button
   // says what pressing it does — it creates the project and accepts its
   // brief — and who may press it is said beforehand.
@@ -192,16 +192,17 @@ export function reviewPlanHtml(group, state, { setup = "solo" } = {}) {
 }
 
 /**
- * The two cards a project started by conversation begins with (design-stage
- * §2.4, DS-P2-1..3): what each card's gate is, since neither is the usual one.
+ * The two issues a project started by conversation begins with (design-stage
+ * §2.4, DS-P2-1..3; internally card zero and card one): what each one's check
+ * is, since neither is the usual one. DEC-31: *issue* and *checks* on screen.
  */
 export function startCardNote(card) {
   const labels = card?.labels ?? [];
   if (labels.includes("card-zero")) {
-    return "Card zero runs the ecosystem's own generator, one step per command in its spec. Its gate checks the files the generator leaves; once it is done, the project's gates are derived from them and the generator's version is written into the brief.";
+    return "This setup issue runs the ecosystem's own generator, one step per command in its description. Its check looks at the files the generator leaves; once it is done, the project's checks are derived from them and the generator's version is written into the brief.";
   }
   if (labels.includes("card-one")) {
-    return "Card one is the first failing test. Its gate passes only when the test runs and fails at an assertion, for the reason its criterion states; failing at an import, at collection or at setup does not count. From card two, every card has a functional gate.";
+    return "This issue is the project's first failing test. Its check passes only when the test runs and fails at an assertion, for the reason its criterion states; failing at an import, at collection or at setup does not count. Every issue after it has a functional check.";
   }
   return "";
 }

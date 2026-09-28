@@ -200,8 +200,9 @@ describe("PM-P13-3: an unplanned must-have is shown and keeps its slice unproven
     const s1 = map.slices[0];
     expect(s1?.unplanned).toEqual(["REQ-2"]);
     expect(s1?.state).toBe("unproven");
-    expect(s1?.provenLine).toBe("1 of 2 must-haves proven");
-    expect(map.provenLine).toBe("1 of 3 must-haves proven");
+    // DEC-31: a proven must-have is a requirement done.
+    expect(s1?.provenLine).toBe("1 of 2 requirements done");
+    expect(map.provenLine).toBe("1 of 3 requirements done");
     // The nice-to-have with no card is not a must-have: not in the list.
     expect(map.unplanned.some((r) => r.id === "REQ-3")).toBe(false);
   });
@@ -244,7 +245,7 @@ describe("PM-P13-4, -5: proven is passing tests on main that meet the strength r
       false,
     );
     expect((await sliceStatus(ledger, "SLICE-1", MAIN))?.slice.blockers).toContain(
-      "The project gates fail on main.",
+      "The project's checks fail on main.",
     );
     await main({
       "tests/save.spec.ts > lists a saved recipe": pass,
@@ -276,7 +277,7 @@ describe("PM-P13-4, -5: proven is passing tests on main that meet the strength r
     const status = (await sliceStatus(ledger, "SLICE-1", MAIN))?.slice;
     expect(status?.mustHaves).toEqual({ proven: 0, total: 0 });
     expect(status?.state).toBe("unproven");
-    expect(status?.blockers.join(" ")).toMatch(/no must-have requirements/);
+    expect(status?.blockers.join(" ")).toMatch(/no Must have requirements/);
   });
 });
 
@@ -356,7 +357,7 @@ describe("PM-P13-6, -14: a model's claim of complete or ready changes nothing", 
     expect(out.guarded).toBe(true);
     expect(out.text).not.toMatch(/complete|ready to ship/);
     expect(out.text).toContain("Great progress today.");
-    expect(out.text).toContain("Not done: 0 of 3 must-haves proven.");
+    expect(out.text).toContain("Not done: 0 of 3 requirements done.");
     expect(out.text).toMatch(/REQ-1 \(planned\).*REQ-2 \(unplanned\)/);
     expect(await ledger.log.getEventsByTypes(["slice/accepted", "release/proposed"])).toEqual(
       before,

@@ -173,6 +173,29 @@ describe("design-stage judgement (NEW-design-stage-1)", () => {
     for (const text of allCopyText()) expect(text).not.toMatch(FORBIDDEN);
   });
 
+  it("DEC-31: the brief, what Seshat says and the project's Type use the words teams use", () => {
+    // A payment card is a card; every other card is an issue (DEC-31, NAMING). A file
+    // name (gates.toml) is not a word a person reads.
+    const RETIRED =
+      /must-haves?|nice-to-haves?|\bkano\b|\bgates?\b(?!\.toml)|\bcards?\b(?!\s+(?:numbers?|details|data|entry))|\bworkers?\b|\bplanners?\b|\bresearcher\b/i;
+    for (const spec of [
+      "build me a calculator",
+      "a CLI that syncs my notes to S3",
+      BILLING,
+      "a recipe website where people can sign up and save favourites",
+      "a patient records service for a clinic",
+    ]) {
+      const d = designStage(spec, { greenfield: true });
+      expect(d.say.join("\n"), spec).not.toMatch(RETIRED);
+      expect(renderBrief(d, { gates: [] }), spec).not.toMatch(RETIRED);
+    }
+    // The Type's reason, read on Review plan under *Proposed:*.
+    for (const reason of Object.values(DESIGN_COPY.depth)) {
+      const text = typeof reason === "function" ? reason("health records") : reason;
+      expect(text).not.toMatch(RETIRED);
+    }
+  });
+
   it("DS-N1-8: with no non-goals given, the brief says Not stated — assumed:, from what was said", () => {
     const d = designStage("a recipe website where people can sign up and save favourites", {
       greenfield: true,

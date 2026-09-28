@@ -7,10 +7,10 @@
 import { $, announce, copyText, esc, getJSON, sendJSON } from "./dom.js";
 
 const ROLE_NAME = {
-  worker: "Worker",
-  planner: "Planner",
-  reviewer: "Reviewer",
-  researcher: "Researcher",
+  worker: "Coding model",
+  planner: "Planning model",
+  reviewer: "Review model",
+  researcher: "Research model",
 };
 const GRADE_WORD = {
   measured: "Measured",
@@ -167,7 +167,7 @@ function modelsHtml(m) {
   const list = m.models ?? [];
   const skipped = (m.skipped ?? []).filter((s) => s.reason !== "not_a_model");
   const table = list.length
-    ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Size</th><th>Quantisation</th><th>Context</th><th>Family</th><th>Fits this machine (Worker)</th><th>Registry hash</th></tr></thead><tbody>${list
+    ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Size</th><th>Quantisation</th><th>Context</th><th>Family</th><th>Fits this machine (Coding model)</th><th>Registry hash</th></tr></thead><tbody>${list
         .map((x) => {
           const fit = x.fits?.worker ?? "yes";
           return `<tr><td><button class="btn ghost sm" type="button" data-open-model="${esc(x.id)}" aria-expanded="${ui.open === x.id}">${esc(x.name)}</button>${x.noEngine ? `<div class="why">${esc(x.noEngine)}</div>` : ""}</td><td>${fromFile(x.sizeBytes, gb)}</td><td class="mono">${esc(x.quantisation)}</td><td>${x.contextLength ? fromFile(x.contextLength, tokens) : '<span class="sec">Not in the header</span>'}</td><td>${esc(x.family ?? "Unknown")}</td><td><span class="fit-${esc(fit)}">${esc(FIT_WORD[fit] ?? fit)}</span><div class="why">${esc(x.fitReason?.worker ?? "")}</div></td><td>${esc(HASH_WORD[x.hash] ?? x.hash)}</td></tr>${
@@ -219,7 +219,7 @@ function detailHtml() {
   const qual = Object.entries(d.qualification ?? {})
     .map(
       ([r, s]) =>
-        `${esc(ROLE_NAME[r] ?? r)}: ${esc(s === "qualified" ? "qualified here" : s === "missing" ? "not qualified yet" : s)}`,
+        `${esc(ROLE_NAME[r] ?? r)}: ${esc(s === "qualified" ? "verified on this machine" : s === "missing" ? "not verified on this machine yet" : s)}`,
     )
     .join("; ");
   const ctxOptions = [4096, 8192, 16384, 32768, 65536]
@@ -270,7 +270,7 @@ function rolesHtml(r, models) {
         .map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`)
         .join("");
       const selectId = `cfg-assign-${x.role}`;
-      return `<div class="cfg-role" data-role="${esc(x.role)}"><div><b>${esc(name)}</b>${x.role === "planner" ? '<div class="why">Seshat, the project manager, runs on this model.</div>' : ""}</div><div><div>${x.model ? `<b>${esc(x.model)}</b>` : "No model"} · ${esc(state)}${x.model && !x.qualified ? " · not qualified here" : ""}</div>${
+      return `<div class="cfg-role" data-role="${esc(x.role)}"><div><b>${esc(name)}</b>${x.role === "planner" ? '<div class="why">Seshat, the project manager, runs on this model.</div>' : ""}</div><div><div>${x.model ? `<b>${esc(x.model)}</b>` : "No model"} · ${esc(state)}${x.model && !x.qualified ? " · not verified on this machine" : ""}</div>${
         x.unfilledReason ? `<div class="why">${esc(x.unfilledReason)}</div>` : ""
       }${x.screen === "not_measured" ? '<div class="why">Quick benchmark: Not measured yet.</div>' : ""}${
         rec ? `<p>Recommended: ${esc(rec.reason)}</p>` : ""
@@ -280,7 +280,7 @@ function rolesHtml(r, models) {
           : ""
       }${
         ui.progress[`qualify-${x.role}`]
-          ? `<button class="btn sm" type="button" data-qualify="${esc(x.role)}"${disabledAttr()}>Qualify to assign</button>`
+          ? `<button class="btn sm" type="button" data-qualify="${esc(x.role)}"${disabledAttr()}>Verify on this machine to assign</button>`
           : ""
       }${
         x.model
@@ -346,7 +346,7 @@ function dialogHtml() {
       dls
         ? `<p>These downloads are made first, each verified by its hash, into <span class="mono">${esc(d.folder ?? "no folder that can be written now")}</span>:</p><ul>${dls}</ul>`
         : "<p>Nothing to download.</p>"
-    }<p>Then the quick benchmark screens this combination, and each role whose model is qualified here is assigned.</p><div class="row"><button class="btn primary" type="button" data-confirm-recommended>Use them</button><button class="btn" type="button" data-cancel-dialog>Cancel</button></div></div>`;
+    }<p>Then the quick benchmark screens this combination, and each role whose model is verified on this machine is assigned.</p><div class="row"><button class="btn primary" type="button" data-confirm-recommended>Use them</button><button class="btn" type="button" data-cancel-dialog>Cancel</button></div></div>`;
   }
   if (d.kind === "speed") {
     return `<div class="cfg-dialog" role="dialog" aria-modal="false" aria-labelledby="cfg-dlg-h"><h4 id="cfg-dlg-h">Measure the speed of ${esc(d.name)}</h4><dl><div><dt>Model</dt><dd>${esc(d.name)}</dd></div><div><dt>Memory it loads</dt><dd>${graded({ value: d.memoryBytes, grade: "estimated" }, gb)}</dd></div></dl><p>${esc(d.error ?? "")}</p><p>llama-bench runs a warm-up and five runs, then the first token is timed with and without the prefix cache. Nothing leaves this machine.</p><div class="row"><button class="btn primary" type="button" data-confirm-speed>Measure</button><button class="btn" type="button" data-cancel-dialog>Cancel</button></div></div>`;

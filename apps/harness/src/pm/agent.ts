@@ -1010,7 +1010,7 @@ export function ledgerStandup(s: PmSnapshot): string {
   const map = s.storyMap;
   if (map && map.slices.length > 0) {
     lines.push(
-      `${map.provenLine}.${map.unplanned.length ? ` Unplanned: ${map.unplanned.map((r) => r.id).join(", ")}.` : ""}${map.projectDone ? " The project is done: a person accepted its last slice." : ""}`,
+      `${map.provenLine}.${map.unplanned.length ? ` Unplanned: ${map.unplanned.map((r) => r.id).join(", ")}.` : ""}${map.projectDone ? " The project is done: a person accepted its last release." : ""}`,
     );
     const waiting = map.slices.filter((x) => x.state === "proven");
     if (waiting.length) {

@@ -66,7 +66,7 @@ const map: StoryMapLike = {
       id: "sl_1",
       title: "Import and total one statement",
       state: "unproven",
-      provenLine: "1 of 3 must-haves proven",
+      provenLine: "1 of 3 requirements done",
       requirements: [
         req("REQ-1", "proven", ["c_parse", "c_upload"]),
         req("REQ-2", "planned", ["c_tagrule"]),
@@ -76,12 +76,12 @@ const map: StoryMapLike = {
     {
       id: "sl_2",
       state: "unproven",
-      provenLine: "0 of 1 must-have proven",
+      provenLine: "0 of 1 requirement done",
       requirements: [req("REQ-4", "unplanned", []), req("REQ-5", "cut", [], { mustHave: false })],
     },
   ],
   unplanned: [{ id: "REQ-4" }],
-  provenLine: "1 of 4 must-haves proven",
+  provenLine: "1 of 4 requirements done",
   projectDone: false,
 };
 
@@ -96,14 +96,14 @@ describe("the story map (DB-P3-13)", () => {
     ]);
   });
 
-  it("marks the first slice as the walking skeleton, and only the first", () => {
+  it("numbers the releases (DEC-31), and marks only the first as the walking skeleton", () => {
     const m = storyMapModel({ map, cards, epics });
     expect(m.bands.map((b) => [b.id, b.skeleton, b.heading])).toEqual([
-      ["sl_1", true, "Walking skeleton · Import and total one statement"],
-      ["sl_2", false, "Slice 2"],
+      ["sl_1", true, "Release 1 · Import and total one statement"],
+      ["sl_2", false, "Release 2"],
       ["untraced", false, "Not traced to a requirement"],
     ]);
-    expect(m.bands[0]?.stateText).toBe("Not proven yet · 1 of 3 must-haves proven");
+    expect(m.bands[0]?.stateText).toBe("Not done yet · 1 of 3 requirements done");
   });
 
   it("puts each requirement under its cards' epic, with its state in words and its cards", () => {
@@ -112,7 +112,7 @@ describe("the story map (DB-P3-13)", () => {
       m.bands[band]?.cells.find((c) => c.epicId === epic);
     expect(
       cell(0, "ep_import")?.requirements.map((r) => [r.id, r.label, r.cards.map((c) => c.id)]),
-    ).toEqual([["REQ-1", "Proven", ["c_parse", "c_upload"]]]);
+    ).toEqual([["REQ-1", "Done", ["c_parse", "c_upload"]]]);
     expect(cell(0, "ep_tag")?.requirements.map((r) => r.id)).toEqual(["REQ-2"]);
     expect(cell(0, "ep_report")?.requirements.map((r) => [r.id, r.label, r.tone])).toEqual([
       ["REQ-3", "Passing, strength unmet", "park"],
@@ -125,6 +125,35 @@ describe("the story map (DB-P3-13)", () => {
     // Every band has one cell per backbone column, in backbone order.
     for (const b of m.bands)
       expect(b.cells.map((c) => c.epicId)).toEqual(["ep_import", "ep_tag", "ep_report", ""]);
+  });
+
+  it("DEC-31: tags each requirement Must have, Should have or Could have, never Nice-to-have", () => {
+    const m = storyMapModel({
+      map: {
+        ...map,
+        slices: [
+          {
+            id: "sl_m",
+            state: "unproven",
+            provenLine: "",
+            requirements: [
+              req("REQ-1", "planned", []),
+              req("REQ-2", "planned", [], { mustHave: false, kano: "performance" }),
+              req("REQ-3", "planned", [], { mustHave: false, kano: "attractive" }),
+              req("REQ-4", "planned", [], { mustHave: false }),
+            ],
+          },
+        ],
+      },
+      cards,
+      epics,
+    });
+    expect(m.bands[0]?.cells.flatMap((c) => c.requirements.map((r) => [r.id, r.moscow]))).toEqual([
+      ["REQ-1", "Must have"],
+      ["REQ-2", "Should have"],
+      ["REQ-3", "Could have"],
+      ["REQ-4", "Could have"],
+    ]);
   });
 
   it("keeps the board's other cards under their epic in the last band, never a rejected one", () => {
@@ -153,7 +182,7 @@ describe("the story map (DB-P3-13)", () => {
         Object.entries(REQUIREMENT_STATES).map(([k, v]) => [k, `${v.icon} ${v.label}`]),
       ),
     ).toEqual({
-      proven: "check-circle Proven",
+      proven: "check-circle Done",
       passing_strength_unmet: "ring Passing, strength unmet",
       failing: "alert Failing on main",
       suspect: "link Suspect",
@@ -168,10 +197,10 @@ describe("the story map (DB-P3-13)", () => {
     });
   });
 
-  it("without an accepted brief, shows the epics and their cards and says why there are no slices", () => {
+  it("without an accepted brief, shows the epics and their cards and says why there are no releases", () => {
     const m = storyMapModel({ map: null, cards, epics });
     expect(m.note).toBe(
-      "No brief has been accepted yet, so there are no slices. Cards are shown under their epics.",
+      "No brief has been accepted yet, so there are no releases. Cards are shown under their epics.",
     );
     expect(m.bands.map((b) => b.id)).toEqual(["untraced"]);
     expect(m.bands[0]?.heading).toBe("Cards by epic");
@@ -198,7 +227,7 @@ describe("the story map (DB-P3-13)", () => {
           {
             id: "sl_1",
             state: "proven",
-            provenLine: "1 of 1 must-have proven",
+            provenLine: "1 of 1 requirement done",
             requirements: [req("REQ-9", "proven", ["c_total", "c_tagrule"])],
           },
         ],
@@ -208,7 +237,7 @@ describe("the story map (DB-P3-13)", () => {
     });
     expect(m.bands[0]?.cells.find((c) => c.requirements.length)?.epicId).toBe("ep_tag");
     expect(m.bands[0]?.stateText).toBe(
-      "Proven, waiting for a person to accept it · 1 of 1 must-have proven",
+      "Requirements done, waiting for a person to accept it · 1 of 1 requirement done",
     );
   });
 });

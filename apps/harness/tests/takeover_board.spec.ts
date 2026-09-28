@@ -77,7 +77,9 @@ describe("the empty board's Start and Take over (DS-TO-16)", () => {
       // Start a project opens Seshat with the words ready to finish, not sent.
       await start.click();
       await page.waitForFunction(() => document.body.classList.contains("pm-open"));
-      expect(await page.locator("aside textarea").first().inputValue()).toBe("Start a project: ");
+      expect(await page.locator("aside textarea").first().inputValue()).toBe(
+        "Start a new project: ",
+      );
       const posted = page.waitForResponse(
         (r) => r.url().endsWith("/api/takeover") && r.request().method() === "POST",
       );

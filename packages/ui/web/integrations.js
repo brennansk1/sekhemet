@@ -16,9 +16,9 @@ const CATALOG = [
     tier: "now",
     name: "GitHub Issues + Projects",
     mono: "GH",
-    does: "Two-way card and issue sync through your gh login. Priority, points and cycle map to Projects fields; cards and issues link by reference.",
+    does: "Two-way issue sync through your gh login. Priority, points and sprint map to Projects fields; Sekhemet issues and GitHub issues link by reference.",
     leaves:
-      "Card titles, specs, priority, points, cycle and state, as issues and Projects fields in the repository you choose. Uses your gh login; Sekhemet stores no token.",
+      "Issue titles, specs, priority, points, sprint and state, as issues and Projects fields in the repository you choose. Uses your gh login; Sekhemet stores no token.",
   },
   {
     id: "github-pr",
@@ -26,14 +26,14 @@ const CATALOG = [
     name: "GitHub PR on accept",
     mono: "PR",
     does: "Accept pushes the card branch and opens a pull request whose body is the evidence, instead of merging locally.",
-    leaves: "The card branch, its diff, and the gate results.",
+    leaves: "The issue branch, its diff, and the check results.",
   },
   {
     id: "research-web",
     tier: "now",
-    name: "Researcher web access",
+    name: "Research model web access",
     mono: "RW",
-    does: "When on, the Researcher can search papers (Hugging Face, arXiv), read papers and web pages, and search GitHub. When off, it works only from this machine: the project's docs, history and registries.",
+    does: "When on, the Research model can search papers (Hugging Face, arXiv), read papers and web pages, and search GitHub. When off, it works only from this machine: the project's docs, history and registries.",
     leaves:
       "Search queries, and the URLs of the pages it reads. Private and local addresses are never fetched.",
   },
@@ -50,7 +50,7 @@ const CATALOG = [
     tier: "now",
     name: "Linear",
     mono: "LI",
-    does: "Import and export in Linear's fields: title, priority 0–4, estimate, cycle, project, labels.",
+    does: "Import and export in Linear's fields: title, priority 0–4, estimate, sprint, project, labels.",
     leaves: "Nothing. Export writes a file; you import it into Linear yourself.",
   },
   {
@@ -67,7 +67,7 @@ const CATALOG = [
     tier: "now",
     name: "Push notifications (ntfy or Gotify)",
     mono: "PU",
-    does: "Your phone hears when a card waits for review, a card is parked or hits its budget, the Worker asks a question, or a run finishes. Tapping opens the card here.",
+    does: "Your phone hears when a card waits for review, an issue is put on hold or hits its budget, the agent asks a question, or a run finishes. Tapping opens the issue here.",
     leaves:
       "The alert title and one line naming the card, to the ntfy or Gotify server you choose (your own, or ntfy.sh).",
   },
@@ -90,10 +90,10 @@ const CATALOG = [
   {
     id: "github-actions",
     tier: "next",
-    name: "GitHub Actions gate mirror",
+    name: "GitHub Actions check mirror",
     mono: "GA",
-    does: "Posts each card's gate results as a check run on its pull request.",
-    leaves: "Gate names, results and durations.",
+    does: "Posts each issue's check results as a check run on its pull request.",
+    leaves: "Check names, results and durations.",
   },
   {
     id: "teams",
@@ -140,8 +140,8 @@ const CATALOG = [
     tier: "later",
     name: "Notion",
     mono: "NO",
-    does: "Seshat publishes cycle plans, run reports and decision logs, and reads linked specs as card context.",
-    leaves: "Cycle plans, run reports and decision logs.",
+    does: "Seshat publishes sprint plans, run reports and decision logs, and reads linked specs as issue context.",
+    leaves: "Sprint plans, run reports and decision logs.",
   },
   {
     id: "confluence",
@@ -149,7 +149,7 @@ const CATALOG = [
     name: "Confluence",
     mono: "CO",
     does: "The same publishing as Notion, to a Confluence space.",
-    leaves: "Cycle plans, run reports and decision logs.",
+    leaves: "Sprint plans, run reports and decision logs.",
   },
 ];
 
@@ -231,7 +231,7 @@ function controls(e) {
     }
     case "research-web": {
       const on = Boolean(e.enabled ?? e.connected);
-      return `<div class="iacts"><button class="switch" type="button" role="switch" aria-checked="${on}" aria-label="Researcher web access" data-toggle-web ${busy("web") ? "disabled" : ""}><span></span></button><span class="sec">${on ? "The Researcher may use the web." : "The Researcher stays on this machine."}</span></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
+      return `<div class="iacts"><button class="switch" type="button" role="switch" aria-checked="${on}" aria-label="Research model web access" data-toggle-web ${busy("web") ? "disabled" : ""}><span></span></button><span class="sec">${on ? "The Research model may use the web." : "The Research model stays on this machine."}</span></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
     }
     case "push": {
       if (e.connected) {
@@ -390,12 +390,12 @@ async function onClick(e) {
     await withBusy("research-web:web", async () => {
       const r = await send("PUT", "/api/integrations/research-web", { enabled: next });
       if (!r.ok)
-        toast({ tone: "fail", text: "Couldn't change Researcher web access.", detail: err(r) });
+        toast({ tone: "fail", text: "Couldn't change Research model web access.", detail: err(r) });
       else
         toast({
           text: next
-            ? "Researcher web access is on."
-            : "Researcher web access is off. It works from this machine only.",
+            ? "Research model web access is on."
+            : "Research model web access is off. It works from this machine only.",
         });
       await load();
     });

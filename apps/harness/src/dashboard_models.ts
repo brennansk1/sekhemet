@@ -127,12 +127,12 @@ export function dashboardQualify(o: {
         ? { qualified: true }
         : {
             qualified: false,
-            reason: `${Math.round(best.passRate * 100)}% of the qualification passed; it needs ${Math.round(QUALIFICATION_BAR * 100)}%.`,
+            reason: `${Math.round(best.passRate * 100)}% of the check that verifies it on this machine passed; it needs ${Math.round(QUALIFICATION_BAR * 100)}%.`,
           };
     } catch (err) {
       return {
         qualified: false,
-        reason: `The qualification could not run: ${err instanceof Error ? err.message : String(err)}`,
+        reason: `The check that verifies it on this machine could not run: ${err instanceof Error ? err.message : String(err)}`,
       };
     } finally {
       lease.release();

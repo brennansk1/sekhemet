@@ -1,10 +1,11 @@
 // The evidence composition shared by Review and the card view: header, gates,
 // failures, changes, facts. Keeps its own scroll, diff mode and file toggles.
 import { changesHtml } from "./diff.js";
-import { $, $$, copyText, esc, icon } from "./dom.js";
+import { $, $$, brandMark, copyText, esc, icon } from "./dom.js";
 import { factsInlineHtml, factsRailHtml } from "./facts.js";
 import { failuresHeadline, failuresHtml } from "./failures.js";
 import { gatesHeadline, gatesSkeletonHtml, gatesStripHtml } from "./gates.js";
+import { checksTip } from "./learn.js";
 import {
   EMPTY_SHA256,
   columnLabel,
@@ -22,7 +23,7 @@ import {
 } from "./review_desk.js";
 import { paintShotDiffs, shotsHtml } from "./shots.js";
 import { store } from "./store.js";
-import { kindTags } from "./tile.js";
+import { typeTag } from "./tile.js";
 import { toast } from "./toast.js";
 
 export function gatesFor(evidence) {
@@ -59,7 +60,7 @@ export function reviewHtml(review) {
       return `<li class="${warn ? "warn" : ""}">${icon(warn ? "alert" : "chat", 14, `ic s14${warn ? " i-park" : ""}`)}<div><b>${warn ? "Likely send-back" : "Consider"}</b><span>${esc(f.note)}</span></div></li>`;
     })
     .join("");
-  return `<section aria-label="Seshat's review" class="mreview"><h3 class="sh">Seshat's review <span class="sec">${esc(head)}</span></h3><p class="mr-why">Seshat checked this diff against what it has learned about you (<a href="#/playbook/profile">Playbook</a>). It's advice, not a gate: Accept is still yours.</p><ul>${items}</ul></section>`;
+  return `<section aria-label="Seshat's review" class="mreview"><h3 class="sh">Seshat's review <span class="sec">${esc(head)}</span></h3><p class="mr-why">Seshat checked this diff against what it has learned about you (<a href="#/playbook/profile">Playbook</a>). It's advice, not a check: Accept is still yours.</p><ul>${items}</ul></section>`;
 }
 
 export class EvidencePane {
@@ -107,7 +108,7 @@ export class EvidencePane {
     // DB-N5-4: a card a person built says so in its outcome line.
     const built = builtByOutcome(detail);
     const builtHtml = built ? `<span class="sec built-by">· ${esc(built)}</span>` : "";
-    return `<div><div class="crumbs">${esc(project)} ${icon("chevron-right", 12, "ic s12")}<span class="mono">${esc(card.id)}</span>${att}</div>${withTitle ? `<h2 class="ttl">${esc(card.display?.title ?? card.title)}</h2>` : ""}<div class="outcome">${kindTags(card.display?.kinds)}${outcome}${builtHtml}</div><div data-notice></div></div>`;
+    return `<div><div class="crumbs">${esc(project)} ${icon("chevron-right", 12, "ic s12")}<span class="mono">${esc(card.id)}</span>${att}</div>${withTitle ? `<h2 class="ttl">${esc(card.display?.title ?? card.title)}</h2>` : ""}<div class="outcome">${typeTag(card.display?.type)}${outcome}${builtHtml}</div><div data-notice></div></div>`;
   }
 
   /** What stands in for the evidence when it failed to load or does not exist yet; else null. */
@@ -116,7 +117,7 @@ export class EvidencePane {
       return `<div class="ev-error" role="alert">${icon("alert")}<span><b>Couldn't load evidence for ${esc(card.display?.shortId ?? card.id)}.</b> <span class="sec">${detail.error.status ? `The server returned ${esc(detail.error.status)}.` : "Sekhemet did not respond."} ${esc(detail.error.message ?? "")}</span></span><button class="btn sm" type="button" data-retry-ev>${icon("refresh", 14, "ic s14")}Retry</button></div>`;
     }
     if (!detail.evidence) {
-      return `<div class="ev-empty">${icon("glyph", 24, "ic s24")}<b>No attempts yet.</b><span>Evidence appears after the Worker's first run. Budget: ${esc(card.stepBudget)} steps.</span></div>`;
+      return `<div class="ev-empty">${brandMark(24)}<b>No attempts yet.</b><span>Evidence appears after the agent's first run. Budget: ${esc(card.stepBudget)} steps.</span></div>`;
     }
     return null;
   }
@@ -130,7 +131,7 @@ export class EvidencePane {
     out.facts = factsInlineHtml(detail.card ?? card, ev, detail);
     // §2.5.3 4a (NEW-dashboard-5): the Reviewer's findings and coverage, first.
     out.reviewer = reviewerHtml(card, detail);
-    out.gates = `<section aria-label="Gates"><h3 class="sh">Gates <span class="sec">${esc(gatesHeadline(gates))}</span></h3>${gatesStripHtml(gates, { failures: ev.failures, config, emptyContract: ev.gatesConfigSha256 === EMPTY_SHA256, sha: ev.gatesConfigSha256 })}</section>`;
+    out.gates = `<section aria-label="Checks"><h3 class="sh">Checks ${checksTip(gates)}<span class="sec">${esc(gatesHeadline(gates))}</span></h3>${gatesStripHtml(gates, { failures: ev.failures, config, emptyContract: ev.gatesConfigSha256 === EMPTY_SHA256, sha: ev.gatesConfigSha256 })}</section>`;
     // SEC-32: files that run outside the sandbox on the next commit or in an editor.
     out.later = ev.executesLater?.length
       ? `<section aria-label="Runs outside the sandbox later"><h3 class="sh">${icon("alert", 14, "ic s14 i-park")} Runs outside the sandbox later <span class="sec">${esc(ev.executesLater.length)}</span></h3><ul class="plain">${ev.executesLater.map((f) => `<li class="mono">${esc(f)}</li>`).join("")}</ul></section>`
@@ -266,7 +267,7 @@ export class EvidencePane {
           block.scrollIntoView({ block: "start" });
           block.querySelector("a")?.focus();
         } else if (seg.classList.contains("pass")) {
-          toast({ text: "No output recorded for passed gates.", duration: 2500 });
+          toast({ text: "No output recorded for passed checks.", duration: 2500 });
         }
         return;
       }

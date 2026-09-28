@@ -11,8 +11,14 @@ import {
   groupCards,
   priorityOf,
   priorityRank,
+  showsPoints,
 } from "./lib/pm.js";
-import { BOARD_COLUMN_ORDER, KIND_LABELS, columnLabel, formatWait } from "./lib/vocabulary.js";
+import {
+  BOARD_COLUMN_ORDER,
+  ISSUE_TYPE_LABELS,
+  columnLabel,
+  formatWait,
+} from "./lib/vocabulary.js";
 import { labelChips, pointsText, prioMark } from "./marks.js";
 import { openPeek } from "./peek.js";
 import { setTopbar } from "./shell.js";
@@ -35,13 +41,19 @@ const COLS = [
   { key: "title", label: "Title", cls: "c-title" },
   { key: "status", label: "State", cls: "c-state" },
   { key: "epicId", label: "Epic", cls: "c-epic", edit: "epicId" },
-  { key: "cycleId", label: "Cycle", cls: "c-cycle", edit: "cycleId" },
+  { key: "cycleId", label: "Sprint", cls: "c-cycle", edit: "cycleId" },
+  // Only with Preferences → Estimation on story points (DB-N7-2): see `cols()`.
   { key: "estimate", label: "Points", cls: "c-pts r", edit: "estimate" },
   { key: "labels", label: "Labels", cls: "c-labels", edit: "labels" },
   { key: "assignee", label: "Assignee", cls: "c-who", edit: "assignee" },
   { key: "dueDate", label: "Due", cls: "c-due", edit: "dueDate" },
   { key: "updatedAt", label: "Updated", cls: "c-upd r" },
 ];
+
+/** The columns in force: Points only with Preferences → Estimation on story points (DB-N7-2). */
+function cols() {
+  return showsPoints(store.state.estimation) ? COLS : COLS.filter((c) => c.key !== "estimate");
+}
 
 const TONE = {
   running: () => '<span class="dot run" aria-hidden="true"></span>',
@@ -118,9 +130,8 @@ function cell(c, col) {
     case "id":
       return `<span class="mono">${esc(d.shortId ?? c.id)}</span>`;
     case "title": {
-      const kinds = (d.kinds ?? [])
-        .map((k) => `<span class="kind">${esc(KIND_LABELS[k]?.label ?? k)}</span>`)
-        .join("");
+      const type = ISSUE_TYPE_LABELS[d.type];
+      const kinds = type ? `<span class="kind">${esc(type.label)}</span>` : "";
       const ext = c.externalRef?.url
         ? `<a class="ext mono" href="${esc(c.externalRef.url)}" target="_blank" rel="noopener noreferrer" title="${esc(`Linked ${c.externalRef.system}: ${c.externalRef.id ?? c.externalRef.key ?? ""}`)}">${esc(c.externalRef.id ?? c.externalRef.key ?? "")}</a>`
         : "";
@@ -175,7 +186,9 @@ function cell(c, col) {
 
 function rowHtml(c) {
   const sel = store.state.selected.has(c.id);
-  return `<tr data-id="${esc(c.id)}" id="row-${esc(c.id)}" tabindex="-1" aria-selected="${sel}" class="${c.status === "done" ? "done" : ""}"><td class="c-sel"><span class="cbx${sel ? " on" : ""}" role="checkbox" aria-checked="${sel}" aria-label="Select" data-sel></span></td>${COLS.map((col) => `<td class="${col.cls}">${cell(c, col)}</td>`).join("")}</tr>`;
+  return `<tr data-id="${esc(c.id)}" id="row-${esc(c.id)}" tabindex="-1" aria-selected="${sel}" class="${c.status === "done" ? "done" : ""}"><td class="c-sel"><span class="cbx${sel ? " on" : ""}" role="checkbox" aria-checked="${sel}" aria-label="Select" data-sel></span></td>${cols()
+    .map((col) => `<td class="${col.cls}">${cell(c, col)}</td>`)
+    .join("")}</tr>`;
 }
 
 function render() {
@@ -195,19 +208,19 @@ function render() {
   );
 
   const groups = groupCards(cards, vb.group, matchContext());
-  const head = `<thead><tr><th class="c-sel"><span class="sr-only">Selected</span></th>${COLS.map(
-    (col) => {
+  const head = `<thead><tr><th class="c-sel"><span class="sr-only">Selected</span></th>${cols()
+    .map((col) => {
       const on = ui.sort.key === col.key;
       const aria = on ? ` aria-sort="${ui.sort.dir > 0 ? "ascending" : "descending"}"` : "";
       return `<th class="${col.cls}"${aria}><button type="button" data-sort="${col.key}">${esc(col.label)}${on ? icon(ui.sort.dir > 0 ? "chevron-down" : "chevron-right", 10, "ic s10") : ""}</button></th>`;
-    },
-  ).join("")}</tr></thead>`;
+    })
+    .join("")}</tr></thead>`;
   let body = "";
   for (const g of groups) {
     const rows = sorted(g.cards);
     if (vb.group !== "none") {
       const shut = ui.collapsed.has(g.key);
-      body += `<tr class="grp"><th colspan="${COLS.length + 1}"><button type="button" data-grp="${esc(g.key)}" aria-expanded="${!shut}">${icon(shut ? "chevron-right" : "chevron-down", 12, "ic s12")}<b>${esc(g.label)}</b><span class="sec tnum">${g.cards.length} ${g.cards.length === 1 ? "card" : "cards"}${g.points ? ` · ${g.points} pts` : ""}</span></button></th></tr>`;
+      body += `<tr class="grp"><th colspan="${cols().length + 1}"><button type="button" data-grp="${esc(g.key)}" aria-expanded="${!shut}">${icon(shut ? "chevron-right" : "chevron-down", 12, "ic s12")}<b>${esc(g.label)}</b><span class="sec tnum">${g.cards.length} ${g.cards.length === 1 ? "card" : "cards"}${g.points && showsPoints(store.state.estimation) ? ` · ${g.points} pts` : ""}</span></button></th></tr>`;
       if (shut) continue;
     }
     body += rows.map(rowHtml).join("");

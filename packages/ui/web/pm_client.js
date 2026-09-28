@@ -7,12 +7,6 @@ import { toast } from "./toast.js";
 
 export const PM_NAME = "Seshat";
 
-/** The manager model's name as people read it: `dirk-27b:latest` -> `dirk-27b`. */
-export function pmModel() {
-  const pm = store.state.pm;
-  return String(pm.status?.model ?? pm.model ?? "dirk-27b").replace(/:latest$/, "");
-}
-
 function setPm(patch) {
   store.set({ pm: { ...store.state.pm, ...patch } });
 }

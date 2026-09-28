@@ -36,7 +36,7 @@ describe("the Benchmark section's words (DB-N6-9–13, DB-N6-18)", () => {
         roles: [{ role: "worker", state: "to_measure", minutes: 17.5, overTarget: true }],
         endToEnd: { minutes: 6, overTarget: false, cached: false },
       }),
-    ).toBe("Run quick — about 24 min (Worker over its target)");
+    ).toBe("Run quick — about 24 min (Coding model over its target)");
     expect(
       estimateLabel({
         totalMinutes: 0,
@@ -92,7 +92,7 @@ describe("the Benchmark section's words (DB-N6-9–13, DB-N6-18)", () => {
     );
   });
 
-  it("labels two candidates Indistinguishable and ranks neither when the paired test does not reject", () => {
+  it("labels two candidates No clear difference (DEC-31) and ranks neither when the paired test does not reject", () => {
     expect(
       comparisonLabel({
         role: "worker",
@@ -104,7 +104,7 @@ describe("the Benchmark section's words (DB-N6-9–13, DB-N6-18)", () => {
         p: 0.0625,
         indistinguishable: true,
       }),
-    ).toBe("Indistinguishable (5 better, 0 worse, 1 tied; p = 0.063)");
+    ).toBe("No clear difference (5 better, 0 worse, 1 tied; p = 0.063)");
     expect(
       comparisonLabel({
         role: "worker",
@@ -151,8 +151,8 @@ describe("the Benchmark section's words (DB-N6-9–13, DB-N6-18)", () => {
     ).toBe("Queued — Tonight 22:00–03:00: 1 of 2 combinations fits");
   });
 
-  it("offers Assign this combination only when every model is qualified, else Qualify to assign", () => {
+  it("offers Assign this combination only when every model is verified on this machine, else Verify on this machine to assign", () => {
     expect(assignAction({ worker: true, planner: true })).toBe("Assign this combination");
-    expect(assignAction({ worker: true, planner: false })).toBe("Qualify to assign");
+    expect(assignAction({ worker: true, planner: false })).toBe("Verify on this machine to assign");
   });
 });

@@ -1,8 +1,8 @@
 /**
  * The story map as a pure model (dashboard §2.4.17, DB-P3-13): the board's
  * epics across as the backbone in user order (the epic cards' recorded
- * order), the release slices beneath as bands with the first — the walking
- * skeleton — marked, and each requirement in its slice under the epic that
+ * order), the release slices beneath as bands (*Release 1*, *Release 2*: DEC-31)
+ * with the first — the walking skeleton, a word only Tips uses — marked, and each requirement in its slice under the epic that
  * holds its cards, with its state as an icon and words and its cards' tiles
  * beneath it. It is a view of the board's cards, not a separate hierarchy:
  * the cards no requirement traces to stay under their epic in a last band.
@@ -12,12 +12,15 @@
  * The browser loads the compiled module as `/app/lib/storymap.js`.
  */
 import type { IconName } from "./icons.js";
+import { moscowOf } from "./status.js";
 import { humanize, parseTitle } from "./vocabulary.js";
 
 export interface RequirementLike {
   id: string;
   title?: string;
   mustHave: boolean;
+  /** The internal priority class; shown only as its MoSCoW group (DEC-31). */
+  kano?: string;
   state: string;
   why: string;
   cards: { id: string; status?: string; suspect: boolean }[];
@@ -57,7 +60,7 @@ export const REQUIREMENT_STATES: Record<
   string,
   { label: string; icon: IconName; tone: RequirementTone }
 > = {
-  proven: { label: "Proven", icon: "check-circle", tone: "pass" },
+  proven: { label: "Done", icon: "check-circle", tone: "pass" },
   passing_strength_unmet: { label: "Passing, strength unmet", icon: "ring", tone: "park" },
   failing: { label: "Failing on main", icon: "alert", tone: "fail" },
   suspect: { label: "Suspect", icon: "link", tone: "park" },
@@ -74,9 +77,10 @@ export function requirementState(state: string): {
   return REQUIREMENT_STATES[state] ?? { label: humanize(state), icon: "dot", tone: "" };
 }
 
+/** A release's state (DEC-31: a slice is a *release*, a proven must-have a requirement done). */
 const SLICE_STATES: Record<string, string> = {
-  unproven: "Not proven yet",
-  proven: "Proven, waiting for a person to accept it",
+  unproven: "Not done yet",
+  proven: "Requirements done, waiting for a person to accept it",
   done: "Done",
 };
 
@@ -84,6 +88,8 @@ export interface MapRequirement<C> {
   id: string;
   title: string;
   mustHave: boolean;
+  /** DEC-31: Must have, Should have or Could have (the project documents' rule). */
+  moscow: "Must have" | "Should have" | "Could have";
   state: string;
   label: string;
   icon: IconName;
@@ -186,8 +192,8 @@ export function storyMapModel<C extends MapCardLike>(input: {
 
   const bands: MapBand<C>[] = slices.map((s, i) => ({
     id: s.id,
-    heading:
-      i === 0 ? `Walking skeleton${s.title ? ` · ${s.title}` : ""}` : (s.title ?? `Slice ${i + 1}`),
+    // DEC-31: releases, numbered; *walking skeleton* is said only inside Tips.
+    heading: `Release ${i + 1}${s.title ? ` · ${s.title}` : ""}`,
     skeleton: i === 0,
     stateText: `${SLICE_STATES[s.state] ?? humanize(s.state)} · ${s.provenLine}`,
     cells: backbone.map((e) => ({
@@ -200,6 +206,7 @@ export function storyMapModel<C extends MapCardLike>(input: {
             id: r.id,
             title: r.title ?? r.id,
             mustHave: r.mustHave,
+            moscow: moscowOf(r),
             state: r.state,
             label: st.label,
             icon: st.icon,
@@ -230,7 +237,7 @@ export function storyMapModel<C extends MapCardLike>(input: {
     ...(input.map
       ? { provenLine: input.map.provenLine }
       : {
-          note: "No brief has been accepted yet, so there are no slices. Cards are shown under their epics.",
+          note: "No brief has been accepted yet, so there are no releases. Cards are shown under their epics.",
         }),
   };
 }

@@ -206,11 +206,12 @@ export class BenchmarkNotFound extends Error {
   }
 }
 
+/** The roles as a person reads them (DEC-31). */
 const ROLE_NAMES: Record<ModelRole, string> = {
-  worker: "Worker",
-  planner: "Planner",
-  reviewer: "Reviewer",
-  researcher: "Researcher",
+  worker: "Coding model",
+  planner: "Planning model",
+  reviewer: "Review model",
+  researcher: "Research model",
 };
 
 /** The quick benchmark's copy (MS-N5-4a, DB-N6-9). */
@@ -854,7 +855,7 @@ function resultLines(r: QuickResult): string[] {
     );
   for (const c of r.comparisons)
     lines.push(
-      `${ROLE_NAMES[c.role as ModelRole] ?? c.role}: ${c.a} vs ${c.b} — ${c.indistinguishable ? "indistinguishable on the quick benchmark" : c.better > c.worse ? `${c.a} is better` : `${c.b} is better`} (${c.better} better, ${c.worse} worse, ${c.ties} tied; p = ${c.p.toFixed(3)})`,
+      `${ROLE_NAMES[c.role as ModelRole] ?? c.role}: ${c.a} vs ${c.b} — ${c.indistinguishable ? "no clear difference on the quick benchmark" : c.better > c.worse ? `${c.a} is better` : `${c.b} is better`} (${c.better} better, ${c.worse} worse, ${c.ties} tied; p = ${c.p.toFixed(3)})`,
     );
   if (r.partial)
     lines.push("Stopped: completed roles are kept and cached; the screen is recorded as partial.");

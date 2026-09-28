@@ -68,7 +68,7 @@ describe("quick create (DB-P3-12)", () => {
     });
   });
 
-  it("names the planner and Seshat, and never the CLI", () => {
+  it("names the planning model and Seshat, and never the CLI", () => {
     expect(QUICK_CREATE_COPY).toEqual({
       heading: "New card",
       title: "Title",
@@ -76,10 +76,10 @@ describe("quick create (DB-P3-12)", () => {
       descriptionHint: "What done looks like, in your words.",
       submit: "Propose card",
       cancel: "Cancel",
-      note: "The planner checks its size, acceptance criteria and scope, and Seshat shows it as a proposal for you to apply.",
+      note: "The planning model checks its size, acceptance criteria and scope, and Seshat shows it as a proposal for you to apply.",
       sent: "Proposed in Seshat. Apply it to plan the card.",
       plus: "New card",
-      plusTip: "New card. The planner decides where it starts.",
+      plusTip: "New card. The planning model decides where it starts.",
     });
     expect(JSON.stringify(QUICK_CREATE_COPY)).not.toMatch(/CLI|terminal|sekhemet plan|command/i);
   });

@@ -62,7 +62,7 @@ export async function runAsk(question: string, deps: AskDeps): Promise<0 | 1 | 2
   if (lease) {
     // A queue is running: it answers queued messages between the Worker's
     // steps (runtime item 4). Wait for that answer rather than load a model.
-    say("Seshat answers between the Worker's steps; waiting…");
+    say("Seshat answers between the agent's steps; waiting…");
     const deadline = Date.now() + (deps.waitMs ?? 30 * 60_000);
     while (Date.now() < deadline) {
       const replies = await repliesSince();

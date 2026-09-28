@@ -1,7 +1,9 @@
-// The board's view bar and cycle header (PM_DESIGN §3.2): Board | List | Story map,
+// The board's view bar and sprint header (PM_DESIGN §3.2): Board | List | Story map,
 // saved views, filter chips over a GitHub-style query, grouping, and the
-// active cycle's progress. One filter object, shared by board and list.
+// active sprint's progress (a sprint is the internal *cycle*, DEC-31). One
+// filter object, shared by board and list.
 import { esc, icon, kbd, tip } from "./dom.js";
+import { tip as learnTip } from "./learn.js";
 import { cycleHeaderShown } from "./lib/burnup.js";
 import {
   PRIORITY_LABELS,
@@ -15,10 +17,12 @@ import {
   matchCard,
   parseQuery,
   setTerm,
+  showsPoints,
   slug,
+  sprintHeaderText,
   termValues,
 } from "./lib/pm.js";
-import { BOARD_COLUMN_ORDER, KIND_LABELS, columnLabel } from "./lib/vocabulary.js";
+import { BOARD_COLUMN_ORDER, ISSUE_TYPE_LABELS, columnLabel } from "./lib/vocabulary.js";
 import { prioMark } from "./marks.js";
 import { openMenu } from "./overlay.js";
 import { openPicker, openPrompt } from "./picker.js";
@@ -32,7 +36,7 @@ const VIEWS_KEY = "sekhemet-views";
 
 export const BUILTIN_VIEWS = [
   { id: "all", name: "All cards", query: "" },
-  { id: "cycle", name: "Current cycle", query: "cycle:current" },
+  { id: "cycle", name: "Current sprint", query: "sprint:current" },
   { id: "needs", name: "Needs you", query: "is:needs-you" },
   { id: "hot", name: "Urgent and high", query: "priority:urgent,high is:open" },
   { id: "unest", name: "Unestimated", query: "is:unestimated is:open" },
@@ -43,17 +47,17 @@ const GROUPS = [
   { id: "epic", label: "Epic" },
   { id: "assignee", label: "Assignee" },
   { id: "priority", label: "Priority" },
-  { id: "cycle", label: "Cycle" },
+  { id: "cycle", label: "Sprint" },
 ];
 
 const FIELD_NAMES = {
   priority: "Priority",
   label: "Label",
   epic: "Epic",
-  cycle: "Cycle",
+  cycle: "Sprint",
   owner: "Owner",
   delegate: "Delegate",
-  kind: "Kind",
+  type: "Type",
   state: "State",
   is: "Is",
 };
@@ -103,7 +107,11 @@ export function savedViews() {
 }
 
 export function allViews() {
-  return [...BUILTIN_VIEWS, ...savedViews()];
+  // *Unestimated* only when the team estimates (DB-N7-2).
+  const builtin = showsPoints(store.state.estimation)
+    ? BUILTIN_VIEWS
+    : BUILTIN_VIEWS.filter((v) => v.id !== "unest");
+  return [...builtin, ...savedViews()];
 }
 
 function currentView() {
@@ -187,13 +195,13 @@ function valueLabel(field, v) {
     case "cycle":
       if (v === "current") return activeCycle(s.cycles)?.name ?? "Current";
       if (v === "next") return "Next";
-      if (v === "none") return "No cycle";
+      if (v === "none") return "No sprint";
       return s.cycles.find((c) => c.id.toLowerCase() === v || slug(c.name) === slug(v))?.name ?? v;
     case "owner":
     case "delegate":
       return personValueLabel(field, v);
-    case "kind":
-      return KIND_LABELS[v]?.label ?? v;
+    case "type":
+      return ISSUE_TYPE_LABELS[v]?.label ?? v;
     case "state":
       return columnLabel(v);
     case "is":
@@ -213,11 +221,11 @@ function valueLabel(field, v) {
   }
 }
 
-/** An owner or delegate value in words: You, Worker, a person's name, or none. */
+/** An owner or delegate value in words: You, Agent, a person's name, or none. */
 function personValueLabel(field, v) {
   if (v === "none") return field === "owner" ? "No owner" : "No delegate";
   if (v === "@me" || v === "me" || v === "you") return "You";
-  if (v === "worker") return "Worker";
+  if (v === "agent" || v === "worker") return "Agent";
   for (const c of store.state.cards) {
     if (field === "owner" && c.owner?.toLowerCase() === v && c.display?.ownerName)
       return c.display.ownerName;
@@ -269,26 +277,31 @@ function optionsFor(field) {
       for (const c of s.cycles)
         if (c.state !== "active")
           list.push(opt(slug(c.name), c.name, "", c.state === "planned" ? "Planned" : "Closed"));
-      list.push(opt("none", "No cycle"));
+      list.push(opt("none", "No sprint"));
       return list;
     }
     case "owner":
       return [opt("@me", "You"), ...peopleOptions("owner", opt), opt("none", "No owner")];
     case "delegate":
       return [
-        opt("worker", "Worker"),
+        opt("agent", "Agent"),
         opt("@me", "You"),
         ...peopleOptions("delegate", opt),
         opt("none", "No delegate"),
       ];
-    case "kind":
-      return Object.entries(KIND_LABELS).map(([k, v]) => opt(k, v.label));
+    case "type":
+      return Object.entries(ISSUE_TYPE_LABELS).map(([k, v]) => opt(k, v.label));
     case "state":
       return BOARD_COLUMN_ORDER.map((st) => opt(st, columnLabel(st)));
     case "is":
-      return ["needs-you", "blocked", "running", "unestimated", "open", "done"].map((v) =>
-        opt(v, valueLabel("is", v)),
-      );
+      return [
+        "needs-you",
+        "blocked",
+        "running",
+        ...(showsPoints(store.state.estimation) ? ["unestimated"] : []),
+        "open",
+        "done",
+      ].map((v) => opt(v, valueLabel("is", v)));
     default:
       return [];
   }
@@ -326,19 +339,19 @@ export function viewBarHtml(layout) {
       ? `<button class="btn sm ghost" type="button" data-save-view>Save view</button>`
       : "";
   return `<div class="vbar" role="toolbar" aria-label="View and filters">
-<div class="lseg" role="tablist" aria-label="Layout"><a role="tab" href="#/board" aria-selected="${layout === "board"}" title="Board (v)">${icon("board", 14, "ic s14")}<span>Board</span></a><a role="tab" href="#/board/list" aria-selected="${layout === "list"}" title="List (v)">${icon("list", 14, "ic s14")}<span>List</span></a><a role="tab" href="#/board/map" aria-selected="${layout === "map"}" ${tip("Story map: epics across, release slices beneath")}>${icon("layers", 14, "ic s14")}<span>Story map</span></a></div>
+<div class="lseg" role="tablist" aria-label="Layout"><a role="tab" href="#/board" aria-selected="${layout === "board"}" title="Board (v)">${icon("board", 14, "ic s14")}<span>Board</span></a><a role="tab" href="#/board/list" aria-selected="${layout === "list"}" title="List (v)">${icon("list", 14, "ic s14")}<span>List</span></a><a role="tab" href="#/board/map" aria-selected="${layout === "map"}" ${tip("Story map: epics across, releases beneath")}>${icon("layers", 14, "ic s14")}<span>Story map</span></a></div>
 <button class="vsel" type="button" data-view-menu aria-haspopup="dialog"><span class="sec">View:</span> <b>${esc(v.name)}</b>${icon("chevron-down", 12, "ic s12")}</button>
 <div class="chips">${chips}<button class="filter" type="button" data-add-filter aria-haspopup="menu">${icon("filter", 12, "ic s12")}Filter</button></div>
-<label class="q">${icon("search", 12, "ic s12")}<input type="text" data-q value="${esc([vb.filter.text, vb.draft].filter(Boolean).join(" "))}" placeholder="Filter by title, or type label:api" aria-label="Filter cards. Accepts priority:, label:, epic:, cycle:, owner:, delegate:, kind:, is:" spellcheck="false">${kbd("/")}</label>
+<label class="q">${icon("search", 12, "ic s12")}<input type="text" data-q value="${esc([vb.filter.text, vb.draft].filter(Boolean).join(" "))}" placeholder="Filter by title, or type label:api" aria-label="Filter cards. Accepts priority:, label:, epic:, sprint:, owner:, delegate:, type:, is:" spellcheck="false">${kbd("/")}</label>
 <div class="vr"><button class="vsel" type="button" data-group-menu title="Group into swimlanes (⇧S)" aria-description="Group into swimlanes" aria-keyshortcuts="Shift+S">${icon("layers", 12, "ic s12")}<span class="sec">Group:</span> <b>${esc(group.label)}</b></button>${save}</div>
 </div>`;
 }
 
-/* ---------- Cycle header ---------- */
+/* ---------- Sprint header ---------- */
 
 export function showsCycle() {
-  // Shown whenever a cycle is in force, unless the filter points elsewhere
-  // (another cycle, or cycle:none): the pure rule, DB-P3-14.
+  // Shown whenever a sprint is in force, unless the filter points elsewhere
+  // (another sprint, or sprint:none): the pure rule, DB-P3-14.
   return cycleHeaderShown(store.state.cycles, vb.filter, Date.now());
 }
 
@@ -346,23 +359,20 @@ export function cycleHeaderHtml() {
   if (!showsCycle()) return "";
   const s = store.state;
   const cycle = activeCycle(s.cycles);
-  const p = cycleProgress(cycle, s.cards, s.now);
+  // Issues, or story points with Preferences → Estimation on (DB-N7-2).
+  const p = cycleProgress(cycle, s.cards, s.now, s.estimation);
+  const words = sprintHeaderText(p, s.estimation);
   const pts = p.points;
   const pct = (n) => (pts.total ? `${(n / pts.total) * 100}%` : "0%");
   const left =
     p.daysLeft === 0 ? "Ends today" : `${p.daysLeft} ${p.daysLeft === 1 ? "day" : "days"} left`;
-  const leftTitle =
-    p.behindBy > 0
-      ? `Behind the linear pace by ${p.behindBy} pts.`
-      : p.behindBy < 0
-        ? `Ahead of the linear pace by ${-p.behindBy} pts.`
-        : "On the linear pace.";
-  const unest = p.unestimated ? ` · ${p.unestimated} unestimated, counted as 1 pt` : "";
+  const leftTitle = words.pace;
+  const unest = words.unestimated;
   return `<section class="cyc" aria-label="${esc(`${cycle.name} progress`)}">
-<div class="cyc-a"><b>${esc(cycle.name)}</b>${cycle.goal ? `<span class="goal">${esc(cycle.goal)}</span>` : ""}<span class="dates tnum">${esc(formatShortDate(cycle.startsOn))} – ${esc(formatShortDate(cycle.endsOn))} · <span class="${p.atRisk ? "risk" : ""}" title="${esc(leftTitle)}">${esc(left)}</span></span></div>
-<div class="cyc-b"><div class="cbar" role="img" aria-label="${esc(`${pts.done} of ${pts.total} points done, ${pts.started} in progress, ${pts.notStarted} not started`)}"><i class="d" style="width:${pct(pts.done)}"></i><i class="s" style="width:${pct(pts.started)}"></i><span class="pace" style="left:${(p.elapsedRatio * 100).toFixed(1)}%" title="${esc(`Where a straight line would be today. ${leftTitle}`)}"></span></div>
-<span class="cnums tnum"><b>${pts.done} of ${pts.total} pts done</b> · ${pts.started} in progress · ${pts.notStarted} not started${esc(unest)}</span>
-<button class="btn sm" type="button" data-plan-cycle>${icon("chat", 12, "ic s12")}Plan next cycle with Seshat</button></div>
+<div class="cyc-a"><b>${esc(cycle.name)}</b>${learnTip("sprint", "Sprint", { sprint: { name: cycle.name, done: pts.done, total: pts.total, daysLeft: p.daysLeft } })}${cycle.goal ? `<span class="goal">${esc(cycle.goal)}</span>` : ""}<span class="dates tnum">${esc(formatShortDate(cycle.startsOn))} – ${esc(formatShortDate(cycle.endsOn))} · <span class="${p.atRisk ? "risk" : ""}" title="${esc(leftTitle)}">${esc(left)}</span></span></div>
+<div class="cyc-b"><div class="cbar" role="img" aria-label="${esc(words.aria)}"><i class="d" style="width:${pct(pts.done)}"></i><i class="s" style="width:${pct(pts.started)}"></i><span class="pace" style="left:${(p.elapsedRatio * 100).toFixed(1)}%" title="${esc(`Where a straight line would be today. ${leftTitle}`)}"></span></div>
+<span class="cnums tnum"><b>${esc(words.done)}</b> · ${pts.started} in progress · ${pts.notStarted} not started${esc(unest)}</span>
+<button class="btn sm" type="button" data-plan-cycle>${icon("chat", 12, "ic s12")}Plan next sprint with Seshat</button></div>
 </section>`;
 }
 
@@ -504,7 +514,7 @@ export function bindViewBar(host) {
     if (sv) {
       openPrompt(sv, {
         heading: "Save view as",
-        placeholder: "e.g. API work this cycle",
+        placeholder: "e.g. API work this sprint",
         onSubmit: (name) => {
           const id = `v_${Date.now().toString(36)}`;
           save(VIEWS_KEY, [
@@ -519,7 +529,7 @@ export function bindViewBar(host) {
       return;
     }
     if (t.closest("[data-plan-cycle]")) {
-      askMerit("Plan the next cycle");
+      askMerit("Plan the next sprint");
     }
   });
 }

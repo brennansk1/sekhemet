@@ -76,7 +76,7 @@ describe("the Configuration page (NEW-dashboard-6)", () => {
   const base = () => `http://127.0.0.1:${withModels.server.port}`;
 
   it(
-    "shows the five sections, and #/registry and #/settings open Benchmark and This browser (DB-N6-1)",
+    "shows the five sections, and #/registry and #/settings open Benchmark and Preferences (DB-N6-1, DEC-31)",
     { timeout: 60_000 },
     async () => {
       await page.goto(`${base()}/#/configuration`);
@@ -86,7 +86,7 @@ describe("the Configuration page (NEW-dashboard-6)", () => {
         "Models",
         "Benchmark",
         "Review capacity",
-        "This browser",
+        "Preferences",
         "Project configuration",
       ]);
       expect(await tabs.locator('[aria-current="page"]').innerText()).toBe("Models");
@@ -98,7 +98,7 @@ describe("the Configuration page (NEW-dashboard-6)", () => {
       await page.goto(`${base()}/#/settings`);
       await page.waitForFunction(
         () =>
-          document.querySelector('.cfg-tabs [aria-current="page"]')?.textContent === "This browser",
+          document.querySelector('.cfg-tabs [aria-current="page"]')?.textContent === "Preferences",
       );
     },
   );
@@ -116,7 +116,12 @@ describe("the Configuration page (NEW-dashboard-6)", () => {
       expect(text).toMatch(/Needs \d+(\.\d)? GB more/);
       await page.getByRole("heading", { name: "Roles" }).waitFor();
       const roles = await page.locator(".cfg-role b:first-child").allInnerTexts();
-      expect(roles.slice(0, 4)).toEqual(["Worker", "Planner", "Reviewer", "Researcher"]);
+      expect(roles.slice(0, 4)).toEqual([
+        "Coding model",
+        "Planning model",
+        "Review model",
+        "Research model",
+      ]);
       expect(text + (await page.locator(".cfg-roles").innerText())).toContain(
         "Seshat, the project manager, runs on this model.",
       );

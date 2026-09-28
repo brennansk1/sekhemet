@@ -9,6 +9,7 @@ import {
   assigneeLabel,
   formatFieldValue,
   formatPoints,
+  showsPoints,
 } from "./lib/pm.js";
 import { prioMark } from "./marks.js";
 import { openMenu } from "./overlay.js";
@@ -30,7 +31,7 @@ export const EDITABLE = [
   { field: "priority", label: "Priority", key: "⇧P" },
   { field: "estimate", label: "Points", key: "⇧E" },
   { field: "labels", label: "Labels", key: "⇧L" },
-  { field: "cycleId", label: "Cycle", key: "⇧C" },
+  { field: "cycleId", label: "Sprint", key: "⇧C" },
   { field: "assignee", label: "Assignee", key: "⇧A" },
   { field: "epicId", label: "Epic" },
   { field: "dueDate", label: "Due date" },
@@ -165,7 +166,7 @@ export function editField(field, cardIds, anchor) {
       const cycles = [...s.cycles].filter((c) => c.state !== "closed");
       if (!cycles.length) {
         toast({
-          text: "No cycles yet.",
+          text: "No sprints yet.",
           detail: "Ask Seshat to plan one, or create one with POST /api/cycles.",
         });
         return;
@@ -179,7 +180,7 @@ export function editField(field, cardIds, anchor) {
             detail: c.state === "active" ? "Current" : "Next",
             checked: cur === c.id,
           })),
-          { value: "", label: "No cycle", checked: !cur },
+          { value: "", label: "No sprint", checked: !cur },
         ],
         onPick: (v) => setField(ids, field, v || null),
       });
@@ -271,7 +272,7 @@ export function editField(field, cardIds, anchor) {
         options: [
           { value: "today", label: "Today" },
           { value: "week", label: "End of this week" },
-          { value: "cycle", label: "End of the current cycle" },
+          { value: "cycle", label: "End of the current sprint" },
           { value: "", label: "No due date", checked: !cur },
         ],
         onPick: (v) => {
@@ -296,10 +297,12 @@ export function editField(field, cardIds, anchor) {
 export function fieldMenu(ids, anchor) {
   openMenu(
     anchor,
-    EDITABLE.map((f) => ({
-      label: f.key ? `${f.label}  ${f.key}` : f.label,
-      run: () => setTimeout(() => editField(f.field, ids, anchor), 0),
-    })),
+    EDITABLE.filter((f) => f.field !== "estimate" || showsPoints(store.state.estimation)).map(
+      (f) => ({
+        label: f.key ? `${f.label}  ${f.key}` : f.label,
+        run: () => setTimeout(() => editField(f.field, ids, anchor), 0),
+      }),
+    ),
     { heading: ids.length > 1 ? `Edit ${ids.length} cards` : "Edit field" },
   );
 }

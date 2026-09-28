@@ -2,9 +2,9 @@ import { loadDetail } from "./data.js";
 // Review (FRONTEND_DESIGN §2.4.1): the queue on the left, the evidence in the
 // middle, the facts on the right, and the triage bar under the evidence.
 import { nextDiffMode } from "./diff.js";
-import { $, announce, esc, icon } from "./dom.js";
+import { $, announce, brandMark, esc, icon } from "./dom.js";
 import { EvidencePane } from "./evidence.js";
-import { KIND_LABELS, formatWait } from "./lib/vocabulary.js";
+import { ISSUE_TYPE_LABELS, formatWait } from "./lib/vocabulary.js";
 import {
   acknowledgeFocused,
   focusNextFinding,
@@ -61,13 +61,15 @@ function rowMeta(card) {
   const d = card.display ?? {};
   const wait = waitOf(card);
   const w = `<span class="w tnum${wait > TWO_HOURS ? " old" : ""}" title="Waiting ${esc(formatWait(wait))}">${esc(formatWait(wait))}</span>`;
-  const kind = d.kinds?.[0] ? `<span>${esc(KIND_LABELS[d.kinds[0]].label)}</span>·` : "";
+  const kind = ISSUE_TYPE_LABELS[d.type]
+    ? `<span>${esc(ISSUE_TYPE_LABELS[d.type].label)}</span>·`
+    : "";
   if (card.status === "review") {
     const gates = d.evidence?.gates ?? [];
     const passed = gates.filter((g) => g.state === "pass").length;
     const ran = gates.filter((g) => g.state !== "not_run").length;
     const all = gates.length > 0 && passed === ran;
-    return `${kind}${icon(all ? "check" : "x", 12, `ic s12 ${all ? "i-pass" : "i-fail"}`)}<span>${ran ? `${passed} of ${ran} gates` : "Waiting for you"}</span>${w}`;
+    return `${kind}${icon(all ? "check" : "x", 12, `ic s12 ${all ? "i-pass" : "i-fail"}`)}<span>${ran ? `${passed} of ${ran} checks` : "Waiting for you"}</span>${w}`;
   }
   if (d.tone === "parked")
     return `${icon("pause", 12, "ic s12 i-park")}<span>${esc(d.statusLine)}</span>${w}`;
@@ -125,7 +127,7 @@ function renderTriage() {
 function renderEmpty() {
   const readyCount = store.state.cards.filter((c) => c.status === "ready").length;
   $(".ev-scroll", ui.root).innerHTML =
-    `<div class="ev-empty">${icon("glyph", 24, "ic s24")}<b>Nothing to review.</b><span>Cards land here when every gate passes.</span>${readyCount ? `<span>${readyCount} ${readyCount === 1 ? "card is" : "cards are"} ready to run: <code>sekhemet queue</code></span>` : ""}</div>`;
+    `<div class="ev-empty">${brandMark(24)}<b>Nothing to review.</b><span>Issues land here when every check passes.</span>${readyCount ? `<span>${readyCount} ${readyCount === 1 ? "card is" : "cards are"} ready to run: <code>sekhemet queue</code></span>` : ""}</div>`;
   $("[data-facts]", ui.root).innerHTML = "";
   $("[data-triage]", ui.root).innerHTML = "";
   ui.triageHtml = "";

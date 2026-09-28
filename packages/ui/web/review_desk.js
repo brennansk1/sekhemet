@@ -144,7 +144,7 @@ export function reviewerHtml(card, detail) {
   const coverage = lists
     ? `<details class="rf-cov"><summary>${esc(cov.line)}</summary>${lists}</details>`
     : `<p class="rf-cov">${esc(cov.line)}</p>`;
-  return `<section aria-label="Reviewer findings" class="mreview rfind" data-reviewer><h3 class="sh">${esc(m.title)}</h3><p class="mr-why">${esc(C.why)} <span class="sec">${esc(C.acknowledgeKey)}.</span></p>${open ? `<ul>${open}</ul>` : ""}${metHtml}${coverage}</section>`;
+  return `<section aria-label="AI review findings" class="mreview rfind" data-reviewer><h3 class="sh">${esc(m.title)}</h3><p class="mr-why">${esc(C.why)} <span class="sec">${esc(C.acknowledgeKey)}.</span></p>${open ? `<ul>${open}</ul>` : ""}${metHtml}${coverage}</section>`;
 }
 
 /**

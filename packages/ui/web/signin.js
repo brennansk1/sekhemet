@@ -2,7 +2,7 @@
 // DB-N9-13): Sign in, Set up Sekhemet from the setup token, and an invite.
 // They replace the whole shell: nothing of the app shows until someone is
 // signed in, and each page has one primary action.
-import { esc, getJSON, icon, sendJSON } from "./dom.js";
+import { brandLockup, esc, getJSON, icon, sendJSON } from "./dom.js";
 import {
   ACCOUNT_COPY as T,
   levelLabel,
@@ -15,7 +15,7 @@ import { continueTo, getSession } from "./session.js";
 const TITLES = { signin: T.signInTitle, setup: T.setupTitle, invite: T.inviteTitle };
 
 function frame(inner) {
-  return `<div class="auth"><div class="auth-col"><div class="auth-brand">${icon("glyph", 32)}<b>Sekhemet</b></div>${inner}<p class="auth-foot">${esc(T.footer)}</p></div></div>`;
+  return `<div class="auth"><div class="auth-col"><div class="auth-brand">${brandLockup(32)}</div>${inner}<p class="auth-foot">${esc(T.footer)}</p></div></div>`;
 }
 
 function field(name, label, type, autocomplete, hint = "") {

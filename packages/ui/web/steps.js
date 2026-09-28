@@ -22,7 +22,7 @@ function usageHtml(u) {
 function gateLine(gate) {
   if (!gate) return "";
   if (gate.passed)
-    return `<div class="gate-r pass">${icon("check", 12, "ic s12")}Gates passed</div>`;
+    return `<div class="gate-r pass">${icon("check", 12, "ic s12")}Checks passed</div>`;
   const names = [
     ...new Set(
       (gate.failures ?? [])
@@ -35,10 +35,10 @@ function gateLine(gate) {
   ];
   const n = (gate.failures ?? []).length;
   if (names.length) {
-    return `<div class="gate-r">${icon("x", 12, "ic s12")}Gates: ${esc(names.join(", "))} failed</div>`;
+    return `<div class="gate-r">${icon("x", 12, "ic s12")}Checks: ${esc(names.join(", "))} failed</div>`;
   }
   const first = String(gate.failures?.[0] ?? "").split("\n")[0];
-  return `<div class="gate-r" title="${esc(first)}">${icon("x", 12, "ic s12")}Gates failed${n ? ` · ${esc(plural(n, "error"))}` : ""}${first ? ` <span class="arg">${esc(first.length > 90 ? `${first.slice(0, 87)}…` : first)}</span>` : ""}</div>`;
+  return `<div class="gate-r" title="${esc(first)}">${icon("x", 12, "ic s12")}Checks failed${n ? ` · ${esc(plural(n, "error"))}` : ""}${first ? ` <span class="arg">${esc(first.length > 90 ? `${first.slice(0, 87)}…` : first)}</span>` : ""}</div>`;
 }
 
 function stepHtml(s, loop, open) {
@@ -135,7 +135,7 @@ export function renderSteps(host, ctx) {
     const d = state.data;
     const card = ctx.card();
     if (!d || d.attempts === 0) {
-      host.innerHTML = `<div class="ev-empty">${icon("runs", 24, "ic s24")}<b>No steps yet.</b><span>The Worker hasn't started this card.</span></div>`;
+      host.innerHTML = `<div class="ev-empty">${icon("runs", 24, "ic s24")}<b>No steps yet.</b><span>The agent hasn't started this issue.</span></div>`;
       return;
     }
     const loop = d.live ? null : loopRange(d.steps);

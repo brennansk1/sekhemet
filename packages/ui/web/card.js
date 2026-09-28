@@ -11,7 +11,9 @@ import { nextDiffMode } from "./diff.js";
 import { $, esc, getJSON, icon } from "./dom.js";
 import { EvidencePane, reviewHtml } from "./evidence.js";
 import { mountIssue } from "./issue_view.js";
+import { tip as learnTip } from "./learn.js";
 import { ISSUE_COPY, ISSUE_TABS, issueEventsUrl, issueTab, oldestFirst } from "./lib/issue.js";
+import { kindTip } from "./lib/learn.js";
 import { columnLabel } from "./lib/vocabulary.js";
 import { renderPlan } from "./plan.js";
 import { acknowledgeFocused, focusNextFinding, reviewerHtml } from "./review_desk.js";
@@ -115,7 +117,18 @@ function renderHead() {
     /^<div class="triage[^"]*"[^>]*>|<\/div>$/g,
     "",
   );
-  const pill = `<span class="pill">${PILL_ICON[card.display?.tone ?? "neutral"] ?? ""}${esc(columnLabel(card.status))}</span>`;
+  // Tips: the issue's type explained, an enabler as one (DB-P4-6).
+  const kindFacts = {
+    card: {
+      kind: card.kind,
+      change: card.change,
+      tier: card.tier,
+      split: card.split,
+      title: card.title,
+    },
+  };
+  const typeTip = learnTip("type", kindTip(kindFacts.card).term, kindFacts);
+  const pill = `<span class="pill">${PILL_ICON[card.display?.tone ?? "neutral"] ?? ""}${esc(columnLabel(card.status))}</span>${typeTip}`;
   const headHtml = ui.pane.headHtml(card, d, { attempt: ui.attempt, withTitle: false });
   const next = `<div class="line"><div style="min-width:0;flex:1 1 420px">${headHtml
     .replace(

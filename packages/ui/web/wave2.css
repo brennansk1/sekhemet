@@ -351,50 +351,8 @@ canvas.sp {
   display: block;
 }
 
-/* ---------- Workspace ---------- */
-.ws tr[data-project] {
-  cursor: pointer;
-}
-.ws tr[data-project]:hover td,
-.ws tr[data-project]:focus-visible td {
-  background: var(--bg-overlay);
-}
-.ws td.warn {
-  color: var(--state-parked);
-  font-weight: 600;
-}
-.ws .num,
 .rg .num {
   text-align: right;
-}
-.ws-bar {
-  display: inline-flex;
-  width: 180px;
-  height: 6px;
-  border-radius: 3px;
-  overflow: hidden;
-  vertical-align: middle;
-  background: var(--bg-overlay);
-  gap: 1px;
-}
-.ws-seg {
-  background: var(--text-muted);
-}
-.ws-seg.s-in_progress,
-.ws-seg.s-verify {
-  background: var(--state-running);
-}
-.ws-seg.s-review {
-  background: var(--state-pass);
-}
-.ws-seg.s-parked {
-  background: var(--state-parked);
-}
-.ws-seg.s-done {
-  background: var(--text-secondary);
-}
-.ws-hint {
-  font-size: var(--text-sm);
 }
 
 /* ---------- Registry ---------- */

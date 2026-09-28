@@ -36,7 +36,7 @@ export function failuresHeadline(failures) {
     const what = g.code || gateLabel(g.rung);
     return `${g.items.length > 1 ? `${g.items.length} × ` : ""}${what}${g.file ? ` in ${g.file}` : ""}`;
   }
-  return `${failures.length} across ${new Set(groups.map((g) => g.gate)).size} gates`;
+  return `${failures.length} across ${new Set(groups.map((g) => g.gate)).size} checks`;
 }
 
 function locText(f, short) {

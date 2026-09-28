@@ -18,10 +18,10 @@ export const QUICK_CREATE_COPY = {
   descriptionHint: "What done looks like, in your words.",
   submit: "Propose card",
   cancel: "Cancel",
-  note: "The planner checks its size, acceptance criteria and scope, and Seshat shows it as a proposal for you to apply.",
+  note: "The planning model checks its size, acceptance criteria and scope, and Seshat shows it as a proposal for you to apply.",
   sent: "Proposed in Seshat. Apply it to plan the card.",
   plus: "New card",
-  plusTip: "New card. The planner decides where it starts.",
+  plusTip: "New card. The planning model decides where it starts.",
 } as const;
 
 export const TITLE_MAX = 300;

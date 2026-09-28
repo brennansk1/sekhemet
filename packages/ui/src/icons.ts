@@ -7,9 +7,6 @@
  * imports this compiled module directly, so it carries no runtime imports.
  */
 export const ICONS = {
-  /** Brand: a pylon gate with a sun disc (§3.8). */
-  glyph:
-    '<path d="M3 20 5.5 9H10v11M21 20 18.5 9H14v11M2 20h20"/><circle cx="12" cy="5.5" r="2.25"/>',
   review:
     '<path d="M4 13 6.5 6h11L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 13h4.5l1 2h5l1-2H20"/><path d="m9.5 9.5 1.8 1.8 3.4-3.6"/>',
   board: '<path d="M4.5 4.5h4v15h-4zM10 4.5h4v9h-4zM15.5 4.5h4v12h-4z"/>',
@@ -79,13 +76,17 @@ export const ICONS = {
   tag: '<path d="M4 4h7l9 9-7 7-9-9z"/><path d="M8 8h.01"/>',
   calendar:
     '<rect x="4" y="5.5" width="16" height="14" rx="1.5"/><path d="M4 10h16M8 3.5v4M16 3.5v4"/>',
+  book: '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v15.5H5.5A1.5 1.5 0 0 0 4 21z"/><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v15.5h5.5A1.5 1.5 0 0 1 20 21z"/>',
   user: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
   upload: '<path d="M12 15V4M7 9l5-5 5 5M5 20h14"/>',
-  // The tile's type icon (dashboard §2.4.4): the card's tier, beside its words.
+  // The tile's type icon (dashboard §2.4.4, DEC-31): the issue type, beside its words.
   "type-feature": '<path d="M12 3.5 20.5 12 12 20.5 3.5 12z"/>',
   "type-story": '<path d="M7 4h10v16l-5-3.5L7 20z"/>',
   "type-task": '<rect x="5" y="5" width="14" height="14" rx="2"/><path d="m9 12 2 2 4-4"/>',
+  "type-bug":
+    '<ellipse cx="12" cy="13.5" rx="4.5" ry="5.5"/><path d="M12 8v11M9.5 6.5 8 4.5M14.5 6.5 16 4.5M7.5 12H4M16.5 12H20M7.8 16.5 5 18.5M16.2 16.5l2.8 2"/>',
+  "type-spike": '<path d="M13.5 3 6 13.5h5.5L10.5 21 18 10.5h-5.5z"/>',
 } as const;
 
 export type IconName = keyof typeof ICONS;
@@ -94,4 +95,76 @@ export type IconName = keyof typeof ICONS;
 export function icon(name: IconName, size = 16, className = "ic"): string {
   const body = ICONS[name] ?? "";
   return `<svg class="${className}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`;
+}
+
+// ---------------------------------------------------------------------------
+// The brand mark (dashboard §2.13.6, DB-N9-19)
+// ---------------------------------------------------------------------------
+
+/**
+ * A temple gateway: two tapered pylons with a sun disc on the horizon between
+ * them, on the 24 grid. Filled, not a line icon: it replaced the 1.5 px line
+ * glyph drawn in accent.
+ */
+const PYLONS = ["M2.5 21 4.5 6H9.5V21z", "M21.5 21 19.5 6H14.5V21z"] as const;
+const DISC = { cx: 12, cy: 10, r: 2.1 } as const;
+
+/** The mark is never drawn smaller than this, nor the lockup narrower than 80 px. */
+export const BRAND_MARK_MIN_PX = 16;
+export const BRAND_LOCKUP_MIN_PX = 80;
+
+/**
+ * The mark in the theme's colours: pylons in its ink (`--text-primary`), the
+ * disc in its gold (`--accent`). The colours are the mark's own, so no
+ * stylesheet recolours it; it is decorative beside the wordmark.
+ */
+export function brandMark(size = 18): string {
+  const px = Math.max(BRAND_MARK_MIN_PX, Math.round(size));
+  const ink = PYLONS.map((d) => `<path d="${d}" style="fill:var(--text-primary)"/>`).join("");
+  return `<svg class="brand-mark" width="${px}" height="${px}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ink}<circle cx="${DISC.cx}" cy="${DISC.cy}" r="${DISC.r}" style="fill:var(--accent)"/></svg>`;
+}
+
+/** The lockup: the mark and the wordmark *Sekhemet*, 8 px apart, never under 80 px wide. */
+export function brandLockup(size = 18): string {
+  return `<span class="lockup" style="min-width:${BRAND_LOCKUP_MIN_PX}px">${brandMark(size)}<b class="lbl">Sekhemet</b></span>`;
+}
+
+/** The app icon and favicon: an ink tile with cream pylons and a gold disc (§2.13.6). */
+export const APP_ICON = { tile: "#1D1B17", pylons: "#F3EEE3", disc: "#D9B45A" } as const;
+
+export function appIconSvg(): string {
+  const pylons = PYLONS.map((d) => `<path d="${d}" fill="${APP_ICON.pylons}"/>`).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="${APP_ICON.tile}"/><g transform="translate(4 4)">${pylons}<circle cx="${DISC.cx}" cy="${DISC.cy}" r="${DISC.r}" fill="${APP_ICON.disc}"/></g></svg>`;
+}
+
+// ---------------------------------------------------------------------------
+// The AI badge (dashboard §2.13.8, DB-N9-18, DEC-36)
+// ---------------------------------------------------------------------------
+
+/** Seshat and the Agent are AI teammates: the letters *AI* beside their names, and a spoken label. */
+export const AI_BADGE = { text: "AI", label: "AI teammate" } as const;
+
+export function aiBadge(): string {
+  return `<span class="ai-badge"><span aria-hidden="true">${AI_BADGE.text}</span><span class="sr-only">${AI_BADGE.label}</span></span>`;
+}
+
+/** Who a name belongs to: an AI teammate carries the badge; a person never does. */
+export type TeammateKind = "seshat" | "agent" | "person";
+
+const escName = (v: string) =>
+  String(v)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+/**
+ * A teammate's name as the page shows it: Seshat and the Agent with the *AI*
+ * badge after the name (4 px, §2.13.8), a person's name alone. The Agent has
+ * no avatar anywhere; the kind, never the name, decides the badge.
+ */
+export function teammateName(name: string, kind: TeammateKind): string {
+  const who = `<b class="tm-name">${escName(name)}</b>`;
+  return kind === "person" ? who : `${who}${aiBadge()}`;
 }

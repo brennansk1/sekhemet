@@ -2,7 +2,9 @@
 // cycle. Each lane is a row of the same columns. Lanes are not windowed; the
 // ungrouped board keeps its virtualization.
 import { esc, icon, tip } from "./dom.js";
-import { groupCards } from "./lib/pm.js";
+import { tip as learnTip } from "./learn.js";
+import { columnLessonId } from "./lib/learn.js";
+import { groupCards, showsPoints } from "./lib/pm.js";
 import { openPeek, peekOpenFor } from "./peek.js";
 import { store } from "./store.js";
 import { tileHtml } from "./tile.js";
@@ -27,9 +29,12 @@ function progressHtml(g) {
   const p = g.epic?.progress;
   if (!p || !p.total) return "";
   const pct = Math.round((p.done / p.total) * 100);
+  // Points only with Preferences → Estimation on story points (DB-N7-2).
   const pts =
-    typeof p.pointsDone === "number" && p.points ? ` · ${p.pointsDone} of ${p.points} pts` : "";
-  return `<span class="eprog" title="${esc(`${p.done} of ${p.total} cards done${pts}`)}"><span class="ebar"><i style="width:${pct}%"></i></span><span class="tnum">${p.done} of ${p.total} done${esc(pts)}</span></span>`;
+    showsPoints(store.state.estimation) && typeof p.pointsDone === "number" && p.points
+      ? ` · ${p.pointsDone} of ${p.points} pts`
+      : "";
+  return `<span class="eprog" title="${esc(`${p.done} of ${p.total} issues done${pts}`)}"><span class="ebar"><i style="width:${pct}%"></i></span><span class="tnum">${p.done} of ${p.total} done${esc(pts)}</span></span>`;
 }
 
 export function render(root, cards, { group, sortCards, tileOpts, columns }) {
@@ -39,14 +44,14 @@ export function render(root, cards, { group, sortCards, tileOpts, columns }) {
   const head = `<div class="lane-cols" style="--cols:${cols.length}">${cols
     .map(
       (d) =>
-        `<div class="lc-h"><h2>${esc(d.label)}</h2><span class="c tnum">${inCol(d, cards).length}</span></div>`,
+        `<div class="lc-h"><h2>${esc(d.label)}</h2>${learnTip(columnLessonId(d.id), d.label, { column: d.id, count: inCol(d, cards).length })}<span class="c tnum">${inCol(d, cards).length}</span></div>`,
     )
     .join("")}</div>`;
   const body = groups
     .map((g) => {
       const key = `${group}:${g.key}`;
       const shut = collapsed.has(key);
-      const h = `<header class="lane-h"><button class="chev" type="button" data-lane-toggle="${esc(key)}" aria-expanded="${!shut}" aria-label="${esc(`${shut ? "Expand" : "Collapse"} ${g.label}`)}">${icon(shut ? "chevron-right" : "chevron-down", 14, "ic s14")}</button><b>${esc(g.label)}</b><span class="sec tnum">${g.cards.length} ${g.cards.length === 1 ? "card" : "cards"}${g.points ? ` · ${g.points} pts` : ""}</span>${progressHtml(g)}</header>`;
+      const h = `<header class="lane-h"><button class="chev" type="button" data-lane-toggle="${esc(key)}" aria-expanded="${!shut}" aria-label="${esc(`${shut ? "Expand" : "Collapse"} ${g.label}`)}">${icon(shut ? "chevron-right" : "chevron-down", 14, "ic s14")}</button><b>${esc(g.label)}</b><span class="sec tnum">${g.cards.length} ${g.cards.length === 1 ? "card" : "cards"}${g.points && showsPoints(store.state.estimation) ? ` · ${g.points} pts` : ""}</span>${progressHtml(g)}</header>`;
       if (shut) return `<section class="lane shut" data-lane="${esc(key)}">${h}</section>`;
       const cells = cols
         .map((d) => {

@@ -13,7 +13,7 @@ import {
   strengthLabel,
   valueBar,
 } from "./lib/pm.js";
-import { formatWait, parseTitle, kindLabel as vocabKindLabel } from "./lib/vocabulary.js";
+import { formatWait } from "./lib/vocabulary.js";
 import { cardChip } from "./marks.js";
 import { openPicker } from "./picker.js";
 import { setTopbar } from "./shell.js";
@@ -25,12 +25,6 @@ function ago(iso) {
   const ms = Date.now() - t;
   return ms < 60_000 ? "just now" : `${formatWait(ms)} ago`;
 }
-
-/** Scope kinds arrive raw (`Rule`, `Interface`); show the product vocabulary. */
-const kindLabel = (k) => {
-  const spidr = parseTitle(`x (SPIDR: ${k})`).kinds[0];
-  return vocabKindLabel(spidr ?? k) || k;
-};
 
 function editForm(kind, id, text) {
   return `<form class="lr-edit" data-edit-form="${kind}:${esc(id)}"><textarea rows="3" aria-label="Edit the wording">${esc(text)}</textarea><div class="acts"><button class="btn ghost sm" type="button" data-edit-cancel>Cancel ${kbd("Esc")}</button><button class="btn sm primary" type="submit">Save ${kbd("⌘↵")}</button></div></form>`;
@@ -47,10 +41,10 @@ function evidenceHtml(list) {
 
 function ruleHtml(r, maxAbs, ui) {
   const editing = ui.editing === `rule:${r.id}`;
-  const chips = scopeChips(r.scope, kindLabel)
+  const chips = scopeChips(r.scope)
     .map(
       (c) =>
-        `<span class="lchip"><span class="sec">${esc(c.label)}:</span> <span class="${c.label === "Files" || c.label === "Error" ? "mono" : ""}">${esc(c.value)}</span></span>`,
+        `<span class="lchip"><span class="sec">${esc(c.label)}:</span> <span class="${c.label === "Files" || c.label === "Error" || c.label === "Kind" ? "mono" : ""}">${esc(c.value)}</span></span>`,
     )
     .join("");
   const vb = valueBar(r.value, maxAbs);
@@ -68,7 +62,7 @@ function ruleHtml(r, maxAbs, ui) {
   } else if (r.status === "active") {
     acts = `<button class="btn sm" type="button" data-edit>Edit</button><button class="btn sm ${retireSuggested(r) ? "" : "ghost"}" type="button" data-retire>Retire</button>`;
   }
-  const role = r.role === "manager" ? "For Seshat" : "For the Worker";
+  const role = r.role === "manager" ? "For Seshat" : "For the agent";
   const text = editing ? editForm("rule", r.id, r.text) : `<p class="lr-text">${esc(r.text)}</p>`;
   return `<li class="lrule ${esc(r.status)}${retireSuggested(r) ? " warn" : ""}" data-rule-id="${esc(r.id)}"><div class="lr-main"><div class="lr-head"><span class="role">${esc(role)}</span>${r.status === "active" && !r.readonly ? `<span class="role reach${r.reach === "global" ? " global" : ""}" title="${esc(r.reach === "global" ? "Lives in ~/.config/sekhemet and applies to every repository on this machine" : "Applies to this project only")}">${r.reach === "global" ? "All projects" : "This project"}</span>` : ""}<span class="sec">${esc(RULE_SOURCE_LABELS[r.source] ?? r.source)}${r.createdAt ? ` · ${esc(ago(r.createdAt))}` : ""}</span></div>${text}<div class="lr-scope">${chips}</div>${r.status === "candidate" || r.unused ? "" : `<div class="lr-meta">${value}${counts}</div>`}${retire}${evidenceHtml(r.evidence)}</div>${editing ? "" : `<div class="lr-acts">${acts}</div>`}</li>`;
 }
@@ -140,14 +134,14 @@ export function learningHtml(data, ui) {
     `<ul class="lrules">${items.map((r) => ruleHtml(r, maxAbs, ui)).join("")}</ul>`;
   const cand = g.candidate.length
     ? list(g.candidate)
-    : '<p class="sec empty-l">Nothing awaiting approval. New rules come from fixes that took the Worker several tries, your send-back notes, and Seshat\'s review at the end of a run.</p>';
+    : '<p class="sec empty-l">Nothing awaiting approval. New rules come from fixes that took the agent several tries, your send-back notes, and Seshat\'s review at the end of a run.</p>';
   const active = g.active.length ? list(g.active) : '<p class="sec empty-l">No active rules.</p>';
   const retired = g.retired.length
     ? `<details class="lr-more"><summary>${g.retired.length} retired</summary>${list(g.retired)}</details>`
     : '<p class="sec empty-l">None retired.</p>';
-  return `<div class="lp"><p class="lp-lede">${icon("lock", 14, "ic s14")}<span>Learned from gate results and what you do, never from a model grading itself. Everything stays on this machine and is recorded on the ledger. A rule takes effect only after you approve it, and you can edit or retire any of them.</span></p>
+  return `<div class="lp"><p class="lp-lede">${icon("lock", 14, "ic s14")}<span>Learned from check results and what you do, never from a model grading itself. Everything stays on this machine and is recorded on the ledger. A rule takes effect only after you approve it, and you can edit or retire any of them.</span></p>
 <section id="pb-candidates" class="lsec"><h3 class="sh">Needs your approval <span class="sec">${g.candidate.length} ${g.candidate.length === 1 ? "candidate" : "candidates"}</span></h3>${cand}</section>
-<section id="pb-active" class="lsec"><h3 class="sh">Active <span class="sec">${g.active.length} · given to the Worker or Seshat when their scope matches · value rises with each helpful use and decays over time</span></h3>${active}</section>
+<section id="pb-active" class="lsec"><h3 class="sh">Active <span class="sec">${g.active.length} · given to the agent or Seshat when their scope matches · value rises with each helpful use and decays over time</span></h3>${active}</section>
 <section id="pb-retired" class="lsec"><h3 class="sh">Retired</h3>${retired}</section>
 ${profileSectionHtml(data.profile, ui)}</div>`;
 }

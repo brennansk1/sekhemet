@@ -73,6 +73,7 @@ describe("the burn-up series, replayed from the ledger (DB-P3-14)", () => {
       }),
     ).toEqual({
       scope: "cycle",
+      unit: "points",
       cycleId: "cyc_3",
       name: "Cycle 3",
       startsOn: "2026-09-21",
@@ -91,6 +92,7 @@ describe("the burn-up series, replayed from the ledger (DB-P3-14)", () => {
   it("the project: every card but epics and rejected ones, from the first card's day", () => {
     expect(burnupFromEvents(events, { now })).toEqual({
       scope: "project",
+      unit: "points",
       days: [
         { date: "2026-09-20", done: 0, scope: 3 },
         { date: "2026-09-21", done: 0, scope: 9 },
@@ -122,6 +124,12 @@ describe("the burn-up series, replayed from the ledger (DB-P3-14)", () => {
       done: 21,
       scope: 22,
     });
+  });
+
+  it("DB-N7-2: counts issues, one each, when the project does not estimate", () => {
+    const issues = burnupFromEvents(events, { now, unit: "issues" });
+    expect(issues.unit).toBe("issues");
+    expect(issues.days.at(-1)).toEqual({ date: "2026-09-25", done: 2, scope: 3 });
   });
 
   it("a cycle that has not started has no days yet", () => {
@@ -208,6 +216,12 @@ describe("the burn-up and quick create on a real server (DB-P3-12, DB-P3-14)", (
     expect(body.scope).toBe("cycle");
     expect(body.days).toEqual([{ date: today, done: 3, scope: 4 }]);
     expect(body.unestimated).toBe(1);
+    // DB-N7-2: in issues when the board asks for them (estimation off).
+    const inIssues = (await (
+      await fetch(`${base()}/api/metrics/burnup?cycle=${cycle.id}&unit=issues`)
+    ).json()) as { unit: string; days: unknown[] };
+    expect(inIssues.unit).toBe("issues");
+    expect(inIssues.days).toEqual([{ date: today, done: 1, scope: 2 }]);
 
     const p = (await (await fetch(`${base()}/api/metrics/burnup?scope=project`)).json()) as {
       days: { date: string; done: number; scope: number }[];
@@ -233,7 +247,7 @@ describe("the burn-up and quick create on a real server (DB-P3-12, DB-P3-14)", (
 
     const missing = await fetch(`${base()}/api/metrics/burnup?cycle=cyc_nope`);
     expect(missing.status).toBe(404);
-    expect(await missing.json()).toEqual({ error: "No cycle cyc_nope" });
+    expect(await missing.json()).toEqual({ error: "No sprint cyc_nope" });
   });
 
   it("POST /api/pm/create-card: a create proposal in Seshat's thread, applied through the planner", async () => {

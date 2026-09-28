@@ -121,7 +121,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     halts: false,
     measuresModel: true,
     goesTo: "Verify",
-    nextAction: "Read what the Worker said on each silent step, and the call it should have made.",
+    nextAction: "Read what the agent said on each silent step, and the call it should have made.",
   },
   oscillation_detected: {
     class: "no_progress",
@@ -184,7 +184,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     halts: true,
     measuresModel: false,
     goesTo: "Verify",
-    nextAction: "Run the gates.",
+    nextAction: "Run the checks.",
   },
   scope_violation: {
     class: "scope_violation",
@@ -245,7 +245,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     halts: true,
     measuresModel: false,
     goesTo: "Planning",
-    nextAction: "The Planner re-plans; the plan is recorded in the dossier.",
+    nextAction: "The planning model re-plans; the plan is recorded in the dossier.",
   },
   gate_suspected: {
     class: "capability_ceiling",
@@ -258,7 +258,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     measuresModel: true,
     goesTo: "Parked",
     nextAction:
-      "See the gate and the Worker's reason, and decide whether the gate or the card is wrong.",
+      "See the check and the agent's reason, and decide whether the check or the issue is wrong.",
   },
   human_abort: {
     class: "human_abort",
@@ -368,7 +368,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     halts: false,
     measuresModel: false, // rule 31: never the Worker's fault (DEC-42)
     goesTo: "Planning",
-    nextAction: "See the gates that passed on the card branch and failed after the rebase.",
+    nextAction: "See the checks that passed on the issue branch and failed after the rebase.",
   },
 };
 

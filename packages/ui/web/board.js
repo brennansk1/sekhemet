@@ -2,9 +2,10 @@
 // for empty columns, keyed tile patching and the keyboard. What the board shows
 // is the pure model's (`lib/columns.js`, `lib/tiles.js`, dashboard P3).
 import { openCreate } from "./create.js";
-import { $, $$, esc, icon, postJSON, tip } from "./dom.js";
+import { $, $$, brandMark, esc, icon, postJSON, tip } from "./dom.js";
 import { fieldKey, selectionOrFocused } from "./fields.js";
 import * as lanes from "./lanes.js";
+import { tip as learnTip } from "./learn.js";
 import {
   boardColumnDefs,
   boardModel,
@@ -18,7 +19,9 @@ import {
   writePipeline,
 } from "./lib/columns.js";
 import { QUICK_CREATE_COPY, epicFromFilter } from "./lib/create.js";
+import { columnLessonId } from "./lib/learn.js";
 import { formatQuery } from "./lib/pm.js";
+import { START_PROJECT_OPENING } from "./lib/seshat.js";
 import { GATE_STATE_LABELS, formatDuration } from "./lib/vocabulary.js";
 import * as listView from "./list.js";
 import * as mapView from "./map.js";
@@ -147,6 +150,7 @@ function model() {
     collapsed: ui.collapsed,
     sort: ui.sort,
     wontDo: wantsWontDo(),
+    estimation: s.estimation,
   });
 }
 
@@ -159,7 +163,20 @@ function headerHtml(col) {
   const c = lim
     ? `<span class="c tnum${tone}" ${tip(lim.derivation)}>${esc(lim.text)}</span>`
     : `<span class="c tnum${tone}">${col.count}</span>`;
-  const pts = `<span class="pts tnum">${esc(col.pointsText)}</span>`;
+  // Tips (DB-P4-2): a `?` on the header, the WIP count and the points, each
+  // with the numbers this header shows (DB-P4-4: the In review limit's
+  // review minutes a day and minutes a review). Nothing with Tips off.
+  const reviewLimit =
+    col.states.length === 1 && col.states[0] === "review" ? store.state.reviewLimit : null;
+  const facts = {
+    column: col.id,
+    count: lim ? lim.count : col.count,
+    ...(lim ? { limit: lim.limit } : {}),
+    ...(reviewLimit ? { reviewLimit } : {}),
+  };
+  const colTip = learnTip(columnLessonId(col.id), col.label, facts);
+  const wipTip = lim ? learnTip("wip", "WIP limit", facts) : "";
+  const pts = `<span class="pts tnum">${esc(col.pointsText)}</span>${col.pointsText ? learnTip("points", "Story points", { column: col.id, points: col.points }) : ""}`;
   const cap = lim
     ? `<div class="cap${lim.state ? ` ${lim.state}` : ""}"><i style="width:${Math.min(100, Math.round((lim.count / Math.max(1, lim.limit)) * 100))}%"></i></div>`
     : "";
@@ -167,7 +184,7 @@ function headerHtml(col) {
   const add = CREATE_COLUMNS.has(col.id)
     ? `<button class="more add" type="button" data-create aria-label="${esc(QUICK_CREATE_COPY.plus)}" ${tip(QUICK_CREATE_COPY.plusTip)}>${icon("plus")}</button>`
     : "";
-  return `<div class="col-h"><h2 id="h-${esc(col.id)}">${esc(col.label)}</h2>${c}${pts}${add}<button class="more" type="button" data-colmenu="${esc(col.id)}" aria-label="${esc(col.label)} column options"${lim ? ` aria-description="${esc(lim.derivation)}"` : ""}>${icon("more")}</button></div>${cap}`;
+  return `<div class="col-h"><h2 id="h-${esc(col.id)}">${esc(col.label)}</h2>${colTip}${c}${wipTip}${pts}${add}<button class="more" type="button" data-colmenu="${esc(col.id)}" aria-label="${esc(col.label)} column options"${lim ? ` aria-description="${esc(lim.derivation)}"` : ""}>${icon("more")}</button></div>${cap}`;
 }
 
 /** Empty and folded columns as chips above the board, and the stages toggle (DB-P3-10). */
@@ -247,6 +264,7 @@ function tileOpts(card) {
       Date.now() - movedAt < JUST_NOW_MS &&
       store.state.focusedId !== card.id,
     pmPaused: Boolean(store.state.pm?.status?.workerPaused),
+    estimation: store.state.estimation,
     hidePriority: vb.group === "priority",
     epics: store.state.epics,
   };
@@ -394,7 +412,7 @@ function render() {
   if (s.loaded && s.cards.length === 0) {
     ui.layoutKey = "";
     // DS-TO-16 (dashboard item 10): start from a brief, or take over a repository someone left.
-    ui.root.innerHTML = `<div class="board-empty">${icon("glyph", 24, "ic s24")}<b>No cards yet.</b><span class="board-empty-acts"><button type="button" class="btn primary" data-empty-action="start">Start a project</button> <button type="button" class="btn" data-empty-action="takeover">Take over a project</button></span><span>Take over reads a repository someone else left, runs what it can once you trust it, and proposes a plan in Seshat.</span><span>From the terminal: <code>sekhemet plan "Build a tamper-evident ledger"</code></span></div>`;
+    ui.root.innerHTML = `<div class="board-empty">${brandMark(24)}<b>No cards yet.</b><span class="board-empty-acts"><button type="button" class="btn primary" data-empty-action="start">Start a project</button> <button type="button" class="btn" data-empty-action="takeover">Take over a project</button></span><span>Take over reads a repository someone else left, runs what it can once you trust it, and proposes a plan in Seshat.</span><span>From the terminal: <code>sekhemet plan "Build a tamper-evident ledger"</code></span></div>`;
     return;
   }
   $(".board-empty", ui.root)?.remove();
@@ -695,7 +713,7 @@ function togglePipeline() {
 /** The empty board's two ways in (DS-TO-16): both open Seshat. */
 async function emptyAction(action) {
   if (action === "start") {
-    askMerit("Start a project: ");
+    askMerit(START_PROJECT_OPENING);
     return;
   }
   togglePmPanel(true);

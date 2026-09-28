@@ -78,6 +78,7 @@ describe("the board API for the professional board (dashboard P3)", () => {
     wipLimits: Record<string, number>;
     reviewLimit?: unknown;
     epics: { id: string; title: string }[];
+    estimation?: "off" | "points";
   };
 
   const firstStart = () =>
@@ -109,7 +110,37 @@ describe("the board API for the professional board (dashboard P3)", () => {
     expect(run?.display.enteredColumnAt).not.toBe(run?.display.startedAt);
     const tile = tileModel(run as never, { now: Date.now() });
     expect(tile.owner).toEqual({ initials: "JD", name: "Jane Doe" });
-    expect(tile.delegate).toEqual({ text: "Worker", worker: true });
+    expect(tile.delegate).toEqual({ text: "Agent", worker: true });
+  });
+
+  it("DB-N7-2: carries the project's Preferences → Estimation, off until the team turns on story points", async () => {
+    const project = (await store.ensureProject({ rootPath: repo, name: "Board P3" })).id;
+    const board = async () =>
+      (await (await fetch(`${base()}/api/board?project=${project}`)).json()) as {
+        estimation?: string;
+        cards: Parameters<typeof tileModel>[0][];
+      };
+    expect((await board()).estimation).toBe("off");
+    const patch = (estimation: unknown) =>
+      fetch(`${base()}/api/projects/${project}/settings`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", "x-sekhemet-action": "1" },
+        body: JSON.stringify({ estimation }),
+      });
+    expect((await patch("hours")).status).toBe(400);
+    const on = await patch("points");
+    expect(on.status).toBe(200);
+    expect(((await on.json()) as { settings: { estimation: string } }).settings.estimation).toBe(
+      "points",
+    );
+    const b = await board();
+    expect(b.estimation).toBe("points");
+    // The tile shows its points only now.
+    const run = b.cards.find((c) => c.id === "card_run");
+    expect(tileModel(run as never, { now: Date.now() }).points).toBeUndefined();
+    expect(tileModel(run as never, { now: Date.now(), estimation: "points" }).points).toBe("3 pts");
+    expect((await patch("off")).status).toBe(200);
+    expect((await board()).estimation).toBe("off");
   });
 
   it("dates a later first start too, reading only the ledger entries since the last board", async () => {
@@ -168,12 +199,19 @@ describe("the board API for the professional board (dashboard P3)", () => {
         now,
         wipLimits: b.wipLimits,
         reviewLimit: b.reviewLimit as never,
+        ...(b.estimation ? { estimation: b.estimation } : {}),
       });
       return {
         columns: m.columns.map((c) => ({
           id: c.id,
           header: [c.label, c.count, c.pointsText, c.limit?.text, c.limit?.derivation],
-          tiles: c.cards.map((x) => tileModel(x as never, { now, epics: b.epics })),
+          tiles: c.cards.map((x) =>
+            tileModel(x as never, {
+              now,
+              epics: b.epics,
+              ...(b.estimation ? { estimation: b.estimation } : {}),
+            }),
+          ),
         })),
         chips: m.chips.map((c) => c.id),
       };
@@ -184,10 +222,11 @@ describe("the board API for the professional board (dashboard P3)", () => {
       "in_review",
       "on_hold",
     ]);
+    // Estimation is off (DB-N7-2): the header shows no points.
     expect(view(reloaded).columns[1]?.header).toEqual([
       "In review",
       1,
-      "2 pts",
+      "",
       "1 / 4",
       "Limit 4, from 60 review minutes a day at ~15 min per card (the starting estimate until you review a card).",
     ]);

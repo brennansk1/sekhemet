@@ -108,10 +108,11 @@ export async function roleWeightsFinder(modelsDir?: string): Promise<RoleWeights
 
 /** The four roles the paragraph names, in order, with the roster's model for each. */
 const ROLES: readonly { role: ConfigRole; label: string; model: (r: Roster) => string }[] = [
-  { role: "worker", label: "Worker", model: (r) => r.worker },
-  { role: "planner", label: "Planner", model: (r) => r.manager },
-  { role: "reviewer", label: "Reviewer", model: (r) => r.reviewer },
-  { role: "researcher", label: "Researcher", model: (r) => r.researcher },
+  // DEC-31: the roles as teams name them (NAMING), never Worker or Planner.
+  { role: "worker", label: "Coding model", model: (r) => r.worker },
+  { role: "planner", label: "Planning model", model: (r) => r.manager },
+  { role: "reviewer", label: "Review model", model: (r) => r.reviewer },
+  { role: "researcher", label: "Research model", model: (r) => r.researcher },
 ];
 
 export type HomePage = "board" | "configuration";
@@ -235,7 +236,7 @@ function paragraph(plan: FirstRunPlan): string[] {
     const worker = plan.weights[0];
     const planner = plan.weights[1];
     lines.push(
-      `${plan.chip}, ${plan.memoryGb} GB. No models found yet — recommended: Worker ${worker?.model}, Planner ${planner?.model}.`,
+      `${plan.chip}, ${plan.memoryGb} GB. No models found yet — recommended: ${worker?.label} ${worker?.model}, ${planner?.label} ${planner?.model}.`,
     );
   } else {
     lines.push(`${plan.chip}, ${plan.memoryGb} GB, tier ${plan.roster.tier}.`);
@@ -256,10 +257,10 @@ function paragraph(plan: FirstRunPlan): string[] {
   const ids = plan.gates.defs.map((g) => g.id);
   lines.push(
     ids.length
-      ? `Gates from ${plan.gates.sources.join(", ")}: ${ids.join(", ")}.`
+      ? `Checks from ${plan.gates.sources.join(", ")}: ${ids.join(", ")}.`
       : plan.empty
         ? START_BY_CONVERSATION
-        : "No gates found yet: add typecheck, lint and test scripts, and run `sekhemet` again.",
+        : "No checks found yet: add typecheck, lint and test scripts, and run `sekhemet` again.",
   );
   if (plan.gates.teamTools.length) {
     lines.push(`  Your team's tools and settings: ${plan.gates.teamTools.join(", ")}.`);
@@ -269,7 +270,7 @@ function paragraph(plan: FirstRunPlan): string[] {
   );
   if (skipped.length) {
     lines.push(
-      `  CI steps not run as gates: ${skipped.map((s) => `${s.command} (${s.reason?.replace(/_/g, " ")})`).join("; ")}.`,
+      `  CI steps not run as checks: ${skipped.map((s) => `${s.command} (${s.reason?.replace(/_/g, " ")})`).join("; ")}.`,
     );
   }
   if (plan.gatesDiff) {
@@ -366,7 +367,7 @@ export async function runFirstRun(
   // its diff on screen (the paragraph showed it); --yes never replaces one.
   const gates = installGates(repo, plan.gates.toml, options.yes !== true && plan.gatesDiff !== "");
   if (gates.state === "written" || gates.state === "replaced") wrote.push(".sekhemet/gates.toml");
-  if (gates.state === "replaced") say(`Kept your previous gates as ${gates.backup}.`);
+  if (gates.state === "replaced") say(`Kept your previous checks file as ${gates.backup}.`);
   if (gates.state === "needs_confirmation") {
     say(
       "Kept your .sekhemet/gates.toml; `sekhemet dev onboard --apply` replaces it after showing the diff.",

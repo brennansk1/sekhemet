@@ -229,7 +229,7 @@ describe("Load, Unload and Qualify to assign on the dashboard (DB-N6-4, rule 20a
     const r = await call("POST", "/api/config/roles/planner/qualify", { model: "fake-planner" });
     expect(r.status).toBe(200);
     expect(r.body.qualified).toBe(false);
-    expect(String(r.body.reason)).toMatch(/qualification/);
+    expect(String(r.body.reason)).toMatch(/verifies it on this machine/);
     expect(asked).toEqual(["planner:fake-planner"]);
   }, 60_000);
 });
@@ -416,8 +416,8 @@ describe("Use the recommended models in the page (DB-N6-16, Chromium)", () => {
     await dialog.getByText("Nothing to download.").waitFor();
     expect(await log.getEventsByTypes(["models/assigned"])).toEqual([]);
     await dialog.getByRole("button", { name: "Use them" }).click();
-    await page.getByText("Worker: tiny assigned").waitFor({ timeout: 20_000 });
-    await page.getByText(/Reviewer: not assigned — /).waitFor();
+    await page.getByText("Coding model: tiny assigned").waitFor({ timeout: 20_000 });
+    await page.getByText(/Review model: not assigned — /).waitFor();
     expect((await log.getEventsByTypes(["models/assigned"])).length).toBe(3);
   }, 60_000);
 });

@@ -44,18 +44,18 @@ export interface FindingRow {
 
 /** Every word of the Review surface's team and forcing parts. */
 export const REVIEW_DESK_COPY = {
-  heading: "Reviewer",
-  why: "The Reviewer checked the diff against the card's criteria. It's advice, not a gate: Accept is yours.",
+  heading: "AI review",
+  why: "The review model checked the diff against the issue's criteria. It's advice, not a check: Accept is yours.",
   verdict: { unmet: "Unmet", unclear: "Unclear", met: "Met" } as Record<FindingVerdict, string>,
   acknowledge: "Acknowledge",
   acknowledged: "Acknowledged",
   acknowledgeKey: "x acknowledges the focused finding",
   metMore: (n: number) => `${n} met`,
   coverageRead: (read: number, total: number, uncited: number, changed: number) =>
-    `Reviewer read ${read} of ${total} ${total === 1 ? "file" : "files"}; ${uncited} of ${changed} changed ${changed === 1 ? "line is" : "lines are"} cited by no finding.`,
+    `AI review read ${read} of ${total} ${total === 1 ? "file" : "files"}; ${uncited} of ${changed} changed ${changed === 1 ? "line is" : "lines are"} cited by no finding.`,
   coverageUnrecorded: (uncited: number, changed: number) =>
-    `The Reviewer did not record which files it read; ${uncited} of ${changed} changed ${changed === 1 ? "line is" : "lines are"} cited by no finding.`,
-  notReadHeading: "Files the Reviewer did not read",
+    `AI review did not record which files it read; ${uncited} of ${changed} changed ${changed === 1 ? "line is" : "lines are"} cited by no finding.`,
+  notReadHeading: "Files AI review did not read",
   uncitedHeading: "Changed lines cited by no finding",
   seen: "Seen",
   findingsLeft: (n: number) => `${n} ${n === 1 ? "finding" : "findings"} to acknowledge`,
@@ -65,19 +65,19 @@ export const REVIEW_DESK_COPY = {
   whoMay: (names: string[]) =>
     `Who may accept: ${names.length ? names.join(", ") : "no other Accept-holder yet"}.`,
   notIndependent: (because: "built" | "delegated") =>
-    `You ${because === "built" ? "built this card" : "delegated this card to the Worker"}; on a team another Accept-holder accepts it.`,
+    `You ${because === "built" ? "built this card" : "delegated this card to the agent"}; on a team another Accept-holder accepts it.`,
   notPermitted: "You do not hold the Accept permission on this project.",
   notCodeOwner: "This project needs a code owner's accept, and you own none of this card's files.",
   noCodeOwner: "no code owner is named in CODEOWNERS for these files",
   builtBy: (name: string) => `Built by ${name} (person)`,
   builtByFact: (name: string) => `${name} (person)`,
   builtByLabel: "Built by",
-  worker: "Worker",
+  worker: "Agent",
   supersededHeading: "Superseded base tests",
   supersededOld: "Base test",
   supersededNew: "New version",
   supersededNotNeeded:
-    "Declared; the base test did not fail, so the regression gate did not need it",
+    "Declared; the base test did not fail, so the regression check did not need it",
   approvalsHeading: "Test approvals",
   approved: (by: string, what?: "file" | "examples") =>
     `Approved by ${by}${what === "examples" ? " · example table" : ""}`,

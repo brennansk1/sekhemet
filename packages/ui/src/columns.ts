@@ -8,7 +8,7 @@
  * imports stay relative to the other published lib modules.
  */
 import type { CardStatus } from "@sekhemet/kernel";
-import { type PmCardLike, sortByPriority } from "./pm.js";
+import { type Estimation, type PmCardLike, showsPoints, sortByPriority } from "./pm.js";
 import {
   BOARD_COLUMNS,
   type BoardColumnDef,
@@ -63,6 +63,7 @@ export interface ColumnView<C extends ColumnCardLike> {
   /** Every card in the column, filtered or not. */
   count: number;
   points: number;
+  /** `13 pts`, only with Preferences → Estimation on story points; empty otherwise (DB-N7-2). */
   pointsText: string;
   limit?: ColumnLimit;
   /** `parked`: On hold's count in `--state-parked` (DB-P3-18). */
@@ -86,6 +87,8 @@ export interface BoardModelInput<C extends ColumnCardLike> {
   sort?: Readonly<Record<string, SortMode>>;
   /** The filter asks for rejected cards: show the Won't do column. */
   wontDo?: boolean;
+  /** Preferences → Estimation, the project's (DB-N7-2). */
+  estimation?: Estimation;
 }
 
 export interface BoardModel<C extends ColumnCardLike> {
@@ -119,7 +122,7 @@ export function pointsText(points: number): string {
   return `${points} ${points === 1 ? "pt" : "pts"}`;
 }
 
-const FULL = "Full. The Worker holds finished cards until you clear one.";
+const FULL = "Full. The agent holds finished cards until you clear one.";
 
 /** The In review limit and its derivation, whatever its size (DB-P3-9). */
 export function reviewLimitText(f: ReviewLimitFacts, now: { count: number; held: number }): string {
@@ -227,7 +230,7 @@ export function boardModel<C extends ColumnCardLike>(input: BoardModelInput<C>):
       cards: sortColumn(shown, mode, input.now),
       count: all.length,
       points,
-      pointsText: pointsText(points),
+      pointsText: showsPoints(input.estimation) ? pointsText(points) : "",
       ...(limit ? { limit } : {}),
       countTone: def.states.includes("parked") && all.length > 0 ? "parked" : "",
     };

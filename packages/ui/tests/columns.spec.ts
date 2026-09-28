@@ -305,31 +305,34 @@ describe("DB-P3-4, 5: the tile's anatomy", () => {
     },
   );
 
-  it("shows key, type, points, owner, the Worker chip, title, priority, epic, labels, status and age", () => {
-    expect(tileModel(c, { now: NOW, epics })).toEqual({
+  it("shows key, type, points, owner, the Agent chip, title, priority, epic, labels, status and age", () => {
+    // Points show because the team turned on story points (DB-N7-2); the
+    // status names no step count and there is no budget bar (DB-N7-3).
+    expect(tileModel(c, { now: NOW, epics, estimation: "points" })).toEqual({
       id: "card_a1",
       column: "in_progress",
       key: "CHR-12",
       type: { icon: "type-story", label: "Story" },
       points: "3 pts",
       owner: { initials: "JD", name: "Jane Doe" },
-      delegate: { text: "Worker", worker: true },
+      delegate: { text: "Agent", worker: true },
       title: "Implement canonical JSON",
       priority: 2,
       epic: { id: "card_epic", title: "Ledger" },
       labels: ["api", "security"],
       moreLabels: ["perf"],
       status: {
-        text: "Step 8 of 40",
+        text: "Working",
         tone: "running",
         mark: "running",
         old: false,
         wraps: false,
       },
       age: "22h",
-      budget: { text: "8 of 40 steps", ratio: 0.2, level: "run" },
       pips: false,
     });
+    // With estimation off (the default) the same tile shows no points.
+    expect(tileModel(c, { now: NOW, epics }).points).toBeUndefined();
   });
 
   it("leaves out what is not set: no points, owner, delegate, priority glyph or epic", () => {
@@ -347,7 +350,7 @@ describe("DB-P3-4, 5: the tile's anatomy", () => {
     });
   });
 
-  it("DB-P3-5: a person delegate is named; the Worker is text, never an avatar", () => {
+  it("DB-P3-5: a person delegate is named; the Agent is text, never an avatar", () => {
     const person = boardCard(
       {
         id: "card_p",
@@ -358,7 +361,7 @@ describe("DB-P3-4, 5: the tile's anatomy", () => {
     );
     expect(tileModel(person, { now: NOW }).delegate).toEqual({ text: "Sam Ortiz", worker: false });
     const worker = tileModel(c, { now: NOW });
-    expect(worker.delegate).toEqual({ text: "Worker", worker: true });
+    expect(worker.delegate).toEqual({ text: "Agent", worker: true });
     expect(worker.owner?.initials).toBe("JD");
     // An owner with no recorded name still shows, with its words.
     const unnamed = boardCard({ id: "card_u", owner: "p_zz" } as Partial<CardRecord>);
@@ -368,12 +371,12 @@ describe("DB-P3-4, 5: the tile's anatomy", () => {
     });
   });
 
-  it("types each tier with its own icon and word", () => {
+  it("types each tier by its standard issue type (DEC-31): containers by tier, work by what it changes", () => {
     const tiers = ["initiative", "epic", "feature", "story", "task"] as const;
     expect(tiers.map((tier) => tileModel(boardCard({ tier }), { now: NOW }).type)).toEqual([
       { icon: "layers", label: "Initiative" },
       { icon: "layers", label: "Epic" },
-      { icon: "type-feature", label: "Feature" },
+      { icon: "type-story", label: "Story" },
       { icon: "type-story", label: "Story" },
       { icon: "type-task", label: "Task" },
     ]);
@@ -404,10 +407,8 @@ describe("DB-P3-4, 5: the tile's anatomy", () => {
     expect(tileModel(held, { now: NOW }).status?.text).toBe("Accepted · PR #14 open");
   });
 
-  it("says the Worker is paused while Seshat replies", () => {
-    expect(tileModel(c, { now: NOW, pmPaused: true }).status?.text).toBe(
-      "Paused for Seshat · step 8 of 40",
-    );
+  it("says the agent is paused while Seshat replies, with no step count (DB-N7-3)", () => {
+    expect(tileModel(c, { now: NOW, pmPaused: true }).status?.text).toBe("Paused for Seshat");
   });
 });
 
@@ -438,7 +439,7 @@ describe("DB-P3-6: the blocker flag", () => {
       { now: NOW },
     );
     expect(t.blocker).toEqual({ text: "Blocked · Needs the API key · waits on hasher" });
-    expect(t.status?.text).toBe("Step 3 of 40");
+    expect(t.status?.text).toBe("Working");
   });
 
   it("DB-P3-12: the criteria-approval hold points to the card's Approve, never to the CLI", () => {
@@ -509,7 +510,7 @@ describe("DB-P3-9: headers carry count, limit with its derivation, and points", 
         { count: 25, held: 1 },
       ),
     ).toBe(
-      "Limit 25, from 375 review minutes a day at ~15 min per card (the starting estimate until you review a card). Full. The Worker holds finished cards until you clear one. An accepted card waiting on its pull request does not count.",
+      "Limit 25, from 375 review minutes a day at ~15 min per card (the starting estimate until you review a card). Full. The agent holds finished cards until you clear one. An accepted card waiting on its pull request does not count.",
     );
     expect(reviewLimitText({ limit: 2, fixed: true }, { count: 3, held: 0 })).toBe(
       "Limit 2, set by [review] wip in the project configuration. Over the limit.",
@@ -529,6 +530,7 @@ describe("DB-P3-9: headers carry count, limit with its derivation, and points", 
       now: NOW,
       wipLimits: { review: 2, backlog: 500 },
       reviewLimit: { limit: 2, minutesPerDay: 60, minutesPerCard: 30, reviews: 3, fixed: false },
+      estimation: "points",
     });
     const byId = Object.fromEntries(m.columns.map((c) => [c.id, c]));
     expect(byId.in_review?.limit).toEqual({
@@ -537,7 +539,7 @@ describe("DB-P3-9: headers carry count, limit with its derivation, and points", 
       state: "full",
       text: "2 / 2",
       derivation:
-        "Limit 2, from 60 review minutes a day at ~30 min per card (the median of 3 reviews). Full. The Worker holds finished cards until you clear one. An accepted card waiting on its pull request does not count.",
+        "Limit 2, from 60 review minutes a day at ~30 min per card (the median of 3 reviews). Full. The agent holds finished cards until you clear one. An accepted card waiting on its pull request does not count.",
     });
     expect(byId.in_review?.pointsText).toBe("8 pts");
     expect(byId.backlog?.pointsText).toBe("1 pt");
@@ -571,7 +573,7 @@ describe("DB-P3-10: empty columns are chips; Done is a column whenever it has ca
     expect(m.chips.map((c) => [c.label, c.count, c.empty])).toEqual([
       ["Backlog", 0, "Ideas and split-off work."],
       ["To do", 0, "Cards whose dependencies are done, and cards being planned."],
-      ["In progress", 0, "No Worker running."],
+      ["In progress", 0, "No agent running."],
       ["In review", 0, "Nothing waiting for you."],
     ]);
   });

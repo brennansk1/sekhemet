@@ -64,11 +64,12 @@ export const signTestCompare: PairedCompare = (a, b) => {
   return { better, worse, indistinguishable: !(p < 0.05) };
 };
 
+/** The role as a person reads it (DEC-31): the Coding, Planning, Review and Research models. */
 const ROLE_NAME: Record<ConfigRole, string> = {
-  worker: "the Worker",
-  planner: "the Planner",
-  reviewer: "the Reviewer",
-  researcher: "the Researcher",
+  worker: "the Coding model",
+  planner: "the Planning model",
+  reviewer: "the Review model",
+  researcher: "the Research model",
   vision: "vision",
 };
 
@@ -96,14 +97,14 @@ export function candidatesFor(
       if (!m.family) {
         excluded.push({
           model: m.name,
-          reason: `${m.name}'s family is unknown, so it cannot be shown to differ from the Worker's`,
+          reason: `${m.name}'s family is unknown, so it cannot be shown to differ from the Coding model's`,
         });
         continue;
       }
       if (ctx.workerFamily && m.family === ctx.workerFamily) {
         excluded.push({
           model: m.name,
-          reason: `${m.name} is of the Worker's family (${m.family}); the Reviewer needs another`,
+          reason: `${m.name} is of the Coding model's family (${m.family}); the Review model needs another`,
         });
         continue;
       }
@@ -173,7 +174,7 @@ function sentence(
 ): string {
   const parts: string[] = [];
   if (role === "reviewer" && s.family && workerFamily) {
-    parts.push("a different family from the Worker, which the Reviewer needs");
+    parts.push("a different family from the Coding model, which the Review model needs");
   }
   parts.push(
     s.fits === "swaps"
@@ -183,7 +184,7 @@ function sentence(
   if (!screenBuilt) parts.push(`${ROLE_NAME[role]}'s quick benchmark is not measured yet`);
   else if (s.mean !== undefined) parts.push(`quick score ${s.mean.toFixed(2)}`);
   else parts.push("no quick score yet");
-  if (qualified(s.ev)) parts.push("qualified on this machine");
+  if (qualified(s.ev)) parts.push("verified on this machine");
   else if (s.ev.registryDefault) parts.push("the registry's default");
   parts.push(...extra);
   if (!s.present) parts.push("not in your folders yet, so it can be downloaded");
@@ -260,7 +261,7 @@ export function recommendRole(input: RecommendInput): {
   if (scored.length === 0) {
     const unfilledReason =
       role === "reviewer"
-        ? "No model outside the Worker's family is configured."
+        ? "No model outside the Coding model's family is configured."
         : input.present.length === 0
           ? `No model is in your folders for ${ROLE_NAME[role]}.`
           : `No model in your folders fits this machine for ${ROLE_NAME[role]}.`;
@@ -295,7 +296,7 @@ export function recommendRole(input: RecommendInput): {
   const extra =
     tied.length > 0
       ? [
-          `indistinguishable on the quick benchmark from ${tied.map((t) => t.name).join(" and ")}, and ${pick.ev.timePerCardMs !== undefined ? "less time per card including swaps" : "the smaller footprint"}`,
+          `no clear difference on the quick benchmark from ${tied.map((t) => t.name).join(" and ")}, and ${pick.ev.timePerCardMs !== undefined ? "less time per card including swaps" : "the smaller footprint"}`,
         ]
       : [];
   return {
@@ -393,8 +394,8 @@ export function rankCombinations<E extends CombinationEstimate>(input: {
       if (noFit) excluded = `${byRole.get(noFit)?.id} does not fit this machine for the ${noFit}`;
       else if (reviewer && (!reviewer.family || (worker && reviewer.family === worker.family))) {
         excluded = !reviewer.family
-          ? `${reviewer.id}'s family is unknown, so the Reviewer cannot be shown to differ from the Worker`
-          : `the Reviewer ${reviewer.id} is of the Worker's family (${reviewer.family})`;
+          ? `${reviewer.id}'s family is unknown, so the Review model cannot be shown to differ from the Coding model`
+          : `the Review model ${reviewer.id} is of the Coding model's family (${reviewer.family})`;
       }
       const combination = { ...acc };
       out.push({

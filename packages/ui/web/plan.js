@@ -3,7 +3,7 @@
 // the Worker after a failed attempt.
 import { esc, icon } from "./dom.js";
 import {
-  KIND_LABELS,
+  ISSUE_TYPE_LABELS,
   columnLabel,
   formatDuration,
   formatTokens,
@@ -22,7 +22,7 @@ function meter(used, budget, format = (n) => String(n), unit = "") {
 }
 
 function difficultyHtml(d) {
-  if (!d) return '<span class="sec">Not rated by the Planner</span>';
+  if (!d) return '<span class="sec">Not rated by the planning model</span>';
   const segs = Array.from({ length: 10 }, (_, i) => `<i class="${i < d ? "on" : ""}"></i>`).join(
     "",
   );
@@ -52,7 +52,7 @@ function html(ctx) {
   const all = store.state.cards;
   const waitsOn = (full.dependsOn ?? []).map((id) => all.find((c) => c.id === id)).filter(Boolean);
   const unblocks = all.filter((c) => (c.dependsOn ?? []).includes(card.id));
-  const kinds = card.display?.kinds ?? [];
+  const type = ISSUE_TYPE_LABELS[card.display?.type];
   const criteria = full.acceptanceCriteria ?? [];
   const plans = repairPlans(ctx.events());
   const ev = detail?.evidence;
@@ -64,7 +64,7 @@ function html(ctx) {
   const start = startCardNote(full);
   if (start) parts.push(`<section class="start-card"><p class="prose">${esc(start)}</p></section>`);
   parts.push(
-    `<section><h3 class="sh">Spec</h3>${full.spec ? `<p class="prose">${esc(full.spec)}</p>` : '<p class="sec">No spec recorded. The Worker works from the title and the criteria.</p>'}${kinds.length ? `<p class="sec kind-why">${kinds.map((k) => `<b>${esc(KIND_LABELS[k].label)}</b>: ${esc(KIND_LABELS[k].tooltip)}`).join(" ")}</p>` : ""}</section>`,
+    `<section><h3 class="sh">Spec</h3>${full.spec ? `<p class="prose">${esc(full.spec)}</p>` : '<p class="sec">No spec recorded. The agent works from the title and the criteria.</p>'}${type ? `<p class="sec kind-why"><b>${esc(type.label)}</b>: ${esc(type.tooltip)}</p>` : ""}</section>`,
   );
   parts.push(
     `<section><h3 class="sh">Done when <span class="sec">${criteria.length ? `${criteria.length} criteria` : ""}</span></h3>${criteria.length ? `<ul class="crit">${criteria.map((c) => `<li><span class="bul" aria-hidden="true"></span><span>${esc(c)}</span></li>`).join("")}</ul>` : '<p class="sec">No criteria recorded for this card.</p>'}</section>`,
@@ -82,7 +82,7 @@ function html(ctx) {
     )
     .join("");
   parts.push(
-    `<div class="two"><section><h3 class="sh">May edit</h3>${scope || '<p class="sec">No files in scope.</p>'}</section><section><h3 class="sh">Acceptance tests</h3>${tests || '<p class="sec">None. The project\'s own gates decide.</p>'}</section></div>`,
+    `<div class="two"><section><h3 class="sh">May edit</h3>${scope || '<p class="sec">No files in scope.</p>'}</section><section><h3 class="sh">Acceptance tests</h3>${tests || '<p class="sec">None. The project\'s own checks decide.</p>'}</section></div>`,
   );
   parts.push(
     `<section><h3 class="sh">Budget</h3><dl class="kv budget-kv"><dt>Steps</dt><dd>${meter(full.stepsUsed, full.stepBudget, String, " steps")}</dd><dt>Tokens</dt><dd>${meter(tokensUsed, full.tokenBudget, formatTokens)}</dd><dt>Time</dt><dd>${meter(secondsUsed, full.secondsBudget, (s) => formatDuration(s * 1000))}</dd><dt>Difficulty</dt><dd class="diff-row">${difficultyHtml(full.difficulty)}</dd></dl></section>`,
@@ -94,11 +94,11 @@ function html(ctx) {
     ? plans
         .map(
           (p, i) =>
-            `<figure class="plan-q"><figcaption>${icon("pencil", 14, "ic s14")}Planner, before attempt ${i + 2} · <span class="tnum">${esc(new Date(p.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }))}</span></figcaption><blockquote>${esc(p.payload?.plan ?? "")}</blockquote></figure>`,
+            `<figure class="plan-q"><figcaption>${icon("pencil", 14, "ic s14")}Planning model, before attempt ${i + 2} · <span class="tnum">${esc(new Date(p.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }))}</span></figcaption><blockquote>${esc(p.payload?.plan ?? "")}</blockquote></figure>`,
         )
         .join("")
-    : `<p class="sec">${ev && !ev.passed ? "No repair plan yet. When a queue runs with a Planner model, its plan for the next attempt appears here." : "The Planner has not needed to repair this card."}</p>`;
-  parts.push(`<section><h3 class="sh">Planner's repair plan</h3>${plansHtml}</section>`);
+    : `<p class="sec">${ev && !ev.passed ? "No repair plan yet. When a queue runs with a Planning model, its plan for the next attempt appears here." : "The planning model has not needed to repair this issue."}</p>`;
+  parts.push(`<section><h3 class="sh">Repair plan</h3>${plansHtml}</section>`);
   return parts.join("");
 }
 

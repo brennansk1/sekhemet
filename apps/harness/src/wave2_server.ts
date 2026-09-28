@@ -5,7 +5,6 @@ import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
 import {
   DecisionStore,
   GoalStore,
-  computeSignals,
   diagnoseEscalation,
   reviewSession,
   standupReport,
@@ -42,7 +41,7 @@ import {
  *   POST /api/planner/decisions/:id        answer; the card resumes (P11)
  *   GET  /api/goals                        goals and their criteria (P17-P22)
  *   GET  /api/standup                      status from gates and the log (P13)
- *   GET  /api/signals                      the seven live signals (P20)
+ *   GET  /api/signals?project=             the live signals of one project (P20, PM-N9-8)
  *   GET  /api/cards/:id/diff               structural, intent-grouped diff (Y8)
  *   GET  /api/cards/:id/review             review brief (P12) and escalation (P14)
  *   POST /webhooks/github                  signed GitHub App events (Y13)
@@ -58,6 +57,8 @@ export interface Wave2RouteContext {
   principalOf?: (req: IncomingMessage) => string;
   /** Whether the request's person can see a project (PM-N9-8). */
   canSee?: (req: IncomingMessage, projectId: string | undefined) => boolean;
+  /** The board's In review limit for a project (review-git §2.2, S6), for the signals. */
+  reviewWip?: (projectId: string | undefined) => Promise<number>;
   /** Injectable for tests. */
   webhookSecret?: string;
   /**
@@ -412,18 +413,18 @@ export async function handleWave2Route(
     return true;
   }
   if (url === "/api/signals" && req.method === "GET") {
-    const events = await ctx.log.getEventsByTypes([
-      "card/status_changed",
-      "gate/result",
-      "assumption/logged",
-      "assumption/outcome",
-    ]);
+    // One project's signals, and only what the person can see (PM-N9-8):
+    // Status reads its risks from them (dashboard DB-N9-6).
+    const project =
+      new URL(req.url ?? "/", "http://localhost").searchParams.get("project") || undefined;
+    const { projectSignals } = await import("./status_api.js");
     json(res, 200, {
-      signals: computeSignals({
-        now: new Date(),
-        cards: await cardStore.listCards(),
-        events,
-        reviewWip: 3,
+      signals: await projectSignals({
+        cardStore,
+        log: ctx.log,
+        canSee: (p) => ctx.canSee?.(req, p) ?? true,
+        project,
+        reviewWip: (await ctx.reviewWip?.(project)) ?? 3,
       }),
     });
     return true;

@@ -9,7 +9,7 @@ import {
   proposalDiff,
   proposalKind,
 } from "./lib/pm.js";
-import { KIND_LABELS } from "./lib/vocabulary.js";
+import { ISSUE_TYPE_LABELS, issueTypeOf } from "./lib/vocabulary.js";
 import { cardChip, diffContext, prioMark } from "./marks.js";
 import { applyAll, decide, discardAll } from "./pm_client.js";
 import { hasReviewPlan, openReviewPlan } from "./review_plan.js";
@@ -63,7 +63,7 @@ function cardsList(p) {
   if (!list.length) return "";
   const items = list
     .map((c, i) => {
-      const kind = c.kind && KIND_LABELS[c.kind] ? KIND_LABELS[c.kind].label : "";
+      const kind = ISSUE_TYPE_LABELS[issueTypeOf(c)]?.label ?? "";
       const meta = [
         kind,
         typeof c.estimate === "number" ? formatPoints(c.estimate) : "",

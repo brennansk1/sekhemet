@@ -1,6 +1,14 @@
 import type { ModelRegistry, QualificationLookup, RoleAssignmentRecord } from "./registry.js";
 import type { ModelRole } from "./types.js";
 
+/** The roles as a person reads them (DEC-31). */
+const ROLE_WORDS: Record<string, string> = {
+  worker: "Coding model",
+  planner: "Planning model",
+  reviewer: "Review model",
+  researcher: "Research model",
+};
+
 /**
  * Who changes a role's model, and on what evidence (models rule 30a,
  * NEW-models-10):
@@ -118,14 +126,14 @@ export function assignRole(
     (input.role === "worker" && input.qualification === "overridden");
   if (!qualified) {
     throw new AssignmentRefusal(
-      `Refusing the assignment: ${input.model} is not qualified for the ${input.role} role on this host (${input.qualification}). Qualify it first: sekhemet qualify --models ${input.model}`,
+      `Refusing the assignment: ${input.model} is not verified on this machine for the ${ROLE_WORDS[input.role] ?? input.role} (${input.qualification}). Verify it first: sekhemet qualify --models ${input.model}`,
     );
   }
   // MD-N4-9: the Reviewer reads the Worker's diff, so it is of another family.
   const f = input.families;
   if (input.role === "reviewer" && f?.model && f.worker && f.model === f.worker) {
     throw new AssignmentRefusal(
-      `Refusing the assignment: ${input.model} is of the ${f.model} family, the Worker's (${f.worker}); the Reviewer must be of another family.`,
+      `Refusing the assignment: ${input.model} is of the ${f.model} family, the Coding model's (${f.worker}); the Review model must be of another family.`,
     );
   }
   const previous = history(registry, input.host, input.role, input.scope).at(-1);

@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 53 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 54 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,56 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 54 — 2026-09-27 (B4.7 done: professional language (DEC-31), Status, Projects, starting a project without a terminal, Tips; the compliance audit)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. One workflow within the owner's 5-hour window: five builders one at a time (G0 the DEC-31 vocabulary, G1 Status, G2 Projects, brand and AI badge, G3 start without a terminal, G4 Tips), a sweep, one independent review, a fixer and a blocker re-check (9 agents, 2.34M tokens), beside the live baseline run. The owner restated the product direction mid-run: surfaces close to the professional tools teams use (the research names Linear, Jira and Atlassian, GitHub Projects, Azure DevOps), which juniors can learn from and non-developers can simply talk to Seshat through. Every brief now carries a compliance list: DECISIONS, NAMING, PROMPT_STANDARD, DEFINITION_OF_DONE, the research, the Phase A reviews and the design trace.
+
+- **Compliance audit of B0–B4.6** (one read-only agent, 271k tokens): the specs' State rows are mostly honest, but reference documents never reached the work. **DEC-31 (the owner's professional vocabulary) was never applied**, and B4.6 built in the retired words. Most of `docs/research/`, every Phase A domain review and DESIGN_TRACE had never been cited by a brief. Its other findings are listed under *Where the cards stop*.
+- **Professional language (NEW-dashboard-7, DB-N7-1..3), built in B4.7's first group:**
+  - Issue types (Story, Bug, Task, Spike, Epic) replace kind labels.
+  - On screen and in generated documents: checks, sprint, release, *requirements done*, Agent, Coding/Planning/Review/Research model, AI review, *verified on this machine*, *no clear difference*, Preferences, Must/Should/Could have and Later.
+  - Tiles show no step counter or model name, and a working issue says what the agent is doing.
+  - Points are hidden unless a project turns on estimation (Preferences → Estimation).
+  - `professional_language.spec.ts` fails on any retired label in the UI's code.
+  - The specs that contradicted DEC-31 (dashboard, planner-pm, NAMING, PM_CONTRACT, teams) are reconciled.
+- **Status `#/status` (DB-P5-1, -2, DB-N9-1..8):**
+  - a plain headline; health set by a person, with *No health set*; *Write update*, a draft posted only on *Post*;
+  - key numbers and a flow strip linking to Insights;
+  - the forecast as 50% and 85% dates, never one date, with *Not enough history yet* below the minimum;
+  - requirements by Must/Should/Could, where tests that are too weak never count as done;
+  - risks with *Suggested … Why …*, changing nothing until applied;
+  - Needs you, today's standup, and signals as sentences, scoped to the projects a person can see;
+  - Done this week, and who is working on what (current item only, no per-person counts).
+- **Projects (DB-N9-9, -21)** replaces Workspace: totals, a row per visible project (health, release, progress, forecast range, what waits, lead), models on this server, *New project* or *Start your first project*.
+- **Brand and AI badge (DB-N9-18, -19):** the mark in ink and gold; the *AI* badge beside Seshat and the Agent only.
+- **Start without a terminal (DB-P5-3..7):** *Start a new project* on Status, the palette (plus *Ask Seshat: …*) and Projects opens Seshat's start conversation; the panel header reads *Seshat · Project manager*, with no model names or API paths; the 400 px non-developer path is proven on a real server.
+- **Tips (P4, DB-P4-1..8):** a lesson for every column, check family and Insights metric, each computed from the project's own numbers (the In review limit's minutes). With Tips off, no Tips nodes are rendered. Keyboard popovers return focus with Esc. The first-run answer *I'm learning* turns Tips on.
+- **Review:** 1 blocker (Status's risks read every project's signals) and 4 majors (a retired label on the story map; retired words on the start-project path; the forecast set against the wrong target; the CLI's person-facing output), all fixed. The blocker was re-checked, and the rest were fixed with 12 minors.
+- **Also in this commit:** live-test F21. A blocked card behind one that never ran no longer reads "an earlier card failed" (`suite_runner.ts`, test seen failing first).
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1,366 files), vitest 590 files, 4,542 passed, 37 skipped (single worker, beside the live baseline run).
+- **Where the cards stop:**
+  - B4.7 is done. **Partial, marked so:**
+    - Status's target line waits on a recorded release date (B4.11, NEW-teams-11);
+    - DB-P4-2 has no *?* on the points field or the list's Points column;
+    - running copy still says *card* where DEC-31 says *issue* outside the tile;
+    - the rest of the CLI's text (index.ts help, init.ts, wave2.ts, card_zero.ts, design_copy.ts's take-over line) is unconverted;
+    - Status and Projects have not been seen in a browser at 1440 and 400 px.
+  - **Model-facing:** Seshat's, the Coding model's and the Researcher's prompts, and the planner's *Walking skeleton* release title, still use retired words. Changing them needs PROMPT_STANDARD's suite A/B (model time). The first two issues' titles were renamed to DEC-31 words. That is text the Coding model reads, and it is covered by card_zero and card_one tests, not yet by an A/B.
+  - **Compliance fixes still to do (the audit):**
+    - Majors:
+      - a 0.y.z breaking change bumps to 1.0.0 (repo_tools.ts, project_done.ts; the research's decision 13);
+      - the reuse survey's matching is not the survey's deps.dev and ranked search;
+      - gitleaks' rules are not vendored (DEC-44);
+      - CI steps are read by a regex that misses `run: |` (DEC-44's `yaml`);
+      - B4.2's unbuilt NEW-dashboard-1, -2 and -4 have no owner;
+      - COVERAGE and the plan's status are never marked done (DoD §5.3.5);
+      - the B4.3–B4.5 prompt changes have no suite A/B.
+    - Minors: stale security rows; hand parsers where `marked` and `semver` are approved; RESEARCH_REGISTER R5; IMPLEMENTATION_AUDIT's Phase B rows.
+    - Also found by the sweep: the Planning model's qualify route never scores a mock model (pre-existing).
+  - **Open:** the Team-stream filter, from a separate session, is not yet merged.
+  - **Baseline, Cyber-Tiel round 1:** ref 20, thinking-surgical 22, thinking-all 21, strict 18, fixed-tools 18 of 30. The evidence-gate arm is running, then round 2.
+  - **Next:** the compliance fixes, then B4.8.
 
 ### Entry 53 — 2026-09-27 (B4.6 done: the professional board, story map and burn-up, live Steps output, team review, the agent issue page)
 

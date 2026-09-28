@@ -1,0 +1,144 @@
+/* Tips, the Learn layer (dashboard §2.9, P4). With Tips off the page carries
+   no `?` and no rule below matches anything, so the layout is unchanged
+   (DB-P4-1). Tokens only; the popover is a raised panel like the menus. */
+
+/* The `?` beside a term: a small ring a keyboard reaches. */
+.tip-q {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
+  vertical-align: middle;
+}
+.tip-q:hover,
+.tip-q[aria-expanded="true"] {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+.col-h .tip-q {
+  margin-left: -4px;
+}
+
+/* The popover a `?` opens: what it is, this project's line, the canon. */
+.tip-pop {
+  position: fixed;
+  z-index: 40;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  padding: 12px;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tip-pop h3 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.tip-pop .tip-yours {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border-radius: var(--radius-control);
+  background: var(--bg-raised);
+}
+.tip-pop .tip-yours .sec,
+.tip-pop .tip-more {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.tip-pop .tip-more {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 16px;
+}
+.tip-pop .tip-more b {
+  color: var(--text-primary);
+}
+.tip-pop .tip-src {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+
+/* The topbar's Tips toggle: pressed while Tips are on. */
+.tips-btn[aria-pressed="true"] {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+
+/* The first-run question: a bar above the view that blocks nothing. */
+.fr-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.fr-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.fr-head h2 {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.fr-head .sec {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.fr-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.fr-choices .fr-choice {
+  height: auto;
+  min-height: 32px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 12px;
+  white-space: normal;
+  text-align: left;
+  max-width: 280px;
+}
+.fr-choice .sec {
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 767px) {
+  .tips-btn .lbl {
+    display: none;
+  }
+  .fr-choices .fr-choice {
+    max-width: none;
+    width: 100%;
+  }
+}

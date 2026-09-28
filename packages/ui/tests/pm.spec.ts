@@ -157,9 +157,9 @@ describe("proposal field diffs", () => {
     expect(rows.map((r) => [r.label, r.before, r.after])).toEqual([
       ["Priority", "Medium", "Urgent"],
       ["Points", "3 pts", "5 pts"],
-      ["Cycle", "Cycle 12", "Cycle 13"],
+      ["Sprint", "Cycle 12", "Cycle 13"],
       ["Epic", "Ledger core", "HTTP API"],
-      ["Assignee", "Worker", "You"],
+      ["Assignee", "Agent", "You"],
       ["Due", "None", "Oct 2"],
     ]);
   });
@@ -297,9 +297,11 @@ describe("filter language", () => {
       { field: "cycle", values: ["current"] },
     ]);
     expect(f.text).toBe("canonical json");
+    // DEC-31: the query reads `sprint:`; `cycle:` is still understood.
     expect(formatQuery(f)).toBe(
-      'priority:urgent,high -label:later epic:"ledger core" cycle:current canonical json',
+      'priority:urgent,high -label:later epic:"ledger core" sprint:current canonical json',
     );
+    expect(parseQuery("cycle:current").terms).toEqual([{ field: "cycle", values: ["current"] }]);
     expect(parseQuery(formatQuery(f))).toEqual(f);
   });
 
@@ -317,7 +319,10 @@ describe("filter language", () => {
     expect(ids("is:unestimated")).toEqual(["card_docs", "card_tamper"]);
     expect(ids("is:blocked")).toEqual(["card_tamper"]);
     expect(ids("is:needs-you")).toEqual(["card_http"]);
-    expect(ids("kind:rules canonical")).toEqual(["card_hasher"]);
+    // DEC-31: the issue type; `kind:` is the older spelling of `type:`.
+    expect(ids("type:story canonical")).toEqual(["card_hasher"]);
+    expect(ids("kind:story canonical")).toEqual(["card_hasher"]);
+    expect(ids("type:bug")).toEqual([]);
     expect(ids("priority:none")).toEqual(["card_docs"]);
   });
 
@@ -338,7 +343,7 @@ describe("grouping", () => {
     ]);
   });
 
-  it("orders priority lanes urgent first and assignee lanes Worker, You, then none", () => {
+  it("orders priority lanes urgent first and assignee lanes Agent, You, then none", () => {
     expect(groupCards(cards, "priority").map((g) => g.label)).toEqual([
       "Urgent",
       "High",
@@ -346,13 +351,13 @@ describe("grouping", () => {
       "No priority",
     ]);
     expect(groupCards(cards, "assignee").map((g) => g.label)).toEqual([
-      "Worker",
+      "Agent",
       "You",
       "No assignee",
     ]);
     expect(groupCards(cards, "cycle", { cycles }).map((g) => g.label)).toEqual([
       "Cycle 12",
-      "No cycle",
+      "No sprint",
     ]);
   });
 });
@@ -375,7 +380,8 @@ describe("active cycle", () => {
 describe("cycle progress", () => {
   it("splits points into done, started and not started, counting unestimated as 1", () => {
     const now = Date.UTC(2026, 8, 25, 12); // Sep 25 noon: day 11 of 14
-    const p = cycleProgress(cycles[0] as CycleLike, cards, now);
+    // With story points on (DB-N7-2); off, each issue counts 1 (professional_language.spec).
+    const p = cycleProgress(cycles[0] as CycleLike, cards, now, "points");
     expect(p.totalDays).toBe(14);
     expect(p.daysLeft).toBe(4);
     expect(p.points).toEqual({ done: 1, started: 3, notStarted: 8, total: 12 });
@@ -383,9 +389,9 @@ describe("cycle progress", () => {
     expect(p.cards).toEqual({ done: 1, total: 3 });
     expect(p.behindBy).toBe(Math.round(12 * p.elapsedRatio - 1));
     expect(p.atRisk).toBe(false);
-    expect(cycleProgress(cycles[0] as CycleLike, cards, Date.UTC(2026, 8, 28, 12)).atRisk).toBe(
-      true,
-    );
+    expect(
+      cycleProgress(cycles[0] as CycleLike, cards, Date.UTC(2026, 8, 28, 12), "points").atRisk,
+    ).toBe(true);
   });
 });
 
@@ -426,28 +432,28 @@ describe("flow metrics", () => {
 });
 
 describe("waiting steps (PmStatus.phase)", () => {
-  it("shows the Worker rows when a Worker is paused, with step and ETA from detail", () => {
+  it("shows the agent rows when the agent is paused, with step and ETA from detail", () => {
     const rows = pmSteps({
       phase: "loading_pm",
       workerPaused: true,
       detail: "Pausing the Worker after step 5 · ~40s to load the PM",
     });
     expect(rows.map((r) => `${r.state}:${r.label}`)).toEqual([
-      "done:Paused the Worker after step 5",
+      "done:Paused the agent after step 5",
       "current:Loading the PM · about 40s",
       "todo:Thinking",
-      "todo:Resuming the Worker",
+      "todo:Resuming the agent",
     ]);
   });
 
-  it("omits the Worker rows when nothing was running, and prefers structured fields", () => {
+  it("omits the agent rows when nothing was running, and prefers structured fields", () => {
     const rows = pmSteps({ phase: "thinking", etaSeconds: 35 });
     expect(rows.map((r) => `${r.state}:${r.label}`)).toEqual([
       "done:Loaded the PM",
       "current:Thinking",
     ]);
     expect(pmSteps({ phase: "waiting_for_step", step: 7 })[0]?.label).toBe(
-      "Pausing the Worker after step 7",
+      "Pausing the agent after step 7",
     );
   });
 });
@@ -471,7 +477,7 @@ describe("worker capability", () => {
     expect(rows[0]).toMatchObject({ trusted: true, text: "14 of 20 passed · 70% (48–86%)" });
     expect(rows[1]?.trusted).toBe(false);
     expect(horizonSentence(118.6)).toBe(
-      "The Worker passes 80% of cards that change up to about 119 lines.",
+      "The agent passes 80% of issues that change up to about 119 lines.",
     );
     expect(horizonSentence(undefined)).toMatch(/^Not enough attempts/);
   });

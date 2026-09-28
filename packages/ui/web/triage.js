@@ -33,7 +33,7 @@ export function acceptState(card, evidence, detail) {
     };
   }
   if (!evidence) return { ok: false, reason: "Accept needs evidence from a run." };
-  if (!evidence.passed) return { ok: false, reason: "Accept needs every gate passing." };
+  if (!evidence.passed) return { ok: false, reason: "Accept needs every check passing." };
   if (!card || card.status !== "review")
     return { ok: false, reason: "Only cards in Review can be accepted." };
   const desk = deskBlocker(card, detail);
@@ -177,7 +177,7 @@ export function quickNotes(card, evidence, gatesConfig) {
     if (notes.length >= 3) break;
   }
   if (evidence?.stopReason === "oscillation_detected")
-    notes.push("Stop repeating the same step; change the file, then run the gates.");
+    notes.push("Stop repeating the same step; change the file, then run the checks.");
   if (notes.length === 0 && scope) notes.push(`Keep the change inside ${scope}.`);
   return notes.slice(0, 4);
 }
@@ -192,7 +192,7 @@ export function composerHtml(notes, { comments = [] } = {}) {
   const chips = notes
     .map((n) => `<button type="button" class="chip" data-chip title="${esc(n)}">${esc(n)}</button>`)
     .join("");
-  return `<form class="composer" data-composer aria-label="Send back"><label class="lbl" for="sb-note">What should the Worker do differently?</label><textarea id="sb-note" name="note" placeholder="Your note is the first thing the Worker reads on its next attempt." aria-describedby="sb-err"></textarea><div class="err" id="sb-err" role="alert" hidden>Add a note for the Worker. It's what they'll read next.</div>${chips ? `<div class="chips"><span class="sec" style="font-size:var(--text-xs)">Quick notes</span>${chips}</div>` : ""}${carriedHtml(comments)}<div class="row"><label class="cbx"><input type="checkbox" checked disabled> Suggest as a playbook rule <small>· your note becomes a candidate rule in Playbook</small></label><span class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("send-back")}Send back ${kbd(`${MOD}↵`)}</button></span></div></form>`;
+  return `<form class="composer" data-composer aria-label="Send back"><label class="lbl" for="sb-note">What should the agent do differently?</label><textarea id="sb-note" name="note" placeholder="Your note is the first thing the agent reads on its next attempt." aria-describedby="sb-err"></textarea><div class="err" id="sb-err" role="alert" hidden>Add a note for the agent. It's what it reads next.</div>${chips ? `<div class="chips"><span class="sec" style="font-size:var(--text-xs)">Quick notes</span>${chips}</div>` : ""}${carriedHtml(comments)}<div class="row"><label class="cbx"><input type="checkbox" checked disabled> Suggest as a playbook rule <small>· your note becomes a candidate rule in Playbook</small></label><span class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("send-back")}Send back ${kbd(`${MOD}↵`)}</button></span></div></form>`;
 }
 
 /**

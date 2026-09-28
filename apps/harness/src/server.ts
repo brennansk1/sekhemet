@@ -25,11 +25,11 @@ import {
 import type { LocalInferenceAdapter, ModelRole } from "@sekhemet/models";
 import { DecisionStore } from "@sekhemet/planner";
 import {
-  BASALT,
-  ICONS,
+  type RosterRoleLike,
   UI_LIB_DIR,
   UI_LIB_MODULES,
   UI_WEB_DIR,
+  appIconSvg,
   describeCard,
   gateLabel,
   generateTokenCss,
@@ -89,6 +89,7 @@ import { dailyStandup } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { createPmApi } from "./pm_api.js";
 import { modelRoster } from "./pm_api.js";
+import { projectsOverview } from "./projects_api.js";
 import { gateWorker } from "./qualify.js";
 import { handleRestExtras } from "./rest_extra.js";
 import { reviewDesk } from "./review_desk.js";
@@ -118,7 +119,7 @@ import {
 } from "./team/serve.js";
 import { bindHost } from "./team/settings.js";
 import { cardTrace } from "./tracing.js";
-import { park, recordReviewOpened, reject, revertAccept, sendBack } from "./triage.js";
+import { park, recordReviewOpened, reject, revertAccept, sendBack, unpark } from "./triage.js";
 import { generateDashboardHtml } from "./ui_html.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { approveBaseline, visualCandidates } from "./visual_baseline.js";
@@ -280,11 +281,6 @@ function serveFile(res: ServerResponse, path: string): void {
     "X-Content-Type-Options": "nosniff",
   });
   res.end(body);
-}
-
-/** The brand glyph on a base-coloured rounded square, from the tokens. */
-function faviconSvg(): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="${BASALT.bgBase}"/><g transform="translate(4 4)" fill="none" stroke="${BASALT.accent}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${ICONS.glyph}</g></svg>`;
 }
 
 /** Card ids travel in URLs; anything else is refused before touching the disk. */
@@ -716,6 +712,10 @@ export function startDashboardServer(
     )
       .reviewLimitFacts?.(projectId)
       .catch(() => undefined);
+    // Preferences → Estimation, the project's (DEC-31, DB-N7-2): named only
+    // when the board is one project's (scoped, or the only one), off by default.
+    const active = options.cardStore?.listProjects().filter((p) => p.status !== "archived") ?? [];
+    const estimationProject = projectId ?? (active.length === 1 ? active[0]?.id : undefined);
     return {
       ...state,
       cards: state.cards.map((card) =>
@@ -724,6 +724,9 @@ export function startDashboardServer(
       epics,
       cycles,
       ...(reviewLimit ? { reviewLimit } : {}),
+      ...(estimationProject
+        ? { estimation: access.settings(estimationProject).estimation ?? "off" }
+        : {}),
     };
   };
 
@@ -1194,7 +1197,7 @@ export function startDashboardServer(
 
     if (url === "/favicon.svg" || url === "/favicon.ico") {
       res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "max-age=86400" });
-      res.end(faviconSvg());
+      res.end(appIconSvg());
       return;
     }
 
@@ -1256,6 +1259,39 @@ export function startDashboardServer(
     if (url === "/api/board") {
       // B8: ?project=<id> scopes the board to one project.
       json(res, 200, await boardWithEvidence(query.get("project") ?? undefined));
+      return;
+    }
+
+    // The Projects page (dashboard §2.11, DB-N9-9; PM_CONTRACT §3): every
+    // project the person can see, the workspace's totals and this server's models.
+    if (url === "/api/projects/overview" && req.method === "GET") {
+      const store = options.cardStore;
+      if (!store) {
+        json(res, 501, { error: "This server was started read-only" });
+        return;
+      }
+      const sample = memoryProbe();
+      const overview = await projectsOverview({
+        cardStore: store,
+        log,
+        me: principalOf(req),
+        audience: audienceFromAccess(() => access, options.db),
+        repoPath,
+        models: {
+          roles: modelRoster(repoPath).roles as RosterRoleLike[],
+          slots: {
+            // The Coding model's slots (RUN-35) and the issues being built in them.
+            inUse: (await store.listCards({ status: "in_progress" })).length,
+            capacity: qualifiedSlotCapacity({
+              mode: setup,
+              parallelSlots: (options.parallelSlots ?? workerParallelSlots)(),
+            }),
+          },
+          queue: (await standing()).length,
+          memory: { usedBytes: sample.usedBytes, totalBytes: sample.totalBytes },
+        },
+      });
+      json(res, 200, { overview });
       return;
     }
 
@@ -1559,7 +1595,7 @@ export function startDashboardServer(
     }
 
     const action = new RegExp(
-      `^/api/cards/(${CARD_ID})/(accept|return|park|reject|revert|opened)$`,
+      `^/api/cards/(${CARD_ID})/(accept|return|park|unpark|reject|revert|opened)$`,
     ).exec(url);
     if (action && req.method === "POST") {
       if (!isTrustedMutation(req)) {
@@ -1628,6 +1664,21 @@ export function startDashboardServer(
           return;
         }
 
+        // Status's Needs you (DB-P5-1): back where it was parked from, as `sekhemet unpark`.
+        if (verb === "unpark") {
+          const to = await unpark(
+            {
+              repoPath,
+              cardStore: store,
+              boardService: boardService as never,
+              log,
+              principal: principalOf(req),
+            },
+            card,
+          );
+          json(res, 200, { ok: true, status: to });
+          return;
+        }
         const reason = typeof body.reason === "string" ? body.reason : "";
         if (verb === "return" && !reason.trim()) {
           json(res, 400, { error: "A return needs a reason: it is what the agent is told next" });
@@ -1999,6 +2050,20 @@ export function startDashboardServer(
         readJsonBody,
         principalOf,
         canSee: planningCanSee,
+        // The limit the board shows for the project's In review column (DB-P3-9).
+        reviewWip: async (projectId) => {
+          const facts = await (
+            boardService as {
+              reviewLimitFacts?: (projectId?: string) => Promise<{ limit: number }>;
+            }
+          )
+            .reviewLimitFacts?.(projectId)
+            .catch(() => undefined);
+          return (
+            facts?.limit ??
+            (await boardService.getBoardState(projectId ? { projectId } : {})).wipLimits.review
+          );
+        },
       })
     ) {
       return;

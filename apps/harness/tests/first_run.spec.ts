@@ -102,11 +102,13 @@ describe("P10: one first run", () => {
     });
     const text = lines.join("\n");
     expect(text).toMatch(/24 GB/);
-    for (const role of ["Worker", "Planner", "Reviewer", "Researcher"])
+    // DEC-31: the roles and the checks in the words teams use, never Worker or gates.
+    for (const role of ["Coding model", "Planning model", "Review model", "Research model"])
       expect(text).toContain(role);
-    expect(text).toMatch(/Worker Cyber-Tiel-Coder-35B-A3B — weights present/);
-    expect(text).toMatch(/Reviewer .* — no weights found/);
-    expect(text).toMatch(/Gates from package\.json: typecheck, unit\./);
+    expect(text).toMatch(/Coding model Cyber-Tiel-Coder-35B-A3B — weights present/);
+    expect(text).toMatch(/Review model .* — no weights found/);
+    expect(text).toMatch(/Checks from package\.json: typecheck, unit\./);
+    expect(text).not.toMatch(/\b(?:Worker|Planner|Reviewer|Researcher)\b|\bgates?\b/);
     expect(out.code).toBe(2);
     expect(out.wrote).toEqual([]);
     expect(tree(root)).toEqual(before);
@@ -247,7 +249,9 @@ describe("P10: one first run", () => {
       say: (l) => lines.push(l),
     });
     expect(out).toMatchObject({ code: 0, opens: "configuration", openBrowser: false });
-    expect(lines.join("\n")).toMatch(/No models found yet/);
+    expect(lines.join("\n")).toMatch(
+      /No models found yet — recommended: Coding model \S+, Planning model \S+/,
+    );
     expect(await homeDestination(none)).toBe("configuration");
     expect(readdirSync(home)).not.toContain("models");
   });

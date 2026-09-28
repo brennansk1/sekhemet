@@ -413,6 +413,12 @@ describe("the 403 on every write endpoint (TEAM-4, TEAM-5, TEAM-32, INT-24)", ()
     // Auto-apply is never offered for the assignee or health (TEAM-18).
     expect((await send(ADMIN, path, { auto_apply: { assignee: true } }, "PATCH")).status).toBe(400);
     expect((await send(ADMIN, path, { auto_apply: { label: true } }, "PATCH")).status).toBe(200);
+    // DB-N7-2: Preferences → Estimation is the project's setting: the lead's or an Admin's.
+    expect((await send(MEMBER, path, { estimation: "points" }, "PATCH")).status).toBe(403);
+    expect((await send(ADMIN, path, { estimation: "hours" }, "PATCH")).status).toBe(400);
+    const est = await send(LEAD, path, { estimation: "points" }, "PATCH");
+    expect(est.status).toBe(200);
+    expect(est.data.changed).toEqual(["estimation"]);
 
     const changes = (await log.getEventsByTypes(["project/settings_changed"])).map(
       (e) => e.payload,
@@ -420,6 +426,7 @@ describe("the 403 on every write endpoint (TEAM-4, TEAM-5, TEAM-32, INT-24)", ()
     expect(changes.slice(1)).toEqual([
       { project, accept_rule: [MEMBER, LEAD], require_resolved_threads: true },
       { project, auto_apply: { label: true } },
+      { project, estimation: "points" },
     ]);
     // Archiving: the lead may, another Member may not.
     expect((await send(MEMBER, `/api/projects/${project}`, { status: "archived" })).status).toBe(

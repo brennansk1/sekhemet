@@ -98,7 +98,7 @@ function render() {
     : '<div class="ib-empty"><b>No cards yet.</b><span>Cards and the cards they wait on appear here as a graph.</span></div>';
   const note = $(".dg-note", ui.root);
   note.textContent = lay.cycles.length
-    ? `A dependency cycle runs through ${lay.cycles.length} card(s); the kernel refuses new cycles.`
+    ? `A dependency loop runs through ${lay.cycles.length} card(s); Sekhemet refuses to add another.`
     : linked.length
       ? "Arrows point from a card to the cards that wait on it. Faded arrows are satisfied."
       : "No card depends on another yet, so every card stands alone.";
