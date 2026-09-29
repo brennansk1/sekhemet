@@ -637,6 +637,17 @@ Two runs follow:
 
 Until one passes RG-P8-13, the Review role ships unfilled (DEC-47).
 
+**Added 2026-09-29, the sandbox engine (DEC-39's steps 2–4, which this plan had not scheduled):** the shipped confinement engine is meant to be Anthropic's `sandbox-runtime` (srt), which drives Seatbelt on macOS and bubblewrap with seccomp on Linux, and is the engine Claude Code uses. Today `native` (our own) is the default.
+- **R-srt:**
+  - the containment suite under `SEKHEMET_SANDBOX_ENGINE=srt` on macOS (a model-free run), then in the Lima VM (with R9);
+  - then one frozen-suite run on srt, against the latest native run on the same build (no clear difference required).
+- **If both pass:** a small workflow step makes srt the default and deletes `seatbelt.ts`, `bubblewrap.ts` and `seccomp.ts`, with security.md updated in the same commit (DEC-39 step 5). W1's shared secret-path table is kept as srt's deny configuration.
+- **Shipping:**
+  - macOS uses the built-in Seatbelt, with nothing to install;
+  - Linux needs `bubblewrap` and `socat` from the distribution (`doctor` checks them);
+  - the Team image carries them.
+- **Not shipped:** Windows is not supported in v1, and the Lima VM is test infrastructure only.
+
 ### E.3 Stream 2: the workflows (Claude Opus 5.5)
 
 Every workflow follows the same pattern:
@@ -841,7 +852,7 @@ All of these hold on one release commit. Each is tied to its evidence.
 
 ## O. Decisions the owner needs to take (K1)
 
-**Decided 2026-09-28** ([DEC-47](../design/DECISIONS.md#dec-47--the-finish-line-decisions), the lead under the owner's delegation; the licence is [DEC-46](../design/DECISIONS.md#dec-46--the-licence-is-apache-20)). Every item below is settled there except item 14, which needs the owner's own judgement. Beta users (O-9) and CI (O-1) are deferred by the owner.
+**Decided 2026-09-28** ([DEC-47](../design/DECISIONS.md#dec-47--the-finish-line-decisions), the lead under the owner's delegation; the licence is [DEC-48](../design/DECISIONS.md#dec-48--the-licence-is-fsl-11-alv2), superseding DEC-46). Every item below is settled there except item 14, which needs the owner's own judgement. Beta users (O-9) and CI (O-1) are deferred by the owner.
 
 1. **O-1, CI host.** Push to a GitHub repository (public or private) so CI runs on macOS and Ubuntu? Each push is the owner's yes (DEC-42).
 2. **O-2, Linux.**

@@ -458,6 +458,7 @@ The harness itself stays TypeScript: a Rust or Python component is allowed only 
 Not a chat assistant (the conversation plans and reports; code is written on cards), not an IDE, not a CI system, and not a replacement for the team's tracker — it fits beside one. It does not aim to beat frontier models on ambiguous, long-horizon or novel design work, and it is slower per card than cloud tools. These trades are deliberate.
 
 ### DEC-46 — the licence is Apache-2.0
+*Superseded by [DEC-48](#dec-48--the-licence-is-fsl-11-alv2) on 2026-09-29.*
 **Sekhemet is licensed under the Apache License 2.0, copyright 2026 Brennan Kelley.** *Owner, 2026-09-28, choosing among the options the lead set out (MIT, Apache-2.0, AGPL-3.0, FSL or BSL, proprietary).*
 - `LICENSE` holds the canonical text from apache.org (sha256 `cfc7749b…`). `NOTICE` names the copyright holder and keeps every bundled third party's attribution: Crawl4AI and the Apodex prompts under Apache-2.0; gitleaks, SecLists and RedCode under MIT; the ScanCode LicenseDB categories under CC-BY-4.0. All of these are compatible with Apache-2.0.
 - It replaces MIT, whose copyright line ("Sekhemet Contributors") disagreed with NOTICE's.
@@ -484,7 +485,7 @@ Not a chat assistant (the conversation plans and reports; code is written on car
 - **v1 scope (O-10):** the Team setup is in v1, because its milestones (B4.10, B4.11) are the plan's. A W4 row may be deferred only through its own recorded decision.
 - **Root documents (O-11):** `CHANGELOG.md`, `SECURITY.md` and `CONTRIBUTING.md` are allowed at the repository root (W3 updates the docs rule and `docs.spec.ts`).
 - **Legal posture (O-12):**
-  - v1 is published free of charge under Apache-2.0 by an individual, with no commercial distribution. Before any paid or commercial offer, including an EU market (the Cyber Resilience Act), the owner takes legal advice.
+  - v1 is published free of charge under FSL-1.1-ALv2 (DEC-48; Apache-2.0 when this was decided) by an individual, with no commercial distribution. Before any paid or commercial offer, including an EU market (the Cyber Resilience Act), the owner takes legal advice.
   - LICENSE, NOTICE and the user guide state that code Sekhemet's models write for a user is the user's, that Sekhemet claims no rights to it, and that the protection of AI-written code varies by jurisdiction.
   - This is a conservative default, not legal advice.
 - **What v1 does not check in the software it builds (O-13):**
@@ -501,8 +502,18 @@ Not a chat assistant (the conversation plans and reports; code is written on car
 - **Still the owner's, because they need a person's judgement:** confirming Seshat's 20 scripted conversations, the golden briefs, and the capstone's hidden suite.
 - **Reopen if:** only the owner.
 
+### DEC-48 — the licence is FSL-1.1-ALv2
+**Sekhemet is licensed under the Functional Source License, version 1.1, with Apache-2.0 as the future licence (FSL-1.1-ALv2), copyright 2026 Brennan Kelley.** *Owner, 2026-09-29. It supersedes [DEC-46](#dec-46--the-licence-is-apache-20). The owner chose it among the options the lead set out: keep Apache-2.0, PolyForm Noncommercial, all rights reserved, or FSL.*
+- Anyone may use, copy, change and redistribute Sekhemet for any purpose except a **Competing Use**: offering it, or something substantially similar, as a commercial product or service. Internal use, non-commercial education and research, and professional services for a licensee are expressly permitted.
+- Each version becomes available under **Apache-2.0 two years after it is made available** (the licence's future grant).
+- `LICENSE` holds the canonical template text from fsl.software with the year and licensor filled in. The `license` fields read `FSL-1.1-ALv2`.
+- NOTICE's third-party attributions are unchanged. Bundled third-party material keeps its own licences (Apache-2.0, MIT, CC-BY-4.0).
+- The repository is private and nothing had been distributed under Apache-2.0, so the change binds no one.
+- **Why:** the owner keeps the commercial right to offer Sekhemet, for example a hosted Team edition, while the code stays usable and readable, and opens fully after two years.
+- **Reopen if:** only the owner.
+
 ## Founder decisions on record
 
 - **Name:** Sekhemet, a deliberate variant spelling, paired with its descriptor where the product introduces itself.
-- **Licence:** Apache-2.0, copyright 2026 Brennan Kelley ([DEC-46](#dec-46--the-licence-is-apache-20); it was MIT until 2026-09-28).
+- **Licence:** FSL-1.1-ALv2, copyright 2026 Brennan Kelley ([DEC-48](#dec-48--the-licence-is-fsl-11-alv2); MIT until 2026-09-28, then Apache-2.0 under DEC-46 until 2026-09-29).
 - **Still the owner's:** the business model; whether go-to-market ever targets defence.
