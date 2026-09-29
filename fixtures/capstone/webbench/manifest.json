@@ -1,0 +1,204 @@
+{
+  "about": "The capstone's second run (W2 G4): one Web-Bench project, reused unchanged. The checkout lives outside this repository; this file records it by SHA-256 only. Written by scripts/capstone/webbench.mjs --write; never edited by hand.",
+  "repository": "https://github.com/bytedance/web-bench",
+  "commit": "7b31ca2b786eef120dd49ce63dd03d0c0006046d",
+  "commitDate": "2026-04-30T17:49:54+08:00",
+  "location": "~/.sekhemet/webbench-src",
+  "project": "projects/fastify",
+  "licence": {
+    "file": "LICENSE.md",
+    "spdx": "Apache-2.0",
+    "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
+  },
+  "tasks": [
+    {
+      "id": "task-1",
+      "level": "easy",
+      "sha256": "96b779fa260e056aa72c81ed74f0cd8b10b3fe0bf6297800cf1bc9f5e7cc1519"
+    },
+    {
+      "id": "task-2",
+      "level": "easy",
+      "sha256": "dbd9c2a35e25e8f73bc9404419da5c09cd6278adb77225816ef7015b95abef85"
+    },
+    {
+      "id": "task-3",
+      "level": "easy",
+      "sha256": "35962e98ca028ff14c97a9be81d537facd2d671020a735f90a08cd876767f15e"
+    },
+    {
+      "id": "task-4",
+      "level": "easy",
+      "sha256": "d60e98c09116d295869af256598fc104fcf878c96e2f9399e9061f5237df989e"
+    },
+    {
+      "id": "task-5",
+      "level": "easy",
+      "sha256": "4c6959860ddc3280f739ba34d7da906a074d4642bbaeb2f642d4606a3db11e3e"
+    },
+    {
+      "id": "task-6",
+      "level": "moderate",
+      "sha256": "7872bddc190540b02f872c14965833b4884877bb5ddd972361922b61547f0561"
+    },
+    {
+      "id": "task-7",
+      "level": "moderate",
+      "sha256": "976883a5f54e7a632ecfa6a4fd61b153e0f01fd977e85d3483fdf0d1a41120e2"
+    },
+    {
+      "id": "task-8",
+      "level": "moderate",
+      "sha256": "3afab6cd90a06672664da3a8a1a51f10596c13b373ac8fc1e11bde2d820ebbe6"
+    },
+    {
+      "id": "task-9",
+      "level": "moderate",
+      "sha256": "6b60e4ab708e417cf106528a2333a57662a3acebf479ba2414ae30dd7dfa5ceb"
+    },
+    {
+      "id": "task-10",
+      "level": "moderate",
+      "sha256": "937af398fdc16249f5049e2d911ce79700d40f729897b1995c40ee129d6bf5a8"
+    },
+    {
+      "id": "task-11",
+      "level": "challenging",
+      "sha256": "170339061a76e1cd4b206ece34946ca3536570515099cb9ffccf5bcb43556350"
+    },
+    {
+      "id": "task-12",
+      "level": "challenging",
+      "sha256": "2d0bf32cb1495da6bf701ff59ef04d36f8df94fbe47118d4b4b56209084b1a96"
+    },
+    {
+      "id": "task-13",
+      "level": "challenging",
+      "sha256": "0e1091148ee6a02b29dbc1cd43d902aadbe6fbe53308d7069c53ddffe437246b"
+    },
+    {
+      "id": "task-14",
+      "level": "challenging",
+      "sha256": "dc3d11c1c766941493fdfaac96a0c7c8483f10b3fa22706ab4c401bb740fff4f"
+    },
+    {
+      "id": "task-15",
+      "level": "challenging",
+      "sha256": "9272da39e42fbebf5848aa3321d84d4d400e4029e9809a3467d411fd7e245395"
+    },
+    {
+      "id": "task-16",
+      "level": "challenging",
+      "sha256": "8821d1ae3a28bc4063c58426f152a7f1d27fb07fcf5a07101ebcd07414c550b5"
+    },
+    {
+      "id": "task-17",
+      "level": "challenging",
+      "sha256": "a4d482742bd44fda966a661618c63cc647769203c29d37306f07b0535413eb3a"
+    },
+    {
+      "id": "task-18",
+      "level": "challenging",
+      "sha256": "ac0266425c28a4e540c0bd3b4620663e52dfbe692bf3112071eae76cfce0dea7"
+    },
+    {
+      "id": "task-19",
+      "level": "challenging",
+      "sha256": "0d5d8e73061a707da1efc82db4ca403f461eafbd7d01b6aa0d965b73f9fcced6"
+    },
+    {
+      "id": "task-20",
+      "level": "challenging",
+      "sha256": "6caf476553257ea46066ab1e930437a28ec9141e6088472aaea3c5f649921007"
+    }
+  ],
+  "tests": {
+    "dir": "projects/fastify/test",
+    "count": 20,
+    "run": "npm test -- <n> in the project directory: Playwright runs task-1 to task-n (libraries/test-util/test.sh)"
+  },
+  "treeSha256": "73aa610b7ce0220bc88ecf66be908ef2970b61a85dcbefb261e247585b86b838",
+  "files": {
+    "LICENSE.md": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd",
+    "common/config/rush/pnpm-lock.yaml": "d645baf30d659e11c7da91eb5264723d5d16b704f240e8568d5953dd1e908b80",
+    "libraries/shop-test-util/package.json": "8ca0bfd7331b22b28672f055c612e4fcfaa4eb76871bcd5d34fc35cd82a1e1cf",
+    "libraries/shop-test-util/src/index.js": "78fe15e95c82cf76e951fc19305d2ec1183b410c632846fa6d7fee9994cdd264",
+    "libraries/shop-test-util/src/sku.js": "1d0ca59a5c8fc4f7587aec2bb4eb272a0829757e13981d8671d000421b1ecdc0",
+    "libraries/test-util/package.json": "0ae07b8f8a807057b34d5daa7b6f4d1249c3b73e1aa2e6ece338f1367f8e66fc",
+    "libraries/test-util/src/css.js": "f59d504d2b141c48b40e9907d03dae670efc23de7c1ebf800f72e7642c598fb7",
+    "libraries/test-util/src/index.js": "7319676beceb1478e73f9c5a9f1571618bc39e94084017b14ae44807e81b06e7",
+    "libraries/test-util/test.sh": "029db7a0a8c9a1fa90636739adbbea4985ca64765c4985e0d1a7e3b91f0d24f0",
+    "projects/fastify/.evalignore": "b55cdbef4907b7045f32cc5360d48d262cca5f94062e353089f189f4460039e0",
+    "projects/fastify/.gitignore": "226728e97e6400f4d8148aa3cb95a6ccaf6b25afc0a28bd020f19f67a4bfe1c3",
+    "projects/fastify/package.json": "fce44f136be163f7474f828002e7a07c9fc3bf66d5a8a6b06a887607f82628b5",
+    "projects/fastify/playwright.config.js": "f4eba9b8fb78084cab6d46a497c8244c921423b0ffd264f6f3b068e24836201a",
+    "projects/fastify/readme.md": "879f15fa6b514b8c2183db49e78dfcbf8cc5a8610b17c6a5977016b682e20b7d",
+    "projects/fastify/scripts/dev.js": "2b0f640bda42fa2a63e387bdf0451e32d0312a12d0ea956d13d6a4ea2ac57da9",
+    "projects/fastify/scripts/init-db.js": "0be03c992d6e7b0bd57ac2c9f054c80d54e792d342f3c56e5b2dbca4f28b7989",
+    "projects/fastify/src-init/index.ts": "f31069947b8cb978979079ba44614838cfcbbbb4ef86b6344f68ec109fbab097",
+    "projects/fastify/src-init/readme.md": "6d86a0fa8580ee17e2ecae1eb66002b28334cee8a0d313d5acd416313c98f346",
+    "projects/fastify/src-init/tsconfig.json": "341bb63ffda35be172939c655ef37d7258e17c2bd756dc3d150c79f58057ecc1",
+    "projects/fastify/src/index.ts": "bdcea216395dcdaf44eb89a5da88c51df6e13245ad75aa085fb0a136b4e82799",
+    "projects/fastify/src/libs/db.ts": "e2d0caef7d5a90e09c27fd78db91ba162b30d15c6412b47d2fbd5ac0f21bf503",
+    "projects/fastify/src/libs/setup.sql": "21dc28affd1c92c22d1edfae2231965d66e4070b96680004fc4b77aeba24b0da",
+    "projects/fastify/src/plugins/admin.ts": "01a4358edd94acba21bb7f6fecf2dff524e10b1f0726c2ab4fe3c85a036e4da7",
+    "projects/fastify/src/plugins/auth.ts": "c91b47f800571ef46cff5f2483a87ab4e8a06f313f3a42b159a6e100b7c01c0f",
+    "projects/fastify/src/plugins/cart.ts": "dfd32faaa7e86382e29cf571c0b4f1dbc514ff9cb351db15122b7be34c449f7f",
+    "projects/fastify/src/plugins/comment.ts": "59dc8ca0166b6077d0f7f33908c4cc1fec274142305ece404e0ee4449e7cae2a",
+    "projects/fastify/src/plugins/home.ts": "35dd057694d43f8ca568840cc1c4498f7a2cac3e939b3dc62481ecd44a73ba35",
+    "projects/fastify/src/plugins/order.ts": "d59a3d6dd6f6da6851847037a01bbd78c2a53915eabfe561653db8263a183f16",
+    "projects/fastify/src/plugins/product.ts": "accb70e6e2951ce01d647dda1560bd41ed39da539b8104fbdea63bbff48d93b3",
+    "projects/fastify/src/plugins/profile.ts": "d688c507374ffaef01c66f24f920ec20f798fb46d57997eeb25ddb91c8ec2095",
+    "projects/fastify/src/plugins/register.ts": "d804bde1fb234e33f9f28fc5dbceae1bb285af314e0ca5f72d921b529f5f9feb",
+    "projects/fastify/src/plugins/wishlist.ts": "5177a7a268cf6b78754e8a41aa2928df88cc089747701ddd6ec06c5ea29ac8da",
+    "projects/fastify/src/public/components/Cart.js": "ebf2dd20f346d10a0df18e7a20f4a6337b3d2292dba6b8ca87d6b4b2190a8aa1",
+    "projects/fastify/src/public/components/HeaderUserMenu.js": "8ffa781a085b8873b1882f0cb136b89225b0d4fca47956bb2c644069a349d5d7",
+    "projects/fastify/src/public/css/admin.css": "001d09495f31459291285b111db8c0ca021e352f752b9476ae7ef3bbc074655e",
+    "projects/fastify/src/public/css/comment.css": "094b8a6e7e758a781ea03f2a4e2bff04695faf2ae079abdd8f426c65cb8b0fdc",
+    "projects/fastify/src/public/css/header-menu.css": "aa5ddc6e3d131cbd355418af2d0a036b7cefc6d03981e08a8d3eda687d947c7a",
+    "projects/fastify/src/public/css/order.css": "f784da9ae6b071e4bcfcb385382a134af1f91960e7a53999b6b43e9971b8baf0",
+    "projects/fastify/src/public/css/profile.css": "0d84cba331a1cba8cfaf2d80d0ff5088651cedb940014b6c40bebe183484cb56",
+    "projects/fastify/src/public/css/register.css": "c6349515cbf82f4a715b8069e45f15904008c9f1697fbdec9bfec18ea3d921fe",
+    "projects/fastify/src/public/css/style.css": "2c5d5ebd199c4787fbd8c93e13153f973c2c4f783ff3f1f0bae2f421faa2c9ab",
+    "projects/fastify/src/public/css/wishlist.css": "2ec2269ceab0d39a331f5d1620c54f2ecbd88728d07c42030adbb40e07cf3bb0",
+    "projects/fastify/src/readme.md": "628384ce82324c02f292907a30747059be75d384a6ee721f8be7190f535d74a9",
+    "projects/fastify/src/tsconfig.json": "341bb63ffda35be172939c655ef37d7258e17c2bd756dc3d150c79f58057ecc1",
+    "projects/fastify/src/views/404.ejs": "8e83ab300fc35a3eddc3f9d254c263554d658ab16fddf48e2ec0c62f94d5b5cb",
+    "projects/fastify/src/views/admin-orders.ejs": "6455a74ce067c3cc8fec945c9333d7e26029822e7f4553a6bd4dd0eddcd26a1e",
+    "projects/fastify/src/views/admin-products.ejs": "4694f02aeec356132619231e6967aba42af67727c3677e0fd0f29a756750f765",
+    "projects/fastify/src/views/admin-users.ejs": "4298df612c024329095b30e9416d6e91d175bf92cd823458e7fa77002a48a1af",
+    "projects/fastify/src/views/home.ejs": "9676cc6b35b7d298afa1180a1a3e609f77609fd593ca9c927469e76c3466d2c2",
+    "projects/fastify/src/views/layout.ejs": "26870fb6ca9d77a57dc7985e781c7942ad7f6174fa8ff2c397e476d9ff7fe084",
+    "projects/fastify/src/views/login.ejs": "705444b5c49e28777429aa79a40323a3a7f2cd2c612318451245a9eedb2ae560",
+    "projects/fastify/src/views/not-found.ejs": "1b79ed2f6857dfaf84ded5a7a1918e00c7c8d7061738c972ca9d5c3b5ce117df",
+    "projects/fastify/src/views/order-detail.ejs": "99e9200546c6ae6e970a79e986cd109f24986e16e5b28c48c23d8c08f77747f9",
+    "projects/fastify/src/views/orders.ejs": "6e2046a9f63c89b1e8edb581d3a1028ae9e1da7cd3a8f245e30f8577cbcd2bad",
+    "projects/fastify/src/views/product-detail.ejs": "2aa37972b2c9de123878eff816a978196a0e7e95e047e20714edb0147685a751",
+    "projects/fastify/src/views/products.ejs": "96947fd20cb725bc95c31a15bfe632961a129d597ada7b43e00ac71655fec090",
+    "projects/fastify/src/views/profile-not-found.ejs": "3eafd26c3da34be584f566a1a420b9412b8fc7eb1880ad17ce8b0a143632340b",
+    "projects/fastify/src/views/profile.ejs": "295fd88789b348dab66fd008a339a3830f9a43ca799344b560d44af3655d081f",
+    "projects/fastify/src/views/register.ejs": "191803f79cfa6d8a131f0e772cabf06a94e0b803e0d6c2d57db65f58fdd4cd7a",
+    "projects/fastify/src/views/wishlist.ejs": "20ff205402ff91fe3acce04081d49d11812e1dd4fd4ca6675116254ce1bafdb8",
+    "projects/fastify/tasks.yml": "5da8ee3e5129c16a396548069dc4fb59cb592c727a3830598ce31b6df7ab62dc",
+    "projects/fastify/test/task-1.spec.js": "fb287c7723a38d0a5b0656db0159242737f6c9663c9d3487c004498a6feb9bf8",
+    "projects/fastify/test/task-10.spec.js": "e103b9cd5fcb52be193a8312f87803c72a96f16730647c119ad35e925cb5586b",
+    "projects/fastify/test/task-11.spec.js": "1ebac733b85ec6e3af2cd744da242810f7a3039be6c81bbe8f73531740d6095c",
+    "projects/fastify/test/task-12.spec.js": "613f479c153ef250edce5c9c13aa87be6fa1c3132344d29a87905ec980b76735",
+    "projects/fastify/test/task-13.spec.js": "f7accd715b11215d915387c834dcfc8a6719964d50fa61d497b62c695df4d885",
+    "projects/fastify/test/task-14.spec.js": "c308989499b0ab2097afa522000922a505931ed37b63f0b13f79af38e5387ae7",
+    "projects/fastify/test/task-15.spec.js": "8ecece6304c0d18b6200b53adf51b6b2b758323f7095b48f5e8fd8daffa24950",
+    "projects/fastify/test/task-16.spec.js": "a173d0860a7db626e0e288237d9ebf11a405e539d5b5201912e2825366d13938",
+    "projects/fastify/test/task-17.spec.js": "fb5c7ddd17df00e2e91503970651459901c48181e314de56c6d580183a262c2c",
+    "projects/fastify/test/task-18.spec.js": "0ceb984bf18cf9098f6cb7763aaa9d9de5cc279beb741c714ba12500fded9749",
+    "projects/fastify/test/task-19.spec.js": "71a74a3ff0da6fdf28ffeb4b3a37f9b8a5018dda6fb4a2ce6f9141d5dca552b3",
+    "projects/fastify/test/task-2.spec.js": "006b94b9b021c6089f91f1207101b07e79ea41c7f184c086913bc419eac50a13",
+    "projects/fastify/test/task-20.spec.js": "795c0289265b39acf729974f8d4137cff4cdf59a4503f3b08e2c821fa0b47ec3",
+    "projects/fastify/test/task-3.spec.js": "a5395181798c30730eb7f57732747bed7a3ac23e0f5e3358f4c8351579909052",
+    "projects/fastify/test/task-4.spec.js": "c0c1fb3c9dc0ba9da9d116af564cf4c10885a681a5dbab4b7b6b0561509cf28b",
+    "projects/fastify/test/task-5.spec.js": "8f6ab7b19d4f51d447d0d4aab5d5ba0a6a038996e4b64f0f8490dde36f59819d",
+    "projects/fastify/test/task-6.spec.js": "56ffd07343d68578ea95b46e9aebf545ee63641e290aac4d1e7bf39ca0159a5a",
+    "projects/fastify/test/task-7.spec.js": "2d7af1de4860d102ec791596b99af86a68fb9f72f2aaa470e38585d58e1e1570",
+    "projects/fastify/test/task-8.spec.js": "82af3d8a7c034a3f744f43c37030cf0a5339bf699b2d584f0d5874698ff1a833",
+    "projects/fastify/test/task-9.spec.js": "557b7afecc273dcedad3c80ed953d8b632e2149ec1b1ba126f89de577fd88873"
+  }
+}

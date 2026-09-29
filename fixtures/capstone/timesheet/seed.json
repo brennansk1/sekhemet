@@ -1,0 +1,16 @@
+{
+  "about": "The capstone's seed repository (W2 G2): the commit scripts/capstone/seed.mjs gives every arm, its tree and every file's SHA-256, and the SHA-256 of its text rendering for an arm that cannot open a repository. Written by seed.mjs --write; never edited by hand.",
+  "node": "26.0.0",
+  "commit": "a11835e71e919c8b312a3e5d0c49582f1ed52d90",
+  "tree": "50fe5d56754e0f809f16b3e99aef9b7f114b0c73",
+  "files": {
+    ".gitignore": "363a8c1862d2221983601fd247d9f364c6f7fd3d00d4d56e2260390bc18146f1",
+    ".npmrc": "3b88d1057add6f92ec23dc22dd017e312ded13a042deb0ba6f08bad85d936456",
+    ".nvmrc": "e8e8584c09cc1d8fbb12fbf9c0f6f84053223ab8a236a5230c3c9b20ff1a017a",
+    "README.md": "f9f777a02af640a1c768105955e5a0864d6e00e828c94ca538099b93822ad8bd",
+    "package-lock.json": "f71570e0f12338981ed9ad89799ddb100ce36f337907a1deee005865edf3d9a5",
+    "package.json": "60b175e7bb2d862c2fe4c3916ecab6d943f125455a597e38236f7c3949ca7a14",
+    "tsconfig.json": "282ef672a5f0d4b42ad6cfe95340f276629cb2d135169a8d4c7d46c13f06d759"
+  },
+  "listingSha256": "0b18c7d4794e636fa0dd5821942f594d3f5df61795dde0fb53b67c955c239828"
+}

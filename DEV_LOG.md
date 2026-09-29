@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 59 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 60 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,56 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 60 — 2026-09-29 (W2 capstone preparation; Holo4 downloaded; R13, R14; R-tune running)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver.
+- **W2:** one workflow: five groups, with the hidden suite written by a sealed agent; a sweep, one benchmark-audit review, a fixer and a blocker re-check (9 agents, 1.77M tokens).
+- **Owner's direction (2026-09-29):**
+  - every arm gets byte-identical input;
+  - a grid: one-shot and with-harness rows, with nail-mtp, Qwen3.8-27B, Opus 5.5, Sonnet 5 and Haiku 4.5 as the models;
+  - screenshots of every arm's app in the public repository.
+
+- **The capstone (fixtures/capstone, scripts/capstone):**
+  - **The brief:** a bakery owner's plain request, FLSA-based and silent on the edge cases a PM should raise.
+  - **The contract:** HTTP, the CSV, fixed pages for screenshots, America/Los_Angeles, Sunday weeks.
+  - **The California change letter.**
+  - **One frozen `prompt.md`** (sha256 `cef14ec1…`, 18,392 bytes) and `change_request.md` (`29e52465…`), rendered from their sources and checked by `render_prompt.mjs --check`. An agent's question is answered only from the same FAQ (`answerFor`).
+  - **The seed repository:** Node 26.0.0 and TypeScript pinned, a deterministic `seed.mjs`.
+  - **The hidden suite:** sealed, outside the repository (`~/.sekhemet/capstone-hidden`, mode 700). 112 tagged tests (release 1: Must 53, Should 28, Could 3; the change request: Must 22, Should 4, Could 2) and a reference that passes them, while the empty seed scores 0. Only its manifest (`fixtures/capstone/hidden.manifest.json`) is in the repository.
+  - **Web-Bench:** `projects/fastify` at commit `7b31ca2b`, fetched outside the repository, with its licence recorded.
+  - **The grid runner** (the one-shot cells through the product's adapter or `claude -p` with no tools; the Claude Code arm driven with pinned flags), **the scorer** (pass by tag and release, regressions, equal-k statistics, neutral findings, a blind packet) and **the screenshot tool** (fixed views at 1280 and 390 px, failures shown).
+- **Review:** 2 blockers, both fixed and the first re-checked:
+  - the gate failed on the tree;
+  - the hidden suite was reachable from a Claude Code arm. The runner now refuses an agentic run while hidden material is readable by the running user.
+
+  Ten majors, most fixed:
+  - the one-shot change request lacked the original prompt;
+  - the Claude Code input was uncontrolled;
+  - there was no fixed point for the change;
+  - accounting differed between arms;
+  - the findings favoured Sekhemet;
+  - the statistics compared unequal k;
+  - the reference leaked into temp;
+  - the credibility disclosure was missing.
+- **Open for W2b, before any capstone run:**
+  - **Seshat's 8,000-character message cap** refuses the 18,392-byte prompt. This is a product gap too: people paste long briefs.
+  - The Sekhemet arm's driver beyond step 1.
+  - The Web-Bench runner and scorer (specified only).
+  - The hidden suite moved to an encrypted disk image (`hdiutil`), mounted only for scoring.
+  - Budgets to confirm with a Haiku dry run: 360 and 180 minutes, 20 replies.
+  - K2: the owner checks the hidden suite's expected values.
+- **Holo4-35B-A3B** (computer-use VLM, Qwen3.6 base, Apache-2.0): Q3_K_S (15.2 GB) and its Q8 projector downloaded from mradermacher and verified against the published hashes (the first check used mistyped hashes and was redone). It is for later testing: too large at Q4 for a Coding model, and a possible future vision role.
+- **Research register:**
+  - **R13:** Transformers running packed GGUF on Apple Silicon. Watch it; llama.cpp stays the engine.
+  - **R14:** TaH2 looped transformers. It is a training method and not applicable, but it supports measuring surgical thinking.
+- **Stream 1:** R-tune (ref against thinking-surgical on nail-mtp, e53e408, ABBA order, two rounds) started at 10:47. Its first card passed.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1567 files), vitest 667 files, 5,255 passed, 45 skipped (the sealed capstone tests run only with SEKHEMET_CAPSTONE_SEALED_TESTS=1).
+- **Where the cards stop:**
+  - W2 is done for the protocol, fixtures and scoring.
+  - **Next:**
+    - Stream 2: W2b (the Sekhemet arm and Web-Bench), then W4 and W16;
+    - Stream 1: R-tune's rounds, then the prompt A/B.
 
 ### Entry 59 — 2026-09-29 (W1 security hardening; the baseline complete and frozen; Stream 1 starts)
 

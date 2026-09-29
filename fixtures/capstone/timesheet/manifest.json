@@ -1,0 +1,20 @@
+{
+  "about": "The capstone's frozen input (W2 G1). Every arm gets prompt.md first and change_request.md at the change request's fixed point (stakeholder_script.json changeRequest), and each is checked against the SHA-256 here when given. Rendered by scripts/capstone/render_prompt.mjs; never edited by hand.",
+  "files": {
+    "prompt.md": {
+      "sha256": "cef14ec1b519fe242869b042efbcc2da4fdcb4e96dd857b89f5a87de9e631c87",
+      "bytes": 18392
+    },
+    "change_request.md": {
+      "sha256": "29e524657fe9c7f23ffb7d39dfe9ab9ce01bbdcf81a8bbb4ae525dcb38c322aa",
+      "bytes": 4675
+    }
+  },
+  "sources": {
+    "brief.md": "d94d0c53f7034a606a8fed10f96849ad66165ebaf915c27998bbe59c55dc4408",
+    "contract.md": "62a1bee8fa0d4fce40462aa32bee2029839c7c9f19f64dd8c839f47a5b44439a",
+    "change_letter.md": "bdf051cb88b18cd5e66762a04d99e7a9454c6999d561d566ca529bfcc9e29791",
+    "contract_change.md": "7055be4e7ab4b5db7820ef17de3cd829d77f7d64eb7c1a5e6f86f595ac93d6f7",
+    "stakeholder_script.json": "65cb3b593d39beab04540ce3ed73d8cd5a524d34bf852359444efc9bb452f6ae"
+  }
+}

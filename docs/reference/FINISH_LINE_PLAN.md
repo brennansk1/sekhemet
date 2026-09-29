@@ -626,6 +626,17 @@ The usability sessions (D.3) are the owner's largest cost: 18 × 45 minutes, plu
 
 **Added 2026-09-29, R-tune (Stream 1):** ref against thinking-surgical on **nail-mtp**, the shipped Coding model (DEC-47), on the current build, 2+ rounds, paired. The B2.5 baseline measured Cyber-Tiel, where surgical led by 5 of 60 (not established), so its verdict does not carry over to another model. This run decides nail-mtp's shipped thinking policy (PROMPT_STANDARD 35.4). About 3 h a round, on nights after R2's re-qualification.
 
+**Added 2026-09-29, the Reviewer (R3's results):**
+- gpt-oss-20b at low reasoning: 18% recall.
+- gpt-oss-20b at high reasoning: every review cut off by its thinking.
+- GLM-4.7-Flash: 0% (it rubber-stamps: every criterion "met", even at the seeded line).
+
+Two runs follow:
+- **R3b:** a Reviewer prompt that makes the model prove each verdict (quote the line that satisfies the criterion, or report it unmet, starting from "find what is wrong"). It is written in the next fix round and admitted by the seeded-set A/B on both models (PROMPT_STANDARD 35.4).
+- **R3c:** gpt-oss-20b at medium reasoning with a larger thinking cap, as a per-model setting (W18 G2).
+
+Until one passes RG-P8-13, the Review role ships unfilled (DEC-47).
+
 ### E.3 Stream 2: the workflows (Claude Opus 5.5)
 
 Every workflow follows the same pattern:
@@ -660,6 +671,54 @@ Every workflow follows the same pattern:
 | W13 | **Independent release security review** | A fresh agent, read-only, on the RC commit, with the research's security list as its lens | 1M | RC commit | DoD §6.2 evidence | Per RC |
 | W14 | **Beta fix rounds** | One per beta round: triage, fix, test first | 2–2.5M each | Beta reports | — | Per round |
 | W15 | **Cut the release** | Version bump, changelog, SBOM, provenance, image, release notes (including how to return to the previous version from the backup, C.10 V-37), claims check | 1M | §F | A tagged release | K5, K6 |
+
+**W2 status (2026-09-29):**
+- **G1, built:** the frozen input in `fixtures/capstone/timesheet/`:
+  - `brief.md`, the stakeholder's brief (a fictional bakery owner), silent on the edge cases a PM should ask about. But every arm gets the FAQ up front (the owner's identical-input rule), so the capstone does not measure whether a PM asks the right questions;
+  - `stakeholder_script.json`, her answers by topic, with a default answer and the change request's fixed point (release 1 finished, or its budget spent: 360 minutes, then 180 for the change, `runner.mjs` `AGENTIC`, proposed for the owner to confirm);
+  - the technical notes (`contract.md`, `contract_change.md`) and the change letter;
+  - `prompt.md` and `change_request.md`, rendered from those by `scripts/capstone/render_prompt.mjs`, with their SHA-256 in `manifest.json` (`--check` refuses any drift; `apps/harness/tests/capstone_prompt.spec.ts`).
+- **G2, built:** the seed repository `fixtures/capstone/timesheet/seed/`: Node.js 26.0.0, TypeScript 5.9.3 and `@types/node` 26.0.1 pinned with a lockfile; Node's built-in test runner; no application code.
+  - `scripts/capstone/seed.mjs` materialises one run's repository at the same commit every time (`a11835e7…`, frozen with every file's SHA-256 in `seed.json`).
+  - It refuses the wrong Node.js, a destination inside the repository or the hidden suite's directory, and any drift (`--check`).
+  - `--render` gives the seed as text for a one-shot cell.
+  - Tests: `apps/harness/tests/capstone_seed.spec.ts`.
+- **G4, built:** the second run is Web-Bench's `projects/fastify` (TypeScript, 20 dependent tasks, a Playwright spec per task), pinned at commit `7b31ca2b…`.
+  - **Its licence:** Apache-2.0, from its `LICENSE.md`, for the code and tests. CC BY 4.0 is the paper's licence and applies only to quoting its baseline (Fastify, pass@2 best of five: Claude-3.7-Sonnet 40%).
+  - **Where it lives:** fetched to `~/.sekhemet/webbench-src`, outside the repository. `fixtures/capstone/webbench/` holds `choice.md` and a SHA-256-only `manifest.json`.
+  - **The script:** `scripts/capstone/webbench.mjs` checks the checkout (`--check`) and hands out task n's text byte for byte (`--task`). Tests: `apps/harness/tests/capstone_webbench.spec.ts`.
+  - **Not installed:** `@playwright/test` 1.57.0 and its Chromium build, and the project's packages. R11 needs them.
+- **G3, built; its person check (K2) is pending:** the hidden suite, sealed outside the repository. Its record is `fixtures/capstone/hidden.manifest.json`: hashes and counts only, and never inside the contestant-visible `timesheet/`.
+  - **What it holds:** 112 tests (75 Must, 32 Should, 5 Could; 84 for release 1, 28 for the change). They include the concurrent-edit, rounding, midnight and daylight-saving cases (C.10 V-9 to V-11).
+  - **Not run:** 5 browser checks are written down but not run, so WCAG and the 400-pixel layout have no executed hidden check.
+  - **The proof:** re-run on 2026-09-29. The seed scores 0/84 and 0/111; the reference scores 84/84 and 111/111; the release-1 reference passes 0 of the 28 change tests.
+  - **Disclosed:** the suite and the reference that "proves" it were written by one agent, `claude-opus-5-5`, of the same family as three contestant columns, so execution is circular.
+    - It waits for K2 and is not registered in `fixtures/eval_assets.json`.
+    - The scorer publishes nothing until a person's labels are registered.
+    - Two cases that go slightly beyond the frozen text, and the missing partly-correct variants, are listed for K2 (CAPSTONE_SELECTION "The hidden suite, as built").
+- **G5, built:** the arms runner, the scorer and the showcase screenshots, in `scripts/capstone/` (CAPSTONE_SELECTION "The runner, the scorer and the screenshots, as built").
+  - **The runner** (`runner.mjs`): a fresh seed repository per run under `~/capstone-runs/`, never inside `~/.sekhemet`. Every frozen text is hash-checked just before it is given.
+    - **One shot:** one request per phase, no tools, no retries, through the product's adapter or `claude -p --tools ""`.
+      - The second request carries the first request and its reply, then the change request.
+      - Every cell shares one window (131,072 tokens, and the local server's `n_ctx` is checked and recorded), reasoning off and one time limit.
+    - **Claude Code:** driven by the runner through `claude -p`, with the operator's configuration pinned out (`--safe-mode`, `--strict-mcp-config`, project settings only, one effort and one permission mode, no web tools). A question it ends on is answered from the FAQ, and the change is given at the budgeted point.
+    - **Sekhemet:** `sekhemet prepare`, then `sekhemet drive`. The person-simulator `person.mjs` answers only from the FAQ. She accepts on the checks, and on the AI review too where a reviewer is configured.
+    - **Isolation:** every agentic run is refused unless the OS makes the hidden suite, its scratch directory, Web-Bench's checkout and every other run unreadable to the run's user.
+  - **The scorer** (`score.mjs`):
+    - **What it reports:** the sealed suite (checked against its manifest before and after) at `release-1` and after the change, regressions, time and tokens from the log, and type, lint, security and accessibility findings. Hygiene counts debug output only, and Sekhemet's checks are always its npm template. Mutation is NOT RUN without Stryker.
+    - **Statistics:** only valid runs are pooled. Two arms are compared over the same k. The statistics give pass^k and pass@k with exact intervals, and paired McNemar comparisons for rows and columns, reading "no clear difference" when they are unresolved.
+    - **The blind packet:** no arm identity.
+    - **Proof:** the seed scores 0/84 and 0/111; the reference solution scores 84/84 and 111/111.
+  - **The screenshots** (`screenshots.mjs`): six fixed views at 1440 and 400 pixels, through the visual gate's Chromium, into `docs/showcase/capstone/`, with a comparison README. The Chromium run itself is not yet run.
+  - Tests: `capstone_runner`, `capstone_score` and `capstone_screenshots` specs. The sealed runs (the scorer and screenshots against the reference) run only with `SEKHEMET_CAPSTONE_SEALED_TESTS=1`, never in every gate, and copy nothing sealed into the shared temp directory.
+  - **Open:**
+    - **The Sekhemet arm cannot take `prompt.md` whole:** Seshat's message route keeps 8,000 characters. Beyond the first step, its driver is not built.
+    - **No agentic run can start on this machine** until the hidden suite, its scratch directory and Web-Bench's checkout are on a detachable disk image or another user's directory. The isolation check refuses every run until then.
+    - **The owner confirms** the agentic budget (360 and 180 minutes, 20 FAQ answers per phase) and Claude Code's `--effort high`. A cheap dry run confirms the pinned `claude -p` command unattended.
+    - **Stryker** before the first run, or the report says the mutation metric `prompt.md` promises was not delivered.
+    - **The Web-Bench runner and scorer are not built.** Its isolation is specified in `fixtures/capstone/webbench/choice.md`.
+    - **The B4.11 milestone** (teams.md §6, five people) needs R12's scripted-actors driver. This arm is Solo, with one simulated person.
+    - **The blind packet** still keeps harness fingerprints: changelogs, card ids and the PM's documents.
 
 ### E.4 The first two weeks, day by day
 

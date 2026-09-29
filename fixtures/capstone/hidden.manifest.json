@@ -1,0 +1,83 @@
+{
+  "about": "The capstone's hidden acceptance suite (W2 G3), recorded without its content. The suite lives only in its sealed directory (SEKHEMET_CAPSTONE_HIDDEN), outside this repository and every sandbox write root, and unreadable to a contestant during an agentic run (CAPSTONE_SELECTION, Protocol: isolation). It is published only after every run is scored. Written by the suite's manifest.mjs; never edited by hand.",
+  "date": "2026-09-29",
+  "location": "the sealed directory named by SEKHEMET_CAPSTONE_HIDDEN",
+  "suiteSha256": "8778213886e79b8ffe2592a1834c48263b094dabd1c6e28a3e17c4b8e2f83cdc",
+  "counts": {
+    "total": 112,
+    "byPriority": {
+      "Must": 75,
+      "Should": 32,
+      "Could": 5
+    },
+    "byRelease": {
+      "release 1": 84,
+      "change request": 28
+    },
+    "byTag": {
+      "Must, release 1": 53,
+      "Should, release 1": 28,
+      "Must, change request": 22,
+      "Should, change request": 4,
+      "Could, change request": 2,
+      "Could, release 1": 3
+    },
+    "scoredInPhase": {
+      "release-1": 84,
+      "change-request": 111
+    },
+    "documentedNotRun": 5
+  },
+  "proof": {
+    "suiteSha256": "8778213886e79b8ffe2592a1834c48263b094dabd1c6e28a3e17c4b8e2f83cdc",
+    "at": "2026-09-29T19:13:01.683Z",
+    "node": "v26.0.0",
+    "allChecksPassed": true,
+    "seed": {
+      "release-1": "0/84",
+      "change-request": "0/111"
+    },
+    "reference": {
+      "release-1": "84/84",
+      "change-request": "111/111"
+    },
+    "changeTestsOnReleaseOneReference": "0/28"
+  },
+  "files": {
+    "README.md": "18c35c6f6572d40bcf0cd21924c9e0f0fb3ead4173eb631d292b66ac71002981",
+    "lib/app.mjs": "92f38b6a423687bd70e01046752d3722d01f279bf686c711912bb91ba376ea25",
+    "lib/csv.mjs": "5ec375e40a3365ac302a680b7ed95783034f8d0fe2b4bbb0749b5343da86115e",
+    "lib/files.mjs": "b10f111f18c5d98036af8c4f5cfcb5e6b56dd80a99caa4a6eab8e81e45a4ddb1",
+    "lib/html.mjs": "eb0b2a6732f6472d794d2963f6ee5404f78ef2dd5e195e9fca79224355c45707",
+    "lib/reporter.mjs": "8dfc541d0a4888452de2f31032bef5f53854c482d740d14d4268b5d5d4efb169",
+    "lib/world.mjs": "e1898e60dba5bf548023425f6246f91338695301cf4fcbf7f65ab40ed80b99fb",
+    "manifest.mjs": "f47419b448f999f2eee6790a0a8e5663612aa69dd58ec06db857ce1a4f915426",
+    "prove.mjs": "93e0f9cfeae0ab2adc9ca389c75c67921011eaa9cbf733ad06900923e185c06a",
+    "reference/.gitignore": "363a8c1862d2221983601fd247d9f364c6f7fd3d00d4d56e2260390bc18146f1",
+    "reference/.npmrc": "3b88d1057add6f92ec23dc22dd017e312ded13a042deb0ba6f08bad85d936456",
+    "reference/.nvmrc": "e8e8584c09cc1d8fbb12fbf9c0f6f84053223ab8a236a5230c3c9b20ff1a017a",
+    "reference/package-lock.json": "914e74afe6add274954816fd558678ea65e27a00870f58632fffdbfd5f927ce1",
+    "reference/package.json": "528f80154af63ecc98a55cdedc3dcd89607626e135b507b82de92c0fd322e016",
+    "reference/src/edition.ts": "95b0dc7a48ff2cacb9a4cc0113cf20db3b4e46e8751ab0059ef3ecbf4a8d3620",
+    "reference/src/main.ts": "e6d6b252535a488cb5942ced021bdf9a23e5a180110737cc61d6a7b5d9424f7e",
+    "reference/src/pages.ts": "ca89cab8693dca87770e09200144e2165c96972d37234a3fec8135009e1d6bf7",
+    "reference/src/pay.test.ts": "5574e021abb8f9d2c6a742e89c580d4b01e139e4325e89afba3b903260578602",
+    "reference/src/pay.ts": "8d73eeea44c429d6c6c2ebef6eadae1e8e29aa352ba41026d873d548f6692870",
+    "reference/src/server.ts": "f10f1638fef91ec485d0b7ceaf049597525247191bc284c8749b88a7d77b9f96",
+    "reference/src/store.ts": "c7eeeba115258a0b970a1af0dc5c81edd91a417fd9fa248d8cb862ab45d1a765",
+    "reference/src/time.ts": "f12a35964398649790e0f8b3fbaeab4cd0cf23ab05bd1c78d085299c98179011",
+    "reference/tsconfig.json": "282ef672a5f0d4b42ad6cfe95340f276629cb2d135169a8d4c7d46c13f06d759",
+    "run.mjs": "135b61e21c8192ff3723e94d785c98bb7e75835d93f5328c6b292254ecb2655c",
+    "tests/authorisation.test.mjs": "cda810f4eaba77f779ad863a204e3fe0d2acf1bf18fda2c4068cee4c2bcf1f4a",
+    "tests/basics.test.mjs": "2dfbad0590b592361efa25ed09292b66c109b4c4a2cc5590e5354976ff63fb14",
+    "tests/browser.playwright.mjs": "5f8b6cbae4be4501e6f19708796787caf58c3ee113dc0079f3b9ed86a97f2228",
+    "tests/california.test.mjs": "56be8b1e2381b9117afab6bdd5f88c891044e58d586649d3fc20739883503f7e",
+    "tests/change_interface.test.mjs": "9e4f181738a96120a7cf9931f44066876c97175fb73c19aeedbe799b25db6807",
+    "tests/concurrency.test.mjs": "f4d59e0e28afc02d00fe359b0b3e640833d662e63840be07ecf76e173404b2f9",
+    "tests/csv.test.mjs": "439502ce5120681b0cd62ba1a87d7e7245416213424619490a913a63d786797e",
+    "tests/federal_pay.test.mjs": "6a5ea52ed0786689d658975ec0a75326d929a7228bff5115b6530ba0ff08c55e",
+    "tests/pages.test.mjs": "94190fb0e893ec69a5564e57707b6924502bbf2eeb9930f5551e5c5e4c9e5688",
+    "tests/shifts.test.mjs": "eda775bfa005b3ee3b6988006bb9231702da99b648386e7b795c8ba816086ecb",
+    "tests/workflow.test.mjs": "097e10c3df3f3552334040fba390f57d0cbd7c2f363d6a4d280bbf3945ccbe61"
+  }
+}

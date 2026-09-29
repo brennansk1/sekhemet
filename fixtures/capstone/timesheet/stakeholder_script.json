@@ -1,0 +1,284 @@
+{
+  "about": "The capstone's stakeholder, Marisol Hollis, owner of Hollis Bakery; both are fictional. The answers here are exactly the FAQ of prompt.md (phase release-1) and of change_request.md (phase change-request), never more: scripts/capstone/render_prompt.mjs renders both files from this script, the opening messages and the technical notes, and records their SHA-256 in manifest.json. An arm that asks a question gets, word for word, the answers whose keywords match it from the phases it has already been given, or else the default answer. Keywords are for matching only and are never shown.",
+  "version": 1,
+  "stakeholder": "Marisol Hollis, owner of Hollis Bakery, Vancouver, Washington (fictional)",
+  "defaultAnswer": "I'm not sure about that one, and it isn't something I've thought about. Please pick what a sensible small business owner would want, and tell me what you picked so I can check it with my accountant.",
+  "changeRequest": {
+    "deliverAt": "release-1-finished",
+    "rule": "Given once, the same way to every arm, when release 1 is finished and never before: for Sekhemet, when the person-simulator accepts release 1; for Claude Code, when a turn of its session ends without a question (the runner answers a question it ends on from this FAQ, at most AGENTIC.maxReplies times per phase, as Seshat's questions are answered); for a one-shot cell, as the second message, after its first reply, carrying the conversation so far. For an agentic arm, if release 1 is not finished when the release-1 time budget ends (scripts/capstone/runner.mjs AGENTIC.budgetMinutes: 360 minutes of wall-clock), the change is given then; the change phase has its own budget (180 minutes), after which the run ends. The tree is tagged release-1 first, and regressions after the change are measured against that tag."
+  },
+  "phases": [
+    {
+      "id": "release-1",
+      "file": "prompt.md",
+      "opening": "brief.md",
+      "notes": "contract.md",
+      "topics": [
+        {
+          "topic": "workweek",
+          "question": "When does your week start and end?",
+          "keywords": [
+            "workweek",
+            "week start",
+            "week begin",
+            "start of the week",
+            "end of the week",
+            "pay period",
+            "sunday"
+          ],
+          "answer": "Our payroll week starts at midnight as Saturday turns into Sunday, and runs to the same moment a week later, bakery time. A timesheet is one person's hours for one of those weeks, and I call a week by its Sunday's date."
+        },
+        {
+          "topic": "time_zone",
+          "question": "What time zone are you in?",
+          "keywords": ["time zone", "timezone", "utc", "pacific", "clock"],
+          "answer": "Pacific time, the same as the clock on our wall, so it changes for daylight saving in spring and autumn. Every day and every week in the app should go by that clock."
+        },
+        {
+          "topic": "overnight_shifts",
+          "question": "What about shifts that go past midnight?",
+          "keywords": ["midnight", "overnight", "night shift", "next day", "cross", "late night"],
+          "answer": "The bakers often work from 10 at night to 6 in the morning. That is one shift, and it goes on the timesheet of the week it started in. The hours before midnight belong to the first day and the hours after midnight to the next day. Our week changes over at midnight on Saturday, so I have anyone working then clock out at midnight and back in, and each week's hours stay in that week. If someone types a shift that runs from Saturday into Sunday, it's a mistake and the app should stop them and ask for two shifts. Finishing at exactly midnight on Saturday is fine."
+        },
+        {
+          "topic": "daylight_saving",
+          "question": "What happens when the clocks change?",
+          "keywords": [
+            "daylight",
+            "dst",
+            "clocks change",
+            "clocks go",
+            "spring forward",
+            "fall back",
+            "summer time"
+          ],
+          "answer": "Pay people for the time they actually worked. On the Sunday the clocks go forward in spring, a baker who works from midnight to 6 in the morning has worked 5 hours, not 6. On the Sunday they go back in autumn, the same shift is 7 hours."
+        },
+        {
+          "topic": "rounding_time",
+          "question": "Do you round clock times, say to the nearest quarter hour?",
+          "keywords": ["round", "rounding", "quarter hour", "nearest", "seconds", "minute"],
+          "answer": "No. My accountant says rounding can short people, so we pay to the exact minute. Times are put in to the minute, with no seconds."
+        },
+        {
+          "topic": "rounding_pay",
+          "question": "How should pay be rounded?",
+          "keywords": ["round", "rounding", "cent", "cents", "decimal", "pay calculation"],
+          "answer": "My accountant's rule: work out each kind of pay for the week (regular and overtime) from the exact minutes, and round only that amount to the nearest cent, with half a cent rounded up. The total is those rounded amounts added together. The hours in the payroll file are shown to two decimal places, but the pay is worked out from the exact minutes, not from the rounded hours."
+        },
+        {
+          "topic": "overtime_rate",
+          "question": "How is overtime paid?",
+          "keywords": ["overtime", "time and a half", "1.5", "rate", "40 hours", "bonus", "tips"],
+          "answer": "At one and a half times the person's hourly rate, for every minute over 40 hours in the week. Everyone here is paid by the hour, with one rate each. Tips and bonuses are not part of this."
+        },
+        {
+          "topic": "other_rules",
+          "question": "Do any other overtime rules apply, like daily overtime or state rules?",
+          "keywords": [
+            "daily overtime",
+            "state law",
+            "state rules",
+            "washington",
+            "other rules",
+            "8 hours"
+          ],
+          "answer": "Not for us today. My accountant says Washington follows the same 40-hours-a-week rule for us, so there is no daily overtime. If that ever changes, I'll tell you."
+        },
+        {
+          "topic": "breaks",
+          "question": "How do unpaid breaks work?",
+          "keywords": ["break", "lunch", "meal", "rest break"],
+          "answer": "People clock out for their unpaid meal break and back in afterwards, so a day with a break is just two shifts. A paid rest break is simply part of the shift."
+        },
+        {
+          "topic": "mistakes",
+          "question": "What mistakes should the app stop?",
+          "keywords": [
+            "mistake",
+            "validation",
+            "invalid",
+            "error",
+            "overlap",
+            "16 hours",
+            "too long",
+            "before it starts"
+          ],
+          "answer": "A shift that finishes before it starts, or at the same minute. A shift longer than 16 hours: nobody works that long here, so it's a typo. A shift that overlaps another shift of the same person (one finishing at 2:00 and the next starting at 2:00 is fine). A shift that runs from Saturday into Sunday, as I said. And any change to a timesheet that has been sent in or approved, unless a manager has opened it again."
+        },
+        {
+          "topic": "who_enters",
+          "question": "Who can put in and change shifts?",
+          "keywords": ["who can", "enter", "edit", "change shifts", "add shifts", "permission"],
+          "answer": "Employees put in and change their own shifts while their timesheet is still open. Managers can put in and change anyone's shifts, including their own, under the same rule."
+        },
+        {
+          "topic": "approval",
+          "question": "How does approval work?",
+          "keywords": ["approve", "approval", "submit", "send in", "reject", "send back", "status"],
+          "answer": "When the week is done, the person sends their timesheet in (a manager can also send it in for them). A manager then approves it, or sends it back with a reason, and then it's open again for changes. A manager can't approve, send back or reopen their own timesheet: another manager does that. And a manager has to approve what they are looking at: if the hours changed after they opened it, they should be told and look again."
+        },
+        {
+          "topic": "corrections",
+          "question": "How are approved timesheets corrected?",
+          "keywords": [
+            "correct",
+            "correction",
+            "fix",
+            "reopen",
+            "approved timesheet",
+            "history",
+            "audit"
+          ],
+          "answer": "A manager opens the approved timesheet again and has to say why. Then the shifts can be fixed, and it's sent in and approved again as usual. Every step is kept in the timesheet's history: sending in, approving, sending back and opening again, each with who, when and the reason, and every shift added, changed or removed, with the times before and after. While it's open again, it is not in the payroll file."
+        },
+        {
+          "topic": "payroll_file",
+          "question": "What exactly goes in the payroll file?",
+          "keywords": ["csv", "export", "payroll file", "payroll company", "columns", "file"],
+          "answer": "One file per week, with one line for each person whose timesheet for that week is approved, in order of name. The columns are the ones in the payroll company's template (they are in the technical notes). Hours have two decimal places, and money is in dollars and cents with no dollar sign, like 1234.50. A week with nothing approved still gets a file with just the heading line."
+        },
+        {
+          "topic": "privacy",
+          "question": "Who can see what?",
+          "keywords": [
+            "can see",
+            "who sees",
+            "privacy",
+            "visible",
+            "other people",
+            "access",
+            "pay rates"
+          ],
+          "answer": "Employees see only their own shifts, timesheets, hours and pay. Managers see everyone's, including pay rates."
+        },
+        {
+          "topic": "two_managers",
+          "question": "What should happen when two managers change the same timesheet at once?",
+          "keywords": [
+            "same time",
+            "at once",
+            "concurrent",
+            "conflict",
+            "overwrite",
+            "both managers",
+            "simultaneous"
+          ],
+          "answer": "Whoever saves second should be told that someone else has just changed it, and see the latest version before trying again. Nothing should be overwritten without them knowing."
+        },
+        {
+          "topic": "sign_in",
+          "question": "How do people sign in?",
+          "keywords": [
+            "sign in",
+            "log in",
+            "login",
+            "password",
+            "account",
+            "first manager",
+            "setup"
+          ],
+          "answer": "It only runs on our own network, so for now people just pick their name. Passwords can come later. The first time the app starts, it asks for my name and rate so I'm the first manager, and then I add everyone else."
+        },
+        {
+          "topic": "people",
+          "question": "What do you need to keep about each person?",
+          "keywords": [
+            "employee details",
+            "person",
+            "leaves",
+            "leave",
+            "inactive",
+            "deactivate",
+            "role"
+          ],
+          "answer": "Their name, whether they're an employee or a manager, and their hourly rate. When someone leaves, I mark them as no longer working here: they can't sign in or get new shifts, but their old timesheets stay, and they still appear in the team's week for any week they worked."
+        },
+        {
+          "topic": "raises",
+          "question": "How do raises work?",
+          "keywords": ["raise", "rate change", "new rate", "pay rise", "increase"],
+          "answer": "This is a nice-to-have. When I give someone a raise, I pick the week it starts from (a Sunday). That week and the weeks after use the new rate; the weeks before keep the rate they had."
+        },
+        {
+          "topic": "look_and_feel",
+          "question": "How should it look?",
+          "keywords": [
+            "look",
+            "design",
+            "colours",
+            "colors",
+            "phone",
+            "mobile",
+            "layout",
+            "grid",
+            "screen"
+          ],
+          "answer": "Clean and easy to read, with text and buttons big enough for a phone. On the managers' week page I'd like it to look like my spreadsheet: people down the side, Sunday to Saturday across the top with each day's hours, then total hours, overtime and whether the timesheet is open, sent in or approved. Our colours don't matter."
+        },
+        {
+          "topic": "size_and_records",
+          "question": "How many people, and how long do you keep records?",
+          "keywords": ["how many", "size", "scale", "records", "years", "retention"],
+          "answer": "14 people today, maybe 30 in a couple of years. I need to keep every week's timesheets for at least three years, because my accountant says I have to keep payroll records."
+        }
+      ]
+    },
+    {
+      "id": "change-request",
+      "file": "change_request.md",
+      "opening": "change_letter.md",
+      "notes": "contract_change.md",
+      "topics": [
+        {
+          "topic": "ca_who",
+          "question": "Which people do the California rules apply to?",
+          "keywords": ["which people", "shop", "location", "sacramento", "move", "moved"],
+          "answer": "Everyone who works at the Sacramento shop. Each person works at one shop only, and I say which when I add them. Everyone already in the app is at the Vancouver shop. If someone ever moved, I'd add them again as a new person."
+        },
+        {
+          "topic": "ca_workday",
+          "question": "What is a workday in California?",
+          "keywords": ["workday", "work day", "midnight", "overnight", "daylight"],
+          "answer": "My accountant says our workday is midnight to midnight, bakery time. A shift that goes past midnight is split: the hours before midnight count toward the first day and the hours after toward the next. On the days the clocks change, it's still the time actually worked."
+        },
+        {
+          "topic": "ca_daily",
+          "question": "How do daily overtime and double time work?",
+          "keywords": ["daily", "8 hours", "12 hours", "double time", "double"],
+          "answer": "In one workday, the hours up to 8 are regular, the hours over 8 up to and including 12 are overtime at one and a half times the rate, and the hours over 12 are double time, at twice the rate. Several shifts on the same day add up."
+        },
+        {
+          "topic": "ca_seventh_day",
+          "question": "What is the seventh-day rule?",
+          "keywords": ["seventh", "7th", "seven days", "every day", "consecutive"],
+          "answer": "If someone works some time on every one of the seven days of a payroll week, Sunday to Saturday, then on the seventh day, the Saturday, their first 8 hours are overtime and anything over 8 is double time."
+        },
+        {
+          "topic": "ca_weekly",
+          "question": "Does the 40-hour weekly rule still apply in California?",
+          "keywords": ["weekly", "40 hours", "twice", "double count", "stack", "pyramid"],
+          "answer": "Yes. Hours over 40 in the week are overtime too, but my accountant says each hour is paid once, at the highest rate that applies. Hours already paid as daily overtime or double time don't count toward the 40: the 40 is counted from the regular hours only, and once someone has 40 regular hours in the week, any more hours that would have been regular are overtime."
+        },
+        {
+          "topic": "ca_rounding",
+          "question": "Does the pay rounding change?",
+          "keywords": ["round", "rounding", "cent", "cents"],
+          "answer": "No, same rule, with double time as a third kind of pay, rounded on its own."
+        },
+        {
+          "topic": "payroll_file_change",
+          "question": "What changes in the payroll file?",
+          "keywords": ["csv", "export", "payroll file", "columns", "template", "file"],
+          "answer": "The payroll company's new template adds each person's state and their double-time hours and pay (the columns are in the technical notes). Washington people have 0.00 double time. They will switch to the new template on the day we release this, and they say their old import won't read the new file."
+        },
+        {
+          "topic": "wa_unchanged",
+          "question": "Does anything change for the Vancouver shop?",
+          "keywords": ["vancouver", "washington", "existing", "unchanged", "regression"],
+          "answer": "No. Everything there must keep working exactly as it does now, with the 40-hours-a-week rule only."
+        }
+      ]
+    }
+  ]
+}
