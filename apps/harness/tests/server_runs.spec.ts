@@ -6,6 +6,7 @@ import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 // Run records, decisions and integrity over the dashboard API (K6, K8, K16-K20, S8).
 describe("@sekhemet/harness dashboard: run records, decisions, integrity", () => {
@@ -15,10 +16,10 @@ describe("@sekhemet/harness dashboard: run records, decisions, integrity", () =>
   let cardStore: CardStore;
   let server: { port: number; close: () => Promise<void> };
   const base = () => `http://127.0.0.1:${server.port}`;
-  const post = (path: string, body: unknown) =>
+  const post = async (path: string, body: unknown) =>
     fetch(`${base()}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+      headers: { "Content-Type": "application/json", ...(await pageWriteHeaders(base())) },
       body: JSON.stringify(body),
     });
 

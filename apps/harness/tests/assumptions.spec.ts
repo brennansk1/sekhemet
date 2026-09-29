@@ -8,6 +8,7 @@ import { loadCalibrationLog } from "@sekhemet/planner";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startDashboardServer } from "../src/server.js";
 import { type Kernel, runWave2Command } from "../src/wave2.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * P15: a logged assumption is only half the loop. Until a person's verdict on
@@ -96,10 +97,10 @@ describe("recording the outcome of a logged assumption (P15)", () => {
       port: 0,
     });
     const base = `http://127.0.0.1:${server.port}`;
-    const post = (path: string, body: unknown) =>
+    const post = async (path: string, body: unknown) =>
       fetch(`${base}${path}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+        headers: { "Content-Type": "application/json", ...(await pageWriteHeaders(base)) },
         body: JSON.stringify(body),
       });
 

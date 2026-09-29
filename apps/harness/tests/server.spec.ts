@@ -17,6 +17,7 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { UI_LIB_MODULES, UI_WEB_DIR } from "@sekhemet/ui";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resolveStaticPath, startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 describe("@sekhemet/harness Dashboard Server", () => {
   let db: DatabaseSync;
@@ -294,12 +295,12 @@ describe("@sekhemet/harness Dashboard Server", () => {
     expect(data.ok).toBe(data.checks.every((c) => c.status !== "fail"));
   });
 
-  const post = (path: string, body?: unknown, trusted = true) =>
+  const post = async (path: string, body?: unknown, trusted = true) =>
     fetch(`http://127.0.0.1:${serverInstance.port}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(trusted ? { "X-Sekhemet-Action": "1" } : {}),
+        ...(trusted ? await pageWriteHeaders(`http://127.0.0.1:${serverInstance.port}`) : {}),
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });

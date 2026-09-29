@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -23,6 +24,7 @@ import { Access } from "../src/team/access.js";
 import { type InboxDeps, inboxNotifier } from "../src/team/inbox.js";
 import { allMembers, personName } from "../src/team/members.js";
 import { identitySettings } from "../src/team/settings.js";
+import { chooseSecretsFile } from "./secret_choice.js";
 import { type SmtpFixture, body, header, startSmtpFixture } from "./smtp_fixture.js";
 
 /**
@@ -45,6 +47,7 @@ let log: EventLog;
 let store: CardStore;
 let dir: string;
 let cfgDir: string;
+let restoreUserConfig: () => void;
 let base: string;
 let smtp: SmtpFixture;
 let server: { port: number; close: () => Promise<void> } | undefined;
@@ -62,6 +65,8 @@ beforeEach(async () => {
   process.env.SEKHEMET_CLI = join(root, "noop.mjs");
   cfgDir = mkdtempSync(join(tmpdir(), "sek-email-cfg-"));
   process.env.SEKHEMET_CONFIG_DIR = cfgDir;
+  // SEC-27c: no secret store in tests, so the SMTP password is kept by the recorded choice.
+  restoreUserConfig = chooseSecretsFile(cfgDir);
   db = new DatabaseSync(join(root, ".sekhemet", "events.db"));
   initSchema(db);
   log = new EventLog(db, { setup: "team" });
@@ -77,6 +82,7 @@ afterEach(async () => {
   await smtp.close();
   Reflect.deleteProperty(process.env, "SEKHEMET_CLI");
   Reflect.deleteProperty(process.env, "SEKHEMET_CONFIG_DIR");
+  restoreUserConfig();
   db.close();
   rmSync(root, { recursive: true, force: true });
   rmSync(cfgDir, { recursive: true, force: true });
@@ -197,6 +203,18 @@ describe("the email channel's settings (integrations item 20, security item 35)"
     };
     // integration.connect is an Admin's (teams item 6): a Member is refused.
     expect((await call("PUT", "/api/integrations/email", t.mo, cfg)).status).toBe(403);
+    // SEC-27c: with no secret store and no recorded choice the password is refused,
+    // and choosing a private file is an Admin's too.
+    rmSync(join(cfgDir, "config.toml"));
+    expect((await call("PUT", "/api/integrations/email", t.ada, cfg)).status).toBe(409);
+    expect(
+      settingsFiles()
+        .map((f) => readFileSync(f, "utf8"))
+        .join(""),
+    ).not.toContain(SMTP_PASSWORD);
+    const choice = { cleartextFile: true };
+    expect((await call("PUT", "/api/integrations/secret-store", t.mo, choice)).status).toBe(403);
+    expect((await call("PUT", "/api/integrations/secret-store", t.ada, choice)).status).toBe(200);
     expect(
       (await call("PUT", "/api/integrations/email", t.ada, { ...cfg, from: "not an address" }))
         .status,
@@ -468,7 +486,7 @@ describe("the SMTP password never crosses a network in the clear (security item 
       const userConfig = process.env.SEKHEMET_USER_CONFIG;
       try {
         // The network policy lets the server through, so TLS is what is tested.
-        writeFileSync(join(cfgDir, "config.toml"), '[network]\nmode = "open"\n');
+        appendFileSync(join(cfgDir, "config.toml"), '\n[network]\nmode = "open"\n');
         process.env.SEKHEMET_USER_CONFIG = join(cfgDir, "config.toml");
         writeEmail(root, {
           host: ownAddress as string,

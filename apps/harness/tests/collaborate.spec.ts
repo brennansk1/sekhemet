@@ -18,6 +18,7 @@ import {
 } from "../src/collaborate.js";
 import { executeCard } from "../src/execute.js";
 import { startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 // worker-loop NEW-worker-loop-10 (WL-N10-1..3, DEC-34): a person messages a
 // running agent, pauses it and hands it back, or takes the issue over.
@@ -302,10 +303,13 @@ describe("NEW-worker-loop-10: collaborating on a running issue", () => {
       port: 0,
       streamIntervalMs: 60_000,
     });
-    const post = (path: string, body: unknown) =>
+    const post = async (path: string, body: unknown) =>
       fetch(`http://127.0.0.1:${server.port}${path}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(await pageWriteHeaders(`http://127.0.0.1:${server.port}`)),
+        },
         body: JSON.stringify(body),
       });
     try {

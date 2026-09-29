@@ -19,6 +19,7 @@ import { identitySettings } from "../src/team/settings.js";
 // The Team setup's pages are checked on Team servers: Set up Sekhemet (no Admin
 // yet), Sign in and an invite (signed out), and Profile (signed in).
 const AXE = createRequire(import.meta.url).resolve("axe-core/axe.min.js");
+const AXE_SOURCE = readFileSync(AXE, "utf8");
 const NAME_RULES = [
   "button-name",
   "link-name",
@@ -225,11 +226,13 @@ describe("the accessibility check (dashboard DB-P12-6)", () => {
               await page.locator("[data-approve]").waitFor({ timeout: 10_000 });
             }
             const at = `${url.startsWith(solo) ? "" : "team "}${route} ${width}px ${theme}`;
-            if ((await page.$('script[data-axe="1"]')) === null) {
-              await page.addScriptTag({ path: AXE });
-              await page.evaluate(() =>
-                document.querySelector("script:last-of-type")?.setAttribute("data-axe", "1"),
-              );
+            // Injected by evaluation, not a <script> tag: the page's policy
+            // (security item 37) refuses inline script, and stays in force here.
+            // biome-ignore lint/suspicious/noExplicitAny: axe is injected as a global
+            if (!(await page.evaluate(() => Boolean((window as any).axe)))) {
+              // Evaluated as global code (DevTools, outside the page's policy);
+              // `undefined` keeps the completion value serializable.
+              await page.evaluate(`${AXE_SOURCE}\n;undefined`);
             }
             const axe = await page.evaluate(
               (rules) =>

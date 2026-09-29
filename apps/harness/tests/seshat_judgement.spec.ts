@@ -27,6 +27,7 @@ import { STANDUP_GIVEN, estimationUnit } from "../src/pm/standup.js";
 import { PmStore } from "../src/pm/store.js";
 import type { PmMessage } from "../src/pm/types.js";
 import { orderForQueue } from "../src/wave2.js";
+import { chooseSecretsFile } from "./secret_choice.js";
 
 // planner-pm P6 (B4.8 group S2): Seshat's judgement — one standup, what is
 // at risk, the sprint bet, split rather than retry, the message budget, a
@@ -35,7 +36,9 @@ import { orderForQueue } from "../src/wave2.js";
 
 const dirs: string[] = [];
 const servers: Server[] = [];
+const restores: (() => void)[] = [];
 afterEach(async () => {
+  for (const r of restores.splice(0)) r();
   for (const s of servers.splice(0)) {
     s.closeAllConnections();
     await new Promise<void>((r) => s.close(() => r()));
@@ -174,6 +177,8 @@ describe("PM-P6-3: one standup builder for the chat, the notifier and the CLI", 
     const s = setup();
     process.env.SEKHEMET_CONFIG_DIR = mkdtempSync(join(tmpdir(), "sek-judgement-cfg-"));
     dirs.push(process.env.SEKHEMET_CONFIG_DIR);
+    // SEC-27c: no secret store here, so the webhook is kept by the person's choice.
+    restores.push(chooseSecretsFile(process.env.SEKHEMET_CONFIG_DIR));
     const { hook, hits } = await slackStandIn();
     writeSettings(s.repoPath, { slackWebhookUrl: hook, slackEvents: ["standup"] });
     await card(s, "c_one", "Ledger");
@@ -615,6 +620,7 @@ describe("PM-P6-10: the unsolicited-message budget, and the panel while the boar
   async function notifier(s: S, clock: () => Date) {
     process.env.SEKHEMET_CONFIG_DIR = mkdtempSync(join(tmpdir(), "sek-judgement-cfg-"));
     dirs.push(process.env.SEKHEMET_CONFIG_DIR);
+    restores.push(chooseSecretsFile(process.env.SEKHEMET_CONFIG_DIR));
     const { hook, hits } = await slackStandIn();
     writeSettings(s.repoPath, { slackWebhookUrl: hook });
     return { n: await startNotifier(s.log, s.repoPath, { intervalMs: 60_000, now: clock }), hits };

@@ -16,7 +16,7 @@ updated in the same commit.
 |---|---|---|---|
 | `assignee` (§2) | `"worker" \| "human" \| string` | `owner` (a person), `delegate` (the Worker or a person), `accepter` | NEW-kernel-6 |
 | `externalRef.system` (§2) | `"github" \| "forgejo"` | adds `"jira"`, `"linear"` | [integrations](specs/integrations.md) item 8 |
-| Mutation guard (§3) | `X-Sekhemet-Action: 1` header | a per-session token | S3c |
+| Mutation guard (§3) | `X-Sekhemet-Action: 1` header plus the session's token as `X-Sekhemet-CSRF`: in Solo this start's token from `GET /api/session` (W1 G1), in the Team setup the signed-in session's | done ([security](specs/security.md) item 37) | S3c |
 | `/api/metrics/flow` `cfd` keys (§3) | `backlog, ready, working, checking, review, done` | the stored states (`in_progress`, `verify`) — *Working* and *Checking* are retired names ([NAMING](NAMING.md)) | NEW-dashboard-2 |
 | PM with no runner (§4) | the server loads the manager model directly | through the residency scheduler only | NEW-models-9 |
 | Slack webhook URL (§5) | `~/.config/sekhemet/…` | the one user directory, `~/.sekhemet/` | NEW-surface-1 |
@@ -67,8 +67,11 @@ Cycles are stored as ledger-backed records:
 
 ## 3. Endpoints
 
-All mutating endpoints require the existing `X-Sekhemet-Action: 1` header
-and are refused in read-only mode.
+All mutating endpoints require the `X-Sekhemet-Action: 1` header and the
+session's token as `X-Sekhemet-CSRF` (in Solo, this server start's token,
+read by the page from `GET /api/session` as `csrf`; [security](specs/security.md)
+item 37), and are refused in read-only mode. A request whose `Host` the
+server does not answer to is refused with 421 before any endpoint runs.
 
 ### Chat
 
@@ -1108,10 +1111,12 @@ URLs and stores no tokens in the repo.
 | Later | Notion / Confluence | The PM publishes cycle plans, run reports and decision logs as pages, and reads linked specs as card context. | Those pages |
 
 Slack endpoints (Now tier):
-- `PUT /api/integrations/slack` with `{ webhookUrl }`. The URL is stored in
-  the user's config directory (`~/.config/sekhemet/repos/<repo>-<hash>.json`,
-  mode 0600), never in the repo: `.sekhemet/` is committed in many projects.
-  It is never written to the ledger. It returns the integration entry.
+- `PUT /api/integrations/slack` with `{ webhookUrl }`. The URL is a secret,
+  kept in the OS secret store (the macOS keychain, the Linux Secret Service
+  through `secret-tool`), else — only by the person's recorded choice — in
+  the user directory (`<user dir>/repos/<repo>-<hash>.json`, mode 0600);
+  never in the repo (`.sekhemet/` is committed in many projects), never on
+  the ledger. It returns the integration entry, or 409 as below.
 - `POST /api/integrations/slack/test` sends a test message and returns
   `{ ok, error? }`.
 - `DELETE /api/integrations/slack` disconnects.
@@ -1122,13 +1127,30 @@ Slack endpoints (Now tier):
   budget is `pm/notice_held` and goes out in the next standup (integrations
   INT-17 to INT-20a).
 
+Where secrets are kept (security item 35, SEC-27c):
+- `GET /api/integrations/secret-store` returns `{ store?: "keychain" |
+  "secret-service", storeName?, unavailable?, cleartextChosen,
+  cleartextChosenAt?, heldInFiles, message }`: the store that answered on
+  this host, or why there is none, the person's choice, and one plain
+  sentence the page shows.
+- `PUT /api/integrations/secret-store` with `{ cleartextFile: boolean }`
+  (an Admin's in the Team setup, `integration.connect`) records the choice
+  to keep secrets in a private 0600 file on a host with no store, in the
+  user's config.toml (`[secrets] cleartext_file`, `cleartext_file_at`) and on
+  the ledger as `config/changed` with the person; returns the status. 400
+  when `cleartextFile` is not a boolean.
+- A `PUT` of Slack, push or email carrying a secret that no store kept, with
+  no recorded choice, answers 409 `{ error, needs: "secret-store-choice",
+  fields }` and saves nothing.
+
 Email endpoints (Now tier; teams TEAM-43, integrations item 20):
 - `PUT /api/integrations/email` with `{ host, port, secure?, user?,
   password?, from, events?, dailyBudget? }` (an Admin's,
   `integration.connect`). Refused 400 with the reason when the server, the
   port or the sender is not usable. The password is kept with the other
-  integration secrets (the keychain, else the 0600 file), never in the repo
-  or on the ledger; a blank password keeps the one kept for the same user.
+  integration secrets (the OS secret store, else the 0600 file by the
+  person's recorded choice), never in the repo or on the ledger; a blank
+  password keeps the one kept for the same user.
   Returns the integration entry, which never carries the password.
 - `POST /api/integrations/email/test` sends a test to the asker's own
   address and returns `{ ok, error?, skipped? }`.

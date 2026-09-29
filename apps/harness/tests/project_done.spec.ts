@@ -20,6 +20,7 @@ import { PmStore } from "../src/pm/store.js";
 import { checkMain, confirmSliceRelease, extendRefusal, mainHead } from "../src/project_done.js";
 import { startDashboardServer } from "../src/server.js";
 import { type Kernel, queuePrelude, runWave2Command } from "../src/wave2.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 // planner-pm P13 (§6): on a fixture project whose brief has eight
 // requirements across two slices, one of which is revised after its slice is
@@ -158,11 +159,12 @@ const put = (p: string, text: string) => {
 // biome-ignore lint/suspicious/noExplicitAny: JSON read back from the API, checked field by field
 type Json = any;
 
-function call(
+async function call(
   method: string,
   path: string,
   body?: unknown,
 ): Promise<{ status: number; json: Json }> {
+  const page = await pageWriteHeaders(`http://127.0.0.1:${server.port}`);
   return new Promise((resolve, reject) => {
     const req = httpRequest(
       {
@@ -170,7 +172,7 @@ function call(
         port: server.port,
         method,
         path,
-        headers: { "x-sekhemet-action": "1", "content-type": "application/json" },
+        headers: { ...page, "content-type": "application/json" },
       },
       (res) => {
         let raw = "";

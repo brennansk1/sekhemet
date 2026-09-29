@@ -83,6 +83,9 @@ export interface PmApiContext {
    * teams items 6, 19a, 20). A Solo install's one person when omitted.
    */
   audience?: () => Audience;
+  /** The user config.toml, and its writes recorded with the person (TEAM-44; SEC-27c's choice). */
+  userConfigPath?: string;
+  recordConfigWrite?: <T>(principal: string, write: () => T) => T;
 }
 
 const CARD_ID = "[A-Za-z0-9_-]+";

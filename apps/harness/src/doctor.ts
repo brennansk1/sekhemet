@@ -25,6 +25,7 @@ import { rolePromptVersions } from "./prompt_versions.js";
 import { checkRegisters } from "./registers.js";
 import { researchDoctorLines } from "./research_bakeoff.js";
 import { awaitingResearchHosts } from "./research_consent.js";
+import { secretStoreStatus } from "./secret_store.js";
 import { readMoveRecord, userDir } from "./user_dir.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { playbookDoctorCheck } from "./wave2.js";
@@ -285,9 +286,21 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
     hooksCheck(repoPath),
     researchConsentCheck(repoPath),
     await researchPipelineCheck(repoPath),
+    secretStoreCheck(),
   ];
 
   return { ok: checks.every((c) => c.status !== "fail"), checks };
+}
+
+/**
+ * SEC-27c (B-12): where integration secrets are kept on this host. The OS
+ * store passes; no store is a warning that says why and what happens — a
+ * secret is not saved until one is installed or the person chooses a private
+ * file in Integrations — and, once chosen, that it is their choice.
+ */
+export function secretStoreCheck(): DiagnosticCheck {
+  const s = secretStoreStatus();
+  return check("Secret store", s.store ? "pass" : "warn", s.message);
 }
 
 /**

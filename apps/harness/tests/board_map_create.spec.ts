@@ -9,6 +9,7 @@ import { tileModel } from "@sekhemet/ui";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { burnupFromEvents } from "../src/pm/metrics.js";
 import { startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * dashboard P3 on the server (DB-P3-12, DB-P3-14): the burn-up's series is
@@ -148,10 +149,10 @@ describe("the burn-up and quick create on a real server (DB-P3-12, DB-P3-14)", (
   let store: CardStore;
   let server: { port: number; close: () => Promise<void> };
   const base = () => `http://127.0.0.1:${server.port}`;
-  const post = (path: string, body: unknown) =>
+  const post = async (path: string, body: unknown) =>
     fetch(`${base()}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+      headers: { "Content-Type": "application/json", ...(await pageWriteHeaders(base())) },
       body: JSON.stringify(body),
     });
   const today = new Date().toISOString().slice(0, 10);

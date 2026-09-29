@@ -22,6 +22,14 @@ export interface IdentityRouteDeps {
   json: (res: ServerResponse, status: number, body: unknown) => void;
   readJsonBody: (req: IncomingMessage) => Promise<Record<string, unknown>>;
   /**
+   * Solo's per-start mutation token (security item 37, SEC-25): handed to
+   * the page by `GET /api/session` as `csrf`, the same field and header
+   * (`X-Sekhemet-CSRF`) as a Team session's token, so the page sends it on
+   * every write. No other site can read it: the server grants no CORS and
+   * answers no other Host.
+   */
+  soloCsrf?: string;
+  /**
    * What Members shows beside a person's level (DB-N9-16): their profile
    * label, per-project levels, last active and whether they are active now
    * or locked. Read from the access projection and the ledger.
@@ -175,6 +183,7 @@ export async function handleIdentityRoute(
         signIn: false,
         principal: who.principal,
         level: who.level,
+        ...(deps.soloCsrf ? { csrf: deps.soloCsrf } : {}),
       });
     } else {
       json(res, 409, { error: "Solo has no accounts: switch to the Team setup in Configuration." });

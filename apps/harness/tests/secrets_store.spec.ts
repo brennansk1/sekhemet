@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readSettings, writeSettings } from "../src/integrations.js";
+import { recordCleartextSecretsChoice } from "../src/secret_store.js";
 
 /**
  * S3c, security item 35 (SEC-27): integration tokens written to a file are
@@ -32,6 +33,9 @@ describe("S3c: integration tokens out of reach", () => {
     vi.stubEnv("SEKHEMET_CONFIG_DIR", base);
     const repo = mkdtempSync(join(tmpdir(), "tokens-repo-"));
     dirs.push(repo);
+    // No keychain in tests: the file keeps the token by the person's recorded choice (SEC-27c).
+    vi.stubEnv("SEKHEMET_USER_CONFIG", join(base, "config.toml"));
+    recordCleartextSecretsChoice(true);
 
     writeSettings(repo, { slackWebhookUrl: "https://hooks.slack.test/T0/B0/secret" });
     const reposDir = join(base, "repos");

@@ -10,6 +10,7 @@ import { toProposals, withProjectGroups } from "../src/pm/agent.js";
 import { draftProjectGroup } from "../src/pm/pipeline.js";
 import { PmStore } from "../src/pm/store.js";
 import { startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * design-stage §2.9 item 7 (close-out C3): the approver of a Stakeholder's
@@ -107,12 +108,12 @@ async function setup() {
     pressureLevel: () => 1,
   });
   cleanup.push(() => server.close());
-  const call = (who: string, method: string, path: string, body?: unknown) =>
+  const call = async (who: string, method: string, path: string, body?: unknown) =>
     fetch(`http://127.0.0.1:${server.port}${path}`, {
       method,
       headers: {
         "Content-Type": "application/json",
-        "X-Sekhemet-Action": "1",
+        ...(await pageWriteHeaders(`http://127.0.0.1:${server.port}`)),
         "X-Test-Principal": who,
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),

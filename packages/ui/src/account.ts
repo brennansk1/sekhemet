@@ -60,6 +60,7 @@ export const ACCOUNT_COPY = {
   inviteGone: "This invite can't be used. Ask an admin for a new invite link.",
   signInToContinue: "Sign in to continue.",
   csrf: "Your session could not be confirmed. Reload the page, or sign in again.",
+  csrfSolo: "This page is out of date because Sekhemet restarted. Reload the page, then try again.",
   pending: "Pending until an Admin approves it.",
   unreachable: "The Sekhemet server can't be reached. Check that it is running, then try again.",
   thisComputer: "This computer",
@@ -210,11 +211,13 @@ export function signInMethods(session: SessionInfo): SignInMethods {
  * the missing permission and who can grant it; written from its parts when
  * the server sent none.
  */
-export function refusalMessage(status: number, body: unknown): string {
+export function refusalMessage(status: number, body: unknown, mode?: "solo" | "team"): string {
   const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
   const error = typeof b.error === "string" ? b.error : "";
   if (status === 0) return ACCOUNT_COPY.unreachable;
-  if (status === 403 && error === "csrf") return ACCOUNT_COPY.csrf;
+  // Solo has no sign-in: a refused write means the page predates a restart (SEC-25).
+  if (status === 403 && error === "csrf")
+    return mode === "solo" ? ACCOUNT_COPY.csrfSolo : ACCOUNT_COPY.csrf;
   if (status === 403 && b.pending === true) return ACCOUNT_COPY.pending;
   if (error) return error;
   if (status === 403 && typeof b.needs === "string") {

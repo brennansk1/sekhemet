@@ -476,8 +476,18 @@ let lastRefusal = { text: "", at: 0 };
  * who can grant it (teams TEAM-4).
  */
 function onAuth(e) {
-  if (getSession().mode !== "team") return;
   const { status, data } = e.detail ?? {};
+  // Solo: a write refused for its token means the server restarted with a
+  // new one (security SEC-25); reloading the page picks it up.
+  if (getSession().mode !== "team") {
+    if (status === 403 && data?.error === "csrf") {
+      const text = refusalMessage(403, data, "solo");
+      if (text === lastRefusal.text && Date.now() - lastRefusal.at < 2000) return;
+      lastRefusal = { text, at: Date.now() };
+      toast({ tone: "fail", text });
+    }
+    return;
+  }
   if (status === 401 && !reloading) {
     reloading = true;
     location.reload();

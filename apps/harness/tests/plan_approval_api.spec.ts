@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startDashboardServer } from "../src/server.js";
 import { routePermissions } from "../src/team/access.js";
 import { planCommand } from "../src/wave2.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * PM-N7-5 on the dashboard (planner-pm §2.17): a person who plans with Seshat
@@ -105,7 +106,7 @@ async function send(who: string, path: string, body: unknown, action = true) {
     headers: {
       "Content-Type": "application/json",
       "X-Test-Principal": who,
-      ...(action ? { "X-Sekhemet-Action": "1" } : {}),
+      ...(action ? await pageWriteHeaders(url("")) : {}),
     },
     body: JSON.stringify(body),
   });

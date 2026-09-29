@@ -11,6 +11,7 @@ import { exportBoard, toCsv } from "../src/integrations.js";
 import { applyProposal } from "../src/pm/apply.js";
 import { PmStore } from "../src/pm/store.js";
 import { startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * NEW-integrations-1: export followed by import duplicates nothing (INT-27),
@@ -24,10 +25,10 @@ describe("idempotent Jira and Linear import (NEW-integrations-1)", () => {
   let server: { port: number; close: () => Promise<void> };
   let base: string;
 
-  const post = (path: string, body: unknown) =>
+  const post = async (path: string, body: unknown) =>
     fetch(`${base}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+      headers: { "Content-Type": "application/json", ...(await pageWriteHeaders(base)) },
       body: JSON.stringify(body),
     });
 

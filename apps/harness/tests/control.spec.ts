@@ -20,6 +20,7 @@ import {
 } from "../src/execute.js";
 import { ledgerEvidenceSummary } from "../src/ledger_evidence.js";
 import { startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 function scripted(turn: (n: number) => Omit<ToolCall, "id">[]) {
   const seen: InferenceRequest[] = [];
@@ -355,10 +356,13 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
       port: 0,
       streamIntervalMs: 60_000,
     });
-    const post = (path: string, body: unknown) =>
+    const post = async (path: string, body: unknown) =>
       fetch(`http://127.0.0.1:${server.port}${path}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(await pageWriteHeaders(`http://127.0.0.1:${server.port}`)),
+        },
         body: JSON.stringify(body),
       });
     try {

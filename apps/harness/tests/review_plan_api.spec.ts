@@ -10,6 +10,7 @@ import { toProposals, withProjectGroups } from "../src/pm/agent.js";
 import { type ProjectGroup, draftProjectGroup } from "../src/pm/pipeline.js";
 import { PmStore } from "../src/pm/store.js";
 import { startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * design-stage DS-P2-7 through the server (PM_CONTRACT §3): Review plan
@@ -79,7 +80,10 @@ describe("POST /api/pm/proposals/:id/apply carries Review plan's choices", () =>
     cleanup.push(() => server.close());
     const res = await fetch(`http://127.0.0.1:${server.port}/api/pm/proposals/${id}/apply`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(await pageWriteHeaders(`http://127.0.0.1:${server.port}`)),
+      },
       body: JSON.stringify({ choices: { remove: [removed.key], releaseLine: 1 } }),
     });
     expect(res.status).toBe(200);
@@ -120,7 +124,10 @@ describe("POST /api/pm/proposals/:id/apply carries Review plan's choices", () =>
       `http://127.0.0.1:${server.port}/api/pm/proposals/${reply.proposals?.[0]?.id}/apply`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(await pageWriteHeaders(`http://127.0.0.1:${server.port}`)),
+        },
         body: JSON.stringify({ choices: { remove: "everything" } }),
       },
     );
@@ -131,7 +138,10 @@ describe("POST /api/pm/proposals/:id/apply carries Review plan's choices", () =>
       `http://127.0.0.1:${server.port}/api/pm/proposals/${reply.proposals?.[0]?.id}/apply`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(await pageWriteHeaders(`http://127.0.0.1:${server.port}`)),
+        },
         body: JSON.stringify({ choices: { type: "enterprise grade" } }),
       },
     );

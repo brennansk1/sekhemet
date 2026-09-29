@@ -17,6 +17,7 @@ import {
   recordLevelChange,
   routePermissions,
 } from "../src/team/access.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * teams NEW-teams-2 (TEAM-4, 5, 6, 7, 32) and integrations INT-22 to INT-25:
@@ -213,7 +214,7 @@ describe("the 403 on every write endpoint (TEAM-4, TEAM-5, TEAM-32, INT-24)", ()
       method,
       headers: {
         "Content-Type": "application/json",
-        "X-Sekhemet-Action": "1",
+        ...(await pageWriteHeaders(url(""))),
         "X-Test-Principal": who,
       },
       body: JSON.stringify(body),
@@ -294,7 +295,7 @@ describe("the 403 on every write endpoint (TEAM-4, TEAM-5, TEAM-32, INT-24)", ()
   it("answers 401 and records nothing when no person is signed in", async () => {
     const res = await fetch(url(`/api/cards/${cardId}/park`), {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+      headers: { "Content-Type": "application/json", ...(await pageWriteHeaders(url(""))) },
       body: "{}",
     });
     expect(res.status).toBe(401);
@@ -620,7 +621,7 @@ describe("Accept by the project's Accept rule (INT-22, INT-23)", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Sekhemet-Action": "1",
+        ...(await pageWriteHeaders(url(""))),
         ...(who ? { "X-Test-Principal": who } : {}),
       },
       body: JSON.stringify(body),

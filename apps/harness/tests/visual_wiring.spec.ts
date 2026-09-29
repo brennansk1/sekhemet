@@ -22,6 +22,7 @@ import { openLocalLedger } from "../src/ledger_cmds.js";
 import { startDashboardServer } from "../src/server.js";
 import { cardVision, inferenceVisionAdapter, parseChecklistAnswers } from "../src/vision_check.js";
 import { BASELINE_APPROVED } from "../src/visual_baseline.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 // NEW-gates-4 wired into the product: the card's declared DOM assertions and
 // overlaps reach the visual layer (GT-N4-4, GT-N4-6); the vision checklist
@@ -261,10 +262,13 @@ describe.runIf(findChrome() !== undefined)("the visual layer in a card's verific
       streamIntervalMs: 60_000,
       setup: "solo",
     });
-    const post = (path: string, body: unknown) =>
+    const post = async (path: string, body: unknown) =>
       fetch(`http://127.0.0.1:${dash.port}${path}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(await pageWriteHeaders(`http://127.0.0.1:${dash.port}`)),
+        },
         body: JSON.stringify(body),
       });
     try {

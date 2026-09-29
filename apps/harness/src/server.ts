@@ -93,6 +93,7 @@ import { dailyStandup } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { createPmApi } from "./pm_api.js";
 import { modelRoster } from "./pm_api.js";
+import { describeError } from "./process_errors.js";
 import { projectsOverview } from "./projects_api.js";
 import { gateWorker } from "./qualify.js";
 import { handleRestExtras } from "./rest_extra.js";
@@ -144,6 +145,18 @@ import {
   startGithubSync,
   startRecurringTicker,
 } from "./wave2_server.js";
+import {
+  MISDIRECTED,
+  SAFE_METHODS,
+  allowedHosts,
+  contentSecurityPolicy,
+  hostAllowed,
+  hostAllowlistWarning,
+  mintMutationToken,
+  sameOrigin,
+  securityHeaders,
+  tokenMatches,
+} from "./web_guard.js";
 import { type StreamClient, acceptWebSocket } from "./ws.js";
 
 /** The loopback port the design fixes for the dashboard. */
@@ -229,26 +242,6 @@ async function readJsonBody(
   return body;
 }
 
-/**
- * Mutations require a custom header. Browsers cannot attach one cross-origin
- * without a CORS preflight, which this server never grants, so a web page the
- * user happens to visit cannot trigger an accept (a git merge) on loopback.
- */
-function isTrustedMutation(req: IncomingMessage): boolean {
-  if (req.headers["x-sekhemet-action"] !== "1") return false;
-  const origin = req.headers.origin;
-  if (!origin) return true;
-  try {
-    const url = new URL(origin);
-    if (url.hostname === "127.0.0.1" || url.hostname === "localhost") return true;
-    // A signed-in Team request (teams item 13): its own origin, whatever the host.
-    const who = requesterOf(req);
-    return who.authenticated && who.via !== "solo" && url.host === req.headers.host;
-  } catch {
-    return false;
-  }
-}
-
 const MIME: Record<string, string> = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -318,8 +311,9 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(payload),
-    // The dashboard is loopback-only and renders model-authored text; a strict
-    // policy keeps an injected string from becoming an external request.
+    // An answer is JSON and read as JSON, never sniffed into a page. The
+    // guard's headers (the CSP, no framing, no referrer) are already set on
+    // every response before any route runs (web_guard.ts).
     "X-Content-Type-Options": "nosniff",
   });
   res.end(payload);
@@ -389,6 +383,49 @@ export function startDashboardServer(
     return Promise.reject(err);
   }
   const host = bindHost(identity.mode, options.host, identity.settings);
+  // Security item 37 (gap B-1): the names this server answers to (DNS
+  // rebinding), this start's mutation token (Solo), and the headers every
+  // response carries, the page's policy hashed from the page itself.
+  const hosts = allowedHosts({
+    bindHost: host,
+    ...(identity.settings.publicUrl ? { publicUrl: identity.settings.publicUrl } : {}),
+  });
+  const hostWarning = hostAllowlistWarning({
+    bindHost: host,
+    ...(identity.settings.publicUrl ? { publicUrl: identity.settings.publicUrl } : {}),
+  });
+  if (hostWarning) console.warn(`sekhemet: ${hostWarning}`);
+  const mutationToken = mintMutationToken();
+  const guardHeaders = Object.entries(securityHeaders(contentSecurityPolicy(html)));
+  /**
+   * A write the dashboard's own page sent. Browsers cannot attach a custom
+   * header cross-origin without a CORS preflight, which this server never
+   * grants. In Solo, where every request is the install's one person at
+   * Admin, the write also carries this start's token, which the page reads
+   * from `GET /api/session` and no other site can (SEC-25). In either setup
+   * any Origin must be the page's own: another loopback port is another site
+   * (security item 25). In the Team setup a signed-in session's CSRF token is
+   * checked by the identity layer (teams item 13); a request with no Origin
+   * is a program's (a bearer token, the CLI), which a browser never sends
+   * for a write; a page on the server's public name must be signed in.
+   */
+  const isTrustedMutation = (req: IncomingMessage): boolean => {
+    if (req.headers["x-sekhemet-action"] !== "1") return false;
+    const origin = req.headers.origin;
+    if (!sameOrigin(origin, req.headers.host)) return false;
+    if (identity.mode === "solo") {
+      return tokenMatches(req.headers["x-sekhemet-csrf"], mutationToken);
+    }
+    if (!origin) return true;
+    try {
+      const url = new URL(origin);
+      if (url.hostname === "127.0.0.1" || url.hostname === "localhost") return true;
+      const who = requesterOf(req);
+      return who.authenticated && who.via !== "solo";
+    } catch {
+      return false;
+    }
+  };
   // The PM conversation, proposals, cycles, inline edits, flow metrics and
   // integrations (docs/design/PM_CONTRACT.md) live in their own module.
   const pmApi = createPmApi({
@@ -405,6 +442,13 @@ export function startDashboardServer(
     principalOf: (req) => principalOf(req),
     // planner-pm §2.8.5, §2.18 (B4.3): who Seshat answers, from the access module.
     audience: () => audienceFromAccess(() => access, options.db),
+    // SEC-27c: the choice to keep secrets in a file is a config write, recorded with the person.
+    userConfigPath: configPath,
+    recordConfigWrite: (principal, write) =>
+      recordConfigWrite(
+        { db: options.db, log, path: configPath, identityDir: credentialDir, principal },
+        write,
+      ),
   });
   const memoryProbe = options.memoryProbe ?? sampleMemory;
   // Configuration's progress (scan, hash, download, copy, benchmark) goes out as `config` frames.
@@ -1236,6 +1280,33 @@ export function startDashboardServer(
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const [url = "/"] = (req.url || "/").split("?");
+    // The guard runs first for every request (runtime item 24, security item 37).
+    for (const [name, value] of guardHeaders) res.setHeader(name, value);
+    // SEC-24: a request naming another host is a rebound page's; nothing runs.
+    if (!hostAllowed(req.headers.host, hosts)) {
+      json(res, 421, { error: MISDIRECTED, refused: "host" });
+      return;
+    }
+    // The page's token is in the session answer: never kept by a cache.
+    if (url === "/api/session") res.setHeader("Cache-Control", "no-store");
+    // SEC-25: in Solo every write carries this start's token, with or without
+    // an Origin, and any Origin is the page's own (security item 37), here
+    // for every route, not only those that ask. A GitHub delivery is signed
+    // instead (wave2_server.ts).
+    if (
+      identity.mode === "solo" &&
+      !SAFE_METHODS.has((req.method ?? "GET").toUpperCase()) &&
+      url !== "/webhooks/github"
+    ) {
+      if (!tokenMatches(req.headers["x-sekhemet-csrf"], mutationToken)) {
+        json(res, 403, { error: "csrf", refused: "token" });
+        return;
+      }
+      if (!sameOrigin(req.headers.origin, req.headers.host)) {
+        json(res, 403, { error: "csrf", refused: "origin" });
+        return;
+      }
+    }
     // Resolve and bind the requester first; in the Team setup a protected
     // endpoint answers 401 before any handler runs (TEAM-12).
     if (identityGate(req, res, url, identity, json)) return;
@@ -1246,10 +1317,26 @@ export function startDashboardServer(
     // Kernel rule 19, K-N2-8: the request's work is the person's who asked, so
     // every event a person causes names them, however deep it is appended.
     const person = requester(req) ?? (setup === "solo" ? log.localPrincipal() : undefined);
-    if (person && PRINCIPAL_PATTERN.test(person)) {
-      await EventLog.actingFor(person, () => handleRequest(req, res));
-    } else {
-      await handleRequest(req, res);
+    try {
+      if (person && PRINCIPAL_PATTERN.test(person)) {
+        await EventLog.actingFor(person, () => handleRequest(req, res));
+      } else {
+        await handleRequest(req, res);
+      }
+    } catch (err) {
+      // One request that fails answers 500 and is recorded on stderr,
+      // redacted; the dashboard, and a queue it runs, keep going (runtime
+      // item 9). The person reads a plain sentence, not the internals.
+      process.stderr.write(
+        `sekhemet: a dashboard request failed (${req.method ?? "GET"} ${url}): ${describeError(err)}\n`,
+      );
+      if (!res.headersSent) {
+        json(res, 500, {
+          error: "Something went wrong on the server; the details are in its log.",
+        });
+      } else {
+        res.destroy();
+      }
     }
   });
 
@@ -1264,6 +1351,7 @@ export function startDashboardServer(
         ...(serverIdentity.sso ? { sso: serverIdentity.sso } : {}),
         json,
         readJsonBody,
+        ...(identity.mode === "solo" ? { soloCsrf: mutationToken } : {}),
         memberFacts: memberFactsReader(),
         sessionFacts: (principal) => {
           const label = access.projection().members.get(principal)?.label;
@@ -1504,6 +1592,12 @@ export function startDashboardServer(
     }
 
     if (url === "/api/stream") {
+      // Only this dashboard's own page may open it (a browser sends an Origin
+      // on a cross-site EventSource); a local program sends none.
+      if (!sameOrigin(req.headers.origin, req.headers.host)) {
+        json(res, 403, { error: "The live stream opens only for this dashboard's own page." });
+        return;
+      }
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -2745,6 +2839,11 @@ export function startDashboardServer(
 
     // H1: the same live stream over WebSocket, at /api/ws (loopback origins only).
     server.on("upgrade", (req, socket) => {
+      // The request guard's Host check, for the one route that bypasses it (SEC-24).
+      if (!hostAllowed(req.headers.host, hosts)) {
+        socket.end("HTTP/1.1 421 Misdirected Request\r\nConnection: close\r\n\r\n");
+        return;
+      }
       if ((req.url ?? "").split("?")[0] !== "/api/ws") {
         socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
         return;
@@ -2755,13 +2854,13 @@ export function startDashboardServer(
         return;
       }
       // Only this page's origin may open it (cross-site WebSocket hijacking):
-      // loopback in Solo, and in Team the host the page was served from.
-      const client = acceptWebSocket(
-        req,
-        socket,
-        (c) => streams.delete(c),
-        identity.mode === "team" ? req.headers.host : undefined,
-      );
+      // the host the page was served from, in both setups; another loopback
+      // port is another site. A local program sends no Origin.
+      if (!sameOrigin(req.headers.origin, req.headers.host)) {
+        socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+        return;
+      }
+      const client = acceptWebSocket(req, socket, (c) => streams.delete(c), req.headers.host);
       if (client) {
         streams.add(client);
         const who = requester(req);

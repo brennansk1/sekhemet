@@ -3,6 +3,7 @@ import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { homeToolchainPaths, ledgerReadDenies, realPath, secretReadDenies } from "./seatbelt.js";
+import { sessionSecretDenies } from "./secret_paths.js";
 
 // SEC-23's path lists live beside the native profile, which denies them too.
 export { ledgerReadDenies, secretReadDenies };
@@ -68,7 +69,12 @@ export function srtFilesystem(
   const homeDeny = options.denyHomeReads ? [realPath(home)] : [];
   const homeAllow = options.denyHomeReads ? homeToolchainPaths(home).map(realPath) : [];
   return {
-    denyRead: [...homeDeny, ...secretReadDenies(home), ...ledgerReadDenies(roots)],
+    denyRead: [
+      ...homeDeny,
+      ...secretReadDenies(home),
+      ...sessionSecretDenies(),
+      ...ledgerReadDenies(roots),
+    ],
     allowRead: [...realRoots, ...homeAllow],
     allowWrite,
     denyWrite,

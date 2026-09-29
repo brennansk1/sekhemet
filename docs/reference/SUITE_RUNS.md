@@ -6,6 +6,37 @@ The number to watch is not the pass count alone. It is **why the failures failed
 
 ---
 
+## Baseline RunProfile (frozen 2026-09-29)
+
+B2.5's baseline, complete: six arms × two rounds on one build, all 30 cards measured in every run. B4 work is compared with it by the paired rule. One trial at non-zero temperature is not a finding.
+
+- **Build:** `5937e83` (the frozen snapshot `~/.sekhemet/baseline/snap`). From 2026-09-28 18:35 it ran with its own model registry (F23).
+- **Suite:** 1.0.0, hash `d70f689d412513486da8408c288025758df7ddd3f7fdd01002b456fe594485af`.
+- **Worker:** `cyber-tiel`, Cyber-Tiel-Coder-35B-A3B MTP UD-IQ3_XXS (GGUF).
+- **Engine:** llama.cpp `llama-server` 0.4.0 (build 10809, commit `5266f24da`), with `-ngl 99 -fa on --jinja -c 16384 -ctk q8_0 -ctv q8_0 -np 1 --cache-ram 2048 --ctx-checkpoints 6`, on port 8098.
+- **RunProfile (the reference arm):**
+  - schema 1;
+  - switches: thinking off, working method baseline, evidence gate off, tool arm progressive;
+  - policies: auto-accept on; review, exploration and escalation off; no step cap;
+  - sequential;
+  - profile hash `f7d1adaa…`, settings file `arms/ref.json` sha256 `7bba8840…`.
+
+  Each other arm changes one switch (`arms/<arm>.json`, and `<arm>.ab.json` naming ref as its baseline).
+- **Results** (passed of 30):
+
+| Arm | Switch | Round 1 | Round 2 | Of 60 |
+| --- | --- | --- | --- | --- |
+| ref | — | 20 | 18 | 38 |
+| thinking-surgical | thinking = surgical | 22 | 21 | 43 |
+| thinking-all | thinking = all | 21 | 21 | 42 |
+| strict | working method = strict | 18 | 20 | 38 |
+| fixed-tools | tool arm = fixed | 18 | 20 | 38 |
+| evidence-gate | evidence gate = on | 18 | 19 | 37 |
+
+- **Reading:** no arm differs from ref by a margin the suite can resolve (admission needs at least 20 points on 30 cards by an exact test, PROMPT_STANDARD rule 35.4). thinking-surgical leads by 5 of 60 across two rounds, which is not established.
+- **Failures:** every failure is named with its stop reason (124 across the 12 runs; `pnpm milestone B2.5`, `evidence/milestones/B2.5_2026-09-29.json`).
+- **Still owed for the milestone:** the planning measure. It waits on the owner's confirmed golden briefs.
+
 ## Regression pair — Nail-MTP on `d377b9d` against `6bdaaa4`, all four fixtures, 2026-09-28
 
 Sprint 3. The same Coding model (nail-mtp, qualified on both builds), the same 30 cards and the same sampling (temperature 0.7, top_p 0.8, top_k 20). The two builds are the one before B4.5–B4.7 and the compliance fixes, and the compliance-fixes commit. Suite 1.0.0 `d70f689d`. The cost measure was named before the run: median tokens per card.

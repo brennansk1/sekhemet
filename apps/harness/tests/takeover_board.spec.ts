@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { SMALL, writeGguf } from "../../../packages/models/tests/support/gguf_fixture.js";
 import { startDashboardServer } from "../src/server.js";
 import { runTakeover } from "../src/takeover.js";
+import { pageWriteHeaders } from "./page_headers.js";
 import { buildTakeoverFixture, fakeTracker } from "./takeover_fixtures.js";
 
 // DS-TO-16 (dashboard item 10) in a real Chromium: a board with no cards
@@ -136,7 +137,7 @@ describe("the take-over routes (DS-TO-11 to DS-TO-14)", () => {
           say: () => undefined,
         });
         const base = `http://127.0.0.1:${server.port}`;
-        const headers = { "Content-Type": "application/json", "X-Sekhemet-Action": "1" };
+        const headers = { "Content-Type": "application/json", ...(await pageWriteHeaders(base)) };
         const state = (await (await fetch(`${base}/api/takeover`)).json()) as {
           brief: { claims: { text: string; label: string }[] };
           backlog: { proposalId: string; approved: boolean; cards: unknown[] };

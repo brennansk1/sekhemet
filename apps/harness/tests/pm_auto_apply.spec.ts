@@ -19,6 +19,7 @@ import {
 } from "../src/pm/suggest.js";
 import { startDashboardServer } from "../src/server.js";
 import { Access, recordSettingsChange } from "../src/team/access.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 // planner-pm PM-N9-2, teams TEAM-18 and TEAM-41: an Admin's auto-apply rule,
 // per project and per property, applies Seshat's suggestion for labels, the
@@ -455,12 +456,12 @@ describe("the routes: the rule's line on the issue and Undo (PM_CONTRACT §3)", 
     });
     servers.push(server);
     const base = `http://127.0.0.1:${server.port}`;
-    const send = (who: string, path: string, method = "POST") =>
+    const send = async (who: string, path: string, method = "POST") =>
       fetch(`${base}${path}`, {
         method,
         headers: {
           "content-type": "application/json",
-          "x-sekhemet-action": "1",
+          ...(await pageWriteHeaders(base)),
           "x-test-principal": who,
         },
         ...(method === "POST" ? { body: "{}" } : {}),

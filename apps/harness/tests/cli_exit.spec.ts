@@ -1,5 +1,14 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { BoardServiceImpl } from "@sekhemet/board";
@@ -71,6 +80,14 @@ describe("S10: a command line scripts can trust", () => {
     const r = sekhemet(["dev", "log", "--repo", notADir], where);
     expect(r.status).toBe(1);
     expect(r.stderr).toMatch(/Error|ENOTDIR|not a directory/i);
+    // SUR-57: one plain line naming the report; the stack only in the report.
+    const report = expectOneLineWithReport(r.stderr, where.home);
+    expect(readFileSync(report, "utf8")).toMatch(/\n\s+at /);
+    // `--debug` is not an unknown flag: it prints the details here too.
+    const debug = sekhemet(["dev", "log", "--repo", notADir, "--debug"], where);
+    expect(debug.status, debug.stderr).toBe(1);
+    expect(debug.stderr).toMatch(/^sekhemet stopped: /);
+    expect(debug.stderr).toMatch(/\n\s+at /);
   });
 
   it("SUR-15: an unknown flag is named and exits 2, writing nothing", () => {
@@ -162,6 +179,242 @@ describe("S10: a command line scripts can trust", () => {
   }, 300_000);
 });
 
+/**
+ * The one line an unexpected error leaves on stderr (SUR-57): it starts with
+ * `sekhemet stopped:`, holds no stack frame, no `undefined` and no secret,
+ * and names a report under the user directory's `logs/`, readable only by
+ * its owner. Returns the report's path.
+ */
+function expectOneLineWithReport(stderr: string, home: string): string {
+  const lines = stderr.split("\n").filter((l) => l.trim() !== "");
+  expect(lines, stderr).toHaveLength(1);
+  const line = lines[0] as string;
+  expect(line).toMatch(/^sekhemet stopped: /);
+  expect(line).not.toMatch(/\bundefined\b|\bNaN\b/);
+  expect(line).not.toContain(SECRET);
+  const path = /details are in (\S+);/.exec(line)?.[1];
+  expect(path, line).toBeDefined();
+  expect(path?.startsWith(join(home, ".sekhemet", "logs"))).toBe(true);
+  expect(statSync(path as string).mode & 0o777).toBe(0o600);
+  expect(readFileSync(path as string, "utf8")).not.toContain(SECRET);
+  return path as string;
+}
+
+/** A seeded fake GitHub token (the shape `redaction.spec.ts` seeds). */
+const SECRET = `ghp_${"Z9y8X7w6V5u4T3s2R1q0".repeat(2).slice(0, 36)}`;
+
+/**
+ * A fault injected into the real binary with `node --import` (fault
+ * injection, FINISH_LINE_PLAN C.6): once the entry has installed its
+ * process-level handlers (or after 5 s, so an entry without them fails the
+ * test rather than hanging it) — and, with FAULT_AFTER=listening, once a
+ * server listens, or with FAULT_AFTER=gate, once the run's gate command runs
+ * as a tracked process group — it fails as FAULT_MODE says: an unhandled
+ * rejection, a rejection with no reason, or an uncaught exception. For the
+ * gate it also records, as the process exits, whether the gate had exited.
+ */
+const FAULT = `
+import { execFileSync } from "node:child_process";
+import { readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const mode = process.env.FAULT_MODE;
+const after = process.env.FAULT_AFTER ?? "handlers";
+const message = process.env.FAULT_MESSAGE ?? "an injected fault";
+const started = Date.now();
+function gatePid() {
+  let names = [];
+  try { names = readdirSync(join(process.cwd(), ".sekhemet", "processes")); } catch { return undefined; }
+  for (const name of names) {
+    const pid = Number(name.replace(/\\.json$/, ""));
+    try {
+      const cmd = execFileSync("ps", ["-ww", "-o", "command=", "-p", String(pid)], { encoding: "utf8" });
+      if (cmd.includes("FAULT_GATE")) return pid;
+    } catch {}
+  }
+  return undefined;
+}
+let found;
+// Registered before the harness's own exit handlers: it sees the gate as the
+// SIGTERM and its grace left it, before the exit's SIGKILL.
+process.on("exit", () => {
+  if (found === undefined) return;
+  let stat = "";
+  try { stat = execFileSync("ps", ["-o", "stat=", "-p", String(found)], { encoding: "utf8" }).trim(); } catch {}
+  writeFileSync(join(process.env.HOME, "gate.at-exit"), stat || "gone");
+});
+function ready() {
+  if (process.listenerCount("unhandledRejection") === 0 && Date.now() - started < 5000) return false;
+  if (after === "listening") return process.getActiveResourcesInfo().includes("TCPServerWrap");
+  if (after === "gate") {
+    const pid = gatePid();
+    if (pid === undefined) return false;
+    found = pid;
+    writeFileSync(join(process.env.HOME, "gate.pid"), String(pid));
+    return true;
+  }
+  return true;
+}
+const tick = setInterval(() => {
+  if (!ready()) return;
+  clearInterval(tick);
+  if (mode === "reject") Promise.reject(new Error(message));
+  else if (mode === "reject-nothing") Promise.reject(undefined);
+  else setTimeout(() => { throw new Error(message); }, 0);
+}, 20);
+`;
+
+function faultPreload(home: string): string {
+  const path = join(home, "fault.mjs");
+  writeFileSync(path, FAULT);
+  return path;
+}
+
+describe("SUR-57, RUN-8b: an error nothing handled stops the process plainly", () => {
+  function faulted(
+    args: string[],
+    where: { cwd: string; home: string },
+    fault: Record<string, string>,
+  ) {
+    return spawnSync(process.execPath, ["--import", faultPreload(where.home), BIN, ...args], {
+      cwd: where.cwd,
+      encoding: "utf8",
+      timeout: 30_000,
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: where.home,
+        SEKHEMET_CONFIG_DIR: join(where.home, ".sekhemet"),
+        SEKHEMET_USER_CONFIG: "/nonexistent/sekhemet-test-user-config.toml",
+        BROWSER: "false",
+        FAULT_MESSAGE: `the vault answered with ${SECRET}`,
+        ...fault,
+      },
+    });
+  }
+
+  it("an unhandled rejection in a command: one plain line, a redacted report, exit 1", () => {
+    const where = sandboxDirs();
+    const r = faulted(["help"], where, { FAULT_MODE: "reject" });
+    expect(r.status, r.stderr).toBe(1);
+    const report = expectOneLineWithReport(r.stderr, where.home);
+    expect(r.stderr).toContain("the vault answered with");
+    const text = readFileSync(report, "utf8");
+    expect(text).toContain("the vault answered with");
+    expect(text).toMatch(/\n\s+at /);
+    expect(text).toMatch(/unhandled promise rejection/);
+  });
+
+  it("W1 review G4: with a user directory that cannot be used, the one line still prints", () => {
+    // SEKHEMET_CONFIG_DIR inside a repository is refused (models_dir.ts), so
+    // the report has nowhere to go; the person must still read what stopped.
+    const where = sandboxDirs();
+    mkdirSync(join(where.cwd, ".git"));
+    for (const mode of ["reject", "throw"]) {
+      const r = spawnSync(process.execPath, ["--import", faultPreload(where.home), BIN, "help"], {
+        cwd: where.cwd,
+        encoding: "utf8",
+        timeout: 30_000,
+        env: {
+          PATH: process.env.PATH ?? "",
+          HOME: where.home,
+          SEKHEMET_CONFIG_DIR: join(where.cwd, "cfg"),
+          SEKHEMET_USER_CONFIG: "/nonexistent/sekhemet-test-user-config.toml",
+          BROWSER: "false",
+          FAULT_MESSAGE: `the vault answered with ${SECRET}`,
+          FAULT_MODE: mode,
+        },
+      });
+      expect(r.status, `${mode}: ${r.stderr}`).toBe(1);
+      const lines = r.stderr.split("\n").filter((l) => l.trim() !== "");
+      expect(lines.length, r.stderr).toBeGreaterThanOrEqual(1);
+      const line = lines.at(-1) as string;
+      expect(line).toMatch(/^sekhemet stopped: /);
+      expect(r.stderr).not.toContain(SECRET);
+      // No report was written into the refused directory.
+      expect(existsSync(join(where.cwd, "cfg", "logs"))).toBe(false);
+    }
+  });
+
+  it("--debug prints the redacted details on the terminal as well", () => {
+    const where = sandboxDirs();
+    const r = faulted(["help", "--debug"], where, { FAULT_MODE: "reject" });
+    expect(r.status, r.stderr).toBe(1);
+    expect(r.stderr).toMatch(/^sekhemet stopped: /);
+    expect(r.stderr).toMatch(/\n\s+at /);
+    expect(r.stderr).not.toContain(SECRET);
+  });
+
+  it("an uncaught exception, and a rejection with no reason, each exit 1 with one plain line", () => {
+    for (const mode of ["throw", "reject-nothing"]) {
+      const where = sandboxDirs();
+      const r = faulted(["help"], where, { FAULT_MODE: mode });
+      expect(r.status, `${mode}: ${r.stderr}`).toBe(1);
+      expectOneLineWithReport(r.stderr, where.home);
+    }
+  });
+
+  it("the dashboard server stops with one plain line and exit 1", () => {
+    const where = sandboxDirs();
+    const r = faulted(["serve", "--port", "0", "--repo", where.cwd], where, {
+      FAULT_MODE: "reject",
+      FAULT_AFTER: "listening",
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(1);
+    expect(r.stdout).toMatch(/Dashboard running at/);
+    expectOneLineWithReport(r.stderr, where.home);
+  });
+
+  it("RUN-8b: a run's gate gets SIGTERM, is gone after, and the lease is released", async () => {
+    const where = sandboxDirs();
+    // A gate that runs until it is stopped, and stops at once on SIGTERM.
+    const gate = `process.on('SIGTERM', () => process.exit(0)); void 'FAULT_GATE'; setInterval(() => {}, 1000);`;
+    const env = await scriptedWorkerProject(where, ["-e", gate]);
+    const r = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        env.preload,
+        "--import",
+        faultPreload(where.home),
+        BIN,
+        "run",
+        "c1",
+        "--worker",
+        SCRIPTED_WORKER,
+      ],
+      {
+        cwd: where.cwd,
+        encoding: "utf8",
+        timeout: 120_000,
+        env: {
+          ...env.vars,
+          SCRIPTED_WORKER_MODE: "finish",
+          FAULT_MODE: "reject",
+          FAULT_AFTER: "gate",
+          FAULT_MESSAGE: `the vault answered with ${SECRET}`,
+        },
+      },
+    );
+    expect(r.status, r.stdout + r.stderr).toBe(1);
+    expectOneLineWithReport(r.stderr, where.home);
+    const pid = Number(readFileSync(join(where.home, "gate.pid"), "utf8"));
+    const alive = () => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    for (let i = 0; i < 40 && alive(); i++) await new Promise((res) => setTimeout(res, 50));
+    expect(alive()).toBe(false);
+    // It was asked to stop before it was killed: when the exit handlers began
+    // (which SIGKILL what is left), it had already exited on SIGTERM.
+    expect(readFileSync(join(where.home, "gate.at-exit"), "utf8")).toMatch(/^(Z|gone)/);
+    expect(existsSync(join(where.cwd, ".sekhemet", "runner.lock"))).toBe(false);
+    expect(existsSync(join(where.cwd, ".sekhemet", "processes", `${pid}.json`))).toBe(false);
+  }, 180_000);
+});
+
 /** The Worker's model tag; every request for it is answered by the preload below. */
 const SCRIPTED_WORKER = "scripted-worker:latest";
 
@@ -202,7 +455,10 @@ globalThis.fetch = async (input, init) => {
  * scripted Worker recorded as qualified for its exact combination on this
  * host (MD-N8-1), and the environment the spawned binary runs with.
  */
-async function scriptedWorkerProject(where: { cwd: string; home: string }) {
+async function scriptedWorkerProject(
+  where: { cwd: string; home: string },
+  gateArgs: string[] = ["-e", "process.exit(0)"],
+) {
   const repo = where.cwd;
   const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" });
   git("init", "-q", "-b", "main");
@@ -213,7 +469,7 @@ async function scriptedWorkerProject(where: { cwd: string; home: string }) {
   writeFileSync(join(repo, "src", "a.ts"), "");
   writeFileSync(
     join(repo, ".sekhemet", "gates.toml"),
-    `[project]\nmax_files = 3\nmax_diff_lines = 200\n\n[[gate]]\nid = "unit"\nrung = "test"\nlayer = "functional"\ncommand = "node"\nargs = ["-e", "process.exit(0)"]\ntimeout_s = 30\nparser = "generic"\n`,
+    `[project]\nmax_files = 3\nmax_diff_lines = 200\n\n[[gate]]\nid = "unit"\nrung = "test"\nlayer = "functional"\ncommand = "node"\nargs = ${JSON.stringify(gateArgs)}\ntimeout_s = 60\nparser = "generic"\n`,
   );
   writeFileSync(join(repo, ".gitignore"), ".sekhemet/\n");
   git("add", "-A");

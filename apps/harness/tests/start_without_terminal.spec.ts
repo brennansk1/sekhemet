@@ -9,6 +9,7 @@ import { MockInferenceAdapter } from "@sekhemet/models";
 import { START_PROJECT_OPENING, type StatusFacts, statusModel } from "@sekhemet/ui";
 import { afterEach, describe, expect, it } from "vitest";
 import { startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * dashboard DB-P5-3 and DB-P5-7 (DEFINITION_OF_DONE §6.4) through the real
@@ -95,10 +96,10 @@ describe("DB-P5-3, DB-P5-7: start a project and ask how it is going, with no ter
     });
     cleanup.push(() => server.close());
     const base = `http://127.0.0.1:${server.port}`;
-    const post = (path: string, body: unknown) =>
+    const post = async (path: string, body: unknown) =>
       fetch(`${base}${path}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+        headers: { "Content-Type": "application/json", ...(await pageWriteHeaders(base)) },
         body: JSON.stringify(body),
       });
     const replies = async (n: number): Promise<Thread> => {

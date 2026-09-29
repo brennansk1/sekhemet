@@ -95,7 +95,10 @@ export function killTrackedGroups(signal: NodeJS.Signals = "SIGKILL"): number[] 
       // Gone.
     }
   }
-  if (signal === "SIGKILL") for (const pid of killed) untrackGroup(pid);
+  // After SIGKILL every group is gone — killed now, or already exited (a
+  // group left with only an unreaped leader cannot be signalled) — so none
+  // stays tracked or recorded on disk for the next start to find (RUN-8b).
+  if (signal === "SIGKILL") for (const pid of [...live]) untrackGroup(pid);
   return killed;
 }
 

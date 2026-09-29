@@ -47,9 +47,10 @@ export function isTyping(e) {
 
 /* ---------- Requests: the action header, the session's CSRF token, refusals ---------- */
 
-// In the Team setup a signed-in session's writes carry its CSRF token
-// (teams item 13, `X-Sekhemet-CSRF`); Solo has none and sends only the
-// action header every write needs.
+// Every write carries the action header and a token the page reads from
+// `GET /api/session` as `csrf`, sent as `X-Sekhemet-CSRF`: in the Team setup
+// the signed-in session's (teams item 13), in Solo this server start's
+// (security SEC-25), so a page from before a restart must be reloaded.
 let csrfToken = "";
 
 export function setCsrf(token) {

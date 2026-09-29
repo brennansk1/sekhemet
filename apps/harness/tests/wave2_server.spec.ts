@@ -14,6 +14,7 @@ import { explainCard } from "../src/execute.js";
 import { LearningStore } from "../src/learning/store.js";
 import { startDashboardServer } from "../src/server.js";
 import { gateRuleOnFixtures } from "../src/wave2.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 let repo: string;
 let db: DatabaseSync;
@@ -99,7 +100,7 @@ describe("dashboard routes for the planner and sync (P9, P11, P13, P17, P20, Y8,
     expect((list.json.decisions as { id: string }[]).map((d) => d.id)).toContain(id);
     // The existing decisions endpoint resumes planner cards too.
     const r = await call("POST", `/api/decisions/${id}`, JSON.stringify({ option: 1 }), {
-      "x-sekhemet-action": "1",
+      ...(await pageWriteHeaders(`http://127.0.0.1:${server.port}`)),
       "content-type": "application/json",
     });
     expect(r.status).toBe(200);
@@ -191,7 +192,10 @@ describe("dashboard routes for the planner and sync (P9, P11, P13, P17, P20, Y8,
       fixtures: ["chronicle"],
       runFixture: async (_f, rule) => ({ passed: rule ? 2 : 5, total: 6 }),
     });
-    const headers = { "x-sekhemet-action": "1", "content-type": "application/json" };
+    const headers = {
+      ...(await pageWriteHeaders(`http://127.0.0.1:${server.port}`)),
+      "content-type": "application/json",
+    };
     // The frozen suite never admits a project rule: its verdict is shown, not enforced.
     const approved = await call("POST", `/api/learning/rules/${bad?.id}/approve`, "{}", headers);
     expect(approved.status).toBe(200);

@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { EventLog } from "@sekhemet/kernel";
 import {
   type EffectiveNetworkPolicy,
@@ -12,6 +11,7 @@ import { type NetworkTable, networkConfigs } from "./config_apply.js";
 import { egressEvent } from "./egress_event.js";
 import { researchCopy } from "./research/research_copy.js";
 import type { ConfigWrite } from "./team/config_audit.js";
+import { writeTomlTableKeys } from "./toml_keys.js";
 import { userPaths } from "./user_dir.js";
 
 /**
@@ -133,37 +133,7 @@ function writeNetworkKeys(
   entries: ReadonlyArray<[string, string]>,
   record: ConfigWrite,
 ): void {
-  record(() => writeNetworkKeysNow(path, entries));
-}
-
-function writeNetworkKeysNow(path: string, entries: ReadonlyArray<[string, string]>): void {
-  const lines = existsSync(path) ? readFileSync(path, "utf8").split("\n") : [];
-  const header = lines.findIndex((l) => /^\s*\[network\]\s*(#.*)?$/.test(l));
-  if (header === -1) {
-    const body = lines.join("\n").replace(/\n*$/, "");
-    const table = entries.map(([k, v]) => `${k} = ${v}`).join("\n");
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${body ? `${body}\n\n` : ""}[network]\n${table}\n`);
-    return;
-  }
-  let end = lines.length;
-  for (let i = header + 1; i < lines.length; i++) {
-    if (/^\s*\[/.test(lines[i] ?? "")) {
-      end = i;
-      break;
-    }
-  }
-  const added: string[] = [];
-  for (const [key, value] of entries) {
-    const entry = `${key} = ${value}`;
-    const at = lines
-      .slice(header + 1, end)
-      .findIndex((l) => new RegExp(`^\\s*${key}\\s*=`).test(l));
-    if (at === -1) added.push(entry);
-    else lines[header + 1 + at] = entry;
-  }
-  lines.splice(header + 1, 0, ...added);
-  writeFileSync(path, lines.join("\n").replace(/\n*$/, "\n"));
+  record(() => writeTomlTableKeys(path, "network", entries));
 }
 
 /**

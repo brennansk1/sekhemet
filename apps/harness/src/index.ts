@@ -163,6 +163,12 @@ import { audienceFromAccess } from "./pm/audience.js";
 import { DEFAULT_PM_MODEL, answerQueued, dailyStandup, pmModelFor } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { seshatWait } from "./pm/while_worker.js";
+import {
+  installProcessErrorHandlers,
+  reportFatal,
+  safeContext,
+  takeDebugFlag,
+} from "./process_errors.js";
 import { runPromptScreen } from "./prompt_screen_cmd.js";
 import { applyWorkerOverride, gateWorker } from "./qualify.js";
 import { diffTrajectories, formatDiff, formatTrajectory, trajectories } from "./replay.js";
@@ -232,7 +238,7 @@ import {
   tuneForRepo,
   writeTuningReport,
 } from "./tune.js";
-import { migrateLegacyUserDir } from "./user_dir.js";
+import { migrateLegacyUserDir, userDir } from "./user_dir.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { approveBaseline, describeCandidate, visualCandidates } from "./visual_baseline.js";
 import { PressureControls, createCardWatchdog, workerFloorRefusal } from "./watchdog_actions.js";
@@ -3770,6 +3776,19 @@ export function harnessVersion(): string {
 }
 
 if (process.argv[1]?.endsWith("index.js") || process.argv[1]?.endsWith("sekhemet")) {
+  // SUR-57: `--debug` is taken off the command line before any parser reads
+  // it; an error nothing handled — in a command or the server it runs — is
+  // one plain line, a redacted report, the children stopped and exit 1.
+  const debug = takeDebugFlag(process.argv);
+  const errorContext = () => ({
+    debug,
+    version: harnessVersion(),
+    argv: process.argv.slice(2),
+    // Resolved only when a report is written; it may throw, and then the
+    // one line still prints (G4, SUR-57).
+    userDir,
+  });
+  installProcessErrorHandlers(errorContext);
   // SUR-26: an older install's ~/.config/sekhemet moves into the one user
   // directory, once; `doctor` reports it. `--version` writes nothing (SUR-13).
   if (routeFrontDoor(process.argv.slice(2)).kind !== "version") {
@@ -3781,10 +3800,11 @@ if (process.argv[1]?.endsWith("index.js") || process.argv[1]?.endsWith("sekhemet
       );
     }
   }
-  // SUR-14: an uncaught error is printed and exits 1 — once the event loop
-  // drains, or shortly after if a server or timer would hold it open.
+  // SUR-14: an error a command throws is reported as SUR-57 says and exits
+  // 1 — once the event loop drains, or shortly after if a server or timer
+  // would hold it open.
   main().catch((err: unknown) => {
-    console.error(err);
+    reportFatal(err, "command", safeContext(errorContext));
     process.exitCode = 1;
     setTimeout(() => process.exit(1), 200).unref();
   });

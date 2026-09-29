@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startDashboardServer } from "../src/server.js";
 import { Presence } from "../src/team/presence.js";
 import { identitySettings } from "../src/team/settings.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * B4.11, teams NEW-teams-9 (item 26; TEAM-26) and dashboard DB-N9-20, on a
@@ -80,10 +81,14 @@ async function start() {
   base = `http://127.0.0.1:${server.port}`;
 }
 
-const call = (method: string, path: string, who: Person, body?: unknown) =>
+const call = async (method: string, path: string, who: Person, body?: unknown) =>
   fetch(`${base}${path}`, {
     method,
-    headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1", ...who.headers },
+    headers: {
+      "Content-Type": "application/json",
+      ...(await pageWriteHeaders(base)),
+      ...who.headers,
+    },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 

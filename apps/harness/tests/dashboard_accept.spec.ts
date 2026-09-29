@@ -13,6 +13,7 @@ import { shownFiles } from "../../../packages/ui/web/diff_parse.js";
 import { reportOpened } from "../../../packages/ui/web/opened.js";
 import { recordLedgerRun } from "../src/ledger_evidence.js";
 import { startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * RG-N5-5 on the dashboard, end to end: a real repository, a real ledger, a
@@ -35,7 +36,7 @@ const url = (path: string) => `http://127.0.0.1:${server.port}${path}`;
 const post = async (path: string, body?: unknown) => {
   const res = await fetch(url(path), {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+    headers: { "Content-Type": "application/json", ...(await pageWriteHeaders(url(""))) },
     body: JSON.stringify(body ?? {}),
   });
   return { ok: res.ok, status: res.status, data: (await res.json()) as Record<string, unknown> };

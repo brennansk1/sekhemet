@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { homedir, platform } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
+import { secretReadDenies } from "./secret_paths.js";
 import type { SandboxOptions } from "./types.js";
 
 /**
@@ -99,31 +100,8 @@ function quote(p: string): string {
   return p.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-/** The user's secret-bearing paths (security.md item 10, SEC-23). */
-export function secretReadDenies(home: string): string[] {
-  // `.config/sekhemet` holds the integration tokens' file (item 35, SEC-27).
-  return [
-    ".ssh",
-    ".aws",
-    ".npmrc",
-    ".netrc",
-    join(".config", "gh"),
-    ".sekhemet",
-    join(".config", "sekhemet"),
-  ]
-    .map((p) => join(home, p))
-    .concat(configDirDeny());
-}
-
-/**
- * The user directory moved by `SEKHEMET_CONFIG_DIR` (surface NEW-surface-1):
- * it holds what `~/.sekhemet` would, so it is denied the same way (SEC-23).
- */
-function configDirDeny(): string[] {
-  const dir = process.env.SEKHEMET_CONFIG_DIR?.trim();
-  // Resolved as the harness resolves it (sekhemetConfigDir): a relative one is still denied.
-  return dir ? [resolve(dir)] : [];
-}
+/** The user's secret-bearing paths: one table for every engine (secret_paths.ts, B-2). */
+export { secretReadDenies };
 
 /**
  * The project ledgers above each root: `<ancestor>/.sekhemet/*.db` (and their

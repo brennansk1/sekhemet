@@ -6,6 +6,7 @@ import { BoardServiceImpl, evidenceSummaryOf } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 describe("REST API completeness (H12)", () => {
   let server: { port: number; close: () => Promise<void> };
@@ -13,12 +14,12 @@ describe("REST API completeness (H12)", () => {
   let base: string;
   let projectId: string;
   const repo = mkdtempSync(join(tmpdir(), "rest-"));
-  const post = (path: string, body: unknown, trusted = true) =>
+  const post = async (path: string, body: unknown, trusted = true) =>
     fetch(`${base}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(trusted ? { "X-Sekhemet-Action": "1" } : {}),
+        ...(trusted ? await pageWriteHeaders(base) : {}),
       },
       body: JSON.stringify(body),
     });
@@ -184,10 +185,10 @@ describe("a human override past a failing security gate (B12)", () => {
     rmSync(repo, { recursive: true, force: true });
   });
 
-  const override = (toStatus: string) =>
+  const override = async (toStatus: string) =>
     fetch(`${base}/api/cards/card_leaky/override`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+      headers: { "Content-Type": "application/json", ...(await pageWriteHeaders(base)) },
       body: JSON.stringify({
         toStatus,
         reason: "I read the diff, it is a test fixture",

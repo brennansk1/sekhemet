@@ -9,6 +9,7 @@ import { writeSettings } from "../src/integrations.js";
 import { MAX_DAILY_BUDGET, startNotifier } from "../src/notify.js";
 import { dailyStandup } from "../src/pm/service.js";
 import { PmStore } from "../src/pm/store.js";
+import { chooseSecretsFile } from "./secret_choice.js";
 
 /**
  * One notifier, Slack a channel of it (integrations items 20-23a, INT-17 to
@@ -34,10 +35,13 @@ describe("the one notifier with Slack as a channel (P9)", () => {
   let hook: string;
   let clock: Date;
   const now = () => clock;
+  let restoreUserConfig: () => void;
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), "notify-slack-"));
     process.env.SEKHEMET_CONFIG_DIR = mkdtempSync(join(tmpdir(), "notify-slack-cfg-"));
+    // SEC-27c: no secret store here, so the webhook is kept by the person's choice.
+    restoreUserConfig = chooseSecretsFile(process.env.SEKHEMET_CONFIG_DIR);
     db = new DatabaseSync(join(dir, "ledger.db"));
     initSchema(db);
     log = new EventLog(db);
@@ -68,6 +72,7 @@ describe("the one notifier with Slack as a channel (P9)", () => {
     await new Promise<void>((r) => slack.close(() => r()));
     db.close();
     Reflect.deleteProperty(process.env, "SEKHEMET_CONFIG_DIR");
+    restoreUserConfig();
     Reflect.deleteProperty(process.env, "SEKHEMET_SLACK_BOT_TOKEN");
     Reflect.deleteProperty(process.env, "SEKHEMET_SLACK_CHANNEL");
     Reflect.deleteProperty(process.env, "SEKHEMET_SLACK_API_URL");

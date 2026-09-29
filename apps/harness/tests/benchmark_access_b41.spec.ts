@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { BenchmarkEnv } from "../src/benchmark_cmd.js";
 import { startDashboardServer } from "../src/server.js";
 import { routePermissions } from "../src/team/access.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 // B4.1 half-B review, the blocker: a benchmark route reached by a path its
 // permission rule does not match (a trailing slash, a doubled slash, an
@@ -117,7 +118,7 @@ const send = async (who: string, path: string, body: unknown = {}) => {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Sekhemet-Action": "1",
+      ...(await pageWriteHeaders(`http://127.0.0.1:${server?.port}`)),
       "X-Test-Principal": who,
     },
     body: JSON.stringify(body),

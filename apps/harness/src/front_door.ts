@@ -146,6 +146,8 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--cron",
   "--date",
   "--days",
+  // SUR-57: global; the entry takes it off the command line before any parser.
+  "--debug",
   "--deep",
   "--default",
   "--depth",

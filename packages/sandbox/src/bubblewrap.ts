@@ -1,9 +1,39 @@
-import { existsSync } from "node:fs";
-import { protectedInsideRoots, realPath } from "./seatbelt.js";
+import { existsSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, relative, sep } from "node:path";
+import {
+  homeToolchainPaths,
+  ledgerReadDenies,
+  protectedInsideRoots,
+  realPath,
+  secretReadDenies,
+} from "./seatbelt.js";
+import { sessionSecretDenies } from "./secret_paths.js";
 import type { SandboxOptions } from "./types.js";
 
 /** Where bubblewrap lives on Ubuntu, Debian and Fedora. */
 export const BWRAP_CANDIDATES = ["/usr/bin/bwrap", "/usr/local/bin/bwrap"];
+
+/** `inner` lies strictly below `outer`. */
+function isBelow(inner: string, outer: string): boolean {
+  return inner.startsWith(outer.endsWith(sep) ? outer : outer + sep);
+}
+
+/**
+ * The mount that hides one existing path: an empty tmpfs over a directory,
+ * an empty read-only `/dev/null` over a file (what srt does). A path that
+ * does not exist gets nothing: bubblewrap cannot create a mount point on the
+ * read-only root, and the sandbox cannot create the path either.
+ */
+function maskOf(path: string): { path: string; argv: string[] } | undefined {
+  try {
+    return statSync(path).isDirectory()
+      ? { path, argv: ["--tmpfs", path] }
+      : { path, argv: ["--ro-bind", "/dev/null", path] };
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * The Linux counterpart of the Seatbelt profile, as a bubblewrap argv.
@@ -15,9 +45,25 @@ export const BWRAP_CANDIDATES = ["/usr/bin/bwrap", "/usr/local/bin/bwrap"];
  * private tmpfs; the child dies with the harness and gets a new session so it
  * cannot reach the controlling terminal.
  *
- * Mount order matters: the read-only root comes first, the private /tmp next,
- * and the writable binds last, so a scratch directory under /tmp is still
- * writable.
+ * Reads are broad, except the user's secrets (security item 10, SEC-23, B-2):
+ * every path of the shared table (`secret_paths.ts`, which Seatbelt denies
+ * and srt receives as `denyRead`), the session's sockets (the runtime
+ * directory under /run/user with its D-Bus session bus, the agent sockets,
+ * the Docker socket: an empty network namespace does not isolate a socket
+ * reached by its path) and the project ledgers above each root are hidden
+ * behind an empty mount. Under `denyHomeReads` the whole home is an
+ * empty tmpfs with its toolchains bound back read-only, as Seatbelt does.
+ *
+ * Mount order matters, later mounts covering earlier ones:
+ * 1. the read-only root, the private /tmp, and (denyHomeReads) the empty home
+ *    and its toolchains;
+ * 2. the writable binds, so a scratch directory under /tmp and a root under
+ *    the home are still reachable;
+ * 3. the secret masks, so a granted root that contains a secret (the home
+ *    itself, say) still does not show it;
+ * 4. any granted root inside a masked directory, bound again: the harness
+ *    chose it (item 8a), so the run gets it and nothing beside it;
+ * 5. each root's `.git` read-only and the ledger masks.
  */
 export function bubblewrapArgv(
   options: SandboxOptions,
@@ -32,6 +78,43 @@ export function bubblewrapArgv(
   // The git metadata inside a granted path is re-mounted read-only after the
   // writable binds: git runs outside the sandbox in that worktree.
   const protectedGit = protectedInsideRoots(roots).filter((p) => existsSync(p));
+
+  // S3a: the home is empty but for its toolchains, bound back at the place a
+  // path through the home reaches them (the home itself may be a symlink).
+  const home = homedir();
+  const realHome = realPath(home);
+  const homeMount = options.denyHomeReads
+    ? [
+        "--tmpfs",
+        realHome,
+        ...homeToolchainPaths(home)
+          .filter((p) => existsSync(p))
+          .flatMap((p) => ["--ro-bind", realPath(p), join(realHome, relative(home, p))]),
+      ]
+    : [];
+
+  // The home's secrets, then the session's sockets (G2/G3): the runtime
+  // directory under /run/user, the agent sockets, the Docker socket. One
+  // under the private /tmp is already gone, and one below another masked
+  // directory is hidden with it; neither gets a mount of its own.
+  const privateTmp = [...new Set(["/tmp", realPath("/tmp")])];
+  const secretMasks = [
+    ...new Set([...secretReadDenies(home), ...sessionSecretDenies()].map(realPath)),
+  ]
+    .map(maskOf)
+    .filter((m) => m !== undefined)
+    .filter((m, _, all) => {
+      if (privateTmp.some((t) => m.path === t || isBelow(m.path, t))) return false;
+      return !all.some((o) => o.argv[0] === "--tmpfs" && isBelow(m.path, o.path));
+    });
+  const maskedDirs = secretMasks.filter((m) => m.argv[0] === "--tmpfs").map((m) => m.path);
+  const rebound = writeRoots.filter((r) => maskedDirs.some((d) => isBelow(r, d)));
+  // Linux lists the ledgers as literal files; the darwin-only glob is Seatbelt's.
+  const ledgerMasks = ledgerReadDenies(roots)
+    .filter((p) => !p.includes("*"))
+    .map(maskOf)
+    .filter((m) => m !== undefined);
+
   return [
     "--die-with-parent",
     "--new-session",
@@ -44,8 +127,12 @@ export function bubblewrapArgv(
     "/proc",
     "--tmpfs",
     "/tmp",
+    ...homeMount,
     ...writeRoots.flatMap((p) => ["--bind", p, p]),
+    ...secretMasks.flatMap((m) => m.argv),
+    ...rebound.flatMap((p) => ["--bind", p, p]),
     ...protectedGit.flatMap((p) => ["--ro-bind", p, p]),
+    ...ledgerMasks.flatMap((m) => m.argv),
     "--unshare-pid",
     "--unshare-ipc",
     "--unshare-uts",

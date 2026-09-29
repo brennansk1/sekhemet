@@ -18,6 +18,7 @@ import { daemonStop, processStartTime } from "../src/daemon.js";
 import { initLocalKernel, main } from "../src/index.js";
 import { acquireRunnerLease, holdRunnerLease, runnerLease } from "../src/runner_lease.js";
 import { startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * NEW-runtime-1 (runtime.md items 3, 5, 6): one runner at a time, taken by
@@ -223,10 +224,13 @@ describe("NEW-runtime-1: every runner takes the lease; detached runs keep a log"
       repoPath: dir,
       port: 0,
     });
-    const post = () =>
+    const post = async () =>
       fetch(`http://127.0.0.1:${server.port}/api/cards/card_r/run`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(await pageWriteHeaders(`http://127.0.0.1:${server.port}`)),
+        },
         body: "{}",
       });
     try {

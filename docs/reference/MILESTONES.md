@@ -7,7 +7,7 @@ Run one with `pnpm milestone <id>` (for example `pnpm milestone B3`), or `pnpm m
 | Milestone | Verdict | Date | Commit |
 | --- | --- | --- | --- |
 | [B1](#b1) | NOT RUN | 2026-09-28 | `150b7f8ebd` |
-| [B2.5](#b25) | NOT RUN | 2026-09-28 | `150b7f8ebd` |
+| [B2.5](#b25) | NOT RUN | 2026-09-29 | `4747051a6d` |
 | [B3](#b3) | PASS | 2026-09-28 | `150b7f8ebd` |
 | [B4.4](#b44) | NOT RUN | 2026-09-28 | `150b7f8ebd` |
 | [B4.10](#b410) | PASS | 2026-09-28 | `150b7f8ebd` |
@@ -36,19 +36,19 @@ How it ran: the containment suite is `packages/sandbox/tests`, run here with one
 
 *A recorded, reproducible baseline: one RunProfile, the full suite and the planning measure, every failure named.*
 
-**NOT RUN** — every arm's rounds: 8 runs recorded; still to run: evidence-gate-r2, fixed-tools-r2, strict-r2, thinking-all-r2; the planning measure: no planning measure yet (it waits on the confirmed golden briefs); the frozen RunProfile in SUITE_RUNS.md: not frozen yet (the schedule freezes it when it completes)
+**NOT RUN** — the planning measure: no planning measure yet (it waits on the confirmed golden briefs)
 
-- Evidence: `evidence/milestones/B2.5_2026-09-28.json`
-- Commit: `150b7f8ebd` with uncommitted changes
-- Tree: tree not recorded (evidence from before trees were recorded); run it again to tie it to a commit
-- Date: 2026-09-28, on darwin arm64 with 24 GB
+- Evidence: `evidence/milestones/B2.5_2026-09-29.json`
+- Commit: `4747051a6d` with uncommitted changes
+- Tree: tree `48b3144221413c619e1909e74c5987ba0b74280e`, the files it ran on (the commit that holds them has this tree; `git diff 48b3144221 <commit>` shows any difference)
+- Date: 2026-09-29, on darwin arm64 with 24 GB
 - Runner: `scripts/milestones/b2_5.mjs`
 
-- – every arm's rounds: 8 runs recorded; still to run: evidence-gate-r2, fixed-tools-r2, strict-r2, thinking-all-r2
-- ✓ every failure named: 84 failures, each with its stop reason
+- ✓ every arm's rounds: 12 runs over 6 arms
+- ✓ every failure named: 124 failures, each with its stop reason
 - ✓ one suite hash: d70f689d4125
 - – the planning measure: no planning measure yet (it waits on the confirmed golden briefs)
-- – the frozen RunProfile in SUITE_RUNS.md: not frozen yet (the schedule freezes it when it completes)
+- ✓ the frozen RunProfile in SUITE_RUNS.md: recorded
 
 How it ran: read only from `~/.sekhemet/baseline` (results and arms); the driver and its runs are not touched. It passes when every arm has its second round, a planning-measure result exists, and SUITE_RUNS.md records the frozen RunProfile under a `## Baseline RunProfile (frozen …)` heading.
 

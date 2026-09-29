@@ -21,6 +21,7 @@ import { createConfigApi } from "../src/config_api.js";
 import { dashboardResidency } from "../src/dashboard_models.js";
 import { ModelAccess } from "../src/model_access.js";
 import { startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 // B4.1 wiring (dashboard NEW-dashboard-6, measurement NEW-measurement-5):
 // the benchmark API mounted on the dashboard, Load/Unload through the
@@ -148,7 +149,7 @@ async function serve(o: {
   const call = async (method: string, path: string, body?: unknown) => {
     const res = await fetch(`${base}${path}`, {
       method,
-      headers: { "content-type": "application/json", "x-sekhemet-action": "1" },
+      headers: { "content-type": "application/json", ...(await pageWriteHeaders(base)) },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
     return { status: res.status, body: (await res.json()) as Record<string, unknown> };

@@ -10,6 +10,7 @@ import { toProposals, withProjectGroups } from "../src/pm/agent.js";
 import { draftProjectGroup } from "../src/pm/pipeline.js";
 import { PmStore } from "../src/pm/store.js";
 import { startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * Teams item 6 and design-stage §2.9 item 7 (B4.4 review): in the Team setup
@@ -82,12 +83,12 @@ async function setup() {
     pressureLevel: () => 1,
   });
   cleanup.push(() => server.close());
-  const apply = (who: string) =>
+  const apply = async (who: string) =>
     fetch(`http://127.0.0.1:${server.port}/api/pm/proposals/${reply.proposals?.[0]?.id}/apply`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Sekhemet-Action": "1",
+        ...(await pageWriteHeaders(`http://127.0.0.1:${server.port}`)),
         "X-Test-Principal": who,
       },
       body: JSON.stringify({ choices: {} }),

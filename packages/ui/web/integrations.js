@@ -2,7 +2,7 @@
 // entry says what leaves this machine when connected; nothing is on by default.
 // Import is a preview of proposals, never a silent write.
 import { esc, getJSON, icon, postJSON, sendJSON } from "./dom.js";
-import { integrationGroups } from "./lib/integrations_view.js";
+import { integrationGroups, secretStoreNotice } from "./lib/integrations_view.js";
 import { formatWait } from "./lib/vocabulary.js";
 import { bindProposals, proposalGroupHtml } from "./proposals.js";
 import { setTopbar } from "./shell.js";
@@ -167,6 +167,8 @@ const ui = {
   importTitle: "",
   importError: "",
   importContent: "",
+  /** Where secrets are kept on this host (SEC-27c): `GET /api/integrations/secret-store`. */
+  secretStore: undefined,
 };
 
 function ago(iso) {
@@ -223,13 +225,13 @@ function controls(e) {
       if (e.connected) {
         return `<div class="iacts"><button class="btn sm" type="button" data-push-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test alert"}</button><button class="btn sm ghost" type="button" data-push-off data-needs="integration.connect">Disconnect</button></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
       }
-      return `<form class="iacts push-form" data-push-form><select name="kind" aria-label="Server"><option value="ntfy">ntfy</option><option value="gotify">Gotify</option></select><input name="url" type="url" required placeholder="https://ntfy.sh or http://192.168.1.5:8080" aria-label="Server URL" autocomplete="off" spellcheck="false"><input name="topic" type="text" placeholder="Topic (ntfy)" aria-label="ntfy topic" autocomplete="off" spellcheck="false"><input name="token" type="password" placeholder="Token (optional for ntfy, required for Gotify)" aria-label="Access token" autocomplete="off"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The server URL and token stay in <code>~/.config/sekhemet/repos/…</code> with mode 0600, never in the repository or the ledger.</span></p>`;
+      return `<form class="iacts push-form" data-push-form><select name="kind" aria-label="Server"><option value="ntfy">ntfy</option><option value="gotify">Gotify</option></select><input name="url" type="url" required placeholder="https://ntfy.sh or http://192.168.1.5:8080" aria-label="Server URL" autocomplete="off" spellcheck="false"><input name="topic" type="text" placeholder="Topic (ntfy)" aria-label="ntfy topic" autocomplete="off" spellcheck="false"><input name="token" type="password" placeholder="Token (optional for ntfy, required for Gotify)" aria-label="Access token" autocomplete="off"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The token is a credential. ${esc(keptWhere())} The server URL stays in your user directory, never in the repository or the ledger.</span></p>`;
     }
     case "email": {
       if (e.connected) {
         return `<div class="iacts"><button class="btn sm" type="button" data-email-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test email to me"}</button><button class="btn sm ghost" type="button" data-email-off data-needs="integration.connect">Disconnect</button></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
       }
-      return `<form class="iacts email-form" data-email-form><input name="host" type="text" required placeholder="SMTP server, e.g. smtp.example.com" aria-label="SMTP server" autocomplete="off" spellcheck="false"><input name="port" type="number" required min="1" max="65535" value="587" aria-label="Port"><label class="sec"><input name="secure" type="checkbox"> TLS from the start (port 465)</label><input name="user" type="text" placeholder="User name (optional)" aria-label="SMTP user name" autocomplete="off" spellcheck="false"><input name="password" type="password" placeholder="Password (optional)" aria-label="SMTP password" autocomplete="off"><input name="from" type="email" required placeholder="Send from, e.g. sekhemet@example.com" aria-label="Sender address" autocomplete="off" spellcheck="false"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The password is a credential. Sekhemet keeps it in your keychain (or <code>~/.config/sekhemet/repos/…</code> with mode 0600), never in the repository or the ledger, and never shows it again.</span></p>`;
+      return `<form class="iacts email-form" data-email-form><input name="host" type="text" required placeholder="SMTP server, e.g. smtp.example.com" aria-label="SMTP server" autocomplete="off" spellcheck="false"><input name="port" type="number" required min="1" max="65535" value="587" aria-label="Port"><label class="sec"><input name="secure" type="checkbox"> TLS from the start (port 465)</label><input name="user" type="text" placeholder="User name (optional)" aria-label="SMTP user name" autocomplete="off" spellcheck="false"><input name="password" type="password" placeholder="Password (optional)" aria-label="SMTP password" autocomplete="off"><input name="from" type="email" required placeholder="Send from, e.g. sekhemet@example.com" aria-label="Sender address" autocomplete="off" spellcheck="false"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The password is a credential. ${esc(keptWhere())} It is never in the repository or the ledger, and never shown again.</span></p>`;
     }
     case "jira":
     case "linear": {
@@ -240,7 +242,7 @@ function controls(e) {
       if (e.connected) {
         return `<div class="iacts"><button class="btn sm" type="button" data-slack-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test message"}</button><button class="btn sm ghost" type="button" data-slack-off data-needs="integration.connect">Disconnect</button></div>`;
       }
-      return `<form class="iacts slack-form" data-slack-form><input type="url" required placeholder="https://hooks.slack.com/services/…" aria-label="Slack incoming webhook URL" autocomplete="off" spellcheck="false"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The webhook URL is a credential. Sekhemet keeps it in <code>~/.config/sekhemet/repos/…</code> with mode 0600, never in the repository or the ledger.</span></p>`;
+      return `<form class="iacts slack-form" data-slack-form><input type="url" required placeholder="https://hooks.slack.com/services/…" aria-label="Slack incoming webhook URL" autocomplete="off" spellcheck="false"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The webhook URL is a credential. ${esc(keptWhere())} It is never in the repository or the ledger.</span></p>`;
     }
     default:
       return "";
@@ -277,6 +279,28 @@ function importHtml() {
   return `<section class="isheet" aria-label="Import"><header><h2>Import</h2><button class="icon-btn" type="button" data-import-close aria-label="Close import">${icon("x", 14, "ic s14")}</button></header><form data-import-form><div class="irow"><label>Format <select name="format">${opts}</select></label><label class="file">File <input type="file" name="file" accept=".csv,.json,text/csv,application/json"></label></div><textarea name="content" rows="5" placeholder="Or paste the export here" spellcheck="false">${esc(ui.importContent ?? "")}</textarea><div class="iacts"><button class="btn sm primary" type="submit" ${ui.busy.has("import") ? "disabled" : ""}>${ui.busy.has("import") ? "Reading…" : "Preview as proposals"}</button><span class="sec">Import is never silent: each issue becomes a proposal you apply or discard.</span></div>${ui.importError ? `<p class="ierr">${icon("alert", 12, "ic s12 i-fail")}${esc(ui.importError)}</p>` : ""}</form>${preview}</section>`;
 }
 
+/** Where a credential typed here is kept, in one sentence (security item 35, SEC-27c). */
+function keptWhere() {
+  const s = ui.secretStore;
+  if (s?.store) return `Sekhemet keeps it in ${s.storeName}.`;
+  if (s?.cleartextChosen)
+    return "Sekhemet keeps it in a private file on this machine (mode 0600), as you chose.";
+  if (s) return "This machine has no secret store, so it is not saved until you choose above.";
+  return "Sekhemet keeps it in your OS secret store.";
+}
+
+/** The secret-store notice under the lede: where secrets go, or why they are not saved. */
+function secretStoreHtml() {
+  const n = secretStoreNotice(ui.secretStore);
+  if (!n) return "";
+  const mark =
+    n.tone === "pass" ? icon("lock", 14, "ic s14 i-pass") : icon("alert", 14, "ic s14 i-park");
+  const choose = n.offerChoice
+    ? ` <button class="btn sm" type="button" data-secret-file data-needs="integration.connect" ${ui.busy.has("secret-store") ? "disabled" : ""}>${esc(n.action)}</button>`
+    : "";
+  return `<p class="${n.tone === "pass" ? "inote" : "ibanner"}" data-secret-store>${mark}<span>${esc(n.text)}${choose}</span></p>`;
+}
+
 function render() {
   if (!ui.root) return;
   const g = grouped();
@@ -293,7 +317,7 @@ function render() {
       : ui.status && ui.status !== 200
         ? `<p class="ibanner">${icon("alert", 14, "ic s14 i-fail")}<span><b>Couldn't load integrations.</b> The server returned ${esc(ui.status)}.</span></p>`
         : "";
-  const html = `<div class="ints">${banner}<p class="ilede">Every integration is off until you connect it, and each one says what leaves this machine. Sekhemet uses your own CLI logins and webhook URLs and keeps no tokens in the repository.</p>${importHtml()}${now.length ? `<section><h2>Now <span class="sec">Connect these</span></h2><div class="igrid">${now.map(nowCard).join("")}</div></section>` : ""}${next.length ? `<section><h2>Next <span class="sec">Planned</span></h2><div class="igrid next">${next.map(nextCard).join("")}</div></section>` : ""}${later.length ? `<section><h2>Later <span class="sec">On the roadmap</span></h2><ul class="ilater">${later.map(laterRow).join("")}</ul></section>` : ""}</div>`;
+  const html = `<div class="ints">${banner}<p class="ilede">Every integration is off until you connect it, and each one says what leaves this machine. Sekhemet uses your own CLI logins and webhook URLs and keeps no tokens in the repository.</p>${secretStoreHtml()}${importHtml()}${now.length ? `<section><h2>Now <span class="sec">Connect these</span></h2><div class="igrid">${now.map(nowCard).join("")}</div></section>` : ""}${next.length ? `<section><h2>Next <span class="sec">Planned</span></h2><div class="igrid next">${next.map(nextCard).join("")}</div></section>` : ""}${later.length ? `<section><h2>Later <span class="sec">On the roadmap</span></h2><ul class="ilater">${later.map(laterRow).join("")}</ul></section>` : ""}</div>`;
   const scroll = ui.root.scrollTop;
   ui.root.innerHTML = html;
   ui.root.scrollTop = scroll;
@@ -311,6 +335,12 @@ async function load() {
     ui.entries = r.ok ? list : [];
   } catch {
     ui.status = -1;
+  }
+  try {
+    const s = await getJSON("/api/integrations/secret-store");
+    ui.secretStore = s.ok ? s.data : undefined;
+  } catch {
+    ui.secretStore = undefined;
   }
   render();
 }
@@ -388,6 +418,19 @@ async function onClick(e) {
             ? "Research model web access is on."
             : "Research model web access is off. It works from this machine only.",
         });
+      await load();
+    });
+    return;
+  }
+  if (t.closest("[data-secret-file]") && !blocked()) {
+    // SEC-27c: the person's own, recorded choice; nothing is kept in a file without it.
+    await withBusy("secret-store", async () => {
+      const r = await send("PUT", "/api/integrations/secret-store", { cleartextFile: true });
+      if (r.ok)
+        toast({
+          text: "Secrets will be kept in a private file on this machine. Connect again to save them.",
+        });
+      else toast({ tone: "fail", text: "Couldn't record your choice.", detail: err(r) });
       await load();
     });
     return;

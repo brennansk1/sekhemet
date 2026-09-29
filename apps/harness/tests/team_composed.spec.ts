@@ -444,7 +444,8 @@ describe("minors: the last Admin, a lead's overrides, the live stream's origin",
   });
 
   it("opens the live stream to the page's own origin only", async () => {
-    await start();
+    // A Team server behind its TLS proxy names the host people use (security item 37).
+    await start({ publicUrl: "https://sekhemet.northwind.test" });
     const ada = await firstAdmin();
     const upgrade = (origin: string, host?: string) =>
       new Promise<number>((resolve, reject) => {
@@ -473,6 +474,65 @@ describe("minors: the last Admin, a lead's overrides, the live stream's origin",
     const own = "sekhemet.northwind.test";
     expect(await upgrade(`https://${own}`, own)).toBe(101);
     expect(await upgrade("https://evil.test", own)).toBe(403);
+    // A name the server does not answer to is a rebound page's (SEC-24).
+    expect(await upgrade("https://evil.test", "evil.test")).toBe(421);
+  });
+
+  it("W1 review: a signed-in write from another loopback port is another site's, as in Solo", async () => {
+    await start();
+    const ada = await firstAdmin();
+    const project = (
+      await asPerson(ada, () =>
+        store.ensureProject({ rootPath: join(root, "chronicle"), name: "Chronicle" }),
+      )
+    ).id;
+    const patch = (origin?: string) =>
+      fetch(`${base}/api/projects/${project}/settings`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Sekhemet-Action": "1",
+          ...ada.headers,
+          ...(origin ? { Origin: origin } : {}),
+        },
+        body: JSON.stringify({ lead: ada.principal }),
+      });
+    const before = mark();
+    expect((await patch("http://127.0.0.1:3000")).status).toBe(403);
+    expect((await patch("http://localhost:3000")).status).toBe(403);
+    // Nothing was written (the sign-in's own activity mark aside).
+    expect(personEvents(before).filter((e) => !e.type.startsWith("session/"))).toEqual([]);
+    // The page's own origin, and a program that sends none, still write.
+    expect((await patch(base)).status).toBeLessThan(400);
+    expect((await patch()).status).toBeLessThan(400);
+  });
+
+  it("answers only the names it serves: loopback and its public URL's host (SEC-24)", async () => {
+    await start({ publicUrl: "https://sekhemet.northwind.test" });
+    const ada = await firstAdmin();
+    const read = (host: string) =>
+      new Promise<number>((resolve, reject) => {
+        const req = request(`${base}/api/board`, { headers: { ...ada.headers, Host: host } });
+        req.on("response", (res) => {
+          resolve(res.statusCode ?? 0);
+          res.resume();
+        });
+        req.on("error", reject);
+        req.end();
+      });
+    expect(await read("sekhemet.northwind.test")).toBe(200);
+    expect(await read("attacker.example")).toBe(421);
+    // The Team setup keeps its own CSRF: a session's write without its token is refused.
+    const res = await fetch(`${base}/api/members/${ada.principal}/label`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Sekhemet-Action": "1",
+        Cookie: ada.headers.Cookie ?? "",
+      },
+      body: JSON.stringify({ label: "Lead" }),
+    });
+    expect(res.status).toBe(403);
   });
 });
 

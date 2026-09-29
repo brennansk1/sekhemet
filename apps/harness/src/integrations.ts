@@ -30,11 +30,19 @@ import {
   integrationRefusal,
 } from "./github_transport.js";
 import { importProposals } from "./import_board.js";
-import { keychainStore } from "./keychain.js";
+import { keychainStore, probeSecretStore } from "./keychain.js";
 import type { ProposalDraft } from "./pm/agent.js";
 import { type Audience, soloAudience } from "./pm/audience.js";
 import type { PmStore } from "./pm/store.js";
 import { PM_EVENTS } from "./pm/types.js";
+import {
+  SECRET_FIELDS,
+  type SecretField,
+  SecretNotStored,
+  cleartextSecretsChoice,
+  recordCleartextSecretsChoice,
+  secretStoreStatus,
+} from "./secret_store.js";
 import { userDir } from "./user_dir.js";
 import {
   type SyncDirection,
@@ -102,14 +110,7 @@ function secureSettingsPath(path: string): void {
   if (existsSync(path) && (statSync(path).mode & 0o777) !== 0o600) chmodSync(path, 0o600);
 }
 
-/**
- * The settings that are secrets (security item 35): a Slack webhook URL can
- * post to the channel, a push token to the phone. Where the host has a
- * keychain they live there (SEC-27a); the file keeps only their account names.
- */
-const SECRET_FIELDS = ["slackWebhookUrl", "slackBotToken", "push.token", "email.password"] as const;
-
-/** The file as stored: the settings, less secrets kept in the keychain, which it names. */
+/** The file as stored: the settings, less secrets kept in the OS store, which it names. */
 type StoredSettings = IntegrationSettings & { keychain?: string[] };
 
 function getField(o: object, field: string): unknown {
@@ -128,29 +129,65 @@ function setField(o: object, field: string, value: unknown): void {
 }
 
 /**
- * Write the settings file: each secret into the keychain when there is one
- * (a failed keychain write keeps that secret in the 0600 file, SEC-27), the
- * secrets it no longer holds removed from the keychain.
+ * Write the settings file: each secret into the OS secret store when there
+ * is one (SEC-27a, SEC-27b), the secrets it no longer holds removed from it.
+ * A secret no store kept goes to the 0600 file (SEC-27) only when the person
+ * chose that (SEC-27c) or the file already held that same value; otherwise
+ * nothing is written, what this write put in the store is taken out again,
+ * and `SecretNotStored` says why.
+ *
+ * `keep` names the accounts the store holds but could not give back on this
+ * read (a locked keyring, no session bus: W1 review G3). Their secrets are
+ * not in `settings`, but they were not removed either: they stay in the store
+ * and in the file's list, so a write that does not touch them — the sync's
+ * time, a toggle — never disconnects them.
  */
-function persistSettings(path: string, settings: IntegrationSettings, previous: string[]): void {
+function persistSettings(
+  path: string,
+  settings: IntegrationSettings,
+  previous: string[],
+  previousFile: StoredSettings = {},
+  keep: string[] = [],
+): void {
   const store = keychainStore();
   const out = structuredClone(settings) as StoredSettings;
   const accounts: string[] = [];
-  if (store) {
-    for (const field of SECRET_FIELDS) {
-      const value = getField(settings, field);
-      if (typeof value !== "string" || !value) continue;
+  const unkept: SecretField[] = [];
+  let why = "";
+  for (const field of SECRET_FIELDS) {
+    const value = getField(settings, field);
+    if (typeof value !== "string" || !value) continue;
+    if (store) {
       const account = `${basename(path, ".json")}:${field}`;
       try {
         store.set(account, value);
         setField(out, field, undefined);
         accounts.push(account);
-      } catch {
-        // The keychain refused: the 0600 file keeps this one.
+        continue;
+      } catch (err) {
+        // The tool's own first line of complaint, else the error's first line.
+        const stderr = (err as { stderr?: unknown }).stderr;
+        why ||=
+          (typeof stderr === "string" && stderr.trim().split("\n")[0]) ||
+          (err instanceof Error ? err.message : String(err)).split("\n")[0] ||
+          "";
       }
     }
-    for (const account of previous) if (!accounts.includes(account)) store.delete(account);
+    if (getField(previousFile, field) !== value) unkept.push(field);
   }
+  if (unkept.length > 0 && !cleartextSecretsChoice().chosen) {
+    if (store) for (const a of accounts) if (!previous.includes(a)) store.delete(a);
+    const probe = probeSecretStore();
+    throw new SecretNotStored(
+      unkept,
+      probe.unavailable ??
+        (why
+          ? `${probe.name ?? "the secret store"} refused it (${why})`
+          : "there is no secret store"),
+    );
+  }
+  for (const account of keep) if (!accounts.includes(account)) accounts.push(account);
+  if (store) for (const account of previous) if (!accounts.includes(account)) store.delete(account);
   if (accounts.length > 0) out.keychain = accounts;
   secureSettingsPath(path);
   writeFileSync(path, `${JSON.stringify(out, null, 2)}\n`, { mode: 0o600 });
@@ -162,24 +199,46 @@ function readStored(path: string): StoredSettings {
   return JSON.parse(readFileSync(path, "utf8")) as StoredSettings;
 }
 
+/** The secret field an account holds (`<repo>:<field>`). */
+const fieldOf = (account: string) => account.slice(account.lastIndexOf(":") + 1);
+
 export function readSettings(repoPath: string): IntegrationSettings {
+  return readWithUnread(repoPath).settings;
+}
+
+/**
+ * The settings with their secrets, and the accounts the file lists whose
+ * secret the store did not give back (G3): absent from the settings, but
+ * not removed.
+ */
+function readWithUnread(repoPath: string): { settings: IntegrationSettings; unread: string[] } {
   try {
     const path = settingsPath(repoPath);
-    const { keychain: accounts = [], ...settings } = readStored(path);
+    const stored = readStored(path);
+    const { keychain: accounts = [], ...settings } = stored;
     secureSettingsPath(path);
     const store = keychainStore();
-    if (!store) return settings;
-    // SEC-27a: an older file's tokens move into the keychain on this read.
+    // No store at all now (SEKHEMET_KEYCHAIN=off, secret-tool removed): the
+    // listed accounts are unread too, and kept.
+    if (!store) return { settings, unread: accounts };
+    // SEC-27a, SEC-27b: an older file's secrets move into the store on this read.
     const plaintext = SECRET_FIELDS.some((f) => typeof getField(settings, f) === "string");
+    const unread: string[] = [];
     for (const account of accounts) {
       const value = store.get(account);
-      if (value !== undefined)
-        setField(settings, account.slice(account.lastIndexOf(":") + 1), value);
+      if (value !== undefined) setField(settings, fieldOf(account), value);
+      else unread.push(account);
     }
-    if (plaintext) persistSettings(path, settings, accounts);
-    return settings;
+    if (plaintext) {
+      try {
+        persistSettings(path, settings, accounts, stored, unread);
+      } catch {
+        // The store refused the move: the file keeps what it held.
+      }
+    }
+    return { settings, unread };
   } catch {
-    return {};
+    return { settings: {}, unread: [] };
   }
 }
 
@@ -188,17 +247,21 @@ export function writeSettings(
   patch: { [K in keyof IntegrationSettings]?: IntegrationSettings[K] | undefined },
 ): IntegrationSettings {
   const path = settingsPath(repoPath);
-  let previous: string[] = [];
+  let previousFile: StoredSettings = {};
   try {
-    previous = readStored(path).keychain ?? [];
+    previousFile = readStored(path);
   } catch {
     // No file yet.
   }
   // An undefined value in the patch removes that setting.
-  const merged: Record<string, unknown> = { ...readSettings(repoPath), ...patch };
+  const { settings, unread } = readWithUnread(repoPath);
+  const merged: Record<string, unknown> = { ...settings, ...patch };
   for (const [k, v] of Object.entries(merged)) if (v === undefined) delete merged[k];
   const next = merged as IntegrationSettings;
-  persistSettings(path, next, previous);
+  // G3: a secret the store could not give back stays, unless this write
+  // replaces or removes the setting that holds it.
+  const keep = unread.filter((a) => !Object.hasOwn(patch, fieldOf(a).split(".")[0] as string));
+  persistSettings(path, next, previousFile.keychain ?? [], previousFile, keep);
   return next;
 }
 
@@ -794,9 +857,34 @@ export interface IntegrationsContext {
   principalOf?: (req: IncomingMessage) => string;
   /** Who can see which project (PM-N9-8); Solo sees everything. */
   audience?: () => Audience;
+  /** The user config.toml the server reads and writes (the test override first). */
+  userConfigPath?: string;
+  /** A write of the user config recorded on the ledger with the person (TEAM-44). */
+  recordConfigWrite?: <T>(principal: string, write: () => T) => T;
 }
 
+/**
+ * The integrations routes. A secret no store kept and the person has not
+ * chosen a file for (SEC-27c) is refused with 409 and `needs:
+ * "secret-store-choice"`, so the page can offer the choice; nothing was saved.
+ */
 export async function handleIntegrationsApi(
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: string,
+  query: URLSearchParams,
+  ctx: IntegrationsContext,
+): Promise<boolean> {
+  try {
+    return await integrationsRoutes(req, res, url, query, ctx);
+  } catch (err) {
+    if (!(err instanceof SecretNotStored)) throw err;
+    ctx.json(res, 409, { error: err.message, needs: err.needs, fields: err.fields });
+    return true;
+  }
+}
+
+async function integrationsRoutes(
   req: IncomingMessage,
   res: ServerResponse,
   url: string,
@@ -805,6 +893,29 @@ export async function handleIntegrationsApi(
 ): Promise<boolean> {
   if (url === "/api/integrations" && req.method === "GET") {
     ctx.json(res, 200, await listIntegrations(ctx.repoPath));
+    return true;
+  }
+
+  // Where secrets are kept on this host, and the person's choice (SEC-27c).
+  if (url === "/api/integrations/secret-store" && req.method === "GET") {
+    ctx.json(res, 200, secretStoreStatus(ctx.userConfigPath));
+    return true;
+  }
+  if (url === "/api/integrations/secret-store" && req.method === "PUT") {
+    if (!ctx.mutationGuard(req, res)) return true;
+    const b = await ctx.readJsonBody(req);
+    if (typeof b.cleartextFile !== "boolean") {
+      ctx.json(res, 400, {
+        error: "Say whether to keep secrets in a private file (cleartextFile)",
+      });
+      return true;
+    }
+    const principal = ctx.principalOf?.(req) ?? ctx.log.localPrincipal();
+    const path = ctx.userConfigPath;
+    const write = () => recordCleartextSecretsChoice(b.cleartextFile === true, path);
+    if (ctx.recordConfigWrite) ctx.recordConfigWrite(principal, write);
+    else write();
+    ctx.json(res, 200, secretStoreStatus(path));
     return true;
   }
 

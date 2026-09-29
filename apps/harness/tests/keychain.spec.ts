@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { readSettings, writeSettings } from "../src/integrations.js";
 import { keychainStore } from "../src/keychain.js";
+import { SecretNotStored, recordCleartextSecretsChoice } from "../src/secret_store.js";
 
 /**
  * S3c, security item 35 (SEC-27a): on a host with a keychain the integration
@@ -97,9 +98,12 @@ describe.runIf(darwin)("SEC-27a: integration tokens in the OS keychain", () => {
     expect(readSettings(repo).slackWebhookUrl).toBe(webhook);
   });
 
-  it("is off where asked, and the file keeps the token (the SEC-27 fallback)", () => {
+  it("is off where asked; the file keeps the token only by the person's recorded choice (SEC-27, SEC-27c)", () => {
     vi.stubEnv("SEKHEMET_KEYCHAIN", "off");
+    vi.stubEnv("SEKHEMET_USER_CONFIG", join(base, "config.toml"));
     expect(keychainStore()).toBeUndefined();
+    expect(() => writeSettings(repo, { slackWebhookUrl: webhook })).toThrow(SecretNotStored);
+    recordCleartextSecretsChoice(true);
     writeSettings(repo, { slackWebhookUrl: webhook });
     expect(settingsFile()).toContain("secret-hook");
   });

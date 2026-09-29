@@ -134,6 +134,12 @@ describe("a refusal says what the server said (teams TEAM-4)", () => {
 
   it("a failed CSRF check and a pending account say what to do", () => {
     expect(refusalMessage(403, { error: "csrf" })).toBe(ACCOUNT_COPY.csrf);
+    // Solo has no sign-in: its page is only out of date (the dashboard restarted).
+    expect(refusalMessage(403, { error: "csrf", refused: "token" }, "solo")).toBe(
+      ACCOUNT_COPY.csrfSolo,
+    );
+    expect(ACCOUNT_COPY.csrfSolo).toMatch(/reload the page/i);
+    expect(ACCOUNT_COPY.csrfSolo).not.toMatch(/sign in|session|token|csrf/i);
     expect(refusalMessage(403, { error: "Waiting for approval.", pending: true })).toBe(
       ACCOUNT_COPY.pending,
     );

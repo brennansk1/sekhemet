@@ -9,6 +9,7 @@ import { resolveConfig } from "../src/config.js";
 import { startDashboardServer } from "../src/server.js";
 import { acquireSlotLease } from "../src/slot_lease.js";
 import { FairScheduler, fairOrder, queueStanding } from "../src/team/fair_queue.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * runtime RUN-34 (fair share per person, interactive PM replies first, aging
@@ -243,7 +244,10 @@ describe("the shared queue on the ledger (RUN-34, TEAM-30)", () => {
     });
     const res = await fetch(`http://127.0.0.1:${server.port}/api/cards/card_a/run`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(await pageWriteHeaders(`http://127.0.0.1:${server.port}`)),
+      },
       body: "{}",
     });
     expect(res.status).toBe(202);
@@ -290,7 +294,7 @@ describe("the shared queue on the ledger (RUN-34, TEAM-30)", () => {
     const at = `http://127.0.0.1:${server.port}`;
     const res = await fetch(`${at}/api/cards/card_a/run`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+      headers: { "Content-Type": "application/json", ...(await pageWriteHeaders(at)) },
       body: "{}",
     });
     expect(res.status).toBe(202);

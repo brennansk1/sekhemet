@@ -7,6 +7,7 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { boardModel, tileModel } from "@sekhemet/ui";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * dashboard P3 on a real server (DB-P3-4, 9, 16): `/api/board` carries what
@@ -121,10 +122,10 @@ describe("the board API for the professional board (dashboard P3)", () => {
         cards: Parameters<typeof tileModel>[0][];
       };
     expect((await board()).estimation).toBe("off");
-    const patch = (estimation: unknown) =>
+    const patch = async (estimation: unknown) =>
       fetch(`${base()}/api/projects/${project}/settings`, {
         method: "PATCH",
-        headers: { "content-type": "application/json", "x-sekhemet-action": "1" },
+        headers: { "content-type": "application/json", ...(await pageWriteHeaders(base())) },
         body: JSON.stringify({ estimation }),
       });
     expect((await patch("hours")).status).toBe(400);

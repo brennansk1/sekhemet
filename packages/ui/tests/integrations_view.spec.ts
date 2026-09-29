@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { integrationGroups } from "../src/integrations_view.js";
+import { integrationGroups, secretStoreNotice } from "../src/integrations_view.js";
 
 /**
  * DB-N2-7: Integrations renders what `/api/integrations` returns, grouped by
@@ -70,5 +70,61 @@ describe("integrationGroups", () => {
     const src = readFileSync(join(import.meta.dirname, "..", "web", "integrations.js"), "utf8");
     expect(src).not.toMatch(/tier:\s*"(now|next|later)"/);
     expect(src).toContain("integrationGroups(");
+  });
+});
+
+/**
+ * SEC-27c (B-12): where credentials are entered, the page says where they
+ * are kept, and on a host with no secret store says so plainly and offers
+ * the choice of a private file, which the person must make.
+ */
+describe("Integrations says where secrets are kept", () => {
+  it("names the store when there is one, with no choice to make", () => {
+    const n = secretStoreNotice({
+      store: "secret-service",
+      storeName: "the Secret Service (secret-tool)",
+      cleartextChosen: false,
+      heldInFiles: 0,
+      message:
+        "Integration secrets (Slack, push and email) are kept in the Secret Service (secret-tool).",
+    });
+    expect(n).toMatchObject({ tone: "pass", offerChoice: false });
+    expect(n?.text).toMatch(/Secret Service/);
+  });
+
+  it("with no store and no choice, warns that secrets are not saved and offers the file", () => {
+    const n = secretStoreNotice({
+      unavailable: "secret-tool is not installed",
+      cleartextChosen: false,
+      heldInFiles: 0,
+      message:
+        "This machine has no secret store: secret-tool is not installed. Integration secrets (Slack, push and email) are not saved until you install one or choose, in Integrations, to keep them in a private file.",
+    });
+    expect(n).toMatchObject({ tone: "warn", offerChoice: true });
+    expect(n?.text).toMatch(/not saved/);
+    expect(n?.action).toMatch(/private file/);
+  });
+
+  it("with no store and the choice made, says it is the person's choice and offers nothing more", () => {
+    const n = secretStoreNotice({
+      unavailable: "secret-tool is not installed",
+      cleartextChosen: true,
+      cleartextChosenAt: "2026-09-29T08:00:00.000Z",
+      heldInFiles: 1,
+      message: "This machine has no secret store: … You chose on 2026-09-29 to keep …",
+    });
+    expect(n).toMatchObject({ tone: "warn", offerChoice: false });
+    expect(n?.text).toMatch(/You chose/);
+  });
+
+  it("shows nothing when the server does not report a secret store (an older server)", () => {
+    expect(secretStoreNotice(undefined)).toBeUndefined();
+    expect(secretStoreNotice({} as never)).toBeUndefined();
+  });
+
+  it("the page asks the server and uses this helper", () => {
+    const src = readFileSync(join(import.meta.dirname, "..", "web", "integrations.js"), "utf8");
+    expect(src).toContain("/api/integrations/secret-store");
+    expect(src).toContain("secretStoreNotice(");
   });
 });

@@ -9,6 +9,7 @@ import type { Audience } from "../src/pm/audience.js";
 import { postWeeklyUpdate } from "../src/pm/weekly.js";
 import { startDashboardServer } from "../src/server.js";
 import { projectSignals, statusFacts } from "../src/status_api.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * dashboard DB-N9-1..4, -8, DEC-37 (§2.8): what only the server knows for
@@ -431,7 +432,7 @@ describe("GET /api/status and POST /api/cards/:id/unpark", () => {
     expect((await fetch(url, { method: "POST" })).status).toBe(403);
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+      headers: { "Content-Type": "application/json", ...(await pageWriteHeaders(base)) },
       body: "{}",
     });
     expect(res.status).toBe(200);
@@ -440,7 +441,7 @@ describe("GET /api/status and POST /api/cards/:id/unpark", () => {
     // Not parked any more: refused, with the reason.
     const again = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+      headers: { "Content-Type": "application/json", ...(await pageWriteHeaders(base)) },
       body: "{}",
     });
     expect(again.status).toBe(409);

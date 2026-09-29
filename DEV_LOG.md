@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 58 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 59 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,60 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 59 — 2026-09-29 (W1 security hardening; the baseline complete and frozen; Stream 1 starts)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver.
+- **W1:** one workflow: four groups, a sweep, one attacker-minded independent review, a fixer and a blocker re-check (8 agents, 1.36M tokens).
+- **Stream 1:** local models on the frozen close-out build, `scratchpad/gate-co` at 4747051.
+- **Owner's direction (2026-09-29):**
+  - W18 was added to the plan: model settings per role and the benchmark, built out;
+  - apps may be closed to free memory.
+
+- **W1, security hardening (FINISH_LINE_PLAN B-1, B-2, B-12):**
+  - **The dashboard** (`web_guard.ts`, first in every request and upgrade):
+    - A Host allowlist on every request, GET included. It covers loopback, the bound address and Team's `public_url`; anything else gets 421, which closes DNS rebinding.
+    - A Solo mutation token: minted per server start, handed out by `/api/session`, and required for every write, with or without an Origin.
+    - A strict CSP: no inline script, no eval, inline `<style>` only by hash.
+    - `frame-ancestors 'none'` and X-Frame-Options DENY, Referrer-Policy no-referrer, a Permissions-Policy, COOP and CORP.
+    - SSE and the WebSocket check Host and Origin.
+    - 17 real-server tests, including a rebound Host refused on a board read and on Accept.
+    - **A Team server behind a proxy must now set `[identity] public_url`.**
+  - **bubblewrap:**
+    - One table (`secret_paths.ts`, 37 home-secret paths with reasons) now feeds both Seatbelt and bubblewrap. Plus session sockets: `/run/user`, `$SSH_AUTH_SOCK`, `$GNUPGHOME`, the Docker socket. That was the review's blocker; it was re-checked.
+    - The planted-secret runtime test runs on Linux only, and is **pending R9 (Lima)**.
+  - **Linux secret store:** the Secret Service through `secret-tool`, and a plain statement where it is absent. An unreadable store no longer drops kept secrets on the next write (a review major, fixed).
+  - **Process errors:** top-level `unhandledRejection` and `uncaughtException` give a one-line message, `--debug` for the stack, a report on disk, a meaningful exit code, and children stopped. An error is never hidden when the user directory cannot be resolved (a review major, fixed).
+  - **Review:** 1 blocker, 2 majors and 11 minors (12 fixes). The Chromium sweep ran; no view breaks under the CSP.
+- **B2.5 baseline complete and frozen.** Six arms × two rounds on `5937e83`, all 30 cards measured in every run.
+  - Results out of 60:
+
+    | Arm | Passed of 60 |
+    | --- | --- |
+    | ref | 38 |
+    | thinking-surgical | 43 |
+    | thinking-all | 42 |
+    | strict | 38 |
+    | fixed-tools | 38 |
+    | evidence-gate | 37 |
+
+    No arm is established over ref.
+  - `## Baseline RunProfile (frozen 2026-09-29)` is in SUITE_RUNS.
+  - `pnpm milestone B2.5` passes every check but the planning measure, which waits on the owner's golden-brief labels.
+  - The baseline measured Cyber-Tiel, while the shipped Coding model is nail-mtp (DEC-47), so the plan adds R-tune (ref against thinking-surgical on nail-mtp) and W18 (per-model settings and tuning).
+- **Stream 1:** nail-mtp re-qualified at 100% on 4747051 under the per-role prompt version. The GLM-4.7-Flash Reviewer admission is running (it completed all 22 reviews and caught 0: GLM marked every criterion met, a real rubber-stamping result, not a harness defect (live_findings; R3b and R3c added to the plan)).
+- **Findings for the next fix round:**
+  - **F26:** `doctor` says every model is verified when the Coding model is owed re-verification.
+  - **macOS parity:** Seatbelt allows mach-lookup and, with network on, `network*`, so `$SSH_AUTH_SOCK`'s agent may be reachable from the sandbox. It needs a containment test and a deny.
+  - **Git identity:** `hardenedGitEnv` (`packages/sync/src/git_hardening.ts:136`) builds its identity directory straight from `SEKHEMET_CONFIG_DIR`, bypassing `sekhemetConfigDir`'s checks.
+  - **CLI copy:** Solo's CSRF copy says "sign in again".
+  - **Serve:** it should warn when bound beyond loopback without `public_url`.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1545 files; the B2.5 evidence file re-formatted after the run), vitest 661 files, 5,172 passed, 39 skipped (the new Linux-only mask tests skip on macOS, pending R9).
+- **Where the cards stop:**
+  - W1 is done in code. Its Linux runtime proofs (masks, session sockets, the Secret Service) wait on R9.
+  - **Next:**
+    - Stream 2: W2, capstone preparation;
+    - Stream 1: the Reviewer admission, then R-tune and the prompt A/B.
 
 ### Entry 58 — 2026-09-28 (Phase B close-out; Apache-2.0; the finish-line plan)
 

@@ -8,6 +8,7 @@ import { MockInferenceAdapter } from "@sekhemet/models";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseCsv, readSettings, writeSettings } from "../src/integrations.js";
 import { startDashboardServer } from "../src/server.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 const usage = { promptTokens: 1, completionTokens: 1, durationMs: 1 };
 
@@ -18,11 +19,12 @@ describe("PM and board-practice API", () => {
   let server: { port: number; close: () => Promise<void> };
   let base: string;
   let ledgerId: string;
+  let userConfigBefore: string | undefined;
 
-  const post = (path: string, body: unknown, method = "POST") =>
+  const post = async (path: string, body: unknown, method = "POST") =>
     fetch(`${base}${path}`, {
       method,
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+      headers: { "Content-Type": "application/json", ...(await pageWriteHeaders(base)) },
       body: JSON.stringify(body),
     });
 
@@ -30,6 +32,9 @@ describe("PM and board-practice API", () => {
     repo = mkdtempSync(join(tmpdir(), "pm-api-"));
     configDir = mkdtempSync(join(tmpdir(), "pm-config-"));
     process.env.SEKHEMET_CONFIG_DIR = configDir;
+    // SEC-27c: this server's user config, where the secret-store choice is recorded.
+    userConfigBefore = process.env.SEKHEMET_USER_CONFIG;
+    process.env.SEKHEMET_USER_CONFIG = join(configDir, "config.toml");
     const db = new DatabaseSync(":memory:");
     initSchema(db);
     const log = new EventLog(db);
@@ -73,6 +78,8 @@ describe("PM and board-practice API", () => {
     await server.close();
     // Assigning undefined would leave the string "undefined" in the environment.
     Reflect.deleteProperty(process.env, "SEKHEMET_CONFIG_DIR");
+    if (userConfigBefore === undefined) Reflect.deleteProperty(process.env, "SEKHEMET_USER_CONFIG");
+    else process.env.SEKHEMET_USER_CONFIG = userConfigBefore;
     rmSync(repo, { recursive: true, force: true });
     rmSync(configDir, { recursive: true, force: true });
   });
@@ -242,6 +249,12 @@ describe("PM and board-practice API", () => {
       (await post("/api/integrations/slack", { webhookUrl: "https://evil.example/x" }, "PUT"))
         .status,
     ).toBe(400);
+    // SEC-27c: no secret store in tests, so the webhook waits for the person's choice.
+    const hookUrl = { webhookUrl: "https://hooks.slack.com/services/T000/B000/XXXX" };
+    expect((await post("/api/integrations/slack", hookUrl, "PUT")).status).toBe(409);
+    expect(
+      (await post("/api/integrations/secret-store", { cleartextFile: true }, "PUT")).status,
+    ).toBe(200);
     const ok = await post(
       "/api/integrations/slack",
       { webhookUrl: "https://hooks.slack.com/services/T000/B000/XXXX" },
@@ -311,7 +324,10 @@ describe("PM and board-practice API", () => {
     });
     const res = await fetch(`http://127.0.0.1:${s2.port}/api/pm/messages`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(await pageWriteHeaders(`http://127.0.0.1:${s2.port}`)),
+      },
       body: JSON.stringify({ text: "status of the api card?" }),
     });
     expect(res.status).toBe(200);

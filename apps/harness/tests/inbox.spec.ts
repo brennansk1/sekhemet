@@ -13,6 +13,7 @@ import { Access } from "../src/team/access.js";
 import { type InboxDeps, inboxNotifier, markInboxItem } from "../src/team/inbox.js";
 import { allMembers, personName } from "../src/team/members.js";
 import { identitySettings } from "../src/team/settings.js";
+import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * B4.11, teams NEW-teams-7 (items 22–24; TEAM-21, -22, -23, -43) and
@@ -689,7 +690,7 @@ describe("DB-N9-14 in Solo: the Inbox is both setups'", () => {
     });
     vi.mocked(console.log).mockRestore();
     base = `http://127.0.0.1:${server.port}`;
-    const me: Person = { principal: log.localPrincipal(), headers: {} };
+    const me: Person = { principal: log.localPrincipal(), headers: await pageWriteHeaders(base) };
     const card = await store.createCard(
       { tier: "task", title: "Search", status: "ready" },
       "human",

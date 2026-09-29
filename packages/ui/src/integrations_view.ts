@@ -62,3 +62,45 @@ export function integrationGroups(
   }
   return out;
 }
+
+/** `GET /api/integrations/secret-store` (`apps/harness/src/secret_store.ts` `SecretStoreStatus`). */
+export interface SecretStoreStatusLike {
+  store?: string;
+  storeName?: string;
+  unavailable?: string;
+  cleartextChosen: boolean;
+  cleartextChosenAt?: string;
+  heldInFiles: number;
+  message: string;
+}
+
+export interface SecretStoreNotice {
+  tone: "pass" | "warn";
+  /** The server's one plain sentence: where secrets are kept, or why they are not saved. */
+  text: string;
+  /** True when the person may choose a private file: no store, and no choice yet. */
+  offerChoice: boolean;
+  /** The words of that choice's button. */
+  action?: string;
+}
+
+/**
+ * What Integrations, where secrets are entered, says about where they are
+ * kept (security item 35, SEC-27c): the OS store by name; on a host with
+ * none, that secrets are not saved and — until the person chooses — the
+ * choice of a private file, which only they make. Nothing for a server that
+ * does not report it.
+ */
+export function secretStoreNotice(
+  status: SecretStoreStatusLike | undefined,
+): SecretStoreNotice | undefined {
+  if (!status || typeof status.message !== "string" || !status.message) return undefined;
+  if (status.store) return { tone: "pass", text: status.message, offerChoice: false };
+  if (status.cleartextChosen) return { tone: "warn", text: status.message, offerChoice: false };
+  return {
+    tone: "warn",
+    text: status.message,
+    offerChoice: true,
+    action: "Keep secrets in a private file on this machine",
+  };
+}
