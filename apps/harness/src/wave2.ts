@@ -34,11 +34,13 @@ import {
   type BakeOffEvidence,
   type CandidateSettings,
   type LocalInferenceAdapter,
+  MODEL_ROLES,
   ManagedLlamaServerAdapter,
   ModelRegistry,
   NAIL_WORKER_PROFILE,
   QUALIFICATION_BAR,
   type QualificationCombination,
+  ROLE_WORDS,
   assignRole,
   currentAssignment,
   describeCombination,
@@ -1153,7 +1155,12 @@ export async function runWave2Command(
         );
       }
       const adapter = (io.model as (n: string) => LocalInferenceAdapter)(modelArg);
-      const combination = qualificationCombination(adapter, { ...io.combinationDeps, registry });
+      // Qualified for this role, under this build's prompt version for it (CX-N6-4).
+      const combination = qualificationCombination(adapter, {
+        ...io.combinationDeps,
+        registry,
+        role,
+      });
       const look = registry.lookupQualification(adapter.modelId, combination);
       // MD-N10-1: the bake-off is a recorded `measure/benchmarked` event.
       const bakeOffId = flag(args, "--bake-off");
@@ -1211,9 +1218,11 @@ export async function runWave2Command(
       }
     }
     case "qualify": {
-      // `sekhemet qualify --models a,b [--speculative on] [--check]` (models
-      // rule 27a, MD-N8-1): the deterministic suite per model and arm,
-      // recorded under the exact combination each model runs as on this host.
+      // `sekhemet qualify --models a,b [--role <role>] [--speculative on] [--check]`
+      // (models rule 27a, MD-N8-1): the deterministic suite per model and arm,
+      // recorded under the exact combination each model runs as on this host,
+      // for one role under this build's prompt version for it (CX-N6-4); the
+      // Coding model's by default.
       // --speculative on qualifies a managed model with its speculative method
       // forced on, with prefix caching on (MD-N8-2). --check only reports
       // whether each model's combination has qualified; it loads nothing.
@@ -1269,9 +1278,17 @@ export async function runWave2Command(
         );
       }
       const names = (flag(args, "--models") ?? "").split(",").filter(Boolean);
-      if (names.length === 0 || !io.model)
-        return done("Usage: sekhemet qualify --models <a,b> [--speculative on] [--check]", 1);
+      const roleFlag = flag(args, "--role");
+      const role = roleFlag === undefined ? "worker" : MODEL_ROLES.find((r) => r === roleFlag);
+      if (names.length === 0 || !io.model || !role)
+        return done(
+          "Usage: sekhemet qualify --models <a,b> [--role <worker|planner|reviewer|researcher>] [--speculative on] [--check]",
+          1,
+        );
       const registry = modelRegistry();
+      const forRole = { ...io.combinationDeps, registry, role };
+      const roleWords = role === "worker" ? "" : ` for the ${ROLE_WORDS[role]}`;
+      const roleFlagText = role === "worker" ? "" : ` --role ${role}`;
       const speculative = flag(args, "--speculative") === "on";
       const adapterFor = (n: string) => {
         const a = (io.model as (n: string) => LocalInferenceAdapter)(n);
@@ -1287,17 +1304,24 @@ export async function runWave2Command(
         const rows: Record<string, unknown>[] = [];
         for (const n of names) {
           const a = adapterFor(n);
-          const combination = qualificationCombination(a, { ...io.combinationDeps, registry });
-          const why = qualificationRefusal(registry, a, combination, n);
-          refused ||= why !== undefined;
+          const combination = qualificationCombination(a, forRole);
           // An override runs, and says so; the failure it overrides is still shown.
           const look = registry.lookupQualification(a.modelId, combination);
+          // An override is the Coding model's only (rule 27, MD-N4-4).
+          const why =
+            role === "worker"
+              ? qualificationRefusal(registry, a, combination, n)
+              : look.status === "qualified"
+                ? undefined
+                : `${a.modelId} is not verified on this machine${roleWords} (${look.status}: ${look.reason}). Verify it with: sekhemet qualify --models ${n}${roleFlagText}`;
+          refused ||= why !== undefined;
           const failure =
             look.status === "overridden"
               ? (look.record?.reason ??
                 `pass rate ${Math.round((look.record?.passRate ?? 0) * 100)}%`)
               : undefined;
-          const owed = (await pendingM0(k.log)).find((p) => p.worker === n);
+          const owed =
+            role === "worker" ? (await pendingM0(k.log)).find((p) => p.worker === n) : undefined;
           if (json) {
             rows.push({
               model: n,
@@ -1315,7 +1339,7 @@ export async function runWave2Command(
             why ??
               (failure
                 ? `${a.modelId}: ${look.reason} (the verification itself failed: ${failure})`
-                : `${a.modelId}: verified on this machine for this combination.`),
+                : `${a.modelId}: verified on this machine${roleWords} for this combination.`),
           );
           // MS-M9-6: the M0 protocol this Worker still owes.
           if (owed)
@@ -1345,25 +1369,25 @@ export async function runWave2Command(
               registry,
               bar: QUALIFICATION_BAR,
               combination: () => {
-                combination = qualificationCombination(a, { ...io.combinationDeps, registry });
+                combination = qualificationCombination(a, forRole);
                 return combination;
               },
               thinking: thinkingPolicyFromEnv(),
             }),
         );
-        combination ??= qualificationCombination(a, { ...io.combinationDeps, registry });
+        combination ??= qualificationCombination(a, forRole);
         const look = registry.lookupQualification(a.modelId, combination);
         anyQualified ||= look.status === "qualified";
         // MS-M9-6: a Worker qualified (or re-qualified) for a combination owes
         // the M0 protocol for it; the overnight run does it first.
-        if (look.status === "qualified")
+        if (look.status === "qualified" && role === "worker")
           await recordM0Pending(k.log, {
             worker: n,
             combination: describeCombination(combination),
             reason: "qualified for this combination on this host",
           });
         print(
-          `${a.modelId}: ${(best.passRate * 100).toFixed(1)}% on ${best.arm} ${look.status === "qualified" ? "VERIFIED on this machine" : "not verified on this machine"} for ${describeCombination(combination)} (${Object.entries(
+          `${a.modelId}: ${(best.passRate * 100).toFixed(1)}% on ${best.arm} ${look.status === "qualified" ? "VERIFIED on this machine" : "not verified on this machine"}${roleWords} for ${describeCombination(combination)} (${Object.entries(
             best.byCategory,
           )
             .map(([c, v]) => `${c} ${(v * 100).toFixed(0)}%`)

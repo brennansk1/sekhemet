@@ -1,9 +1,12 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   BOTTOM_BAR,
   KEY_GROUPS,
   NAV_ITEMS,
   type NavContext,
+  agentQueueLine,
   bottomBar,
   cheatSheet,
   chordTarget,
@@ -218,5 +221,46 @@ describe("the board's keys (dashboard P3)", () => {
   it("DB-P3-3: lists Shift+V for pipeline stages among the Board keys", () => {
     const cards = KEY_GROUPS.find((g) => g.name === "Board");
     expect(cards?.rows.find((r) => r.label === "Pipeline stages")?.keys).toEqual(["⇧", "V"]);
+  });
+});
+
+describe("teams item 31, dashboard §2.2.3: the Agent status line shows where you stand", () => {
+  const key = (id: string) => (id === "card_mo" ? "CHR-14" : id);
+  it("says your issue's place and estimate in the Team queue", () => {
+    expect(
+      agentQueueLine(
+        { cardId: "card_mo", place: 2, message: "2nd in queue, about 6 minutes" },
+        key,
+      ),
+    ).toBe("CHR-14 · 2nd in queue, about 6 minutes");
+  });
+
+  it("says yours starts next while another person's issue runs", () => {
+    expect(
+      agentQueueLine(
+        {
+          cardId: "card_mo",
+          place: 1,
+          message: "Next in queue, about 6 minutes",
+          runningFor: "Priya",
+        },
+        key,
+      ),
+    ).toBe("Priya's issue is running; yours starts next");
+  });
+
+  it("says nothing when none of yours waits", () => {
+    expect(agentQueueLine(null, key)).toBeUndefined();
+    expect(agentQueueLine(undefined, key)).toBeUndefined();
+  });
+});
+
+describe("the Agent status line is wired to the page's queue (shell.js, app.js)", () => {
+  const web = (f: string) => readFileSync(join(import.meta.dirname, "..", "web", f), "utf8");
+  it("renders the queue line under the Agent's, and fetches it as the ledger moves", () => {
+    expect(web("shell.js")).toContain("agentQueueLine(");
+    expect(web("app.js")).toContain("/api/agent/states");
+    expect(web("tile.js")).toContain("opts.ai");
+    expect(web("board.js")).toContain("agentStates");
   });
 });

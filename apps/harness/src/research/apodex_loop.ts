@@ -265,7 +265,7 @@ export const SUBMIT_REPORT: ToolDefinition = {
   },
 };
 
-const TEAM_TOOLS: ToolDefinition[] = [
+export const TEAM_TOOLS: ToolDefinition[] = [
   {
     name: "create_subagent",
     description:

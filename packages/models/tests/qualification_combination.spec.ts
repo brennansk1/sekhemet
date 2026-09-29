@@ -64,6 +64,15 @@ describe("the qualification combination (rule 27a, MD-N8-1, MD-N8-4)", () => {
     expect(combinationKey(combo({ kvType: "f16" }))).not.toBe(combinationKey(a));
   });
 
+  it("keys the role a qualification is for; the Coding model's keys as before roles were keyed (F24)", () => {
+    const a = combo();
+    // A record made before roles were keyed is the Coding model's, and keeps its key.
+    expect(combinationKey(combo({ role: "worker" }))).toBe(combinationKey(a));
+    expect(combinationKey(combo({ role: "reviewer" }))).not.toBe(combinationKey(a));
+    expect(changedCombinationElements(a, combo({ role: "reviewer" }))).toEqual(["role"]);
+    expect(changedCombinationElements(a, combo({ role: "worker" }))).toEqual([]);
+  });
+
   it("names every element that differs", () => {
     const a = combo();
     expect(changedCombinationElements(a, a)).toEqual([]);

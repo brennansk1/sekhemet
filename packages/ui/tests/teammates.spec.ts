@@ -5,6 +5,7 @@ import {
   aiStateLine,
   startRequestLine,
   teammatePicker,
+  tileAiState,
 } from "../src/teammates.js";
 
 // B4.11, teams NEW-teams-5 (items 17–19, 19a; TEAM-15, -17, -39) and
@@ -158,5 +159,26 @@ describe("the comment box's words", () => {
         }),
       ),
     ).toBe("Agent: You asked the Agent to start. Waiting for Owen to start it.");
+  });
+});
+
+describe("teams item 19: the Agent's state on a board card's tile", () => {
+  it("is the Agent's state word with its sentence, from the server's facts", () => {
+    expect(
+      tileAiState([{ who: "agent", state: "queued", standing: "2nd in queue, about 6 minutes" }]),
+    ).toEqual({
+      name: "Agent",
+      label: "queued",
+      sentence: "Queued: 2nd in queue, about 6 minutes.",
+    });
+    expect(tileAiState([{ who: "agent", state: "working", step: 3, of: 40 }])?.sentence).toBe(
+      "Working on step 3 of 40.",
+    );
+  });
+
+  it("shows nothing when the Agent is not on the issue, or only Seshat is", () => {
+    expect(tileAiState(undefined)).toBeUndefined();
+    expect(tileAiState([])).toBeUndefined();
+    expect(tileAiState([{ who: "seshat", state: "working" }])).toBeUndefined();
   });
 });

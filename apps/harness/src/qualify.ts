@@ -1,20 +1,16 @@
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-import { FALLBACK_CHARS_PER_TOKEN, computeContextVersion, workerCopy } from "@sekhemet/context";
-import { gateCopy } from "@sekhemet/gates";
-import { TOOL_CATALOG } from "@sekhemet/loop";
 import {
   HttpInferenceAdapter,
   type LocalInferenceAdapter,
   ManagedLlamaServerAdapter,
   type ModelRegistry,
+  type ModelRole,
   type QualificationCombination,
   type WorkerOverride,
   hostFingerprintHash,
   samplingSettingsOf,
 } from "@sekhemet/models";
 import { launchVariant } from "./model_access.js";
+import { rolePromptVersion } from "./prompt_versions.js";
 import { llamaRuntime, parseLlamaBuild, sampledDigest } from "./repro.js";
 
 /**
@@ -34,8 +30,13 @@ export interface CombinationDeps {
   engineBuild?: () => string | undefined;
   /** `hostFingerprintHash()`. */
   host?: () => string;
-  /** The Worker's context version: `workerContextVersion()`. */
-  contextVersion?: () => string;
+  /** The role's prompt version: `rolePromptVersion(role)` (CX-N6-4). */
+  contextVersion?: (role: ModelRole) => string;
+  /**
+   * The role the combination is qualified for (models rule 4d, MD-N10-3);
+   * the Coding model's (the Worker's) by default.
+   */
+  role?: ModelRole;
   /**
    * The registry the caller qualifies against, which holds the pinned chat
    * template. Read from here, not from the adapter, so equivalent adapters —
@@ -44,47 +45,22 @@ export interface CombinationDeps {
   registry?: ModelRegistry;
 }
 
-/** A copy module as text: its strings, and each builder's source. */
-export function copyText(copy: Record<string, unknown>): string {
-  return JSON.stringify(copy, (_k, v) => (typeof v === "function" ? String(v) : v));
-}
+export { copyText } from "./prompt_versions.js";
 
 /**
- * The Worker's context version for a qualification (context.md rule 27; the
- * lead's ruling on MD-N8-1): its prompt templates, the copy modules it reads
- * (the Worker's and the gates'), its tool schemas and the token estimator's
- * characters-per-token ratio. Playbook rules are per project and card, so
- * they are not part of it.
+ * The Coding model's prompt version, what its qualification depends on
+ * (context.md rule 27, CX-N6-4; the lead's ruling on MD-N8-1): its prompt
+ * templates, the copy modules it reads (the Worker's, the gates' and the
+ * sandbox's), its literals outside them, its tool schemas and its budget
+ * policy with the estimator's characters-per-token ratio. No other role's
+ * prompts are in it (live-test F24), and playbook rules are per project and
+ * card, so they are not part of it.
  */
-export function workerContextVersion(
-  inventory: string = recordedLiteralInventory(),
-  charsPerToken: number = FALLBACK_CHARS_PER_TOKEN,
-): string {
-  return computeContextVersion({
-    tools: TOOL_CATALOG,
-    // The estimator's ratio sizes every budget the prompt is cut to (CX-N1-2),
-    // so a change of ratio is a change of the Worker's context.
-    templates: [
-      copyText(workerCopy),
-      copyText(gateCopy),
-      inventory,
-      `chars per token ${charsPerToken}`,
-    ],
-  }).version;
-}
-
-/**
- * The recorded inventory of model-facing literals outside the copy modules
- * (context CX-M1-13): editing a Worker literal that has not moved into a copy
- * module yet changes it, and so the context version.
- */
-function recordedLiteralInventory(): string {
-  try {
-    const pkg = createRequire(import.meta.url).resolve("@sekhemet/context/package.json");
-    return readFileSync(join(dirname(pkg), "prompt_literals_baseline.json"), "utf8");
-  } catch {
-    return "no recorded inventory";
-  }
+export function workerContextVersion(inventory?: string, charsPerToken?: number): string {
+  return rolePromptVersion("worker", {
+    ...(inventory !== undefined ? { inventory } : {}),
+    ...(charsPerToken !== undefined ? { charsPerToken } : {}),
+  });
 }
 
 function templateOf(adapter: LocalInferenceAdapter, passed?: ModelRegistry): string {
@@ -103,7 +79,10 @@ export function qualificationCombination(
   deps: CombinationDeps = {},
 ): QualificationCombination {
   const host = (deps.host ?? hostFingerprintHash)();
-  const contextVersion = (deps.contextVersion ?? workerContextVersion)();
+  const role = deps.role ?? "worker";
+  const contextVersion = (deps.contextVersion ?? ((r: ModelRole) => rolePromptVersion(r)))(role);
+  // The Coding model's combination keys as it did before roles were keyed.
+  const forRole = role === "worker" ? {} : { role };
   const chatTemplate = templateOf(adapter, deps.registry);
   // Suite q1.2: the role qualifies at the sampling it runs at, so the
   // sampling is keyed; an adapter that does not say leaves it out.
@@ -136,6 +115,7 @@ export function qualificationCombination(
         chatTemplate,
         contextVersion,
         ...(sampling ? { sampling } : {}),
+        ...forRole,
       },
     };
   }
@@ -158,6 +138,7 @@ export function qualificationCombination(
       chatTemplate,
       contextVersion,
       ...(sampling ? { sampling } : {}),
+      ...forRole,
     },
   };
 }
@@ -243,10 +224,12 @@ export function gateWorker(
   name: string,
   deps: CombinationDeps = {},
 ): WorkerGate {
-  const combination = qualificationCombination(adapter, { ...deps, registry });
-  // CX-N6-1: a new context version invalidates every qualification made
-  // under the old one, naming both, and schedules its re-qualification.
-  registry.observeContextVersion(combination.settings.contextVersion);
+  const combination = qualificationCombination(adapter, { ...deps, registry, role: "worker" });
+  // CX-N6-1: a Coding model qualified under another version and not under
+  // this build's is scheduled for re-qualification under it, naming both.
+  // Nothing is invalidated: a build still running the other version keeps
+  // its qualification (live-test F23).
+  registry.observeContextVersion(combination.settings.contextVersion, "worker");
   const refusal = qualificationRefusal(registry, adapter, combination, name);
   if (refusal) return { refusal, combination };
   const override = workerOverrideFor(registry, adapter, combination);

@@ -58,6 +58,11 @@ interface PlanApprovedPayload {
   projectId?: string;
 }
 
+interface PlanCommentedPayload {
+  proposalId: string;
+  id: string;
+}
+
 const THREAD_TYPES = [
   PM_EVENTS.message,
   PM_EVENTS.reply,
@@ -65,6 +70,7 @@ const THREAD_TYPES = [
   PM_EVENTS.status,
   PM_EVENTS.planSent,
   PM_EVENTS.planApproved,
+  PM_EVENTS.planCommented,
 ];
 
 /**
@@ -243,6 +249,14 @@ export class PmStore {
             ...(e.principal ? { approvedBy: e.principal } : {}),
           });
         }
+      } else if (e.type === PM_EVENTS.planCommented) {
+        // Design-stage §2.9 item 7: a message in the sent plan's thread, by a person.
+        const p = e.payload as PlanCommentedPayload;
+        const was = approvals.get(p.proposalId);
+        if (was && e.principal) {
+          const message = { id: p.id, by: e.principal, text: messageText(e), at: e.createdAt };
+          approvals.set(p.proposalId, { ...was, thread: [...(was.thread ?? []), message] });
+        }
       } else if (e.type === PM_EVENTS.reply) {
         for (const id of (e.payload as ReplyPayload).replyTo) answered.add(id);
       }
@@ -321,6 +335,23 @@ export class PmStore {
   ): Promise<void> {
     const payload: PlanSentPayload = { proposalId, approver, ...(choices ? { choices } : {}) };
     await this.log.append({ actor: "human", type: PM_EVENTS.planSent, payload });
+  }
+
+  /**
+   * A message in a sent plan's thread (design-stage §2.9 item 7): the words
+   * private, the plan and the message's id structural; the person writing
+   * it is the event's principal.
+   */
+  public async commentOnPlan(proposalId: string, text: string): Promise<string> {
+    const id = `pcm_${randomUUID().slice(0, 12).replace(/-/g, "")}`;
+    const payload: PlanCommentedPayload = { proposalId, id };
+    await this.log.append({
+      actor: "human",
+      type: PM_EVENTS.planCommented,
+      payload,
+      private: { text },
+    });
+    return id;
   }
 
   /** The approver approved the plan and it created `projectId` (TEAM-20, TEAM-42). */

@@ -287,6 +287,27 @@
   min-width: 0;
   overflow: hidden;
 }
+/* Teams item 19: the Agent's state on the issue, with the AI badge. */
+.tile-ai {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  min-width: 0;
+}
+.tile-ai b {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.tile-ai-st {
+  color: var(--text-primary);
+}
+/* DB-N9-17: the board's and the list's one visible level note, above the columns or the table. */
+.board-level-note,
+.list-level-note {
+  margin: 0 0 8px;
+}
 /* Row 4: the status badge, gate pips and work item age. The status wraps
    and never cuts off its cause (DB-P3-7). */
 .r4s {

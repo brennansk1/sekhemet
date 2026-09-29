@@ -1,5 +1,6 @@
 {
   "name": "sekhemet",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.30.3",
@@ -17,7 +18,8 @@
     "test:unit": "vitest run --project unit",
     "test:watch": "vitest",
     "typecheck": "tsc -b",
-    "release-gate": "node scripts/release_gate.mjs"
+    "release-gate": "node scripts/release_gate.mjs",
+    "milestone": "node scripts/milestones/run.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

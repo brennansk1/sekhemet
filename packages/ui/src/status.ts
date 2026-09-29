@@ -40,17 +40,27 @@ export interface StatusFacts {
   project?: { id: string; name: string } | null;
   /** The viewer leads the project (or, in Solo, is its one person). */
   isLead: boolean;
-  /** The viewer may set health: the project lead (TEAM-28, `project.health`). */
+  /**
+   * The viewer may set health: the project lead, or a Member who leads a
+   * release not yet accepted (TEAM-28, teams item 28, `project.health`).
+   */
   canSetHealth: boolean;
   /** Whether the server records health (`POST /api/projects/:id/health`, teams NEW-teams-11). */
   healthWritable: boolean;
   health?: { value: HealthValue; by: string; at: string } | null;
-  /** The current release: the first no person has accepted (DB-N9-3). */
-  release?: { id: string; name: string } | null;
+  /**
+   * The current release: the first no person has accepted (DB-N9-3), with
+   * its lead when a person named one (teams item 28, DB-N9-2; Team only).
+   */
+  release?: { id: string; name: string; lead?: { principal: string; name: string } } | null;
   /** The current release's target date, as a person set it (DB-N9-3, DEC-37). */
   target?: { release: string; date: string; by: string; at: string } | null;
   /** The viewer may set it: the project lead or an Admin (`release.target`); always in Solo. */
   canSetTarget?: boolean;
+  /** The viewer may name the release's lead: the project lead or an Admin (`release.lead`); Team only. */
+  canSetReleaseLead?: boolean;
+  /** Whom they may name: the project's Members and Admins, by name. */
+  releaseLeadChoices?: { principal: string; name: string }[];
   update?: { text: string; by: string; at: string } | null;
   /** Team only: 7 days without a posted update, shown to the lead (TEAM-29). */
   updateMissing: boolean;
@@ -197,9 +207,30 @@ export interface StatusView {
   target: string | null;
   /** *Set target date* for the current release, to the lead or an Admin (DB-N9-3); null otherwise. */
   setTarget: { release: string; name: string; date: string | null } | null;
+  /** The current release's lead, in the Team setup: *Release 2 lead: Mo Member*, or null (teams item 28). */
+  releaseLead: string | null;
+  /** *Set release lead*, to the project lead or an Admin, with whom they may name; null otherwise. */
+  setReleaseLead: {
+    release: string;
+    name: string;
+    lead: string | null;
+    choices: { principal: string; name: string }[];
+  } | null;
   update: { text: string; byline: string } | null;
   updateMissing: string | null;
   writeUpdate: boolean;
+  /**
+   * DB-N9-17 (dashboard §2.2.7): each header action the viewer's level does
+   * not allow, by the permission it needs — shown disabled with the level
+   * they hold and one that can, never hidden. Team only; an action with
+   * nothing to act on (no release, health not recorded) is not offered.
+   */
+  gated: {
+    health?: "project.health";
+    target?: "release.target";
+    releaseLead?: "release.lead";
+    update?: "project.update";
+  };
   numbers: KeyNumber[];
   appetite?: string;
   forecast: { band?: { from: string; to: string }; target?: string };
@@ -246,7 +277,7 @@ export const STATUS_COPY = {
   setHealth: "Set health",
   healthLegend: "Project health",
   healthHint:
-    "Your call as the project lead: it shows with your name and today's date. Seshat never sets it.",
+    "Your call as the project lead or a release's lead: it shows with your name and today's date. Seshat never sets it.",
   setTarget: "Set target date",
   changeTarget: "Change target date",
   targetLabel: "Target date",
@@ -256,6 +287,14 @@ export const STATUS_COPY = {
   healthSaved: "Health set.",
   targetSaved: "Target date set.",
   targetCleared: "Target date cleared.",
+  setReleaseLead: "Set release lead",
+  changeReleaseLead: "Change release lead",
+  releaseLeadLabel: "Release lead",
+  releaseLeadHint:
+    "A Member or an Admin who leads this release. While it is open they may set the project's health.",
+  noReleaseLead: "No lead",
+  releaseLeadSaved: "Release lead set.",
+  releaseLeadCleared: "Release lead cleared.",
   updateLabel: "Project update",
   updateHint:
     "Seshat drafted this from the project's history in five parts: status, done, next, risks and asks. Edit it; nothing is posted until you press Post.",
@@ -890,9 +929,35 @@ export function statusModel(input: StatusInput): StatusView {
       facts?.release && facts.canSetTarget
         ? { release: facts.release.id, name: facts.release.name, date: facts.target?.date ?? null }
         : null,
+    releaseLead:
+      facts?.setup === "team" && facts.release?.lead
+        ? `${facts.release.name} lead: ${facts.release.lead.name}`
+        : null,
+    setReleaseLead:
+      facts?.setup === "team" && facts.release && facts.canSetReleaseLead
+        ? {
+            release: facts.release.id,
+            name: facts.release.name,
+            lead: facts.release.lead?.principal ?? null,
+            choices: facts.releaseLeadChoices ?? [],
+          }
+        : null,
     update,
     updateMissing,
     writeUpdate: Boolean(facts?.canPostUpdate),
+    gated:
+      facts?.setup === "team" && facts.project
+        ? {
+            ...(facts.healthWritable && !facts.canSetHealth
+              ? { health: "project.health" as const }
+              : {}),
+            ...(facts.release && !facts.canSetTarget ? { target: "release.target" as const } : {}),
+            ...(facts.release && !facts.canSetReleaseLead
+              ? { releaseLead: "release.lead" as const }
+              : {}),
+            ...(!facts.canPostUpdate ? { update: "project.update" as const } : {}),
+          }
+        : {},
     numbers,
     ...(appetite ? { appetite } : {}),
     forecast,

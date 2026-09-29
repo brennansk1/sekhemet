@@ -2,6 +2,7 @@
 // optimistic change, then PATCH /api/cards/:id per card. On failure the value
 // reverts and the toast says why, verbatim.
 import { aiBadge, esc, icon, sendJSON } from "./dom.js";
+import { noteFor } from "./level_gate.js";
 import {
   ESTIMATES,
   PRIORITY_LABELS,
@@ -11,6 +12,7 @@ import {
   formatPoints,
   showsPoints,
 } from "./lib/pm.js";
+import { fieldPermission } from "./lib/team_admin.js";
 import { teammatePicker } from "./lib/teammates.js";
 import { prioMark } from "./marks.js";
 import { openMenu } from "./overlay.js";
@@ -137,6 +139,16 @@ function common(ids, field) {
 export function editField(field, cardIds, anchor) {
   const ids = cardIds.filter((id) => store.card(id));
   if (!ids.length || !anchor) return;
+  // DB-N9-17: where the person's level cannot change this field on an issue's
+  // project, say who can instead of opening the menu (the server refuses too).
+  for (const id of ids) {
+    const c = store.card(id);
+    const note = noteFor(fieldPermission(field), c?.projectId, c?.projectName);
+    if (note) {
+      toast({ tone: "parked", text: note });
+      return;
+    }
+  }
   const cur = common(ids, field);
   const heading = `${EDITABLE.find((f) => f.field === field)?.label ?? field}${ids.length > 1 ? ` · ${ids.length} issues` : ""}`;
   const s = store.state;

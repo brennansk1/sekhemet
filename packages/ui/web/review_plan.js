@@ -67,9 +67,12 @@ export function openReviewPlan(
   });
   const draw = () => {
     const approver = host.querySelector("[data-approver]")?.value;
+    const typed = host.querySelector("[data-plan-comment] textarea")?.value;
     host.innerHTML = reviewPlanHtml(group, state, view);
     const select = host.querySelector("[data-approver]");
     if (select && approver) select.value = approver;
+    const box = host.querySelector("[data-plan-comment] textarea");
+    if (box && typed) box.value = typed;
   };
   // Who the plan can be sent to, fetched once for a Stakeholder.
   if (planAction(view) === "send") {
@@ -137,6 +140,39 @@ export function openReviewPlan(
     // Keep the line within what is kept after an Accept or a Remove.
     state = moveLine(group, state, 0);
     draw();
+  });
+  // Design-stage §2.9 item 7: a question (the approver's) or an answer (the
+  // sender's) in the plan's thread; the dialog stays open and shows it.
+  host.addEventListener("submit", async (e) => {
+    const form = e.target instanceof HTMLFormElement ? e.target : null;
+    if (!form?.hasAttribute("data-plan-comment")) return;
+    e.preventDefault();
+    const box = form.querySelector("textarea");
+    const btn = form.querySelector('button[type="submit"]');
+    const text = box?.value.trim() ?? "";
+    if (!text) {
+      box?.focus();
+      return;
+    }
+    if (btn) btn.disabled = true;
+    const r = await post(`${base}/comments`, { text });
+    if (btn) btn.disabled = false;
+    if (!r.ok) {
+      toast({
+        tone: "fail",
+        text: "Not sent.",
+        detail: r.data?.error ?? `The server returned ${r.status || "no response"}.`,
+      });
+      return;
+    }
+    const approvalNow = r.data?.proposal?.approval;
+    if (approvalNow) {
+      view.approval = approvalNow;
+      proposal.approval = approvalNow;
+    }
+    if (box) box.value = "";
+    draw();
+    host.querySelector("[data-plan-comment] textarea")?.focus();
   });
   host.addEventListener("change", (e) => {
     const t = e.target instanceof Element ? e.target : null;

@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { EventLog } from "@sekhemet/kernel";
 import {
+  MODEL_ROLES,
   ModelRegistry,
+  type ModelRole,
+  ROLE_WORDS,
   type WeightsReport,
   classifyMemoryPressure,
   managedModelWeights,
@@ -18,6 +21,7 @@ import { networkConfigs } from "./config_apply.js";
 import { configUpgradeCheck } from "./config_upgrade.js";
 import { toolProbeOptions } from "./init.js";
 import { pendingM0InRepo } from "./m0_path.js";
+import { rolePromptVersions } from "./prompt_versions.js";
 import { checkRegisters } from "./registers.js";
 import { researchDoctorLines } from "./research_bakeoff.js";
 import { awaitingResearchHosts } from "./research_consent.js";
@@ -274,6 +278,7 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
     registersCheck(repoPath),
     pluginsCheck(repoPath),
     m0PendingCheck(repoPath),
+    modelVerificationCheck(),
     userDirCheck(),
     // SUR-43: each renamed config key an upgrade rewrote, with its backup.
     configUpgradeCheck([join(repoPath, ".sekhemet", "config.toml"), userConfigPath()]),
@@ -399,6 +404,38 @@ export function m0PendingCheck(repoPath: string): DiagnosticCheck {
         "warn",
         `M0 pending: ${pending.map((p) => `${p.worker} (${p.combination})`).join(", ")}; sekhemet overnight runs it first, or run sekhemet m0 --worker <name>`,
       );
+}
+
+/**
+ * CX-N6-1, CX-N6-4: the models this build owes a re-verification, per role —
+ * each qualified for the role under another prompt version and not yet under
+ * this build's. Read without writing; the registry is shared by every build,
+ * and what another build owes under its own version is not listed (F23).
+ */
+export function modelVerificationCheck(
+  registry: ModelRegistry | undefined = hostRegistry(),
+  versions: Readonly<Record<ModelRole, string>> = rolePromptVersions(),
+): DiagnosticCheck {
+  if (!registry) return check("Model verification", "pass", "no model registry on this host");
+  const owed = MODEL_ROLES.flatMap((role) =>
+    registry.requalificationsOwed(versions[role], role).map((o) => ({ ...o, role })),
+  );
+  if (owed.length === 0)
+    return check(
+      "Model verification",
+      "pass",
+      "every verified model is verified for this build's prompts",
+    );
+  return check(
+    "Model verification",
+    "warn",
+    `verify again on this machine, the prompts changed since: ${owed
+      .map(
+        (o) =>
+          `${ROLE_WORDS[o.role]} ${o.modelId} (${o.reason}): sekhemet qualify --models ${o.modelId}${o.role === "worker" ? "" : ` --role ${o.role}`}`,
+      )
+      .join("; ")}`,
+  );
 }
 
 /** X17, X18: the provenance and research registers, when the repository keeps them. */

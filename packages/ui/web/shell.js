@@ -2,7 +2,7 @@
 import { MOD, brandLockup, esc, icon, kbd, tip } from "./dom.js";
 import { tipsToggleHtml } from "./learn.js";
 import { ACCOUNT_COPY, accountHeader, initials, themeChoice, themeFor } from "./lib/account.js";
-import { agentStatusLine, bottomBar, navNameOf, visibleNav } from "./lib/nav.js";
+import { agentQueueLine, agentStatusLine, bottomBar, navNameOf, visibleNav } from "./lib/nav.js";
 import { stopReasonLabel } from "./lib/vocabulary.js";
 import { getSession } from "./session.js";
 import { ledgerAltered, store } from "./store.js";
@@ -264,7 +264,15 @@ function renderSide() {
     ? `Coding model ${worker.model}`
     : m.model || (m.inferenceUp === false ? "No model server" : "Model: checking…");
   const dot = agent.state === "working" ? "run" : agent.state === "paused" ? "warn" : "idle";
-  const model = `<div class="row agent-line" title="${esc(agent.text)}"><span class="dot ${dot}"></span><span class="lbl">${esc(agent.text)}</span></div><div class="row sub" title="${esc(modelName)}"><span class="lbl sec${m.model || worker?.model ? " mono" : ""}">${esc(modelName)}</span></div>`;
+  // Teams item 31: in the Team setup, where the person's own issue stands in the queue.
+  const queueText = agentQueueLine(s.agentQueue, (id) => {
+    const c = s.cards.find((x) => x.id === id);
+    return c?.key ?? c?.display?.shortId ?? id;
+  });
+  const queueRow = queueText
+    ? `<div class="row sub agent-queue" title="${esc(queueText)}"><span class="lbl">${esc(queueText)}</span></div>`
+    : "";
+  const model = `<div class="row agent-line" title="${esc(agent.text)}"><span class="dot ${dot}"></span><span class="lbl">${esc(agent.text)}</span></div>${queueRow}<div class="row sub" title="${esc(modelName)}"><span class="lbl sec${m.model || worker?.model ? " mono" : ""}">${esc(modelName)}</span></div>`;
   // Theme and Keys live in the account menu (§2.2.6); the account closes the sidebar.
   const head = accountHeader(getSession());
   const account = `<button class="account-btn" type="button" data-account aria-haspopup="menu"><span class="avatar" aria-hidden="true">${esc(initials(head.name))}</span><span class="lbl">${esc(head.name)}</span><span class="sr-only">, ${esc(ACCOUNT_COPY.account)}</span></button>`;

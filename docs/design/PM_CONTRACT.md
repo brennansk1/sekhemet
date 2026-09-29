@@ -239,6 +239,19 @@ interface PmProposal {
   `choices` or else the ones sent, makes the approver the owner of every
   issue of the new project (`card/owner_changed`), records `plan/approved
   { proposalId, projectId }` and returns `{ proposal, cards }`.
+  While it waits, the approver may ask a question in the plan's thread and
+  the sender answers there (design-stage §2.9 item 7): `POST
+  /api/pm/proposals/:id/comments { text }` (`comment`) records
+  `plan/commented { proposalId, id }` — the words in the event's private
+  part, its author as principal — and returns `{ proposal }`, whose
+  `approval.thread` is `{ id, by, byName, text, at }[]`, oldest first, as
+  `GET /api/pm/thread` gives it to both. Only the approver and the sender
+  write (anyone else **403**, naming them); a plan not sent or already
+  approved is **409**; no words, or more than 8000 characters, **400**.
+  Nothing is created and the choices sent are unchanged. The approver's
+  latest unanswered question is in the sender's Inbox under *Needs you*
+  (`kind: "plan_question"`, `by`, `question`); once answered, the
+  approver's `plan_approval` item carries `answered: true`.
 - Applying a proposal is not an approval of the planned cards' criteria: the
   proposal shows each card's title, not the criteria the planner wrote, so
   every card it plans keeps its approval hold until a person approves it
@@ -387,8 +400,9 @@ the person's level does not allow (teams items 6–10, 27; B4.11 T5).
   it) with the Admin as principal; 400 for a label over 80 characters or not
   text, 404 for someone not in the workspace. It grants nothing (TEAM-7).
 - `GET /api/session` adds, in the Team setup, `projects: { <project>: {
-  level?, lead? } }` — the person's own per-project levels and the projects
-  they lead — and `label`, their profile label; the page disables a control
+  level?, lead?, releaseLead? } }` — the person's own per-project levels,
+  the projects they lead, and those where they lead a release no person has
+  accepted yet (teams item 28) — and `label`, their profile label; the page disables a control
   from these and the action table (`CONTROL_RULES`, the server's `ACTIONS`),
   writing the level held and one that can do it beside it (DB-N9-17).
 - `GET /api/audit?person=&action=&project=&before=&limit=` (`audit.view`,
@@ -533,6 +547,16 @@ at once, before any model loads (teams TEAM-15); the words are
   start requests waiting on the person (addressed to them; with no one
   named, to an Admin), for issues they can see — their *Needs you*. Status's
   facts carry the same for the page's issues as `agentRequests`.
+- `GET /api/agent/states` returns `{ states: { cardId, ai: AiStateFacts[]
+  }[], queue: { cardId, place, message, runningFor? } | null }` (teams items
+  19, 31): the Agent's state on every issue the person can see that it is
+  on — a start request waiting, or delegated to it and not done — for the
+  board's tiles, the queue's standing computed once for the answer; and, in
+  the Team setup, the person's own first waiting Agent issue with its place
+  and estimate, and `runningFor` — the name of the person whose issue runs —
+  when theirs is next while another person's runs (*Priya's issue is
+  running; yours starts next*). `queue` is null in Solo and when none of
+  theirs waits. A read: every level.
 - In the Team setup `GET /api/events` (paged) adds `principalName` to each
   person's event, so Activity names who did it rather than "You"; Solo's one
   person stays "You". In the Team setup both forms — the first 200 and a
@@ -558,17 +582,21 @@ words are `packages/ui/src/inbox.ts`'s.
   unread: number }` (`unread` counts the Inbox tab). `InboxItem` is `{ id,
   reason: "needs_you" | "mentioned" | "review_requested" | "watching" |
   "agent_finished", kind: "issue" | "start_request" | "decision" |
-  "plan_approval" | "mention_invite" | "invite_request", cardId?, title,
+  "plan_approval" | "plan_question" | "mention_invite" | "invite_request",
+  cardId?, title,
   project?: { id, name }, change?: { type: "created" | "commented" |
   "mentioned" | "status" | "owner" | "delegated" | "updated", by?, byAi?,
   status?, to?, toAi?, fields? }, count, by?, at, seq, unread, saved, done,
   snoozedUntil?, ai?: AiStateFacts[], request?: { id, requestedBy, ask },
-  mention?: { commentId, people, project? }, question?, link }`. An issue's
+  mention?: { commentId, people, project? }, question?, answered?, link }`. An issue's
   changes are one row (`issue:<cardId>`) under the strongest reason among
   those since it was last marked done (mentioned, Agent finished, review
   requested, watching) with the latest change and how many; *Needs you*
   holds the requests to start the Agent waiting on the person, a plan sent
-  for their approval (`plan:<proposalId>`, until approved), the Agent's
+  for their approval (`plan:<proposalId>`, until approved; `answered` once
+  its sender answered their question), the approver's unanswered question
+  on a plan the person sent (`plan-question:<proposalId>:<messageId>`,
+  `question` its words), the Agent's
   pending question for whom it waits on (a permission request: the Accept
   rule's people; any other: the owner, else the lead, else the Admins), the
   author's invite question (`mention:<commentId>`) and, after *Invite*, the
@@ -601,7 +629,9 @@ words are `packages/ui/src/inbox.ts`'s.
   the Inbox but not pushed) — and each posted project update
   (`project/update_posted`) to the project's watchers (anyone subscribed to
   one of its issues, and its lead) as `project_update`, on the connected
-  channels, titled *For <name>: …*, within that person's own daily budget
+  channels — on push and Slack once per change titled *For <name>: …*, by
+  email as each person's own message at their own address, naming no one
+  else and holding no comment or update text — within that person's own daily budget
   (3 by default); past it the notice is held (`pm/notice_held { to }`), and
   once a day, when the standup is due, a `digest` lists those held issues
   still unread in their Inbox — none, no digest.
@@ -637,11 +667,16 @@ the server knows is one read:
   project's creation; `team/health.ts` `updateClockStart`, the notifier's
   *Update due* clock too; teams TEAM-29, TEAM-45). `health` is the
   project's latest `project/health_set` a person recorded, `by` their name;
-  `canSetHealth` is true for the project lead only (in Solo, the one
-  person), and `healthWritable` is true. `release` is the current release
-  (the first no person has accepted; its title, else *Release n*), `target`
-  its date as last set (`release/target_set`), and `canSetTarget` true for
-  the project lead or an Admin (in Solo, always) while there is a release. `canPostUpdate`
+  `canSetHealth` is true for the project lead, or a Member who leads a
+  release no person has accepted yet (in Solo, the one person), and
+  `healthWritable` is true. `release` is the current release
+  (the first no person has accepted; its title, else *Release n*; in the
+  Team setup `lead: { principal, name }` once a person named its lead),
+  `target` its date as last set (`release/target_set`), and `canSetTarget` true for
+  the project lead or an Admin (in Solo, always) while there is a release.
+  `canSetReleaseLead` is true, in the Team setup, for the project lead or an
+  Admin while there is a release, with `releaseLeadChoices: { principal,
+  name }[]` — the project's Members and Admins, by name. `canPostUpdate`
   mirrors `POST /api/projects/:id/update`'s rule; `canUnpark` mirrors
   `POST /api/cards/:id/unpark`'s (`review`, a Member's; always in Solo). The
   forecast resamples
@@ -658,9 +693,10 @@ the server knows is one read:
 - `POST /api/projects/:id/health` with `{ health: "on_track" | "at_risk" |
   "off_track" }` records `project/health_set { project, health }` with the
   person as principal and returns `{ health: { value, by, at } }` (teams
-  TEAM-28). In the Team setup only the project's lead (`project.health`,
-  the lead alone: an Admin who does not lead it is refused too, and with no
-  lead named the refusal says an Admin names one); in Solo the one person.
+  TEAM-28). In the Team setup the project's lead, or a Member who leads one
+  of its releases no person has accepted yet (`project.health`: an Admin who
+  leads neither is refused too, and with no project lead named the refusal
+  says an Admin names one); in Solo the one person.
   `400` for another word, `404` for no such project. A model never sets it:
   no Seshat path calls it, and a health event with no person is not read.
 - `POST /api/slices/:id/target` with `{ date: "YYYY-MM-DD" | null }` records
@@ -669,6 +705,14 @@ the server knows is one read:
   | null }` (dashboard DB-N9-3). The project lead or an Admin
   (`release.target`, checked on the release's own project); `400` for a day
   that does not exist, `404` for no such release.
+- `POST /api/slices/:id/lead` with `{ lead: "p_…" | null }` records
+  `release/lead_set { sliceId, projectId, lead? }` (no `lead` clears it) with
+  the person as principal and returns `{ lead: { release, principal, name }
+  | null }` (teams item 28, DB-N9-2). The project lead or an Admin
+  (`release.lead`, checked on the release's own project); `400` for someone
+  who is not in the workspace or is below Member on the project, `404` for
+  no such release. While that release is open its lead, at Member or above
+  on the project, may set the project's health.
 - `GET /api/signals?project=` returns `{ signals: { id, value, threshold?,
      triggered, detail, epicId?, response: { action, mode, targets } }[] }`
   (`status_api.ts` `projectSignals` over planner `computeSignals`): the live
@@ -1022,6 +1066,7 @@ interface BenchmarkRun {
 - **Results, keyed by combination.** `GET /api/config/benchmark` returns `{ runs: BenchmarkRun[], results: CombinationResult[], roleScores: RoleScore[] }`; `GET /api/config/benchmark/:combinationId` returns that combination's results of both tiers over time, its history. `versusBaseline` is `"not established"`, and a pair is absent from `resolvedAgainst`, whenever the difference is smaller than the measurement can resolve ([measurement](specs/measurement.md) NEW-measurement-5). No endpoint here assigns a combination: `PUT /api/config/roles/:role` does, on a person's request.
 - `GET /api/config` (and `GET /api/config?project=`) returns the effective configuration, read-only: `{ config, layers, problems, sources, reviewCapacity? }` — `sources` maps each dotted key a file sets (`network.mode`) to the layer it came from, one of `user`, `project`, `card`, `cli`; a key absent from it is the default's, and so is a refused value (its problem is in `problems`). `reviewCapacity` `{ project, minutesPerDay, reviewWip?, allowed, reason? }` is the named project's (or the only active one's): its minutes, the In review limit they give now, and whether this person may change them (`review.capacity`), with the reason when not (DB-N4-1, -2). *(Built C5, 2026-09-27; this line said `{ key, value, source }[]` with `default`, `flag` and `env` sources, which no code served: the configuration has no environment layer.)*
 - `PUT /api/config/review` with `{ minutesPerDay, project? }` sets `review_minutes_per_day` for the project (the only active one when none is named; recorded as `project/review_hours`); a value of 0 or less (or not a number) is refused with 400 `{ error: "Review minutes per day must be more than 0.", key: "review_minutes_per_day" }` and nothing is recorded ([review-git](specs/review-git.md) §2.2.3, DB-N4-3); a person without `review.capacity` on the project gets 403 with the reason. The event carries the person's principal. It returns `{ project, minutesPerDay, reviewWip }`, `reviewWip` that project's In review limit recomputed from its own minutes; other projects' limits are unchanged (NEW-dashboard-4).
+- `PUT /api/config/queue` with `{ agentIssuesPerPerson }` sets `[queue] agent_issues_per_person` in the user configuration — the per-person cap on concurrent Agent issues ([teams](specs/teams.md) item 30, TEAM-30; dashboard §2.16) — keeping every other line of the file, and returns `{ agentIssuesPerPerson }`. It needs `queue.caps` (an Admin in the Team setup; anyone else gets the 403 of TEAM-4 naming it); a value that is not a whole number of 1 or more is refused with 400 `{ error: "Agent issues per person is a whole number, 1 or more.", key: "agent_issues_per_person" }` and nothing is written. The write is recorded as `config/changed { keys, state }` with the Admin as principal (TEAM-27, TEAM-44), and the queue reads the cap on its next pass, so a waiting issue's standing changes at once.
 
 ## 4. Preemption protocol (backend only; the UI shows `PmStatus`)
 
@@ -1076,6 +1121,21 @@ Slack endpoints (Now tier):
   "run_report" | "test", ok, to?, notice?, day? }`; a notice past the day's
   budget is `pm/notice_held` and goes out in the next standup (integrations
   INT-17 to INT-20a).
+
+Email endpoints (Now tier; teams TEAM-43, integrations item 20):
+- `PUT /api/integrations/email` with `{ host, port, secure?, user?,
+  password?, from, events?, dailyBudget? }` (an Admin's,
+  `integration.connect`). Refused 400 with the reason when the server, the
+  port or the sender is not usable. The password is kept with the other
+  integration secrets (the keychain, else the 0600 file), never in the repo
+  or on the ledger; a blank password keeps the one kept for the same user.
+  Returns the integration entry, which never carries the password.
+- `POST /api/integrations/email/test` sends a test to the asker's own
+  address and returns `{ ok, error?, skipped? }`.
+- `DELETE /api/integrations/email` disconnects and removes the password.
+- Each email is recorded as `pm/notify { channel: "email", kind, ok, to?,
+  notice?, day? }` — `to` the person's principal, never their address — and
+  its connection as `harness/egress` with purpose `integration:email`.
 
 ## 6. Learning: self-improvement and the user profile (2026-09-18)
 

@@ -11,7 +11,7 @@ import { postCardMessage } from "../collaborate.js";
 import { type Audience, nameFor } from "../pm/audience.js";
 import { PM_EVENTS } from "../pm/types.js";
 import type { Access, Decision, Level } from "./access.js";
-import { capNote } from "./fair_queue.js";
+import { capNote, personOf } from "./fair_queue.js";
 
 /**
  * The AI teammates on an issue (teams NEW-teams-5, items 17–19 and 19a;
@@ -82,6 +82,8 @@ export interface AiTeammatesDeps {
       cardId: string;
       message: string;
       person?: string;
+      /** Its place in the fair order, 1 first. */
+      place?: number;
       /** At the per-person cap (TEAM-30): said with the place, so the wait has its reason. */
       capped?: { cap: number; running: number };
     }[]
@@ -384,22 +386,102 @@ export async function aiStates(
   const card = await deps.cardStore.getCard(cardId);
   if (!card) return [];
   const out: AiStateFacts[] = [];
-  const name = (p: string | undefined) => (p ? nameFor(deps.audience, p, reader) : "an Admin");
   const request = (await startRequests(deps, { cardId })).at(-1);
+  const agent = await agentFacts(deps, card, reader, request);
+  if (agent) out.push(agent);
+  const seshat = await seshatState(deps, cardId);
+  if (seshat) out.push(seshat);
+  return out;
+}
+
+/** The Agent's state on one issue: a start request waiting, else its work; none when it is not on it. */
+async function agentFacts(
+  deps: AiTeammatesDeps,
+  card: CardRecord,
+  reader: string,
+  request: StartRequest | undefined,
+): Promise<AiStateFacts | undefined> {
+  const name = (p: string | undefined) => (p ? nameFor(deps.audience, p, reader) : "an Admin");
   if (request) {
-    out.push({
+    return {
       who: "agent",
       state: "needs you",
       waitingFor: "start",
       requestedBy: name(request.requestedBy),
       waitsOn: name(request.to),
-    });
-  } else if (card.delegate?.kind === "worker") {
-    out.push(await agentState(deps, card, name));
+    };
   }
-  const seshat = await seshatState(deps, cardId);
-  if (seshat) out.push(seshat);
-  return out;
+  return card.delegate?.kind === "worker" ? agentState(deps, card, name) : undefined;
+}
+
+/** Each issue's Agent state for the board, and where the reader's own issue stands (teams items 19, 31). */
+export interface AgentStatesView {
+  states: { cardId: string; ai: AiStateFacts[] }[];
+  /**
+   * The reader's first waiting Agent issue, in the Team setup: its place and
+   * estimate, and — when it is next while another person's issue runs — whose
+   * (*Priya's issue is running; yours starts next*). Null when none waits.
+   */
+  queue: { cardId: string; place: number; message: string; runningFor?: string } | null;
+}
+
+/**
+ * The Agent's state on every issue it is on that the reader can see — a
+ * start request waiting, or delegated to it and not done — for the board's
+ * tiles (teams item 19, NEW-teams-5), and the reader's standing in the Team
+ * queue for the Agent status line (item 31, dashboard §2.2.3). The standing
+ * is computed once for the whole answer.
+ */
+export async function agentStatesFor(
+  deps: AiTeammatesDeps,
+  reader: string,
+  canSee: (project: string | undefined) => boolean,
+): Promise<AgentStatesView> {
+  let standing: ReturnType<NonNullable<AiTeammatesDeps["standing"]>> | undefined;
+  const once: AiTeammatesDeps = {
+    ...deps,
+    ...(deps.standing
+      ? {
+          standing: () => {
+            standing ??= (deps.standing as NonNullable<AiTeammatesDeps["standing"]>)();
+            return standing;
+          },
+        }
+      : {}),
+  };
+  const requests = new Map<string, StartRequest>();
+  for (const r of await startRequests(deps)) requests.set(r.cardId, r);
+  const states: AgentStatesView["states"] = [];
+  const visible = (c: CardRecord) => canSee(deps.projectOf(c));
+  for (const card of await deps.cardStore.listCards()) {
+    if (card.status === "done" || !visible(card)) continue;
+    if (!requests.has(card.id) && card.delegate?.kind !== "worker") continue;
+    const agent = await agentFacts(once, card, reader, requests.get(card.id));
+    if (agent) states.push({ cardId: card.id, ai: [agent] });
+  }
+  let queue: AgentStatesView["queue"] = null;
+  if (deps.audience.setup === "team" && once.standing) {
+    const entries = await once.standing().catch(() => []);
+    for (const e of entries) {
+      if (e.person !== reader || e.place === undefined) continue;
+      const card = await deps.cardStore.getCard(e.cardId);
+      if (!card || !visible(card)) continue;
+      const running = (await deps.cardStore.listCards({ status: "in_progress" })).filter(
+        (c) => c.delegate?.kind === "worker" && visible(c),
+      );
+      const people = running.map((c) => personOf(deps.cardStore, c));
+      const other = people.find((p) => p !== reader);
+      const next = e.place === 1 && other !== undefined && !people.includes(reader);
+      queue = {
+        cardId: e.cardId,
+        place: e.place,
+        message: e.message,
+        ...(next ? { runningFor: nameFor(deps.audience, other, reader) } : {}),
+      };
+      break;
+    }
+  }
+  return { states, queue };
 }
 
 async function agentState(

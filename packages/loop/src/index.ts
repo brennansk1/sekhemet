@@ -22,3 +22,4 @@ export * from "./write_contract.js";
 export * from "./phase.js";
 export * from "./evidence_gate.js";
 export * from "./verification.js";
+export { replanCopy } from "./replan_copy.js";

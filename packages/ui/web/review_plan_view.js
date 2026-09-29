@@ -56,7 +56,58 @@ export function approvalNoteHtml(approval, me) {
     approval.approver === me
       ? `${approval.requestedByName ?? approval.requestedBy} sent this plan for your approval.`
       : `Sent to ${approval.approverName ?? approval.approver} for approval.`;
-  return `<p class="pnote">${esc(text)}</p>`;
+  // Design-stage §2.9 item 7: the approver's question waits on the sender.
+  const last = approval.thread?.at(-1);
+  const waits =
+    last && me === approval.requestedBy && last.by === approval.approver
+      ? ` ${last.byName ?? last.by} asked a question: open Review plan to answer.`
+      : "";
+  return `<p class="pnote">${esc(`${text}${waits}`)}</p>`;
+}
+
+/** A message's day and time, as the Inbox shows them. */
+function when(iso) {
+  const t = Date.parse(iso ?? "");
+  if (!Number.isFinite(t)) return "";
+  return new Date(t).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/**
+ * The plan's thread (design-stage §2.9 item 7): the approver's questions and
+ * the sender's answers, oldest first. While the plan waits for approval its
+ * approver can ask a question and its sender can answer; anyone else, and
+ * everyone once it is approved, reads it only. Nothing here changes the plan.
+ */
+export function planThreadHtml(approval, me) {
+  if (!approval) return "";
+  const thread = approval.thread ?? [];
+  const role =
+    me === approval.approver ? "approver" : me === approval.requestedBy ? "sender" : undefined;
+  const approver = approval.approverName ?? approval.approver;
+  const sender = approval.requestedByName ?? approval.requestedBy;
+  const items = thread
+    .map(
+      (m) =>
+        `<li class="rp-msg"><p class="rp-msg-by"><b>${esc(m.byName ?? m.by)}</b> <time class="sec" datetime="${esc(m.at)}">${esc(when(m.at))}</time></p><p class="rp-msg-text">${esc(m.text)}</p></li>`,
+    )
+    .join("");
+  const list = items
+    ? `<ol class="rp-thread" aria-label="Questions on this plan">${items}</ol>`
+    : '<p class="sec">No questions yet.</p>';
+  if (approval.state !== "sent" || !role) return `<h4 class="rp-h2">Questions</h4>${list}`;
+  const label = role === "approver" ? "Ask a question" : "Answer";
+  const hint =
+    role === "approver"
+      ? `${sender} sees it with the plan and answers here. Nothing is created until you approve it.`
+      : `${approver} reads your answer with the plan.`;
+  const button = role === "approver" ? "Ask" : "Send answer";
+  const form = `<form class="rp-ask" data-plan-comment><label for="rp-q">${label}</label><textarea id="rp-q" name="text" rows="3" maxlength="8000" aria-describedby="rp-q-hint"></textarea><p class="sec" id="rp-q-hint">${esc(hint)}</p><div class="acts"><button class="btn" type="submit">${button}</button></div></form>`;
+  return `<h4 class="rp-h2">Questions</h4>${list}${form}`;
 }
 
 /**
@@ -255,7 +306,7 @@ export function reviewPlanHtml(group, state, opts = {}) {
     .map((a) => `<li>${esc(a)}</li>`)
     .join(
       "",
-    )}</ul><p class="rp-count" id="rp-count">Creating it makes ${counted}, set up first by ${esc(group.stack.name)}'s own generator. ${created}</p>${footHtml(opts)}</section>`;
+    )}</ul><p class="rp-count" id="rp-count">Creating it makes ${counted}, set up first by ${esc(group.stack.name)}'s own generator. ${created}</p>${planThreadHtml(opts.approval, opts.me)}${footHtml(opts)}</section>`;
 }
 
 /**

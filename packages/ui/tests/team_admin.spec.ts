@@ -273,7 +273,7 @@ describe("B4.11 T6: health is the project lead's alone (TEAM-28, DB-N9-2)", () =
   it("disables Set health for anyone but the lead, an Admin included, and names who can", () => {
     const where = { project: "proj_c", projectName: "Chronicle" };
     expect(levelNote({ mode: "team", level: "admin" }, "project.health", where)).toBe(
-      "You're an Admin on Chronicle. The project lead can set this project's health.",
+      "You're an Admin on Chronicle. The project lead or a Member who leads a release can set this project's health.",
     );
     expect(
       levelNote(
@@ -288,5 +288,98 @@ describe("B4.11 T6: health is the project lead's alone (TEAM-28, DB-N9-2)", () =
       "You're a Member on Chronicle. An Admin or the project lead can set a release's target date.",
     );
     expect(levelNote({ mode: "solo" }, "project.health", where)).toBeUndefined();
+  });
+});
+
+describe("close-out C3: a Member who leads a release may set health (teams item 28, DB-N9-2)", () => {
+  const where = { project: "proj_c", projectName: "Chronicle" };
+  it("leaves Set health enabled for a release's lead at Member, and names them in the note", () => {
+    expect(
+      levelNote(
+        { mode: "team", level: "member", projects: { proj_c: { releaseLead: true } } },
+        "project.health",
+        where,
+      ),
+    ).toBeUndefined();
+    expect(levelNote({ mode: "team", level: "member" }, "project.health", where)).toBe(
+      "You're a Member on Chronicle. The project lead or a Member who leads a release can set this project's health.",
+    );
+    // Below Member, leading a release is not enough.
+    expect(
+      levelNote(
+        {
+          mode: "team",
+          level: "member",
+          projects: { proj_c: { level: "viewer", releaseLead: true } },
+        },
+        "project.health",
+        where,
+      ),
+    ).toBe(
+      "You're a Viewer on Chronicle. The project lead or a Member who leads a release can set this project's health.",
+    );
+  });
+
+  it("names a release's lead: the project lead or an Admin", () => {
+    expect(levelNote({ mode: "team", level: "member" }, "release.lead", where)).toBe(
+      "You're a Member on Chronicle. An Admin or the project lead can name a release's lead.",
+    );
+    expect(
+      levelNote(
+        { mode: "team", level: "member", projects: { proj_c: { lead: true } } },
+        "release.lead",
+        where,
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe("close-out C3: a release's lead is on the audit log (teams items 27, 28)", () => {
+  const names = {
+    person: (p: string) => ({ p_ada: "Ada Admin", p_mo: "Mo Member" })[p],
+    project: (id: string) => ({ proj_a: "Chronicle" })[id],
+    release: (project: string, id: string) =>
+      project === "proj_a" && id === "SLICE-1" ? "Release 1" : undefined,
+  };
+  it("lists who named whom to lead which release, on which project", () => {
+    expect(AUDIT_TYPES).toContain("release/lead_set");
+    const base = {
+      seq: 2,
+      at: "2026-09-28T10:00:00.000Z",
+      type: "release/lead_set",
+      actor: "human",
+      principal: "p_ada",
+    };
+    expect(
+      auditEntry(
+        { ...base, payload: { sliceId: "SLICE-1", projectId: "proj_a", lead: "p_mo" } },
+        names,
+      ),
+    ).toMatchObject({
+      category: "level",
+      action: "Release lead named",
+      actor: { principal: "p_ada", name: "Ada Admin" },
+      target: "Mo Member for Release 1 on Chronicle",
+      targetPrincipal: "p_mo",
+      project: "proj_a",
+    });
+    expect(
+      auditEntry({ ...base, payload: { sliceId: "SLICE-1", projectId: "proj_a" } }, names),
+    ).toMatchObject({ action: "Release lead cleared", target: "Release 1 on Chronicle" });
+  });
+
+  it("names the release by its name, never its internal id (DEC-31)", () => {
+    const row = {
+      seq: 3,
+      at: "2026-09-28T10:00:00.000Z",
+      type: "release/lead_set",
+      actor: "human",
+      principal: "p_ada",
+      payload: { sliceId: "SLICE-9", projectId: "proj_a", lead: "p_mo" },
+    };
+    // A release the names do not know (since removed): a release, not SLICE-9.
+    const entry = auditEntry(row, names);
+    expect(entry?.target).toBe("Mo Member for a release on Chronicle");
+    expect(JSON.stringify(entry)).not.toContain("SLICE-9");
   });
 });

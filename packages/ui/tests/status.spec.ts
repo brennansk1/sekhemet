@@ -306,7 +306,7 @@ describe("the page's sections and words (§2.8's order, DB-N9-1)", () => {
       setHealth: "Set health",
       healthLegend: "Project health",
       healthHint:
-        "Your call as the project lead: it shows with your name and today's date. Seshat never sets it.",
+        "Your call as the project lead or a release's lead: it shows with your name and today's date. Seshat never sets it.",
       setTarget: "Set target date",
       changeTarget: "Change target date",
       targetLabel: "Target date",
@@ -316,6 +316,14 @@ describe("the page's sections and words (§2.8's order, DB-N9-1)", () => {
       healthSaved: "Health set.",
       targetSaved: "Target date set.",
       targetCleared: "Target date cleared.",
+      setReleaseLead: "Set release lead",
+      changeReleaseLead: "Change release lead",
+      releaseLeadLabel: "Release lead",
+      releaseLeadHint:
+        "A Member or an Admin who leads this release. While it is open they may set the project's health.",
+      noReleaseLead: "No lead",
+      releaseLeadSaved: "Release lead set.",
+      releaseLeadCleared: "Release lead cleared.",
       updateLabel: "Project update",
       updateHint:
         "Seshat drafted this from the project's history in five parts: status, done, next, risks and asks. Edit it; nothing is posted until you press Post.",
@@ -865,5 +873,103 @@ describe("B4.11 T6: health a person sets and a release's target date (TEAM-28, D
     expect(none.target).toBeNull();
     expect(none.setTarget).toEqual({ release: "SLICE-2", name: "Release 2", date: null });
     expect(none.numbers[0]?.value).toBe("50% Sep 30 · 85% Oct 3 · no target set");
+  });
+});
+
+describe("close-out C3: a release's lead (teams item 28, DB-N9-2)", () => {
+  const team: StatusFacts = {
+    ...solo,
+    setup: "team",
+    isLead: true,
+    canSetHealth: true,
+    healthWritable: true,
+    health: null,
+    release: {
+      id: "SLICE-2",
+      name: "Release 2",
+      lead: { principal: "p_mo", name: "Mo Member" },
+    },
+    canSetReleaseLead: true,
+    releaseLeadChoices: [
+      { principal: "p_lee", name: "Lee Lead" },
+      { principal: "p_mo", name: "Mo Member" },
+    ],
+  };
+
+  it("names the current release's lead to everyone", () => {
+    expect(statusModel(input({ facts: { ...team, canSetReleaseLead: false } })).releaseLead).toBe(
+      "Release 2 lead: Mo Member",
+    );
+    const none = { ...team, release: { id: "SLICE-2", name: "Release 2" } };
+    expect(statusModel(input({ facts: none })).releaseLead).toBeNull();
+  });
+
+  it("offers the project lead or an Admin the Members and Admins to name, the current one chosen", () => {
+    expect(statusModel(input({ facts: team })).setReleaseLead).toEqual({
+      release: "SLICE-2",
+      name: "Release 2",
+      lead: "p_mo",
+      choices: [
+        { principal: "p_lee", name: "Lee Lead" },
+        { principal: "p_mo", name: "Mo Member" },
+      ],
+    });
+    expect(
+      statusModel(input({ facts: { ...team, canSetReleaseLead: false } })).setReleaseLead,
+    ).toBeNull();
+    expect(statusModel(input({ facts: { ...team, release: null } })).setReleaseLead).toBeNull();
+    // Solo has one person: no release lead is shown or offered.
+    const soloView = statusModel(input({ facts: { ...team, setup: "solo" } }));
+    expect(soloView.releaseLead).toBeNull();
+    expect(soloView.setReleaseLead).toBeNull();
+  });
+});
+
+describe("DB-N9-17 on Status: a header action the viewer's level cannot do is shown disabled", () => {
+  const member: StatusFacts = {
+    ...solo,
+    setup: "team",
+    isLead: false,
+    canSetHealth: false,
+    healthWritable: true,
+    health: null,
+    release: { id: "SLICE-2", name: "Release 2" },
+    canSetTarget: false,
+    canSetReleaseLead: false,
+    canPostUpdate: false,
+  };
+
+  it("names each one with the permission it needs, so the page writes the level note beside it", () => {
+    const v = statusModel(input({ facts: member }));
+    expect(v.setHealth).toBe(false);
+    expect(v.setTarget).toBeNull();
+    expect(v.setReleaseLead).toBeNull();
+    expect(v.writeUpdate).toBe(false);
+    expect(v.gated).toEqual({
+      health: "project.health",
+      target: "release.target",
+      releaseLead: "release.lead",
+      update: "project.update",
+    });
+  });
+
+  it("gates nothing the viewer may do, nothing that has no release to act on, and nothing in Solo", () => {
+    const lead = {
+      ...member,
+      isLead: true,
+      canSetHealth: true,
+      canSetTarget: true,
+      canSetReleaseLead: true,
+      canPostUpdate: true,
+    };
+    expect(statusModel(input({ facts: lead })).gated).toEqual({});
+    expect(statusModel(input({ facts: { ...member, release: null } })).gated).toEqual({
+      health: "project.health",
+      update: "project.update",
+    });
+    expect(
+      statusModel(input({ facts: { ...member, healthWritable: false } })).gated.health,
+    ).toBeUndefined();
+    expect(statusModel(input({ facts: { ...member, setup: "solo" } })).gated).toEqual({});
   });
 });

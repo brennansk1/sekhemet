@@ -58,7 +58,7 @@ import {
 } from "./benchmark_runner.js";
 import { effectiveConfig } from "./config_apply.js";
 import { type BenchmarkLease, type ModelAccess, sharedModelAccess } from "./model_access.js";
-import { workerContextVersion } from "./qualify.js";
+import { fullContextVersion, rolePromptVersions } from "./prompt_versions.js";
 import { reservationNow } from "./reservation.js";
 import { acquireRunnerLease, leaseRefusal } from "./runner_lease.js";
 import { isReserved, parseHours } from "./scheduler.js";
@@ -738,7 +738,7 @@ export function defaultBenchmarkEnv(o: {
           }),
         ).slice(0, 16),
         host,
-        contextVersion: workerContextVersion(),
+        contextVersion: fullContextVersion(),
         setHash,
       };
     },
@@ -763,12 +763,20 @@ export function defaultBenchmarkEnv(o: {
       } catch {
         // not a git checkout: the build is unknown, and any later known build differs
       }
+      // This build's qualifications only: another build's run, under its
+      // own versions, changes none of them (live-test F23).
+      const versions = new Set(Object.values(rolePromptVersions()));
       const qualifications = registry()
         .list()
-        .map((e) => [e.id, e.qualifications ?? []]);
+        .map((e) => [
+          e.id,
+          (e.qualifications ?? []).filter((q) =>
+            versions.has(q.combination.settings.contextVersion),
+          ),
+        ]);
       return {
         build: build.slice(0, 40) || "unknown",
-        contextVersion: workerContextVersion(),
+        contextVersion: fullContextVersion(),
         qualification: sha(JSON.stringify(qualifications)).slice(0, 16),
       };
     },

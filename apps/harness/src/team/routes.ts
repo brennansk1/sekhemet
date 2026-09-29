@@ -33,7 +33,7 @@ export interface IdentityRouteDeps {
    * default page in the Team setup (dashboard §2.2.5, teams item 8).
    */
   sessionFacts?: (principal: string) => {
-    projects: Record<string, { level?: string; lead?: boolean }>;
+    projects: Record<string, { level?: string; lead?: boolean; releaseLead?: boolean }>;
     label?: string;
   };
 }

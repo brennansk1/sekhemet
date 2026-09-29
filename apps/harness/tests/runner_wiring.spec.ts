@@ -551,6 +551,24 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     expect(off.evidence.settings).toMatchObject({ evidenceGate: "off", toolSet: "progressive" });
   });
 
+  it("records the full context version and the Coding model's prompt version on every card (PROMPT_STANDARD rule 37)", async () => {
+    const { fullContextVersion, rolePromptVersion } = await import("../src/prompt_versions.js");
+    const run = await executeCard(ctx, await newCard("card_versions"), scripted([WRITE_A]).adapter);
+    expect(run.evidence.settings).toMatchObject({
+      contextVersion: fullContextVersion(),
+      promptVersion: rolePromptVersion("worker"),
+    });
+    // On the bundle as kept, so card results can be split by version afterwards.
+    const row = db
+      .prepare("SELECT path FROM evidence_bundles WHERE card_id = ?")
+      .get("card_versions") as { path: string } | undefined;
+    const kept = JSON.parse(readFileSync(join(repo, row?.path ?? ""), "utf8")) as {
+      settings: Record<string, unknown>;
+    };
+    expect(kept.settings.contextVersion).toBe(fullContextVersion());
+    expect(kept.settings.promptVersion).toBe(rolePromptVersion("worker"));
+  });
+
   it("fixes the sampling seed the RunProfile names on the card's model, and leaves it unset by default (rule 10)", async () => {
     const { resolveRunProfile } = await import("@sekhemet/eval");
     const seeds: (number | undefined)[] = [];

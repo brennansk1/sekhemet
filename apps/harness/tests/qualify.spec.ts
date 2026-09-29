@@ -5,7 +5,12 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { FALLBACK_CHARS_PER_TOKEN, computeContextVersion, workerCopy } from "@sekhemet/context";
+import {
+  FALLBACK_CHARS_PER_TOKEN,
+  computeContextVersion,
+  computeRolePromptVersion,
+  workerCopy,
+} from "@sekhemet/context";
 import { gateCopy } from "@sekhemet/gates";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { TOOL_CATALOG } from "@sekhemet/loop";
@@ -18,6 +23,7 @@ import {
   candidateSettings,
   createCyberTielWorker,
 } from "@sekhemet/models";
+import { sandboxCopy } from "@sekhemet/sandbox";
 import { afterEach, describe, expect, it } from "vitest";
 import { speculativeProbes } from "../src/calibrate_cmd.js";
 import {
@@ -101,13 +107,15 @@ describe("the Worker's qualification combination (rule 27a)", () => {
     expect(c.settings.contextTokens).toBe(8192);
   });
 
-  it("uses the Worker's prompt, copy modules, tool schemas and literal inventory as the context version", () => {
+  it("uses the Coding model's prompt, copy modules, tool schemas, literal inventory and budget policy as its version (CX-N6-4)", () => {
     expect(workerContextVersion("inventory")).toBe(
-      computeContextVersion({
+      computeRolePromptVersion("worker", {
         tools: TOOL_CATALOG,
         templates: [
-          copyText(workerCopy),
-          copyText(gateCopy),
+          `worker ${copyText(workerCopy)}`,
+          `gates ${copyText(gateCopy)}`,
+          `sandbox ${copyText(sandboxCopy)}`,
+          // An inventory that cannot be read is taken whole.
           "inventory",
           `chars per token ${FALLBACK_CHARS_PER_TOKEN}`,
         ],
@@ -265,6 +273,47 @@ describe("sekhemet qualify records the combination (MD-N8-1)", () => {
     expect(look.record?.suiteVersion).toBe(QUALIFICATION_SUITE_VERSION);
     expect(await runWave2Command("qualify", ["--check", "--models", "silent"], k, io)).toBe(1);
     expect(out.at(-1)).toMatch(/failed/);
+  });
+
+  it("CX-N6-4: --role records the run for that role, under its own prompt version", async () => {
+    const k = kernel();
+    process.env.SEKHEMET_MODEL_REGISTRY = join(k.repoPath, "models.json");
+    const out: string[] = [];
+    const io = {
+      print: (l: string) => out.push(l),
+      model: (n: string) => new MockInferenceAdapter(n, [], { exhaustion: "default" as const }),
+      combinationDeps: { ...deps, contextVersion: (r: string) => `${r}-v1` },
+    };
+    expect(await runWave2Command("qualify", ["--models", "silent", "--role", "boss"], k, io)).toBe(
+      1,
+    );
+    expect(out.at(-1)).toMatch(
+      /Usage: sekhemet qualify .*--role <worker\|planner\|reviewer\|researcher>/,
+    );
+    expect(
+      await runWave2Command(
+        "qualify",
+        ["--check", "--models", "silent", "--role", "reviewer"],
+        k,
+        io,
+      ),
+    ).toBe(1);
+    expect(out.at(-1)).toMatch(
+      /silent is not verified on this machine for the Review model \(missing: .*\)\. Verify it with: sekhemet qualify --models silent --role reviewer/,
+    );
+    await runWave2Command("qualify", ["--models", "silent", "--role", "reviewer"], k, io);
+    const reg = new ModelRegistry(process.env.SEKHEMET_MODEL_REGISTRY);
+    const records = reg.get("silent")?.qualifications ?? [];
+    expect(
+      records.map((q) => [q.combination.settings.role, q.combination.settings.contextVersion]),
+    ).toEqual([["reviewer", "reviewer-v1"]]);
+    // The Coding model's qualification is untouched by the Review model's run.
+    expect(
+      reg.lookupQualification(
+        "silent",
+        qualificationCombination(io.model("silent"), io.combinationDeps),
+      ).status,
+    ).toBe("missing");
   });
 });
 

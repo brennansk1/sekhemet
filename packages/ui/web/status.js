@@ -7,6 +7,7 @@
 import { burnupHtml, loadBurnup } from "./burnup.js";
 import { $, announce, esc, getJSON, icon, postJSON } from "./dom.js";
 import { aiBadge } from "./issue_view.js";
+import { noteFor } from "./level_gate.js";
 import { burnupTarget } from "./lib/burnup.js";
 import { START_PROJECT_OPENING } from "./lib/seshat.js";
 import { STATUS_COPY, STATUS_SECTIONS, statusModel } from "./lib/status.js";
@@ -36,6 +37,8 @@ const ui = {
   health: false,
   /** The Set target date form is open (DB-N9-3). */
   target: false,
+  /** The Set release lead form is open (teams item 28, DB-N9-2). */
+  releaseLead: false,
   busy: false,
   timer: 0,
   off: null,
@@ -112,6 +115,18 @@ const empty = (text) => `<p class="sec stp-empty">${esc(text)}</p>`;
 const toneDot = (tone) =>
   `<span class="stp-dot${tone ? ` t-${esc(tone)}` : ""}" aria-hidden="true"></span>`;
 
+/**
+ * DB-N9-17: a header action the viewer's level does not allow — disabled,
+ * marked with the permission it needs, so the level gate writes beside it
+ * the level they hold and one that can. Never hidden. Nothing when the page
+ * finds no note to write (the server's word decides; it refuses the write).
+ */
+function gatedButton(permission, label, ghost = false) {
+  const p = ui.facts.data?.project;
+  if (!permission || !p?.id || !noteFor(permission, p.id, p.name)) return "";
+  return `<button class="btn sm${ghost ? " ghost" : ""}" type="button" disabled data-needs="${esc(permission)}" data-needs-project="${esc(p.id)}" data-needs-project-name="${esc(p.name ?? "")}">${esc(label)}</button>`;
+}
+
 function headerHtml(v) {
   const health = v.health
     ? `<p class="stp-health">${toneDot(v.health.tone)}<span>${esc(v.health.text)}</span></p>`
@@ -119,12 +134,16 @@ function headerHtml(v) {
   const setHealth =
     v.setHealth && !ui.health
       ? `<button class="btn sm" type="button" data-set-health aria-expanded="false">${esc(C.setHealth)}</button>`
-      : "";
+      : v.setHealth
+        ? ""
+        : gatedButton(v.gated.health, C.setHealth);
   const target = v.target ? `<p class="stp-by sec">${esc(v.target)}</p>` : "";
   const setTarget =
     v.setTarget && !ui.target
       ? `<button class="btn sm ghost" type="button" data-set-target aria-expanded="false">${esc(v.setTarget.date ? C.changeTarget : C.setTarget)}</button>`
-      : "";
+      : v.setTarget
+        ? ""
+        : gatedButton(v.gated.target, C.setTarget, true);
   const missing = v.updateMissing
     ? `<p class="stp-missing" role="status">${icon("clock", 14, "ic s14")}${esc(v.updateMissing)}</p>`
     : "";
@@ -134,8 +153,22 @@ function headerHtml(v) {
   const write =
     v.writeUpdate && !ui.editor
       ? `<button class="btn sm" type="button" data-write>${icon("pencil", 14, "ic s14")}${esc(C.writeUpdate)}</button>`
+      : v.writeUpdate
+        ? ""
+        : gatedButton(v.gated.update, C.writeUpdate);
+  // Teams item 28: the current release's lead, and naming one (the project lead or an Admin).
+  const releaseLead = v.releaseLead ? `<p class="stp-by sec">${esc(v.releaseLead)}</p>` : "";
+  const setReleaseLead =
+    v.setReleaseLead && !ui.releaseLead
+      ? `<button class="btn sm ghost" type="button" data-set-release-lead aria-expanded="false">${esc(v.setReleaseLead.lead ? C.changeReleaseLead : C.setReleaseLead)}</button>`
+      : v.setReleaseLead
+        ? ""
+        : gatedButton(v.gated.releaseLead, C.setReleaseLead, true);
+  const leadRow =
+    releaseLead || setReleaseLead
+      ? `<div class="stp-row">${releaseLead}${setReleaseLead}</div>`
       : "";
-  return `<header class="stp-head"><p class="stp-headline">${esc(v.headline)}</p><div class="stp-row">${health}${setHealth}${write}</div>${healthFormHtml(v)}${target || setTarget ? `<div class="stp-row">${target}${setTarget}</div>` : ""}${targetFormHtml(v)}${missing}${editorHtml()}${update}</header>`;
+  return `<header class="stp-head"><p class="stp-headline">${esc(v.headline)}</p><div class="stp-row">${health}${setHealth}${write}</div>${healthFormHtml(v)}${target || setTarget ? `<div class="stp-row">${target}${setTarget}</div>` : ""}${targetFormHtml(v)}${leadRow}${releaseLeadFormHtml(v)}${missing}${editorHtml()}${update}</header>`;
 }
 
 /** The lead's health call (TEAM-28): three words, one checked; nothing changes until Save. */
@@ -148,6 +181,20 @@ function healthFormHtml(v) {
     )
     .join("");
   return `<form class="stp-editor" data-health><fieldset aria-describedby="stp-health-hint"><legend>${esc(C.healthLegend)}</legend><p class="sec" id="stp-health-hint">${esc(C.healthHint)}</p>${radios}</fieldset><div class="acts"><button class="btn ghost" type="button" data-cancel-health>${esc(C.cancel)}</button><button class="btn" type="submit"${ui.busy ? " disabled" : ""}>${esc(C.save)}</button></div></form>`;
+}
+
+/** Name the current release's lead (teams item 28): a Member or an Admin of the project, or no one. */
+function releaseLeadFormHtml(v) {
+  if (!ui.releaseLead || !v.setReleaseLead) return "";
+  const t = v.setReleaseLead;
+  const options = [
+    `<option value=""${t.lead ? "" : " selected"}>${esc(C.noReleaseLead)}</option>`,
+    ...t.choices.map(
+      (c) =>
+        `<option value="${esc(c.principal)}"${c.principal === t.lead ? " selected" : ""}>${esc(c.name)}</option>`,
+    ),
+  ].join("");
+  return `<form class="stp-editor" data-release-lead="${esc(t.release)}"><label for="stp-release-lead">${esc(C.releaseLeadLabel)}: ${esc(t.name)}</label><p class="sec" id="stp-release-lead-hint">${esc(C.releaseLeadHint)}</p><select id="stp-release-lead" aria-describedby="stp-release-lead-hint">${options}</select><div class="acts"><button class="btn ghost" type="button" data-cancel-release-lead>${esc(C.cancel)}</button><button class="btn" type="submit"${ui.busy ? " disabled" : ""}>${esc(C.save)}</button></div></form>`;
 }
 
 /** The current release's target date (DB-N9-3): a day, drawn against the forecast range. */
@@ -449,6 +496,35 @@ async function saveTarget(release, date) {
   $("[data-set-target]", ui.root)?.focus();
 }
 
+function openReleaseLead() {
+  ui.releaseLead = true;
+  render();
+  $("#stp-release-lead", ui.root)?.focus();
+}
+
+function closeReleaseLead() {
+  ui.releaseLead = false;
+  render();
+  $("[data-set-release-lead]", ui.root)?.focus();
+}
+
+async function saveReleaseLead(release, lead) {
+  if (!release || ui.busy) return;
+  ui.busy = true;
+  const r = await postJSON(`/api/slices/${encodeURIComponent(release)}/lead`, { lead });
+  ui.busy = false;
+  if (!r.ok) {
+    fail(lead ? "set the release lead" : "clear the release lead", r);
+    return;
+  }
+  ui.releaseLead = false;
+  const said = lead ? C.releaseLeadSaved : C.releaseLeadCleared;
+  toast({ tone: "pass", text: said });
+  announce(said);
+  await load();
+  $("[data-set-release-lead]", ui.root)?.focus();
+}
+
 async function act(btn) {
   const { act: kind, id } = btn.dataset;
   if (kind === "slice-extend") {
@@ -542,6 +618,7 @@ export function mount(view) {
   ui.extend = null;
   ui.health = false;
   ui.target = false;
+  ui.releaseLead = false;
   root.addEventListener("click", (e) => {
     const t = e.target instanceof Element ? e.target : null;
     if (!t) return;
@@ -550,6 +627,8 @@ export function mount(view) {
     else if (t.closest("[data-cancel-health]")) closeHealth();
     else if (t.closest("[data-set-target]")) openTarget();
     else if (t.closest("[data-cancel-target]")) closeTarget();
+    else if (t.closest("[data-set-release-lead]")) openReleaseLead();
+    else if (t.closest("[data-cancel-release-lead]")) closeReleaseLead();
     else if (t.closest("[data-clear-target]"))
       saveTarget(t.closest("[data-target]")?.dataset.target, null);
     else if (t.closest("[data-cancel]")) closeEditor();
@@ -573,6 +652,8 @@ export function mount(view) {
     else if (f.matches("[data-health]")) saveHealth(f);
     else if (f.matches("[data-target]"))
       saveTarget(f.dataset.target, $("#stp-target", f)?.value || null);
+    else if (f.matches("[data-release-lead]"))
+      saveReleaseLead(f.dataset.releaseLead, $("#stp-release-lead", f)?.value || null);
     else if (f.matches("[data-extend]")) extend(f);
     else if (f.matches("[data-ask]")) ask(f);
   });
@@ -589,6 +670,9 @@ export function mount(view) {
     } else if (t?.closest("[data-target]")) {
       e.stopPropagation();
       closeTarget();
+    } else if (t?.closest("[data-release-lead]")) {
+      e.stopPropagation();
+      closeReleaseLead();
     } else if (t?.closest("[data-extend]")) {
       e.stopPropagation();
       t.closest("form").querySelector("[data-cancel-extend]")?.click();

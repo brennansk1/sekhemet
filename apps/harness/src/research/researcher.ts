@@ -190,7 +190,7 @@ export function withPageBudget(deps: ResearchDeps): ResearchDeps {
 
 const str = { type: "string" } as const;
 
-const WEB_TOOLS: ToolDefinition[] = [
+export const WEB_TOOLS: ToolDefinition[] = [
   {
     name: "scholar_search",
     description:

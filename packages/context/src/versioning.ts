@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
+import type { ModelRole } from "@sekhemet/models";
 import { ALLOCATOR_WINDOW_MARGIN_TOKENS, ROLE_ANSWER_TOKENS } from "./allocator.js";
 import type { Exemplar } from "./exemplars.js";
 import type { PlaybookRule } from "./playbook.js";
 import { DEFAULT_PRESSURE_THRESHOLDS } from "./pressure.js";
+import { rolePolicyText } from "./prompt_roles.js";
 import { PROMPT_ZONE_1_SYSTEM } from "./prompts.js";
 import type { SkillManifest } from "./skills.js";
 import { FALLBACK_CHARS_PER_TOKEN } from "./tokens.js";
@@ -65,15 +67,37 @@ export function budgetPolicyText(): string {
   ].join("\n");
 }
 
-export function computeContextVersion(input: ContextVersionInput): ContextVersion {
-  const prompt = h([PROMPT_ZONE_1_SYSTEM, ...(input.templates ?? [])].join(SEP));
-  const tools = h(
-    [...input.tools]
+const toolsHash = (tools: readonly ToolInterfaceSpec[]) =>
+  h(
+    [...tools]
       .map((t) => JSON.stringify([t.name, t.summary, t.parameters, t.returns ?? ""]))
       .sort()
       .join(SEP),
   );
+
+export function computeContextVersion(input: ContextVersionInput): ContextVersion {
+  const prompt = h([PROMPT_ZONE_1_SYSTEM, ...(input.templates ?? [])].join(SEP));
+  const tools = toolsHash(input.tools);
   const policy = h(budgetPolicyText());
+  return { version: h(`${prompt}:${tools}:${policy}`), prompt, tools, policy };
+}
+
+/**
+ * One role's prompt version (context rule 27, CX-N6-4; live-test F24): its
+ * own templates (its copy modules and literals, and any tool definitions not
+ * in the tool catalog), its tool catalog and its budget policy
+ * (`rolePolicyText`). A role's qualification depends on this version and on
+ * no other role's, so a Seshat prompt change leaves the Coding model
+ * qualified. The full context version recorded on every card covers every
+ * role's (PROMPT_STANDARD rule 37). Guidance is never an input (CX-N6-3).
+ */
+export function computeRolePromptVersion(
+  role: ModelRole,
+  input: ContextVersionInput,
+): ContextVersion {
+  const prompt = h([`role ${role}`, ...(input.templates ?? [])].join(SEP));
+  const tools = toolsHash(input.tools);
+  const policy = h(rolePolicyText(role));
   return { version: h(`${prompt}:${tools}:${policy}`), prompt, tools, policy };
 }
 

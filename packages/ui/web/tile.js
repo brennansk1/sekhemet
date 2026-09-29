@@ -1,6 +1,7 @@
 // Card tile (dashboard §2.4.4). Returns markup; every model string is escaped.
 import { aiBadge, esc, icon, tip } from "./dom.js";
 import { PRESENCE_COPY } from "./lib/live.js";
+import { tileAiState } from "./lib/teammates.js";
 import { tileModel } from "./lib/tiles.js";
 import { GATE_STATE_LABELS, ISSUE_TYPE_LABELS, formatDuration } from "./lib/vocabulary.js";
 import { prioMark } from "./marks.js";
@@ -134,11 +135,20 @@ export function tileHtml(card, opts = {}) {
       : "";
     r4s = `<div class="r4s">${mark}${status}${age}</div>`;
   }
+  // Teams item 19: the Agent's state on this issue, as the harness set it
+  // (`GET /api/agent/states`), with the AI badge; its sentence is the description.
+  const ai = tileAiState(opts.ai);
+  const aiId = `ai-${card.id}`;
+  const aiRow = ai
+    ? `<div class="tile-ai" id="${esc(aiId)}" ${tip(ai.sentence)}><b>${esc(ai.name)}</b>${aiBadge()}<span class="tile-ai-st">${esc(ai.label)}</span></div>`
+    : "";
 
   // No step, token or time budget on the card face (DEC-31, DB-N7-3): the issue shows them.
   const excerpt = card.spec
     ? `<p class="spec comfy">${esc(String(card.spec).split("\n")[0].slice(0, 160))}</p>`
     : "";
-  const described = [t.blocker ? blkId : "", st ? stId : ""].filter(Boolean).join(" ");
-  return `<li class="${cls}" role="option" id="tile-${esc(card.id)}" data-id="${esc(card.id)}" aria-selected="${opts.selected ? "true" : "false"}"${described ? ` aria-describedby="${esc(described)}"` : ""}>${r1}<p class="title">${esc(t.title)}</p>${r3}${blocker}${r4s}${excerpt}</li>`;
+  const described = [t.blocker ? blkId : "", st ? stId : "", ai ? aiId : ""]
+    .filter(Boolean)
+    .join(" ");
+  return `<li class="${cls}" role="option" id="tile-${esc(card.id)}" data-id="${esc(card.id)}" aria-selected="${opts.selected ? "true" : "false"}"${described ? ` aria-describedby="${esc(described)}"` : ""}>${r1}<p class="title">${esc(t.title)}</p>${r3}${blocker}${r4s}${aiRow}${excerpt}</li>`;
 }

@@ -26,6 +26,7 @@ export * from "./subtask.js";
 export * from "./lsp.js";
 export * from "./ranked_repo_map.js";
 export * from "./prompt_tags.js";
+export * from "./prompt_roles.js";
 export * from "./prompt_lint.js";
 export * from "./prompt_literals.js";
 export * from "./worker_copy.js";

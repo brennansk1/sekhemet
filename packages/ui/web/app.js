@@ -279,6 +279,29 @@ async function hydrate() {
   store.set({ loaded: true });
   refreshDecisions().catch(() => {});
   refreshInbox().catch(() => {});
+  refreshAgentStates().catch(() => {});
+}
+
+/**
+ * The Agent's state per issue and the person's place in the queue (teams
+ * items 19, 31): the tiles and the Agent status line read them.
+ */
+async function refreshAgentStates() {
+  const r = await getJSON("/api/agent/states").catch(() => ({ ok: false }));
+  if (!r.ok) return;
+  store.set({
+    agentStates: new Map((r.data?.states ?? []).map((s) => [s.cardId, s.ai])),
+    agentQueue: r.data?.queue ?? null,
+  });
+}
+
+let agentTimer = 0;
+function refreshAgentStatesSoon() {
+  if (agentTimer) return;
+  agentTimer = setTimeout(() => {
+    agentTimer = 0;
+    refreshAgentStates().catch(() => {});
+  }, 1000);
 }
 
 /** The Inbox refetched at most once a second while the ledger is busy (a run moves cards often). */
@@ -353,6 +376,9 @@ export function connect() {
         )
       )
         refreshInboxSoon();
+      // The Agent's states and the queue move with its issues and requests.
+      if ((payload.events ?? []).some((e) => /^(card|agent|queue|decision)\//.test(e.type)))
+        refreshAgentStatesSoon();
       if (
         (payload.events ?? []).some(
           (e) => e.type === "card/status_changed" && /^returned/.test(e.payload?.reason ?? ""),

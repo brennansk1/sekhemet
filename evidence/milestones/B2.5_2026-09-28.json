@@ -1,0 +1,255 @@
+{
+  "id": "B2.5",
+  "title": "A recorded, reproducible baseline: one RunProfile, the full suite and the planning measure, every failure named",
+  "verdict": "NOT RUN",
+  "reason": "every arm's rounds: 8 runs recorded; still to run: evidence-gate-r2, fixed-tools-r2, strict-r2, thinking-all-r2; the planning measure: no planning measure yet (it waits on the confirmed golden briefs); the frozen RunProfile in SUITE_RUNS.md: not frozen yet (the schedule freezes it when it completes)",
+  "commit": "150b7f8ebd5fa95c4c1a540969effda57b94c39f",
+  "treeClean": false,
+  "date": "2026-09-28",
+  "recordedAt": "2026-09-29T02:52:54.072Z",
+  "host": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "release": "25.6.0",
+    "node": "v26.0.0",
+    "memoryGB": 24
+  },
+  "checks": [
+    {
+      "name": "every arm's rounds",
+      "ok": null,
+      "detail": "8 runs recorded; still to run: evidence-gate-r2, fixed-tools-r2, strict-r2, thinking-all-r2"
+    },
+    {
+      "name": "every failure named",
+      "ok": true,
+      "detail": "84 failures, each with its stop reason"
+    },
+    {
+      "name": "one suite hash",
+      "ok": true,
+      "detail": "d70f689d4125"
+    },
+    {
+      "name": "the planning measure",
+      "ok": null,
+      "detail": "no planning measure yet (it waits on the confirmed golden briefs)"
+    },
+    {
+      "name": "the frozen RunProfile in SUITE_RUNS.md",
+      "ok": null,
+      "detail": "not frozen yet (the schedule freezes it when it completes)"
+    }
+  ],
+  "details": {
+    "arms": ["evidence-gate", "fixed-tools", "ref", "strict", "thinking-all", "thinking-surgical"],
+    "runs": [
+      {
+        "run": "evidence-gate-r1.json",
+        "passed": 18,
+        "total": 30,
+        "profileHash": "01cf39d2addfb656530384958b40c2f656b9498274d27e011de7a0bb9adbdf0f",
+        "switches": {
+          "thinking": "off",
+          "workerMethod": "baseline",
+          "evidenceGate": "on",
+          "toolArm": "progressive"
+        },
+        "failures": [
+          "chronicle_5: budget_exhausted",
+          "chronicle_6: blocked: the queue deferred it; prerequisites card_chron_ledger did not merge",
+          "card_onyx_4_vault: budget_exhausted",
+          "card_onyx_7_cli: oscillation_detected",
+          "card_onyx_8_e2e: blocked: src/cli, src/vault never built (an earlier card failed); the queue ran it: budget_exhausted",
+          "card_vang_4_ingest: budget_exhausted",
+          "card_vang_5_replay: oscillation_detected",
+          "card_vang_6_sse: budget_exhausted",
+          "card_vang_8_e2e: blocked: src/ingest, src/replay, src/sse never built (an earlier card failed); the queue ran it: budget_exhausted",
+          "card_canvas_2_store: oscillation_detected",
+          "card_canvas_7_palette: budget_exhausted",
+          "card_canvas_8_e2e_ui: blocked: src/store never built (an earlier card failed); the queue ran it: oscillation_detected"
+        ],
+        "finishedAt": "2026-09-28T05:38:38.874Z"
+      },
+      {
+        "run": "fixed-tools-r1.json",
+        "passed": 18,
+        "total": 30,
+        "profileHash": "a15108e5b1cb07b17e20dda43958d2ab67b6ebfb63d987250700076776f5c0b5",
+        "switches": {
+          "thinking": "off",
+          "workerMethod": "baseline",
+          "evidenceGate": "off",
+          "toolArm": "fixed"
+        },
+        "failures": [
+          "chronicle_4: budget_exhausted",
+          "chronicle_5: blocked: the queue deferred it; prerequisites card_chron_verifier did not merge",
+          "chronicle_6: blocked: the queue deferred it; prerequisites card_chron_ledger did not merge",
+          "card_onyx_4_vault: oscillation_detected",
+          "card_onyx_8_e2e: blocked: src/vault never built (an earlier card failed); the queue ran it: budget_exhausted",
+          "card_vang_4_ingest: budget_exhausted",
+          "card_vang_5_replay: budget_exhausted",
+          "card_vang_6_sse: budget_exhausted",
+          "card_vang_7_cli: oscillation_detected",
+          "card_vang_8_e2e: blocked: src/ingest, src/replay, src/sse never built (an earlier card failed); the queue ran it: replan_requested",
+          "card_canvas_7_palette: budget_exhausted",
+          "card_canvas_8_e2e_ui: oscillation_detected"
+        ],
+        "finishedAt": "2026-09-28T02:48:51.016Z"
+      },
+      {
+        "run": "ref-r1.rescored.json",
+        "passed": 20,
+        "total": 30,
+        "profileHash": "f7d1adaabdf0d3f83ab5528d69ceabddd3765afceb92ddb5895f124b22d42f6f",
+        "switches": {
+          "thinking": "off",
+          "workerMethod": "baseline",
+          "evidenceGate": "off",
+          "toolArm": "progressive"
+        },
+        "failures": [
+          "chronicle_5: budget_exhausted",
+          "chronicle_6: blocked: the queue deferred it; prerequisites card_chron_ledger did not merge",
+          "card_onyx_4_vault: budget_exhausted",
+          "card_onyx_8_e2e: blocked: src/vault never built (an earlier card failed); the queue ran it: replan_requested",
+          "card_vang_4_ingest: budget_exhausted",
+          "card_vang_5_replay: budget_exhausted",
+          "card_vang_6_sse: oscillation_detected",
+          "card_vang_8_e2e: blocked: src/ingest, src/replay, src/sse never built (an earlier card failed); the queue ran it: budget_exhausted",
+          "card_canvas_7_palette: budget_exhausted",
+          "card_canvas_8_e2e_ui: oscillation_detected"
+        ],
+        "finishedAt": "2026-09-25T22:32:29.720Z"
+      },
+      {
+        "run": "ref-r2.json",
+        "passed": 18,
+        "total": 30,
+        "profileHash": "f7d1adaabdf0d3f83ab5528d69ceabddd3765afceb92ddb5895f124b22d42f6f",
+        "switches": {
+          "thinking": "off",
+          "workerMethod": "baseline",
+          "evidenceGate": "off",
+          "toolArm": "progressive"
+        },
+        "failures": [
+          "chronicle_5: budget_exhausted",
+          "chronicle_6: blocked: the queue deferred it; prerequisites card_chron_ledger did not merge",
+          "card_onyx_4_vault: budget_exhausted",
+          "card_onyx_8_e2e: blocked: src/vault never built (an earlier card failed); the queue ran it: budget_exhausted",
+          "card_vang_4_ingest: replan_requested",
+          "card_vang_5_replay: oscillation_detected",
+          "card_vang_6_sse: oscillation_detected",
+          "card_vang_7_cli: budget_exhausted",
+          "card_vang_8_e2e: blocked: src/ingest, src/replay, src/sse never built (an earlier card failed); the queue ran it: budget_exhausted",
+          "card_canvas_2_store: budget_exhausted",
+          "card_canvas_7_palette: budget_exhausted",
+          "card_canvas_8_e2e_ui: blocked: src/store never built (an earlier card failed); the queue ran it: oscillation_detected"
+        ],
+        "finishedAt": "2026-09-28T09:05:44.081Z"
+      },
+      {
+        "run": "strict-r1.json",
+        "passed": 18,
+        "total": 30,
+        "profileHash": "7a33e8f6ebdbd98de7a56b65e6361044b8be2f9b71a10ab6c815783be54eeea2",
+        "switches": {
+          "thinking": "off",
+          "workerMethod": "strict",
+          "evidenceGate": "off",
+          "toolArm": "progressive"
+        },
+        "failures": [
+          "chronicle_5: budget_exhausted",
+          "chronicle_6: blocked: the queue deferred it; prerequisites card_chron_ledger did not merge",
+          "card_onyx_4_vault: budget_exhausted",
+          "card_onyx_7_cli: budget_exhausted",
+          "card_onyx_8_e2e: blocked: src/cli, src/vault never built (an earlier card failed); the queue ran it: budget_exhausted",
+          "card_vang_4_ingest: budget_exhausted",
+          "card_vang_5_replay: budget_exhausted",
+          "card_vang_6_sse: oscillation_detected",
+          "card_vang_7_cli: oscillation_detected",
+          "card_vang_8_e2e: blocked: src/ingest, src/replay, src/sse never built (an earlier card failed); the queue ran it: replan_requested",
+          "card_canvas_7_palette: budget_exhausted",
+          "card_canvas_8_e2e_ui: oscillation_detected"
+        ],
+        "finishedAt": "2026-09-27T23:17:09.341Z"
+      },
+      {
+        "run": "thinking-all-r1.json",
+        "passed": 21,
+        "total": 30,
+        "profileHash": "8d75de59b881ed08121508e3316a7ecb6ec6d807e9777695f3f2fd176593e74c",
+        "switches": {
+          "thinking": "all",
+          "workerMethod": "baseline",
+          "evidenceGate": "off",
+          "toolArm": "progressive"
+        },
+        "failures": [
+          "chronicle_5: oscillation_detected",
+          "chronicle_6: blocked: the queue deferred it; prerequisites card_chron_ledger did not merge",
+          "card_onyx_4_vault: oscillation_detected",
+          "card_onyx_8_e2e: blocked: src/vault never built (an earlier card failed); the queue ran it: budget_exhausted",
+          "card_vang_4_ingest: budget_exhausted",
+          "card_vang_5_replay: oscillation_detected",
+          "card_vang_6_sse: time_budget_exhausted",
+          "card_vang_8_e2e: blocked: src/ingest, src/replay, src/sse never built (an earlier card failed); the queue ran it: memory_pressure",
+          "card_canvas_8_e2e_ui: oscillation_detected"
+        ],
+        "finishedAt": "2026-09-27T17:42:53.172Z"
+      },
+      {
+        "run": "thinking-surgical-r1.rescored.json",
+        "passed": 22,
+        "total": 30,
+        "profileHash": "76c513b9d78b91a5c3240a4f994b42307167e99575f07b55907f3037e42d9eb5",
+        "switches": {
+          "thinking": "surgical",
+          "workerMethod": "baseline",
+          "evidenceGate": "off",
+          "toolArm": "progressive"
+        },
+        "failures": [
+          "chronicle_6: budget_exhausted",
+          "card_onyx_8_e2e: budget_exhausted",
+          "card_vang_4_ingest: budget_exhausted",
+          "card_vang_5_replay: replan_requested",
+          "card_vang_6_sse: budget_exhausted",
+          "card_vang_8_e2e: blocked: src/ingest, src/replay, src/sse never built (an earlier card failed); the queue ran it: oscillation_detected",
+          "card_canvas_7_palette: budget_exhausted",
+          "card_canvas_8_e2e_ui: oscillation_detected"
+        ],
+        "finishedAt": "2026-09-26T02:24:11.565Z"
+      },
+      {
+        "run": "thinking-surgical-r2.json",
+        "passed": 21,
+        "total": 30,
+        "profileHash": "76c513b9d78b91a5c3240a4f994b42307167e99575f07b55907f3037e42d9eb5",
+        "switches": {
+          "thinking": "surgical",
+          "workerMethod": "baseline",
+          "evidenceGate": "off",
+          "toolArm": "progressive"
+        },
+        "failures": [
+          "chronicle_5: oscillation_detected",
+          "chronicle_6: blocked: the queue deferred it; prerequisites card_chron_ledger did not merge",
+          "card_onyx_8_e2e: budget_exhausted",
+          "card_vang_4_ingest: budget_exhausted",
+          "card_vang_5_replay: budget_exhausted",
+          "card_vang_6_sse: budget_exhausted",
+          "card_vang_8_e2e: blocked: src/ingest, src/replay, src/sse never built (an earlier card failed); the queue ran it: replan_requested",
+          "card_canvas_7_palette: budget_exhausted",
+          "card_canvas_8_e2e_ui: oscillation_detected"
+        ],
+        "finishedAt": "2026-09-28T12:14:19.872Z"
+      }
+    ],
+    "missingRounds": ["evidence-gate-r2", "fixed-tools-r2", "strict-r2", "thinking-all-r2"],
+    "planningMeasure": null
+  }
+}

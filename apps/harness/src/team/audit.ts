@@ -68,8 +68,11 @@ export function auditEntries(
     args.push(q.person, q.person, q.person);
   }
   if (q.project) {
-    where.push("(json_extract(e.payload, '$.project') = ? OR c.project_id = ?)");
-    args.push(q.project, q.project);
+    // A release's lead names its project as `projectId` (teams item 28).
+    where.push(
+      "(json_extract(e.payload, '$.project') = ? OR json_extract(e.payload, '$.projectId') = ? OR c.project_id = ?)",
+    );
+    args.push(q.project, q.project, q.project);
   }
   const rows = db
     .prepare(
@@ -110,6 +113,21 @@ export interface AuditRouteDeps {
   /** A personal token's scope: the ceiling of the check (teams item 15). */
   ceilingOf?: (req: IncomingMessage) => Level | undefined;
   projectName: (id: string) => string | undefined;
+  /** Every release, for its name in an entry (DEC-31): its title, else *Release N* in its project. */
+  releases?: () => Promise<{ id: string; projectId: string; title?: string }[]>;
+}
+
+/** A release's name as Status says it: its title, else *Release N* by its place in the project. */
+export function releaseNames(
+  releases: { id: string; projectId: string; title?: string }[],
+): (project: string, id: string) => string | undefined {
+  const byProject = new Map<string, Map<string, string>>();
+  for (const r of releases) {
+    const names = byProject.get(r.projectId) ?? new Map<string, string>();
+    names.set(r.id, r.title?.trim() ? r.title.trim() : `Release ${names.size + 1}`);
+    byProject.set(r.projectId, names);
+  }
+  return (project, id) => byProject.get(project)?.get(id);
 }
 
 /** `GET /api/audit` (TEAM-27): the page, or `?format=csv|json` for the export. */
@@ -151,18 +169,35 @@ export function handleAuditRoute(
     ...(before !== undefined ? { before } : {}),
     limit: exporting ? AUDIT_EXPORT_MAX : (num("limit") ?? AUDIT_PAGE),
   };
+  void respond(res, q, format, exporting, deps).catch((err: unknown) => {
+    if (!res.headersSent) {
+      deps.json(res, 500, { error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  return true;
+}
+
+async function respond(
+  res: ServerResponse,
+  q: AuditQuery,
+  format: string | null,
+  exporting: boolean,
+  deps: AuditRouteDeps,
+): Promise<void> {
   const cache = new Map<string, string | undefined>();
+  const release = deps.releases ? releaseNames(await deps.releases()) : undefined;
   const names = {
     person: (p: string) => {
       if (!cache.has(p)) cache.set(p, personName(deps.db, p));
       return cache.get(p);
     },
     project: deps.projectName,
+    ...(release ? { release } : {}),
   };
   const page = auditEntries(deps.db, q, names);
   if (!exporting) {
     deps.json(res, 200, page);
-    return true;
+    return;
   }
   const day = new Date().toISOString().slice(0, 10);
   const body = format === "csv" ? auditCsv(page.entries) : JSON.stringify(page, null, 2);
@@ -173,5 +208,4 @@ export function handleAuditRoute(
     "Cache-Control": "no-store",
   });
   res.end(body);
-  return true;
 }

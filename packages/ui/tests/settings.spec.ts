@@ -4,8 +4,11 @@ import { describe, expect, it } from "vitest";
 import {
   CONFIG_SOURCE_LABELS,
   DENSITY_CHOICES,
+  QUEUE_CAP_REFUSED,
   REVIEW_MINUTES_REFUSED,
   configRows,
+  queueCapInput,
+  queueCapView,
   readDensity,
   reviewCapacityView,
   reviewMinutesInput,
@@ -133,5 +136,45 @@ describe("Project configuration: each value's source (DB-N4-1)", () => {
     expect(rows.map((r) => r.key)).not.toContain("machine.tier");
     const cli = configRows(config, { "network.mode": "cli" });
     expect(cli[2]).toMatchObject({ label: "Network", source: "The command line" });
+  });
+});
+
+describe("TEAM-30, dashboard §2.16: the per-person Agent cap in Configuration", () => {
+  it("shows the cap in force with its source, editable by an Admin", () => {
+    const v = queueCapView(
+      { queue: { agentIssuesPerPerson: 2 } },
+      { "queue.agent_issues_per_person": "user" },
+      "",
+    );
+    expect(v).toEqual({
+      value: "2",
+      source: "Your configuration (~/.sekhemet/config.toml)",
+      disabled: false,
+      note: "How many Agent issues one person may have running at once. At the limit, their next issue waits and other people's issues go first.",
+    });
+    expect(queueCapView({}, {}, "").value).toBe("1");
+    expect(queueCapView({}, {}, "").source).toBe("Default");
+  });
+
+  it("is read-only below Admin, with the level note beside it", () => {
+    const ro = "Read-only. You're a Member in this workspace. An Admin can set the queue's caps.";
+    const v = queueCapView({ queue: { agentIssuesPerPerson: 1 } }, {}, ro);
+    expect(v.disabled).toBe(true);
+    expect(v.note).toContain(ro);
+  });
+
+  it("takes a whole number of 1 or more, and keeps the previous value otherwise", () => {
+    expect(queueCapInput("3", 1)).toEqual({ ok: true, value: 3 });
+    for (const raw of ["0", "-1", "1.5", "two", ""]) {
+      expect(queueCapInput(raw, 2)).toEqual({ ok: false, value: 2, error: QUEUE_CAP_REFUSED });
+    }
+    expect(QUEUE_CAP_REFUSED).toBe("Agent issues per person is a whole number, 1 or more.");
+  });
+
+  it("the page renders it in Project configuration, marked with the permission it needs", () => {
+    const js = web("configuration.js");
+    expect(js).toContain("data-queue-form");
+    expect(js).toContain('levelNote(getSession(), "queue.caps")');
+    expect(js).toContain('sendJSON("PUT", "/api/config/queue"');
   });
 });

@@ -814,11 +814,18 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
   // dashboard DB-N9-3, DEC-37: a person set a release's target date, drawn as
   // the target line against the forecast range; no `target` clears it.
   "release/target_set": { sliceId: s(ID), projectId: s(ID), target: s(DAY, true) },
+  // teams item 28, dashboard DB-N9-2: a person named a release's lead (the
+  // event's principal is who named them); no `lead` clears it. A Member who
+  // leads a release not yet accepted may set the project's health.
+  "release/lead_set": { sliceId: s(ID), projectId: s(ID), lead: s(PRINCIPAL, true) },
+  // design-stage §2.9 item 7: a message in a sent plan's thread — the
+  // approver's question, or the sender's answer. The words are private.
+  "plan/commented": { proposalId: s(ID), id: s(ID), text: priv("free_text", TEXT) },
   // The one notifier (integrations items 20-23a): which channel, which kind,
   // whether it went, and for the budget the person, the notice and the day.
   // The notice's text and the channel's URL or token are never on the ledger.
   "pm/notify": {
-    channel: s(v.picklist(["ntfy", "gotify", "slack"])),
+    channel: s(v.picklist(["ntfy", "gotify", "slack", "email"])),
     kind: s(NOTICE_KIND),
     ok: s(v.boolean()),
     to: s(PRINCIPAL, true),
@@ -851,7 +858,7 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     notice: s(ID),
     to: s(PRINCIPAL, true),
     day: s(DAY, true),
-    channel: s(v.picklist(["ntfy", "gotify", "slack"]), true),
+    channel: s(v.picklist(["ntfy", "gotify", "slack", "email"]), true),
     attempt: s(v.pipe(v.number(), v.integer(), v.minValue(0)), true),
   },
   // teams M6: a recorded switch of setup; Solo starts on a Team ledger only after one.

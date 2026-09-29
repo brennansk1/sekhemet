@@ -1026,11 +1026,13 @@
   flex: none;
   margin-top: 1px;
 }
-.push-form {
+.push-form,
+.email-form {
   flex-wrap: wrap;
 }
 .push-form input,
-.push-form select {
+.push-form select,
+.email-form input:not([type="checkbox"]) {
   flex: 1 1 160px;
   min-width: 0;
   height: 24px;
@@ -1047,7 +1049,17 @@
 .push-form input[name="url"] {
   flex: 1 1 240px;
 }
-.push-form input::placeholder {
+.email-form input[name="port"] {
+  flex: 0 0 72px;
+}
+.email-form label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+}
+.push-form input::placeholder,
+.email-form input::placeholder {
   color: var(--text-secondary);
 }
 .slack-form input {
@@ -1700,5 +1712,11 @@
   /* The query's edge is on its wrapper, so the wrapper grows with the field. */
   .vbar .q {
     height: 44px;
+  }
+  /* Integrations › Email: the TLS checkbox is a 44×44 target, as Configuration's are. */
+  .email-form input[type="checkbox"] {
+    width: 44px;
+    height: 44px;
+    margin: 0;
   }
 }

@@ -2,7 +2,10 @@
 // focused tile for keyboards. Each move is one POST /api/cards/:id/reorder
 // with the card's new neighbours; the server writes one fractional key.
 import { postJSON } from "./dom.js";
+import { noteFor } from "./level_gate.js";
 import { dropIndex, neighboursFor } from "./reorder_logic.js";
+import { store } from "./store.js";
+import { toast } from "./toast.js";
 
 function columnOf(tile) {
   return tile?.parentElement ?? null;
@@ -10,6 +13,12 @@ function columnOf(tile) {
 
 function idsIn(list) {
   return [...list.children].filter((n) => n.classList?.contains("tile")).map((n) => n.dataset.id);
+}
+
+/** DB-N9-17: why this person cannot move the tile's issue, or undefined when they can. */
+function moveNote(tile) {
+  const card = store.card(tile?.dataset.id);
+  return noteFor("priority.change", card?.projectId, card?.projectName);
 }
 
 async function send(id, pos) {
@@ -23,7 +32,8 @@ export function bindReorder(container) {
   let dragged = null;
   container.addEventListener("pointerdown", (e) => {
     const tile = e.target instanceof Element ? e.target.closest(".tile") : null;
-    if (tile) tile.draggable = true;
+    // Below Member the tile does not drag; the board says why once, above it.
+    if (tile && !moveNote(tile)) tile.draggable = true;
   });
   container.addEventListener("dragstart", (e) => {
     const tile = e.target instanceof Element ? e.target.closest(".tile") : null;
@@ -62,6 +72,11 @@ export function bindReorder(container) {
     const list = columnOf(tile);
     if (!tile || !list) return;
     e.preventDefault();
+    const note = moveNote(tile);
+    if (note) {
+      toast({ tone: "parked", text: note });
+      return;
+    }
     const ids = idsIn(list);
     const from = ids.indexOf(tile.dataset.id);
     const to = e.key === "ArrowUp" ? from - 1 : from + 2;

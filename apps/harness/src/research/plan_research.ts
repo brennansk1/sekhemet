@@ -17,6 +17,7 @@ import {
   unaskedResearchHosts,
 } from "../research_consent.js";
 import { runnerLease } from "../runner_lease.js";
+import type { ConfigWrite } from "../team/config_audit.js";
 import { DEPS_DEV_HOST, depsDevVersion } from "./deps_dev.js";
 import type { ResearchDeps } from "./researcher.js";
 import {
@@ -54,6 +55,12 @@ export interface PlanResearchOptions {
   ask?: (question: string) => Promise<boolean>;
   /** Injectable for tests; the product uses the research fetch of security item 29a. */
   fetchImpl?: Fetch;
+  /**
+   * Records an answer's write to the user config.toml as Sekhemet's own
+   * (`config/changed` with the person, TEAM-44); `plan` passes it. Only a
+   * run that may ask (`newProject` with `ask`) writes.
+   */
+  recordConfigWrite?: ConfigWrite;
 }
 
 const NOT_LOOKED = "Did not look for existing packages, repositories or papers";
@@ -113,6 +120,7 @@ export async function planResearch(o: PlanResearchOptions): Promise<ReuseDeps | 
     const ask = o.ask;
     const answer = await askResearchOnce({
       hosts: RESEARCH_HOSTS,
+      ...(o.recordConfigWrite ? { record: o.recordConfigWrite } : {}),
       ask: () =>
         ask(
           `Look for existing packages, repositories and papers before planning? A yes lets Sekhemet's own research reach ${RESEARCH_HOSTS.join(", ")} (short keyword queries only, each logged); the commands an issue runs still get no network. [y/N] `,
@@ -134,7 +142,7 @@ export async function planResearch(o: PlanResearchOptions): Promise<ReuseDeps | 
     const yes = await o.ask(
       `Research may also reach ${unasked.join(", ")}, which your earlier yes to research did not name (short keyword queries only, each logged; the commands an issue runs still get no network). Allow ${unasked.length === 1 ? "it" : "them"} too? [y/N] `,
     );
-    recordResearchHostsAnswer(yes, unasked);
+    recordResearchHostsAnswer(yes, unasked, undefined, o.recordConfigWrite);
   }
   const user = networkConfigs(o.repoPath).user;
   const awaiting = awaitingResearchHosts(user);

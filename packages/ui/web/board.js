@@ -6,6 +6,7 @@ import { $, $$, brandMark, esc, icon, postJSON, tip } from "./dom.js";
 import { fieldKey, selectionOrFocused } from "./fields.js";
 import * as lanes from "./lanes.js";
 import { tip as learnTip } from "./learn.js";
+import { noteFor } from "./level_gate.js";
 import {
   boardColumnDefs,
   boardModel,
@@ -185,7 +186,7 @@ function headerHtml(col) {
     : "";
   // DB-P3-12: the columns a new card can start in carry the create `+`.
   const add = CREATE_COLUMNS.has(col.id)
-    ? `<button class="more add" type="button" data-create aria-label="${esc(QUICK_CREATE_COPY.plus)}" ${tip(QUICK_CREATE_COPY.plusTip)}>${icon("plus")}</button>`
+    ? `<button class="more add" type="button" data-create data-needs="issue.create" data-needs-quiet${store.state.project?.id ? ` data-needs-project="${esc(store.state.project.id)}"` : ""} aria-label="${esc(QUICK_CREATE_COPY.plus)}" ${tip(QUICK_CREATE_COPY.plusTip)}>${icon("plus")}</button>`
     : "";
   return `<div class="col-h"><h2 id="h-${esc(col.id)}">${esc(col.label)}</h2>${colTip}${c}${wipTip}${pts}${add}<button class="more" type="button" data-colmenu="${esc(col.id)}" aria-label="${esc(col.label)} column options"${lim ? ` aria-description="${esc(lim.derivation)}"` : ""}>${icon("more")}</button></div>${cap}`;
 }
@@ -274,6 +275,8 @@ function tileOpts(card) {
     epics: store.state.epics,
     // DB-N9-20: the others dragging this card, from the stream's presence frame.
     draggedBy: draggedBy(store.state.presence, card.id, getSession().principal),
+    // Teams item 19: the Agent's state on the issue (`GET /api/agent/states`).
+    ai: store.state.agentStates?.get?.(card.id),
   };
 }
 
@@ -487,6 +490,7 @@ function render() {
 
 /** The chips bar above the board, patched only when it changed. */
 function paintChips(chips) {
+  paintBoardLevelNote();
   const html = chipsHtml(chips);
   const host = $(":scope > .col-chips", ui.root);
   if (host && host.outerHTML === html) return;
@@ -495,6 +499,35 @@ function paintChips(chips) {
   const fresh = t.content.firstElementChild;
   if (host) host.replaceWith(fresh);
   else ui.root.prepend(fresh);
+}
+
+/**
+ * DB-N9-17: where the viewer's level cannot create or move issues on this
+ * board, the sentence is written once above it — the column `+` and the
+ * tiles' drag carry it quietly (their title and description).
+ */
+function boardLevelNote() {
+  const project = store.state.project?.id;
+  const create = noteFor("issue.create", project);
+  const move = noteFor("priority.change", project);
+  return [create, move && move !== create ? move.replace(/^You're [^.]*\. /, "") : ""]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function paintBoardLevelNote() {
+  const text = boardLevelNote();
+  let el = $(":scope > .board-level-note", ui.root);
+  if (!text) {
+    el?.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement("p");
+    el.className = "level-note board-level-note";
+    ui.root.prepend(el);
+  }
+  if (el.textContent !== text) el.textContent = text;
 }
 
 /**

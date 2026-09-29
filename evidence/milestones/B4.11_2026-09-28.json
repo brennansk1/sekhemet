@@ -1,0 +1,48 @@
+{
+  "id": "B4.11",
+  "title": "A team of five, at four access levels, takes a project from a stakeholder's conversation to an accepted release on one server",
+  "verdict": "NOT RUN",
+  "reason": "a stakeholder's conversation with Seshat becomes a plan a Member approves: needs Seshat's model loaded on the reference machine (the capstone run); the plan's issues built, reviewed and accepted under the Accept rule, and the release accepted: needs the Worker model for a live run (the capstone), then this audit on its ledger",
+  "commit": "150b7f8ebd5fa95c4c1a540969effda57b94c39f",
+  "treeClean": false,
+  "date": "2026-09-28",
+  "recordedAt": "2026-09-29T02:53:47.546Z",
+  "host": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "release": "25.6.0",
+    "node": "v26.0.0",
+    "memoryGB": 24
+  },
+  "checks": [
+    {
+      "name": "a team of five at four levels on one server",
+      "ok": true,
+      "detail": "Ada Admin admin, Lee Lead member, Mo Member member, Sam Stakeholder stakeholder, Vi Viewer viewer"
+    },
+    {
+      "name": "every write attributed to one of the five",
+      "ok": true,
+      "detail": "0 events a person caused without a principal; 0 principals outside the team (on this runner's sign-in ledger)"
+    },
+    {
+      "name": "a stakeholder's conversation with Seshat becomes a plan a Member approves",
+      "ok": null,
+      "detail": "needs Seshat's model loaded on the reference machine (the capstone run)"
+    },
+    {
+      "name": "the plan's issues built, reviewed and accepted under the Accept rule, and the release accepted",
+      "ok": null,
+      "detail": "needs the Worker model for a live run (the capstone), then this audit on its ledger"
+    }
+  ],
+  "details": {
+    "people": {
+      "ada": "admin",
+      "lee": "member",
+      "mo": "member",
+      "sam": "stakeholder",
+      "vi": "viewer"
+    }
+  }
+}

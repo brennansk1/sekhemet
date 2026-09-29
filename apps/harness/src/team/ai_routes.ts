@@ -3,6 +3,7 @@ import type { Level } from "./access.js";
 import {
   AiTeammateError,
   type AiTeammatesDeps,
+  agentStatesFor,
   aiStates,
   answerStartRequest,
   issueComments,
@@ -44,7 +45,8 @@ export async function handleAiTeammateRoute(
   const comments = COMMENTS.exec(url);
   const answer = ANSWER.exec(url);
   const requests = url === "/api/agent/requests";
-  if (!comments && !answer && !requests) return false;
+  const states = url === "/api/agent/states";
+  if (!comments && !answer && !requests && !states) return false;
   const method = req.method ?? "GET";
   const deps = ctx.deps();
   if (!deps) {
@@ -52,12 +54,23 @@ export async function handleAiTeammateRoute(
       res,
       method === "GET" ? 200 : 501,
       method === "GET"
-        ? { comments: [], ai: [], requests: [] }
+        ? { comments: [], ai: [], requests: [], states: [], queue: null }
         : { error: "This server was started read-only" },
     );
     return true;
   }
   const me = ctx.principalOf(req);
+
+  // Teams items 19 and 31: the Agent's state on each issue it is on that the
+  // person can see (the board's tiles), and where their own issue stands.
+  if (states && method === "GET") {
+    ctx.json(res, 200, await agentStatesFor(deps, me, (project) => ctx.canSee(req, project)));
+    return true;
+  }
+  if (states) {
+    ctx.json(res, 405, { error: "Method not allowed." });
+    return true;
+  }
 
   if (requests && method === "GET") {
     const mine = await startRequests(deps, { for: me });

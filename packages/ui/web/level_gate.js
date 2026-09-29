@@ -8,6 +8,9 @@
 // every render. The server still checks every write (TEAM-4): the note says
 // in advance what its refusal would. Solo's one person is Admin, so nothing
 // is ever disabled there. The sentence is `/app/lib/team_admin.js`'s.
+// A control in a tight place — a column header's `+`, a table cell — is
+// marked `data-needs-quiet`: its note is its title and, for screen readers,
+// a hidden description, and its view writes the sentence once where it reads.
 import { levelNote } from "./lib/team_admin.js";
 import { getSession } from "./session.js";
 import { store } from "./store.js";
@@ -19,6 +22,35 @@ function projectName(control, id) {
   if (control.dataset.needsProjectName) return control.dataset.needsProjectName;
   if (!id) return undefined;
   return store.state.cards?.find?.((c) => c.projectId === id && c.projectName)?.projectName;
+}
+
+/**
+ * The note for a permission on a project for the signed-in person, or
+ * undefined when they may (always in Solo). For views that act from the
+ * keyboard or a drag, where there is no control to disable.
+ */
+export function noteFor(permission, project, projectNameText) {
+  return levelNote(getSession(), permission, {
+    project: project || undefined,
+    projectName: projectNameText ?? (project ? projectName({ dataset: {} }, project) : undefined),
+  });
+}
+
+/**
+ * One visible sentence for a view's quiet controls (DB-N9-17): the first
+ * permission's note, and each further one that differs without repeating
+ * *You're a …* — written once where the view reads, beside its controls'
+ * titles. Empty when the person may do all of them (always in Solo).
+ */
+export function levelSentence(permissions, project, projectNameText) {
+  const notes = [];
+  for (const p of permissions) {
+    const note = noteFor(p, project, projectNameText);
+    if (!note) continue;
+    const text = notes.length ? note.replace(/^You're [^.]*\. /, "") : note;
+    if (!notes.includes(text) && !notes.includes(note)) notes.push(text);
+  }
+  return notes.join(" ");
 }
 
 /** Disable one marked control and write its note beside it, or leave it. */
@@ -40,9 +72,12 @@ export function applyLevelGate(control) {
   }
   const id = `level-note-${++seq}`;
   const span = document.createElement("span");
-  span.className = "level-note";
+  // A quiet control's note is its title and a hidden description (see above).
+  const quiet = control.dataset.needsQuiet !== undefined;
+  span.className = quiet ? "level-note sr-only" : "level-note";
   span.id = id;
   span.textContent = note;
+  if (quiet) control.title = note;
   const described = control.getAttribute("aria-describedby");
   control.setAttribute("aria-describedby", described ? `${described} ${id}` : id);
   control.insertAdjacentElement("afterend", span);

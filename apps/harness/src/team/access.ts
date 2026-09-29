@@ -28,6 +28,11 @@ export interface ActionRule {
    */
   lead?: true | "only";
   /**
+   * A Member who leads one of the project's releases not yet accepted may
+   * too (item 28: "the project lead, or any Member who leads a release").
+   */
+  releaseLead?: true;
+  /**
    * `only`: held by the people the project's Accept rule names, at Member or
    * above (item 7) — the level alone is not enough. `or`: the level, or being named.
    */
@@ -88,8 +93,16 @@ export const ACTIONS = {
   "playbook.approve_all": { level: "admin", does: "approve a Playbook rule for all projects" },
   // PM_CONTRACT: "In the Team setup only the project's lead or an Admin" (teams item 6).
   "project.update": { level: "admin", lead: true, does: "post this project's update" },
-  // Teams item 28, TEAM-28, DB-N9-2: health is the project lead's call.
-  "project.health": { level: "member", lead: "only", does: "set this project's health" },
+  // Teams item 28, TEAM-28, DB-N9-2: health is the project lead's call, or
+  // a Member's who leads a release not yet accepted.
+  "project.health": {
+    level: "member",
+    lead: "only",
+    releaseLead: true,
+    does: "set this project's health",
+  },
+  // Teams item 28, DB-N9-2: who leads a release, named like its target date.
+  "release.lead": { level: "admin", lead: true, does: "name a release's lead" },
   // DB-N9-3, DEC-37: a release's target date, like the project's settings.
   "release.target": { level: "admin", lead: true, does: "set a release's target date" },
   // Teams item 6: brief acceptance is the project's Admin or lead, like its settings.
@@ -129,13 +142,25 @@ export interface TeamProjection {
   members: Map<string, MemberRecord>;
   projects: Map<string, ProjectSettings>;
   /**
+   * Each project's releases that have a lead (item 28, `release/lead_set`),
+   * release id to lead, and the releases a person has accepted since.
+   */
+  releaseLeads: Map<string, Map<string, string>>;
+  acceptedReleases: Set<string>;
+  /**
    * Who turned each auto-apply property on, by project (TEAM-41): the
    * principal of the change that last switched it from off to on.
    */
   autoApplyBy: Map<string, Record<string, string>>;
 }
 
-const ACCESS_TYPES = ["member/level_changed", "member/label_changed", "project/settings_changed"];
+const ACCESS_TYPES = [
+  "member/level_changed",
+  "member/label_changed",
+  "project/settings_changed",
+  "release/lead_set",
+  "slice/accepted",
+];
 
 /** Fold the member and project-settings events into who may do what. */
 export function projectTeam(db: DatabaseSync): TeamProjection {
@@ -151,13 +176,38 @@ export function projectTeam(db: DatabaseSync): TeamProjection {
   }
   const projects = new Map<string, ProjectSettings>();
   const autoApplyBy = new Map<string, Record<string, string>>();
+  const releaseLeads = new Map<string, Map<string, string>>();
+  const acceptedReleases = new Set<string>();
   const rows = db
     .prepare(
-      `SELECT type, payload, principal FROM events WHERE type IN (${ACCESS_TYPES.map(() => "?").join(",")}) ORDER BY seq`,
+      `SELECT type, actor, payload, principal FROM events WHERE type IN (${ACCESS_TYPES.map(() => "?").join(",")}) ORDER BY seq`,
     )
-    .all(...ACCESS_TYPES) as { type: string; payload: string; principal: string | null }[];
+    .all(...ACCESS_TYPES) as {
+    type: string;
+    actor: string;
+    payload: string;
+    principal: string | null;
+  }[];
   for (const row of rows) {
     const p = JSON.parse(row.payload) as Record<string, unknown>;
+    // A release's lead is named by a person (a human event with its principal),
+    // never a model; and only a person's acceptance ends it (the slice ledger's rule).
+    if (row.type === "release/lead_set" && (row.actor !== "human" || !row.principal)) continue;
+    if (row.type === "slice/accepted" && row.actor !== "human") continue;
+    if (row.type === "release/lead_set" || row.type === "slice/accepted") {
+      const release = typeof p.sliceId === "string" ? p.sliceId : undefined;
+      const project = typeof p.projectId === "string" ? p.projectId : undefined;
+      if (!release || !project) continue;
+      if (row.type === "slice/accepted") {
+        acceptedReleases.add(release);
+        continue;
+      }
+      const leads = releaseLeads.get(project) ?? new Map<string, string>();
+      if (typeof p.lead === "string" && p.lead) leads.set(release, p.lead);
+      else leads.delete(release);
+      releaseLeads.set(project, leads);
+      continue;
+    }
     if (row.type === "project/settings_changed") {
       const id = typeof p.project === "string" ? p.project : undefined;
       if (!id) continue;
@@ -185,7 +235,7 @@ export function projectTeam(db: DatabaseSync): TeamProjection {
       else member.label = undefined;
     }
   }
-  return { members, projects, autoApplyBy };
+  return { members, projects, autoApplyBy, releaseLeads, acceptedReleases };
 }
 
 export interface AccessOptions {
@@ -327,8 +377,14 @@ export class Access {
     const named = member && (accept?.holders ?? []).includes(principal);
     let allowed: boolean;
     if (rule.lead === "only") {
-      // Solo's one person leads everything (item 1); in the Team setup, the lead alone.
-      allowed = isLead || this.isSoloPerson(principal);
+      // Solo's one person leads everything (item 1); in the Team setup, the
+      // lead — and, where the rule says so, a Member who leads a release (item 28).
+      const leadsRelease =
+        rule.releaseLead === true &&
+        project !== undefined &&
+        member &&
+        this.leadsRelease(principal, project);
+      allowed = isLead || leadsRelease || this.isSoloPerson(principal);
     } else if (rule.acceptRule === "only") {
       // Solo with no rule recorded: the install's person holds Accept, as before.
       allowed = named || (accept?.source === "solo" && this.isSoloPerson(principal));
@@ -358,7 +414,9 @@ export class Access {
         : "";
     const grantedBy =
       rule.lead === "only"
-        ? "The project lead"
+        ? rule.releaseLead
+          ? "The project lead or a Member who leads a release"
+          : "The project lead"
         : rule.acceptRule === "only"
           ? accept?.source === "lead"
             ? "The project lead"
@@ -384,6 +442,25 @@ export class Access {
       return personName(this.options.db, holders[0]) ?? "the project lead";
     }
     return "an Admin";
+  }
+
+  /** The release's lead, while it has one (item 28). */
+  public releaseLead(project: string, release: string): string | undefined {
+    return this.projection().releaseLeads.get(project)?.get(release);
+  }
+
+  /**
+   * Whether the person leads one of the project's releases that no person
+   * has accepted yet, at Member or above there (teams item 28, DB-N9-2).
+   */
+  public leadsRelease(principal: string, project: string): boolean {
+    const level = this.level(principal, project);
+    if (level === undefined || levelRank(level) < levelRank("member")) return false;
+    const { releaseLeads, acceptedReleases } = this.projection();
+    for (const [release, lead] of releaseLeads.get(project) ?? []) {
+      if (lead === principal && !acceptedReleases.has(release)) return true;
+    }
+    return false;
   }
 
   public isLead(principal: string, project: string): boolean {
@@ -883,6 +960,9 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
     /^\/api\/pm\/proposals\/[A-Za-z0-9_-]+\/send-for-approval$/,
     fixed("project.converse"),
   ],
+  // Design-stage §2.9 item 7: a question or answer in a sent plan's thread is a
+  // comment (every level); the route lets only its approver and sender write.
+  [["POST"], /^\/api\/pm\/proposals\/[A-Za-z0-9_-]+\/comments$/, fixed("comment")],
   [
     ["POST"],
     /^\/api\/pm\/proposals\/[A-Za-z0-9_-]+\/approve$/,
@@ -981,6 +1061,12 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
     ["POST"],
     /^\/api\/slices\/([\w.-]+)\/target$/,
     (m) => ({ permissions: ["release.target"], sliceId: m[1] }),
+  ],
+  // Teams item 28, DB-N9-2: a release's lead, named on the release's own project.
+  [
+    ["POST"],
+    /^\/api\/slices\/([\w.-]+)\/lead$/,
+    (m) => ({ permissions: ["release.lead"], sliceId: m[1] }),
   ],
   // Teams item 6: brief acceptance is the project's Admin or lead; the body
   // names the project (checked to exist before it grounds a decision, below).

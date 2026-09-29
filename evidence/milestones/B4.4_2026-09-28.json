@@ -1,0 +1,47 @@
+{
+  "id": "B4.4",
+  "title": "A non-developer starts or takes over a project on the reference machine by conversation and watches its must-haves become proven",
+  "verdict": "NOT RUN",
+  "reason": "start a project by conversation: a scripted non-developer talks to Seshat: needs Seshat's model loaded on the reference machine and scripted conversations a person confirmed (0 confirmed; fixtures/pm_conversations holds drafts only); must-haves become proven: an issue on each take-over fixture built, gated and accepted from the dashboard (DS-TO-15): needs the Worker model loaded for a live run on the reference machine",
+  "commit": "150b7f8ebd5fa95c4c1a540969effda57b94c39f",
+  "treeClean": false,
+  "date": "2026-09-28",
+  "recordedAt": "2026-09-29T02:53:37.377Z",
+  "host": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "release": "25.6.0",
+    "node": "v26.0.0",
+    "memoryGB": 24
+  },
+  "checks": [
+    {
+      "name": "take over: the five DS-TO-15 fixtures reach an approved, evidenced plan with issues, no model loaded",
+      "ok": true,
+      "detail": "6/6 (half-built-ts, broken-build, python-stubs, committed-secret, inherited-issues, and no fixture file edited)"
+    },
+    {
+      "name": "start a project by conversation: a scripted non-developer talks to Seshat",
+      "ok": null,
+      "detail": "needs Seshat's model loaded on the reference machine and scripted conversations a person confirmed (0 confirmed; fixtures/pm_conversations holds drafts only)"
+    },
+    {
+      "name": "must-haves become proven: an issue on each take-over fixture built, gated and accepted from the dashboard (DS-TO-15)",
+      "ok": null,
+      "detail": "needs the Worker model loaded for a live run on the reference machine"
+    }
+  ],
+  "details": {
+    "takeover": {
+      "files": 1,
+      "tests": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "skippedTitles": [],
+      "failedTitles": [],
+      "brokenFiles": [],
+      "ok": true
+    }
+  }
+}

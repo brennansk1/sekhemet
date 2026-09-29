@@ -380,7 +380,8 @@ describe("the record, the advice and the adoption on the ledger (DS-N2-9, MD-N11
       const a = c.create(`/models/${c.modelId}.gguf`, "/bin/llama-server");
       registry.recordCombinationQualification(
         a.modelId,
-        qualificationCombination(a, { ...build, registry }),
+        // `sekhemet qualify --models <m> --role researcher` (CX-N6-4).
+        qualificationCombination(a, { ...build, registry, role: "researcher" }),
         { suiteVersion: "q1.2", passRate: 0.95, status: "qualified" },
       );
     }
@@ -592,7 +593,7 @@ describe("the record, the advice and the adoption on the ledger (DS-N2-9, MD-N11
     out.length = 0;
     expect(await runResearchBakeoffCommand([], k, io)).toBe(1);
     expect(out.join("\n")).toMatch(/apodex-1\.1-mini is not verified on this machine/);
-    expect(out.join("\n")).toMatch(/sekhemet qualify --models apodex-1\.1-mini/);
+    expect(out.join("\n")).toMatch(/sekhemet qualify --models apodex-1\.1-mini --role researcher/);
 
     // Qualified on an old build: Spark needs b10828.
     const old = { ...deps, engineBuild: () => "b7000 (abc1234)" };

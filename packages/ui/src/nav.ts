@@ -357,6 +357,27 @@ export function cheatSheet(visible: readonly NavItem[]): KeyGroup[] {
  * Agent's state in one line — *Agent working on CHR-12 · step 14 of 40*,
  * *Agent idle*, or *Agent paused after step 5 while Seshat replies*.
  */
+/**
+ * Where the viewer's own Agent issue stands in the Team queue, for the line
+ * under the Agent status line (teams item 31, dashboard §2.2.3): its key and
+ * place with an estimate (*CHR-14 · 2nd in queue, about 6 minutes*), or —
+ * when it is next while another person's issue runs — *Priya's issue is
+ * running; yours starts next*. Undefined when none of theirs waits.
+ */
+export function agentQueueLine(
+  queue:
+    | { cardId: string; place: number; message: string; runningFor?: string | undefined }
+    | null
+    | undefined,
+  keyOf: (cardId: string) => string,
+): string | undefined {
+  if (!queue) return undefined;
+  if (queue.place === 1 && queue.runningFor) {
+    return `${queue.runningFor}'s issue is running; yours starts next`;
+  }
+  return `${keyOf(queue.cardId)} · ${queue.message}`;
+}
+
 export function agentStatusLine(input: {
   running: readonly { key: string; step?: number | undefined; budget?: number | undefined }[];
   pausedForSeshat?: { step?: number | undefined } | undefined;

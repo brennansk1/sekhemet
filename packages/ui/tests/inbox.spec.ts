@@ -306,3 +306,23 @@ describe("teams item 23: `@` mentions people as well as the AI teammates", () =>
     expect(personMentions("@DanaLeeX @Agent @Seshat", people)).toEqual([]);
   });
 });
+
+describe("design-stage §2.9 item 7: a question on a sent plan reaches the Inbox", () => {
+  it("tells the sender what the approver asked, and the approver that it was answered", () => {
+    expect(
+      itemLine(
+        item({
+          reason: "needs_you",
+          kind: "plan_question",
+          by: "Mo Member",
+          question: "Why is search first?",
+        }),
+      ).line,
+    ).toBe("Mo Member asked about your plan: Why is search first?");
+    expect(
+      itemLine(
+        item({ reason: "needs_you", kind: "plan_approval", by: "Sam Stakeholder", answered: true }),
+      ).line,
+    ).toBe("Sam Stakeholder answered your question on this plan.");
+  });
+});

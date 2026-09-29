@@ -3,6 +3,7 @@ import { openCreate } from "./create.js";
 // same filter, grouping and selection, sortable columns and inline edits.
 import { $, $$, esc, icon } from "./dom.js";
 import { editField, fieldKey, selectionOrFocused } from "./fields.js";
+import { levelSentence } from "./level_gate.js";
 import { epicFromFilter } from "./lib/create.js";
 import {
   PRIORITY_LABELS,
@@ -13,6 +14,7 @@ import {
   priorityRank,
   showsPoints,
 } from "./lib/pm.js";
+import { fieldPermission } from "./lib/team_admin.js";
 import {
   BOARD_COLUMN_ORDER,
   ISSUE_TYPE_LABELS,
@@ -118,9 +120,12 @@ function sorted(cards) {
 function cell(c, col) {
   const s = store.state;
   const d = c.display ?? {};
+  // DB-N9-17: each edit carries the permission it needs on the issue's project.
+  const needs = () =>
+    `data-needs="${fieldPermission(col.edit)}" data-needs-quiet${c.projectId ? ` data-needs-project="${esc(c.projectId)}"` : ""}`;
   const edit = (inner, label) =>
     col.edit && !(col.edit === "priority" && vb.group === "priority")
-      ? `<button type="button" class="ed" data-edit="${col.edit}" aria-label="${esc(`${col.label}: ${label}. Change`)}">${inner}</button>`
+      ? `<button type="button" class="ed" data-edit="${col.edit}" ${needs()} aria-label="${esc(`${col.label}: ${label}. Change`)}">${inner}</button>`
       : inner;
   switch (col.key) {
     case "priority": {
@@ -228,7 +233,10 @@ function render() {
   const empty = cards.length
     ? ""
     : `<div class="list-empty"><b>No issues match this view.</b><span>Clear a filter chip, or press <kbd>/</kbd> and change the query.</span></div>`;
-  const html = `<div class="tbl-wrap list-wrap"><table class="tbl ltbl" aria-label="Issues" aria-multiselectable="true">${head}<tbody>${body}</tbody></table>${empty}</div>`;
+  // DB-N9-17: the cells' edits carry their note quietly; the sentence is written once, here.
+  const gate = levelSentence(["issue.edit", "priority.change"], s.project?.id);
+  const note = gate ? `<p class="level-note list-level-note">${esc(gate)}</p>` : "";
+  const html = `${note}<div class="tbl-wrap list-wrap"><table class="tbl ltbl" aria-label="Issues" aria-multiselectable="true">${head}<tbody>${body}</tbody></table>${empty}</div>`;
   if (html === ui.last) return;
   const activeId = document.activeElement?.closest?.("tr[data-id]")?.dataset.id;
   const scroller = $(".list-wrap", ui.root);

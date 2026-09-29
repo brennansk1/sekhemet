@@ -17,8 +17,10 @@ import { tightenModes, writePrivateFile } from "./credential_store.js";
  * value; it is not the credential store itself, whose presence marks a Team
  * install (M6). Without a user config and with nothing recorded, nothing is
  * read or written. A lost key reads as every key changed, once.
- * Sekhemet's own writes to the file record `config/changed` with the person
- * who made them, so the next start does not report them as outside changes.
+ * Sekhemet's own writes to the file — Configuration's model folders, the
+ * research question's answer, the start's renamed-key upgrade — record
+ * `config/changed` (`recordConfigWrite`), so the next start does not report
+ * them as outside changes.
  */
 
 /** A dotted key a person reads (`sessions.idle_minutes`); any other character becomes `_`. */
@@ -134,10 +136,13 @@ export function recordConfigAtStart(input: {
 }
 
 /**
- * Sekhemet's own write to the user config (Configuration's model folders):
- * any outside change found first is recorded as such, then the write, then
- * `config/changed {keys, state}` with the person who asked — so the audit
- * log names them and the next start sees no outside change.
+ * Sekhemet's own write to the user config: any outside change found first is
+ * recorded as such, then the write, then `config/changed {keys, state}` — so
+ * the audit log names it and the next start sees no outside change. Every
+ * in-product writer goes through here (TEAM-44): Configuration's model
+ * folders and the research question's answer with the person who asked as
+ * principal; the start's renamed-key upgrade, which no person asked for, as
+ * Sekhemet's own (actor `harness`, no principal).
  */
 export function recordConfigWrite<T>(
   input: {
@@ -145,7 +150,7 @@ export function recordConfigWrite<T>(
     log: EventLog;
     path: string;
     identityDir: string;
-    principal: string;
+    principal?: string;
   },
   write: () => T,
 ): T {
@@ -166,11 +171,26 @@ export function recordConfigWrite<T>(
     const keys = changedKeys(before ?? recordedConfigState(input.db), after);
     if (keys.length)
       input.log.appendNow({
-        actor: "human",
+        ...(input.principal
+          ? { actor: "human" as const, principal: input.principal }
+          : { actor: "harness" as const }),
         type: "config/changed",
-        principal: input.principal,
         payload: { keys, state: after },
       });
   }
   return result;
+}
+
+/** A writer of the user config that records each write as Sekhemet's own (TEAM-44). */
+export type ConfigWrite = <T>(write: () => T) => T;
+
+/** `recordConfigWrite` bound to one ledger, file and person, for a writer to call. */
+export function configWriter(input: {
+  db: DatabaseSync;
+  log: EventLog;
+  path: string;
+  identityDir: string;
+  principal?: string;
+}): ConfigWrite {
+  return (write) => recordConfigWrite(input, write);
 }

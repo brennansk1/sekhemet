@@ -6,7 +6,7 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { describe, expect, it } from "vitest";
 import { abVerdictLine, contextVersionGate, measuredContextVersions } from "../src/context_gate.js";
 import { computeFootprint, runMeasureCommand } from "../src/measure_cmd.js";
-import { workerContextVersion } from "../src/qualify.js";
+import { fullContextVersion } from "../src/prompt_versions.js";
 
 /**
  * CX-N6-2: the release gate compares the built context version with the one
@@ -42,14 +42,14 @@ describe("CX-N6-2: the release gate checks the context version was measured", ()
     expect(gate.reason).toMatch(new RegExp(`${V1}.*no adopted A/B`));
   });
 
-  it("`measure context-gate` checks the built Worker's version; the footprint and admit stamp it", async () => {
+  it("`measure context-gate` checks the built full context version; the footprint and admit stamp it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ctx-gate-"));
     mkdirSync(join(dir, ".sekhemet"), { recursive: true });
     const db = new DatabaseSync(join(dir, ".sekhemet", "events.db"));
     initSchema(db);
     const log = new EventLog(db);
     const k = { repoPath: dir, log, cardStore: new CardStore(db, log) };
-    const built = workerContextVersion();
+    const built = fullContextVersion();
     const file = join(dir, "SUITE_RUNS.md");
     const lines: string[] = [];
     writeFileSync(file, suiteRuns(abVerdictLine("admitted", V1, "2026-09-20")));

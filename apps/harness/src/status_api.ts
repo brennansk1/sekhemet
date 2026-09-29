@@ -108,10 +108,14 @@ export async function statusFacts(deps: {
     ? (await deps.cardStore.slices.list(project.id)).map((sl, i) => ({ sl, i }))
     : [];
   const current = slices.find(({ sl }) => !sl.accepted);
+  // Teams item 28, DB-N9-2: the current release's lead, as a person named them.
+  const releaseLead =
+    team && project && current ? a.releaseLeadOf?.(project.id, current.sl.id) : undefined;
   const release = current
     ? {
         id: current.sl.id,
         name: current.sl.title?.trim() ? current.sl.title.trim() : `Release ${current.i + 1}`,
+        ...(releaseLead ? { lead: { principal: releaseLead, name: nameFor(a, releaseLead) } } : {}),
       }
     : null;
   const targetSet =
@@ -127,6 +131,20 @@ export async function statusFacts(deps: {
       : null;
   const canSetTarget =
     Boolean(release) && (!team || (lead !== undefined && lead === me) || level === "admin");
+  // Naming the release's lead is the project lead's or an Admin's (`release.lead`), in
+  // the Team setup; the choices are the project's Members and Admins, by name.
+  const canSetReleaseLead =
+    team && Boolean(release) && ((lead !== undefined && lead === me) || level === "admin");
+  const releaseLeadChoices =
+    canSetReleaseLead && project
+      ? (a.people?.() ?? [])
+          .filter((p) => {
+            const l = a.levelOf(p, project.id);
+            return l !== undefined && levelRank(l) >= levelRank("member");
+          })
+          .map((p) => ({ principal: p, name: a.nameOf(p) ?? p }))
+          .sort((x, y) => x.name.localeCompare(y.name))
+      : [];
 
   // Finished issues by day, from the project's first issue (at most 60 days back).
   const moves = (await deps.log.getEventsByTypes(["card/status_changed"])).filter((e) =>
@@ -209,13 +227,18 @@ export async function statusFacts(deps: {
     project: project ? { id: project.id, name: project.name } : null,
     ...(agentRequests.length ? { agentRequests } : {}),
     isLead,
-    // The project lead (item 28; `project.health`). A release names no lead of its own yet.
-    canSetHealth: Boolean(project) && isLead,
+    // The project lead, or a Member who leads a release not yet accepted (item 28;
+    // `project.health`).
+    canSetHealth:
+      Boolean(project) &&
+      (isLead || (team && project !== undefined && a.leadsRelease?.(me, project.id) === true)),
     healthWritable: true,
     health,
     release,
     target,
     canSetTarget,
+    canSetReleaseLead,
+    ...(canSetReleaseLead ? { releaseLeadChoices } : {}),
     update,
     updateMissing,
     canPostUpdate,

@@ -70,6 +70,8 @@ export interface IntegrationSettings {
   researchWeb?: boolean;
   /** Self-hosted push (ntfy or Gotify); see notify.ts. */
   push?: import("./notify.js").PushSettings;
+  /** Email through an SMTP server, each notice to one person's own address (TEAM-43); see email.ts. */
+  email?: import("./email.js").EmailSettings;
   lastSync?: Record<string, string>;
 }
 
@@ -105,7 +107,7 @@ function secureSettingsPath(path: string): void {
  * post to the channel, a push token to the phone. Where the host has a
  * keychain they live there (SEC-27a); the file keeps only their account names.
  */
-const SECRET_FIELDS = ["slackWebhookUrl", "slackBotToken", "push.token"] as const;
+const SECRET_FIELDS = ["slackWebhookUrl", "slackBotToken", "push.token", "email.password"] as const;
 
 /** The file as stored: the settings, less secrets kept in the keychain, which it names. */
 type StoredSettings = IntegrationSettings & { keychain?: string[] };
@@ -203,7 +205,7 @@ export function writeSettings(
 // --- Catalogue ----------------------------------------------------------------
 
 type Tier = "now" | "next" | "later";
-type Via = "gh-cli" | "csv" | "webhook" | "api";
+type Via = "gh-cli" | "csv" | "webhook" | "api" | "smtp";
 
 export interface IntegrationEntry {
   id: string;
@@ -224,6 +226,7 @@ const CATALOGUE: Omit<IntegrationEntry, "connected">[] = [
   { id: "slack", name: "Slack for the PM", tier: "now", via: "webhook" },
   { id: "research-web", name: "Research model web access", tier: "now", via: "api" },
   { id: "push", name: "Push notifications (ntfy or Gotify)", tier: "now", via: "webhook" },
+  { id: "email", name: "Email notifications", tier: "now", via: "smtp" },
   { id: "jira-sync", name: "Jira live sync", tier: "next", via: "api" },
   { id: "linear-sync", name: "Linear live sync", tier: "next", via: "api" },
   { id: "github-actions", name: "GitHub Actions checks mirror", tier: "next", via: "gh-cli" },
@@ -290,6 +293,17 @@ export async function listIntegrations(repoPath: string): Promise<IntegrationEnt
           detail: p
             ? `${p.kind === "ntfy" ? `ntfy topic ${p.topic}` : "Gotify"} at ${new URL(p.url).host}; ${(p.events ?? ["review", "parked", "budget", "question", "run_report"]).join(", ")}`
             : "Not connected: a self-hosted ntfy or Gotify server pushes review, park, budget and question alerts to your phone",
+        };
+      }
+      case "email": {
+        const e = settings.email;
+        // The password is never in an entry: only whether one is kept.
+        return {
+          ...base,
+          connected: Boolean(e),
+          detail: e
+            ? `From ${e.from} through ${e.host}:${e.port}${e.user ? ` as ${e.user}` : ""}${e.password ? " (password kept)" : ""}; each person at their own address, within their daily limit`
+            : "Not connected: an SMTP server sends each person their own notices at their own address",
         };
       }
       case "slack":
@@ -876,6 +890,84 @@ export async function handleIntegrationsApi(
       res,
       200,
       (await listIntegrations(ctx.repoPath)).find((i) => i.id === "push"),
+    );
+    return true;
+  }
+
+  if (url === "/api/integrations/email" && (req.method === "PUT" || req.method === "DELETE")) {
+    if (!ctx.mutationGuard(req, res)) return true;
+    const { validateEmail, writeEmail } = await import("./email.js");
+    const { ALL_EVENTS } = await import("./notify.js");
+    if (req.method === "DELETE") {
+      writeEmail(ctx.repoPath, undefined);
+    } else {
+      const b = await ctx.readJsonBody(req);
+      const events = Array.isArray(b.events)
+        ? (b.events as unknown[]).filter((e): e is (typeof ALL_EVENTS)[number] =>
+            (ALL_EVENTS as string[]).includes(String(e)),
+          )
+        : undefined;
+      const user = typeof b.user === "string" && b.user.trim() ? b.user.trim() : undefined;
+      const previous = readSettings(ctx.repoPath).email;
+      // A blank password keeps the one already kept for the same login.
+      const password =
+        typeof b.password === "string" && b.password
+          ? b.password
+          : previous?.password && previous.user === user
+            ? previous.password
+            : undefined;
+      const email = {
+        host: String(b.host ?? "").trim(),
+        port:
+          typeof b.port === "number" ? b.port : Number(String(b.port ?? "").trim() || Number.NaN),
+        ...(b.secure === true ? { secure: true } : {}),
+        ...(user ? { user } : {}),
+        ...(password ? { password } : {}),
+        from: String(b.from ?? "").trim(),
+        ...(events ? { events } : {}),
+        ...(typeof b.dailyBudget === "number" ? { dailyBudget: b.dailyBudget } : {}),
+      };
+      const bad = validateEmail(email);
+      if (bad) {
+        ctx.json(res, 400, { error: bad });
+        return true;
+      }
+      writeEmail(ctx.repoPath, email);
+    }
+    ctx.json(
+      res,
+      200,
+      (await listIntegrations(ctx.repoPath)).find((i) => i.id === "email"),
+    );
+    return true;
+  }
+
+  if (url === "/api/integrations/email/test" && req.method === "POST") {
+    if (!ctx.mutationGuard(req, res)) return true;
+    const { personAddresses, sendEmail } = await import("./email.js");
+    // To the asker's own address, never one typed into the request.
+    const asker = ctx.principalOf?.(req) ?? ctx.log.localPrincipal();
+    const address = (await personAddresses(ctx.log)).get(asker);
+    if (!address) {
+      ctx.json(res, 200, {
+        ok: false,
+        error: "Your account has no email address to send a test to",
+      });
+      return true;
+    }
+    ctx.json(
+      res,
+      200,
+      await sendEmail(
+        ctx.repoPath,
+        {
+          event: "test",
+          title: "Sekhemet email works",
+          message: `Email notifications work for ${basename(ctx.repoPath)}.`,
+        },
+        address,
+        { log: ctx.log, record: { to: asker } },
+      ),
     );
     return true;
   }

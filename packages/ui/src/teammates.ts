@@ -171,6 +171,16 @@ export interface AiStateLine {
   sentence: string;
 }
 
+/**
+ * The Agent's state on a board card's tile (teams item 19): its word and
+ * sentence from the server's facts, or undefined when the Agent is not on
+ * the issue. Seshat takes no issue (DEC-36), so its state is never a tile's.
+ */
+export function tileAiState(ai: readonly AiStateFacts[] | undefined): AiStateLine | undefined {
+  const agent = ai?.find((f) => f.who === "agent");
+  return agent ? aiStateLine(agent) : undefined;
+}
+
 export function aiStateLine(f: AiStateFacts): AiStateLine {
   const name = NAME[f.who];
   // A name at the start of the sentence may be "you": the sentence starts with a capital.

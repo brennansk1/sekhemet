@@ -195,7 +195,9 @@ describe("TEAM-28, DB-N9-2: the project lead sets health; it shows with their na
       });
       const body = (await res.json()) as { error: string };
       expect(res.status).toBe(403);
-      expect(body.error).toMatch(/The project lead can set this project's health\./);
+      expect(body.error).toMatch(
+        /The project lead or a Member who leads a release can set this project's health\./,
+      );
     }
     expect(await log.getEventsByTypes(["project/health_set"])).toEqual([]);
 

@@ -426,12 +426,16 @@ describe("Smart Swap in the product", () => {
         now: new Date(2026, 8, 28, 10, 0).getTime(),
       });
       expect(reserved.present).toBe(true);
-      const night = await presenceNow(log, {
-        hours: "08:00-18:00",
-        now: new Date(2026, 8, 28, 22, 0).getTime(),
-      });
+      // The ledger stamps the presence event with the real clock, so "night"
+      // is taken days after that stamp: a fixed date could fall within ten
+      // minutes of the real run (it did, on 2026-09-28 at 22:00).
+      const later = new Date(at + 3 * 24 * 60 * MIN);
+      const nightAt = new Date(later.getFullYear(), later.getMonth(), later.getDate(), 22, 0);
+      const night = await presenceNow(log, { hours: "08:00-18:00", now: nightAt.getTime() });
       expect(night.present).toBe(false);
-      expect(night.reservedStartsAt).toBe(new Date(2026, 8, 29, 8, 0).getTime());
+      expect(night.reservedStartsAt).toBe(
+        new Date(later.getFullYear(), later.getMonth(), later.getDate() + 1, 8, 0).getTime(),
+      );
     });
 
     it("the dashboard records a person's requests as presence (Solo), once per 5 minutes", async () => {

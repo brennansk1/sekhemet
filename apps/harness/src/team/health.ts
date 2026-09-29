@@ -11,6 +11,7 @@ import type { EventLog, EventRecord } from "@sekhemet/kernel";
 
 export const HEALTH_SET = "project/health_set";
 export const TARGET_SET = "release/target_set";
+export const RELEASE_LEAD_SET = "release/lead_set";
 export const HEALTH_VALUES = ["on_track", "at_risk", "off_track"] as const;
 export type Health = (typeof HEALTH_VALUES)[number];
 
@@ -71,6 +72,28 @@ export async function setReleaseTarget(
       sliceId: input.sliceId,
       projectId: input.projectId,
       ...(input.target ? { target: input.target } : {}),
+    },
+    principal: input.principal,
+  });
+}
+
+/**
+ * A person names a release's lead, or clears it with none (teams item 28,
+ * DB-N9-2): the only writer, with the person who named them as principal.
+ */
+export async function setReleaseLead(
+  log: EventLog,
+  input: { sliceId: string; projectId: string; lead: string | null; principal: string },
+): Promise<void> {
+  if (!input.principal)
+    throw new Error("A release's lead is named by a person; no principal was given");
+  await log.append({
+    actor: "human",
+    type: RELEASE_LEAD_SET,
+    payload: {
+      sliceId: input.sliceId,
+      projectId: input.projectId,
+      ...(input.lead ? { lead: input.lead } : {}),
     },
     principal: input.principal,
   });

@@ -307,6 +307,13 @@ export interface SessionOptions {
    * a build without it (WL-N9-4), until B2.5's A/B admits it.
    */
   evidenceGate?: "off" | "on" | undefined;
+  /**
+   * The build's full context version and the Coding model's prompt version
+   * (PROMPT_STANDARD rule 37, CX-N6-4), recorded in every bundle; the harness
+   * computes them from its copy modules, which the loop cannot see.
+   */
+  contextVersion?: string | undefined;
+  promptVersion?: string | undefined;
   /** The model a `subtask` child context runs on (C16); default the Worker's own. */
   subtaskAdapter?: LocalInferenceAdapter | undefined;
   /** Decoded tokens as they stream, for the dashboard's live step view (M2). */

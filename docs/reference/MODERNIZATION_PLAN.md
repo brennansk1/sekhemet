@@ -139,6 +139,8 @@ Each workstream is one session: specification → numbered plan → failing test
 | B4.11 | A team of five, at four access levels, takes a project from a stakeholder's conversation to an accepted release on one server |
 | C | v1: DEFINITION_OF_DONE §6 on one release commit |
 
+Each milestone's runner, evidence file, commit, the tree it ran on (`git write-tree` of the working tree, so evidence from an uncommitted tree is tied to the commit that holds it), date and verdict (PASS, FAIL or NOT RUN with the reason) are in [MILESTONES.md](MILESTONES.md); `pnpm milestone <id>` runs one on this machine and renders the page. B1's recorded Worker that tries to leave counts only while the sandbox and the Worker's tools are unchanged since the commit that recorded it; otherwise it is NOT RUN, naming what changed.
+
 ### The baseline RunProfile
 
 B2.5 ends by freezing one recorded `RunProfile` — Worker model, quantisation, engine and its settings, the thinking policy, the tool arm, the working method, the context version, the gates configuration and the suite hash — in [SUITE_RUNS.md](SUITE_RUNS.md). Every later comparison names it; a workstream that changes any field compares against it, paired.

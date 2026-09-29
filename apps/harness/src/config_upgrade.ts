@@ -58,11 +58,10 @@ function backupPath(file: string): string {
   return candidate;
 }
 
-/** Rewrite renamed keys in one `config.toml`; a backup is written first when anything changes. */
-export function upgradeConfigKeys(file: string): { changes: RenamedKey[]; backup?: string } {
-  if (!existsSync(file)) return { changes: [] };
-  const text = readFileSync(file, "utf8");
-  const lines = text.split("\n");
+/** The renames `file` still needs, with its lines as they would be after them. */
+function pendingRenames(file: string): { changes: RenamedKey[]; lines: string[] } {
+  if (!existsSync(file)) return { changes: [], lines: [] };
+  const lines = readFileSync(file, "utf8").split("\n");
   const changes: RenamedKey[] = [];
   for (const rename of RENAMED_KEYS) {
     const range = sectionRange(lines, rename.section);
@@ -81,6 +80,21 @@ export function upgradeConfigKeys(file: string): { changes: RenamedKey[]; backup
     );
     changes.push(rename);
   }
+  return { changes, lines };
+}
+
+/**
+ * Whether `file` has a renamed key to rewrite: the start records the
+ * rewrite of the user config as Sekhemet's own (`config/changed`, TEAM-44),
+ * and only when there is one.
+ */
+export function configRenamesDue(file: string): RenamedKey[] {
+  return pendingRenames(file).changes;
+}
+
+/** Rewrite renamed keys in one `config.toml`; a backup is written first when anything changes. */
+export function upgradeConfigKeys(file: string): { changes: RenamedKey[]; backup?: string } {
+  const { changes, lines } = pendingRenames(file);
   if (changes.length === 0) return { changes };
   const backup = backupPath(file);
   // Exclusive: an earlier upgrade's backup is never overwritten.

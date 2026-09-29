@@ -235,6 +235,8 @@ describe("PM and board-practice API", () => {
       "slack",
       "research-web",
       "push",
+      // TEAM-43, the email half (B4.11 close-out C2).
+      "email",
     ]);
     expect(
       (await post("/api/integrations/slack", { webhookUrl: "https://evil.example/x" }, "PUT"))

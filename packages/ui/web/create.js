@@ -3,6 +3,7 @@
 // applied there, the card goes through the planner pipeline. Every word is
 // the pure module's (`lib/create.js`).
 import { esc, icon, postJSON } from "./dom.js";
+import { noteFor } from "./level_gate.js";
 import { QUICK_CREATE_COPY as T, quickCreateRequest } from "./lib/create.js";
 import { pushOverlay, trapFocus } from "./overlay.js";
 import { loadThread } from "./pm_client.js";
@@ -27,6 +28,12 @@ export function closeCreate() {
  */
 export function openCreate({ epicId } = {}) {
   if (open) return;
+  // DB-N9-17: below Member the `c` key and the `+` say who can instead (the server refuses too).
+  const note = noteFor("issue.create", store.state.project?.id);
+  if (note) {
+    toast({ tone: "parked", text: note });
+    return;
+  }
   const node = document.createElement("div");
   node.className = "scrim";
   node.innerHTML = `<form class="dialog qc" role="dialog" aria-modal="true" aria-labelledby="qc-h" aria-describedby="qc-note" novalidate>

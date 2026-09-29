@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
-import { MockInferenceAdapter, ModelRegistry, currentAssignment } from "@sekhemet/models";
+import {
+  MockInferenceAdapter,
+  ModelRegistry,
+  type ModelRole,
+  currentAssignment,
+} from "@sekhemet/models";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CombinationDeps, qualificationCombination } from "../src/qualify.js";
 import { type Kernel, runWave2Command } from "../src/wave2.js";
@@ -37,13 +42,14 @@ function setup() {
     model: (n: string) => new MockInferenceAdapter(n, [], { exhaustion: "default" as const }),
     combinationDeps: deps,
   };
-  const qualify = (name: string) => {
+  // `sekhemet qualify --models <name> [--role <role>]`: qualified for one role (CX-N6-4).
+  const qualify = (name: string, role: ModelRole = "worker") => {
     const reg = new ModelRegistry(process.env.SEKHEMET_MODEL_REGISTRY);
-    reg.recordCombinationQualification(name, qualificationCombination(io.model(name), deps), {
-      suiteVersion: "q1.2",
-      passRate: 0.95,
-      status: "qualified",
-    });
+    reg.recordCombinationQualification(
+      name,
+      qualificationCombination(io.model(name), { ...deps, role }),
+      { suiteVersion: "q1.2", passRate: 0.95, status: "qualified" },
+    );
   };
   return { k, io, out, log, qualify };
 }
@@ -51,8 +57,8 @@ function setup() {
 describe("sekhemet models assign and restore (NEW-models-10)", () => {
   it("MD-N10-3, MD-N10-2: assigns a qualified model on the ledger with the principal, and restores in one command", async () => {
     const { k, io, out, log, qualify } = setup();
-    qualify("apodex");
-    qualify("spark-x");
+    qualify("apodex", "researcher");
+    qualify("spark-x", "researcher");
     expect(await runWave2Command("models", ["assign", "researcher", "apodex"], k, io)).toBe(0);
     expect(await runWave2Command("models", ["assign", "researcher", "spark-x"], k, io)).toBe(0);
     const reg = () => new ModelRegistry(process.env.SEKHEMET_MODEL_REGISTRY);
@@ -79,6 +85,18 @@ describe("sekhemet models assign and restore (NEW-models-10)", () => {
     const { k, io, out } = setup();
     expect(await runWave2Command("models", ["assign", "reviewer", "gemma-x"], k, io)).toBe(1);
     expect(out.at(-1)).toMatch(/gemma-x is not verified on this machine for the Review model/);
+  });
+
+  it("CX-N6-4: a model verified as the Coding model is not thereby verified for another role", async () => {
+    const { k, io, out, qualify } = setup();
+    qualify("gemma-x", "worker");
+    expect(await runWave2Command("models", ["assign", "reviewer", "gemma-x"], k, io)).toBe(1);
+    expect(out.at(-1)).toMatch(
+      /gemma-x is not verified on this machine for the Review model \(missing\)\. Verify it first: sekhemet qualify --models gemma-x --role reviewer/,
+    );
+    qualify("gemma-x", "reviewer");
+    expect(await runWave2Command("models", ["assign", "reviewer", "gemma-x"], k, io)).toBe(0);
+    expect(await runWave2Command("models", ["assign", "worker", "gemma-x"], k, io)).toBe(0);
   });
 
   /** A recorded benchmark of qwen-next as the Worker on host-a, as the kernel registry requires it. */

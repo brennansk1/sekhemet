@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { ModelRole } from "./types.js";
 
 /**
  * What a qualification qualifies (models rule 27a, MD-N8-1): the tuple
@@ -34,8 +35,18 @@ export interface QualificationSettings {
   parallelSlots: number;
   /** The chat template's checksum, or "unpinned" when none is pinned. */
   chatTemplate: string;
-  /** The Worker's context version: its prompt templates and tool catalog (context.md rule 27). */
+  /**
+   * The role's prompt version (context.md rule 27, CX-N6-4): the role's own
+   * templates, copy modules, tool schemas and budget policy. A qualification
+   * depends on this and on no other role's prompts (live-test F24).
+   */
   contextVersion: string;
+  /**
+   * The role the qualification is for (models rule 4d, MD-N10-3). Absent is
+   * the Coding model's (the Worker's): records made before roles were keyed
+   * were all the Coding model's, and keep their keys.
+   */
+  role?: ModelRole;
   /**
    * The sampling the role runs at (suite q1.2). Absent in a record made
    * before sampling was keyed (q1.1, greedy), which then differs from any
@@ -67,7 +78,13 @@ const ELEMENTS: [name: string, read: (c: QualificationCombination) => unknown][]
   ["chat template", (c) => c.settings.chatTemplate],
   ["context version", (c) => c.settings.contextVersion],
   ["sampling", (c) => canonicalSampling(c.settings.sampling)],
+  ["role", (c) => roleOf(c)],
 ];
+
+/** The role a combination is qualified for: absent is the Coding model's (the Worker's). */
+export function roleOf(c: Pick<QualificationCombination, "settings">): ModelRole {
+  return c.settings.role ?? "worker";
+}
 
 /** The keyed sampling fields in a fixed order; undefined when none is recorded. */
 function canonicalSampling(s: SamplingSettings | undefined): unknown {
@@ -78,13 +95,15 @@ function canonicalSampling(s: SamplingSettings | undefined): unknown {
 /**
  * The canonical form: every element in a fixed order, so key order never
  * matters. A combination without sampling keys as it did before sampling
- * was an element, so records made then keep their keys.
+ * was an element, and the Coding model's as it did before roles were, so
+ * records made then keep their keys.
  */
 function canonical(c: QualificationCombination): string {
   return JSON.stringify(
-    ELEMENTS.filter(([name, read]) => name !== "sampling" || read(c) !== undefined).map(
-      ([name, read]) => [name, read(c)],
-    ),
+    ELEMENTS.filter(
+      ([name, read]) =>
+        (name !== "sampling" || read(c) !== undefined) && (name !== "role" || read(c) !== "worker"),
+    ).map(([name, read]) => [name, read(c)]),
   );
 }
 

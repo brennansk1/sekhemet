@@ -8,6 +8,7 @@ import {
   changedCombinationElements,
   combinationKey,
   describeCombination,
+  roleOf,
 } from "./qualification_key.js";
 import type { ModelRole, ReasoningLevel, ToolArm } from "./types.js";
 
@@ -287,19 +288,40 @@ export interface TemplatePinResult {
   previous?: string;
 }
 
-/** A model whose qualification a change invalidated, waiting to be qualified again (CX-N6-1). */
+/**
+ * A model owed a qualification under a context version it has none for
+ * (CX-N6-1): it was qualified for the role under another version. The other
+ * version's record stays qualified, for a build that still runs it (F23).
+ */
 export interface PendingRequalification {
   modelId: string;
-  /** The combination key that was invalidated. */
+  /** The key of the newest combination it qualified under another version. */
   key: string;
   reason: string;
   since: string;
+  /**
+   * The version it is owed a qualification under: the running build's
+   * prompt version for the role. Absent on entries written before
+   * qualifications were kept per version.
+   */
+  version?: string;
+  /** The role; absent is the Coding model's (the Worker's). */
+  role?: ModelRole;
+}
+
+/** Which scheduled re-qualifications to read: one build's, for one role. */
+export interface RequalificationFilter {
+  version?: string;
+  role?: ModelRole;
 }
 
 /** The registry file beside its entries: state that belongs to the host, not one model. */
 interface RegistryRoot {
-  /** The context version the qualifications were last checked against (CX-N6-1). */
-  contextVersion?: string;
+  /**
+   * Re-qualifications owed, each for one version and role (CX-N6-1). The
+   * registry is shared by every build on the host, so no single "current"
+   * version is kept (live-test F23): each build reads its own entries.
+   */
   requalify?: PendingRequalification[];
   /**
    * Role assignments per host fingerprint, newest last (NEW-models-10): a
@@ -379,62 +401,81 @@ export class ModelRegistry {
   }
 
   /**
-   * Record the context version the harness runs now (CX-N6-1). When it
-   * differs from the one recorded, every combination qualified under another
-   * version is marked invalidated, naming the old and new versions, and its
-   * model is scheduled for re-qualification. Returns what was invalidated.
+   * The models owed a qualification under this role's version (CX-N6-1),
+   * read without writing: each has a qualified combination for the role under
+   * another version and has run none under this one. Nothing is invalidated:
+   * the other version's records stay, for a build still running it (F23).
    */
-  public observeContextVersion(version: string): PendingRequalification[] {
+  public requalificationsOwed(
+    version: string,
+    role: ModelRole = "worker",
+  ): PendingRequalification[] {
     this.refresh();
-    const previous = this.root.contextVersion;
-    if (previous === version) return [];
-    this.root.contextVersion = version;
-    this.dirtyRoot.add("contextVersion");
-    const invalidated: PendingRequalification[] = [];
-    if (previous !== undefined) {
-      const date = this.now().toISOString();
-      for (const entry of this.entries.values()) {
-        const newest = new Map<string, CombinationQualification>();
-        for (const q of entry.qualifications ?? []) newest.set(q.key, q);
-        for (const q of newest.values()) {
-          if (q.status !== "qualified" || q.combination.settings.contextVersion === version)
-            continue;
-          const reason = `context version changed (${q.combination.settings.contextVersion} -> ${version})`;
-          entry.qualifications = [
-            ...(entry.qualifications ?? []),
-            { ...q, status: "invalidated", reason, date },
-          ];
-          invalidated.push({ modelId: entry.id, key: q.key, reason, since: date });
-        }
-        if (invalidated.some((i) => i.modelId === entry.id)) {
-          if (entry.qualification && entry.qualification.status === "qualified") {
-            entry.qualificationHistory = [
-              ...(entry.qualificationHistory ?? []),
-              entry.qualification,
-            ];
-            entry.qualification = {
-              ...entry.qualification,
-              status: "invalidated",
-              reason: `context version changed (${previous} -> ${version})`,
-              date,
-            };
-          }
-          this.touch(entry.id);
-        }
+    const since = this.now().toISOString();
+    const owed: PendingRequalification[] = [];
+    for (const entry of this.entries.values()) {
+      const mine = (entry.qualifications ?? []).filter((q) => roleOf(q.combination) === role);
+      if (mine.some((q) => q.combination.settings.contextVersion === version)) continue;
+      // Each combination's latest record, the map in the order they were last
+      // recorded (records are appended), so `.at(-1)` is the newest qualified.
+      const newest = new Map<string, CombinationQualification>();
+      for (const q of mine) {
+        newest.delete(q.key);
+        newest.set(q.key, q);
       }
-      if (invalidated.length > 0) {
-        this.root.requalify = [...(this.root.requalify ?? []), ...invalidated];
-        this.dirtyRoot.add("requalify");
-      }
+      const qualified = [...newest.values()].filter((q) => q.status === "qualified").at(-1);
+      if (!qualified) continue;
+      owed.push({
+        modelId: entry.id,
+        key: qualified.key,
+        reason: `context version changed (${qualified.combination.settings.contextVersion} -> ${version})`,
+        since,
+        version,
+        role,
+      });
     }
-    this.save();
-    return invalidated;
+    return owed;
   }
 
-  /** Models waiting to be qualified again after a change invalidated them (CX-N6-1). */
-  public pendingRequalifications(): PendingRequalification[] {
+  /**
+   * The running build's prompt version for a role (CX-N6-1): schedules a
+   * re-qualification under it for every model qualified for the role under
+   * another version and not yet under this one, once. Returns what it newly
+   * scheduled. Qualifications under other versions stay as recorded, so a
+   * build running another version keeps them (live-test F23).
+   */
+  public observeContextVersion(
+    version: string,
+    role: ModelRole = "worker",
+  ): PendingRequalification[] {
+    // Read first: it brings this instance up to the file.
+    const owed = this.requalificationsOwed(version, role);
+    const queued = this.root.requalify ?? [];
+    const fresh = owed.filter(
+      (o) =>
+        !queued.some(
+          (q) => q.modelId === o.modelId && q.version === version && (q.role ?? "worker") === role,
+        ),
+    );
+    if (fresh.length === 0) return [];
+    this.root.requalify = [...(this.root.requalify ?? []), ...fresh];
+    this.dirtyRoot.add("requalify");
+    this.save();
+    return fresh;
+  }
+
+  /**
+   * Re-qualifications scheduled and not yet run (CX-N6-1). With a filter,
+   * one build's for one role; entries written before qualifications were
+   * kept per version have no version and are read only unfiltered.
+   */
+  public pendingRequalifications(filter: RequalificationFilter = {}): PendingRequalification[] {
     this.refresh();
-    return [...(this.root.requalify ?? [])];
+    return (this.root.requalify ?? []).filter(
+      (r) =>
+        (filter.version === undefined || r.version === filter.version) &&
+        (filter.role === undefined || (r.role ?? "worker") === filter.role),
+    );
   }
 
   /** Every role assignment recorded for a host, oldest first (NEW-models-10). */
@@ -452,12 +493,6 @@ export class ModelRegistry {
     };
     this.dirtyRoot.add("assignments");
     this.save();
-  }
-
-  /** The context version the qualifications were last checked against. */
-  public get contextVersion(): string | undefined {
-    this.refresh();
-    return this.root.contextVersion;
   }
 
   public get(id: string): ModelEntry | undefined {
@@ -664,13 +699,16 @@ export class ModelRegistry {
     entry.qualification = plain;
     this.entries.set(id, entry);
     this.touch(id);
-    // Qualified again under the version in force: no longer waiting (CX-N6-1).
-    if (
-      this.root.requalify?.some((r) => r.modelId === id) &&
-      (this.root.contextVersion === undefined ||
-        combination.settings.contextVersion === this.root.contextVersion)
-    ) {
-      this.root.requalify = this.root.requalify.filter((r) => r.modelId !== id);
+    // Run under the version it was owed for this role: no longer waiting
+    // (CX-N6-1); its result is the record's. An entry written before
+    // versions were kept is this model's and role's under any version.
+    const role = roleOf(combination);
+    const done = (r: PendingRequalification) =>
+      r.modelId === id &&
+      (r.role ?? "worker") === role &&
+      (r.version === undefined || r.version === combination.settings.contextVersion);
+    if (this.root.requalify?.some(done)) {
+      this.root.requalify = this.root.requalify.filter((r) => !done(r));
       this.dirtyRoot.add("requalify");
     }
     this.save();
@@ -773,12 +811,16 @@ export class ModelRegistry {
         record: exact,
       };
     }
+    // The nearest is looked for within the role: a model verified for
+    // another role is missing for this one, not "changed" (F24).
+    const role = roleOf(combination);
     const nearest = all
-      .filter((q) => q.status === "qualified")
+      .filter((q) => q.status === "qualified" && roleOf(q.combination) === role)
       .map((q) => ({ q, changed: changedCombinationElements(q.combination, combination) }))
       .sort((a, b) => a.changed.length - b.changed.length)[0];
     // An override is invalidated by a change exactly as a qualification is (MD-N8-4).
     const nearestOverride = (entry?.overrides ?? [])
+      .filter((o) => roleOf(o.combination) === role)
       .map((o) => ({ o, changed: changedCombinationElements(o.combination, combination) }))
       .sort((a, b) => a.changed.length - b.changed.length)[0];
     if (nearestOverride && (!nearest || nearestOverride.changed.length < nearest.changed.length)) {
@@ -790,9 +832,14 @@ export class ModelRegistry {
       };
     }
     if (nearest) {
+      const was = nearest.q.combination.settings.contextVersion;
+      const now = combination.settings.contextVersion;
+      const versions = nearest.changed.includes("context version")
+        ? ` (context version ${was} -> ${now})`
+        : "";
       return {
         status: "invalidated",
-        reason: `${nearest.changed.join(", ")} changed since it qualified (${describeCombination(nearest.q.combination)})`,
+        reason: `${nearest.changed.join(", ")} changed since it qualified${versions} (${describeCombination(nearest.q.combination)})`,
         changed: nearest.changed,
         record: nearest.q,
       };
@@ -903,7 +950,6 @@ export class ModelRegistry {
 
 function rootOf(raw: RegistryFile): RegistryRoot {
   return {
-    ...(raw.contextVersion !== undefined ? { contextVersion: raw.contextVersion } : {}),
     ...(raw.requalify !== undefined ? { requalify: raw.requalify } : {}),
     ...(raw.assignments !== undefined ? { assignments: raw.assignments } : {}),
   };

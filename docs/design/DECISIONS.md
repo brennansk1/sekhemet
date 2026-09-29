@@ -457,8 +457,52 @@ The harness itself stays TypeScript: a Rust or Python component is allowed only 
 ### DEC-23 — what the harness is not
 Not a chat assistant (the conversation plans and reports; code is written on cards), not an IDE, not a CI system, and not a replacement for the team's tracker — it fits beside one. It does not aim to beat frontier models on ambiguous, long-horizon or novel design work, and it is slower per card than cloud tools. These trades are deliberate.
 
+### DEC-46 — the licence is Apache-2.0
+**Sekhemet is licensed under the Apache License 2.0, copyright 2026 Brennan Kelley.** *Owner, 2026-09-28, choosing among the options the lead set out (MIT, Apache-2.0, AGPL-3.0, FSL or BSL, proprietary).*
+- `LICENSE` holds the canonical text from apache.org (sha256 `cfc7749b…`). `NOTICE` names the copyright holder and keeps every bundled third party's attribution: Crawl4AI and the Apodex prompts under Apache-2.0; gitleaks, SecLists and RedCode under MIT; the ScanCode LicenseDB categories under CC-BY-4.0. All of these are compatible with Apache-2.0.
+- It replaces MIT, whose copyright line ("Sekhemet Contributors") disagreed with NOTICE's.
+- **Why:** the licence professional developer tools are adopted under, with an explicit patent grant. Changing it is simple while the owner is the only copyright holder; outside contributions would need their authors' agreement, or a contributor agreement, before any relicensing.
+- **Reopen if:** only the owner (for example, FSL for a hosted paid edition).
+
+### DEC-47 — the finish-line decisions
+*Lead, 2026-09-28, under the owner's delegation of every finish-line decision ("you can make all decisions for me"; beta users and CI deferred). They answer [FINISH_LINE_PLAN](../reference/FINISH_LINE_PLAN.md) §O. Downloads are still named, with source and size, when made.*
+- **CI (O-1):** deferred by the owner. Until then, Linux is proven in a local Lima VM, and the release gate runs on this Mac and in that VM.
+- **Linux (O-2):** Lima is approved and installed. If Linux containment is not green by week 4, v1 ships macOS-first, with Linux stated as a preview.
+- **Test tools (O-4):** Stryker (Apache-2.0), fast-check (MIT), `@playwright/test` (Apache-2.0) and `@cyclonedx/cyclonedx-npm` (Apache-2.0) may be added when their workflow arrives. cosign waits for CI. A clone detector for users' code is Phase C.
+- **Models for new users (O-5):**
+  - v1 supports 24 GB and above; 16 GB is not supported in v1, and the claims table and docs say so.
+  - The 24 GB tier recommends the qualified set: the Coding model nail-mtp (qualified on the current code), the Planning model Qwen3.8-27B GSQ-RCO, the Research model Apodex mini, and the Review role unfilled until a model is admitted (RG-P8-13).
+  - Each model's source, hash and licence go in PROVENANCE (W11).
+- **Publication identity (O-6):**
+  - Copyright 2026 Brennan Kelley (DEC-46).
+  - The npm name is `sekhemet` if free when W15 runs, otherwise a scoped name.
+  - GitHub Container Registry and GitHub Issues on the public repository.
+  - Every push or publication is still the owner's yes (DEC-42).
+- **The comparison's budget (O-7):** the Claude arms run only after the week's build workflow, at most about one 5-hour window a week, with a Haiku 4.5 dry run first.
+- **"0 skipped" (O-8):** read as "every test runs on at least one machine of the release matrix, with its tools installed": this Mac and the Lima VM until CI exists.
+- **Betas and sessions (O-9):** deferred by the owner. Until outside betas, usability evidence comes from the owner's dogfooding sessions and agent-driven cognitive walkthroughs, and SUS is scored from the owner's sessions.
+- **v1 scope (O-10):** the Team setup is in v1, because its milestones (B4.10, B4.11) are the plan's. A W4 row may be deferred only through its own recorded decision.
+- **Root documents (O-11):** `CHANGELOG.md`, `SECURITY.md` and `CONTRIBUTING.md` are allowed at the repository root (W3 updates the docs rule and `docs.spec.ts`).
+- **Legal posture (O-12):**
+  - v1 is published free of charge under Apache-2.0 by an individual, with no commercial distribution. Before any paid or commercial offer, including an EU market (the Cyber Resilience Act), the owner takes legal advice.
+  - LICENSE, NOTICE and the user guide state that code Sekhemet's models write for a user is the user's, that Sekhemet claims no rights to it, and that the protection of AI-written code varies by jurisdiction.
+  - This is a conservative default, not legal advice.
+- **What v1 does not check in the software it builds (O-13):**
+  - internationalisation;
+  - a complexity or code-smell gate;
+  - API-level deprecation beyond the project's own lint;
+  - load testing;
+  - metrics and crash reporting;
+  - the deployment and rollback of users' services;
+  - similarity search for reproduced code;
+  - a dead-control crawl of users' web apps.
+
+  Each is stated in the claims table and the user guide, and each is proposed for Phase C in the Phase B report (W12).
+- **Still the owner's, because they need a person's judgement:** confirming Seshat's 20 scripted conversations, the golden briefs, and the capstone's hidden suite.
+- **Reopen if:** only the owner.
+
 ## Founder decisions on record
 
 - **Name:** Sekhemet, a deliberate variant spelling, paired with its descriptor where the product introduces itself.
-- **Licence:** MIT.
+- **Licence:** Apache-2.0, copyright 2026 Brennan Kelley ([DEC-46](#dec-46--the-licence-is-apache-20); it was MIT until 2026-09-28).
 - **Still the owner's:** the business model; whether go-to-market ever targets defence.

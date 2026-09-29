@@ -834,12 +834,17 @@ export async function runResearchBakeoffCommand(
   // MD-N11-1: each model qualified per combination, on the build it needs — checked before any load.
   const plan = (candidates as ResearcherCandidate[]).map((c) => {
     const adapter = adapterFor(c);
-    const combination = qualificationCombination(adapter, { ...io.combinationDeps, registry });
+    // The Research model's qualification, under this build's version for it (CX-N6-4).
+    const combination = qualificationCombination(adapter, {
+      ...io.combinationDeps,
+      registry,
+      role: "researcher",
+    });
     const look = registry.lookupQualification(adapter.modelId, combination);
     const build = llamaBuildNumber(combination.engine);
     const refusal =
       look.status !== "qualified"
-        ? `${c.modelId} is not verified on this machine for this combination (${look.status}); verify it first: sekhemet qualify --models ${c.modelId}`
+        ? `${c.modelId} is not verified on this machine for this combination (${look.status}); verify it first: sekhemet qualify --models ${c.modelId} --role researcher`
         : c.minLlamaBuild && (build === undefined || build < c.minLlamaBuild)
           ? `${c.modelId} needs llama.cpp b${c.minLlamaBuild} or later; this engine is ${combination.engine}`
           : undefined;
@@ -920,6 +925,7 @@ function qualificationOf(
     const combination = qualificationCombination(adapterFor(c), {
       ...io.combinationDeps,
       registry,
+      role: "researcher",
     });
     return registry.lookupQualification(model, combination).status;
   };
@@ -955,7 +961,7 @@ async function adoptFromRecord(
   const status = qualification(adopt);
   if (status !== "qualified") {
     print(
-      `Refusing to adopt ${adopt}: ${adopt} is not verified on this machine for this combination (${status}); verify it first: sekhemet qualify --models ${adopt}`,
+      `Refusing to adopt ${adopt}: ${adopt} is not verified on this machine for this combination (${status}); verify it first: sekhemet qualify --models ${adopt} --role researcher`,
     );
     return 1;
   }

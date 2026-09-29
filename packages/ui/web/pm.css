@@ -1140,6 +1140,41 @@ body.pm-open .col {
   align-items: center;
   gap: 6px;
 }
+/* Design-stage §2.9 item 7: the plan's thread, the approver's questions and the sender's answers. */
+.rp-thread {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rp-msg {
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+}
+.rp-msg-by {
+  margin: 0 0 2px;
+}
+.rp-msg-text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.rp-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.rp-ask textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+.rp-ask .acts {
+  display: flex;
+  justify-content: flex-end;
+}
 @media (max-width: 767px) {
   .rp-dialog {
     padding: 0;

@@ -45,7 +45,8 @@ describe("models assign researcher --default (MD-N11-2)", () => {
     };
     new ModelRegistry(process.env.SEKHEMET_MODEL_REGISTRY).recordCombinationQualification(
       "spark-x",
-      qualificationCombination(io.model("spark-x"), deps),
+      // Qualified for the Research model's role (CX-N6-4).
+      qualificationCombination(io.model("spark-x"), { ...deps, role: "researcher" }),
       { suiteVersion: "q1.2", passRate: 0.95, status: "qualified" },
     );
     const night = await log.append({

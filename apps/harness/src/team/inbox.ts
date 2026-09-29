@@ -555,20 +555,41 @@ async function needsYou(deps: InboxDeps, fold: InboxFold, me: string): Promise<O
   for (const e of plans) {
     if (e.type !== PM_EVENTS.planSent) continue;
     const p = e.payload as { proposalId: string; approver: string };
-    if (p.approver !== me || approved.has(p.proposalId)) continue;
+    if (approved.has(p.proposalId)) continue;
+    if (p.approver !== me && e.principal !== me) continue;
     const proposal = await pm.proposal(p.proposalId);
     if (!proposal || proposal.state !== "open") continue;
-    out.push({
-      id: `plan:${p.proposalId}`,
-      reason: "needs_you",
-      kind: "plan_approval",
-      title: proposal.summary,
-      count: 1,
-      ...(e.principal ? { by: nameFor(deps.audience, e.principal, me) } : {}),
-      at: e.createdAt,
-      seq: e.seq,
-      link: "#/pm",
-    });
+    // Design-stage §2.9 item 7: the plan's thread — the approver's question
+    // waits on the sender; the sender's answer is said on the approver's item.
+    const last = proposal.approval?.thread?.at(-1);
+    if (p.approver === me) {
+      const answered = last !== undefined && last.by !== me;
+      out.push({
+        id: `plan:${p.proposalId}`,
+        reason: "needs_you",
+        kind: "plan_approval",
+        title: proposal.summary,
+        count: 1,
+        ...(e.principal ? { by: nameFor(deps.audience, e.principal, me) } : {}),
+        ...(answered ? { answered: true } : {}),
+        at: answered ? last.at : e.createdAt,
+        seq: e.seq,
+        link: "#/pm",
+      });
+    } else if (last && last.by === p.approver) {
+      out.push({
+        id: `plan-question:${p.proposalId}:${last.id}`,
+        reason: "needs_you",
+        kind: "plan_question",
+        title: proposal.summary,
+        count: 1,
+        by: nameFor(deps.audience, last.by, me),
+        question: last.text,
+        at: last.at,
+        seq: e.seq,
+        link: "#/pm",
+      });
+    }
   }
   // The Agent's question, to whom it waits on: a permission request to the
   // people the Accept rule names, any other question to the issue's owner,
@@ -1007,7 +1028,12 @@ export interface InboxNotifier {
   digest(
     to: string,
     heldCards: ReadonlySet<string>,
-  ): Promise<{ title: string; message: string } | undefined>;
+  ): Promise<{ title: string; head: string; message: string } | undefined>;
+  /**
+   * Whether the person may see the issue's project: a personal channel
+   * (email) carries nothing of a project they cannot see (TEAM-43).
+   */
+  visible?(to: string, cardId: string): Promise<boolean>;
 }
 
 export function inboxNotifier(deps: InboxDeps): InboxNotifier {
@@ -1023,8 +1049,13 @@ export function inboxNotifier(deps: InboxDeps): InboxNotifier {
       const head = `${n} unread in your Inbox`;
       return {
         title: who ? `For ${who}: ${head}` : head,
+        head,
         message: rows.map((r) => `${r.title}: ${itemLine(r).line}`).join("\n"),
       };
+    },
+    visible: async (to, cardId) => {
+      const card = await deps.cardStore.getCard(cardId);
+      return card ? deps.audience.canSee(to, deps.projectOf(card)) : false;
     },
   };
 }

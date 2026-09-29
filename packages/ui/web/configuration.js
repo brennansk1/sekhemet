@@ -9,7 +9,8 @@
 // Review capacity and Project configuration are NEW-dashboard-4's (DB-N4-1..3):
 // the project's minutes a day with the In review limit they give, disabled
 // with its reason for a person who may not change them, and every effective
-// value with the file it came from.
+// value with the file it came from; above it, the Agent queue's per-person
+// cap (teams item 30, TEAM-30), an Admin's to save (`PUT /api/config/queue`).
 import { esc, getJSON, sendJSON } from "./dom.js";
 import { setTips, storage, tipsOn } from "./learn.js";
 import { FIRST_RUN, readRole, writeRole } from "./lib/learn.js";
@@ -18,6 +19,8 @@ import {
   DENSITY_CHOICES,
   autoApplyView,
   configRows,
+  queueCapInput,
+  queueCapView,
   readDensity,
   reviewCapacityView,
   reviewMinutesInput,
@@ -51,7 +54,7 @@ function readOnlyReason() {
   return note ? `Read-only. ${note}` : "";
 }
 
-const ui = { root: null, section: "models", child: null, capacity: null };
+const ui = { root: null, section: "models", child: null, capacity: null, queueCap: 1 };
 
 function tabsHtml() {
   return `<nav class="cfg-tabs" aria-label="Configuration sections">${SECTIONS.map(
@@ -208,7 +211,40 @@ function projectHtml(cfg) {
     )
     .join("");
   const problems = (cfg.problems ?? []).map((p) => `<li>${esc(p)}</li>`).join("");
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-project"><h3 id="cfg-h-project">Project configuration</h3><p class="sec">The values in force, and the file each came from. Edit the files to change them.</p><div class="tbl-wrap"><table class="tbl"><thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">From</th></tr></thead><tbody>${rows}</tbody></table></div>${problems ? `<h4>Problems</h4><ul class="cfg-warn">${problems}</ul>` : ""}</section>`;
+  return `<section class="cfg-sec" aria-labelledby="cfg-h-project"><h3 id="cfg-h-project">Project configuration</h3>${queueHtml(cfg)}<h4>Values in force</h4><p class="sec">The values in force, and the file each came from. Edit the files to change them.</p><div class="tbl-wrap"><table class="tbl"><thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">From</th></tr></thead><tbody>${rows}</tbody></table></div>${problems ? `<h4>Problems</h4><ul class="cfg-warn">${problems}</ul>` : ""}</section>`;
+}
+
+/**
+ * The queue's per-person Agent cap (teams item 30, TEAM-30; dashboard §2.16):
+ * an Admin's (`queue.caps`), saved to the user configuration; read-only with
+ * the level note below Admin (DB-N9-17).
+ */
+function queueHtml(cfg) {
+  const note = levelNote(getSession(), "queue.caps");
+  const v = queueCapView(cfg.config ?? {}, cfg.sources ?? {}, note ? `Read-only. ${note}` : "");
+  ui.queueCap = Number(v.value);
+  const dis = v.disabled ? " disabled" : "";
+  return `<h4 id="cfg-h-queue">Agent queue</h4><form class="row" data-queue-form aria-labelledby="cfg-h-queue"><label for="cfg-queue-cap">Agent issues per person</label><input id="cfg-queue-cap" type="text" inputmode="numeric" name="cap" value="${esc(v.value)}" aria-describedby="cfg-queue-why"${dis}><button class="btn" type="submit"${dis}>Save</button></form><p class="sec" id="cfg-queue-why">${esc(v.note)} From: ${esc(v.source)} <span class="mono">queue.agent_issues_per_person</span></p><p class="why" role="status" data-queue-note></p>`;
+}
+
+async function saveQueueCap(form) {
+  const field = form.elements.namedItem("cap");
+  const note = ui.root?.querySelector("[data-queue-note]");
+  const previous = ui.queueCap ?? 1;
+  const input = queueCapInput(field?.value ?? "", previous);
+  if (!input.ok) {
+    if (field) field.value = String(input.value);
+    if (note) note.textContent = input.error;
+    return;
+  }
+  const r = await sendJSON("PUT", "/api/config/queue", { agentIssuesPerPerson: input.value });
+  if (!r.ok) {
+    if (field) field.value = String(previous);
+    if (note) note.textContent = r.data?.error ?? "Not saved.";
+    return;
+  }
+  ui.queueCap = r.data?.agentIssuesPerPerson ?? input.value;
+  if (note) note.textContent = "Saved. The queue uses it from its next pick.";
 }
 
 async function renderSection() {
@@ -241,6 +277,11 @@ async function renderSection() {
 
 async function onSubmit(e) {
   const form = e.target instanceof HTMLFormElement ? e.target : null;
+  if (form?.hasAttribute("data-queue-form")) {
+    e.preventDefault();
+    await saveQueueCap(form);
+    return;
+  }
   if (!form?.hasAttribute("data-review-form")) return;
   e.preventDefault();
   const field = form.elements.namedItem("minutes");

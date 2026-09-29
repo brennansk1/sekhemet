@@ -30,6 +30,7 @@ import type { ProjectChoices } from "./pm/pipeline.js";
 import {
   approvalRefusal,
   approveSentPlan,
+  commentOnSentPlan,
   sendPlanForApproval,
   sentTo,
   withApprovalNames,
@@ -49,7 +50,13 @@ import { seshatWait } from "./pm/while_worker.js";
 import { oneShotResearcher } from "./research/service.js";
 import { quickAnswererFor } from "./smart_swap.js";
 import { statusFacts } from "./status_api.js";
-import { isDay, isHealth, setProjectHealth, setReleaseTarget } from "./team/health.js";
+import {
+  isDay,
+  isHealth,
+  setProjectHealth,
+  setReleaseLead,
+  setReleaseTarget,
+} from "./team/health.js";
 import { modelRegistry, ruleGateVerdict } from "./wave2.js";
 
 /** How often a focused dashboard's presence is recorded (PM-P6-10; the notifier's window is 5 minutes). */
@@ -437,6 +444,33 @@ export function createPmApi(ctx: PmApiContext) {
       return true;
     }
 
+    // Design-stage §2.9 item 7: the approver asks a question in the sent
+    // plan's thread, and the person who sent it answers; nothing is created.
+    const planComment = /^\/api\/pm\/proposals\/([A-Za-z0-9_-]+)\/comments$/.exec(url);
+    if (planComment && req.method === "POST") {
+      if (!mutationGuard(req, res)) return true;
+      const found = await pmStore.proposal(planComment[1] as string);
+      const a = audience();
+      if (!found) {
+        ctx.json(res, 404, { error: `No proposal ${planComment[1]}` });
+        return true;
+      }
+      const body = await ctx.readJsonBody(req);
+      try {
+        const proposal = await commentOnSentPlan(pmStore, found, {
+          principal: personOf(req),
+          text: body.text,
+          audience: a,
+        });
+        ctx.json(res, 200, { proposal });
+      } catch (err) {
+        ctx.json(res, err instanceof ProposalError ? err.status : 409, {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return true;
+    }
+
     // TEAM-20, TEAM-42 (design-stage §2.9 item 7): a Stakeholder's plan is
     // sent to a named Member or Admin, and created only when they approve it.
     const planAct = /^\/api\/pm\/proposals\/([A-Za-z0-9_-]+)\/(send-for-approval|approve)$/.exec(
@@ -624,9 +658,16 @@ export function createPmApi(ctx: PmApiContext) {
       }
       const a = audience();
       const me = personOf(req);
-      // Item 28: the project lead's call (checked centrally as `project.health` first).
-      if (a.setup === "team" && a.leadOf(project) !== me) {
-        ctx.json(res, 403, { error: "The project lead sets its health." });
+      // Item 28: the project lead's call, or a release lead's (checked centrally as
+      // `project.health` first).
+      if (
+        a.setup === "team" &&
+        a.leadOf(project) !== me &&
+        a.leadsRelease?.(me, project) !== true
+      ) {
+        ctx.json(res, 403, {
+          error: "The project lead or a Member who leads a release sets its health.",
+        });
         return true;
       }
       await setProjectHealth(ctx.log, { project, health: b.health, principal: me });
@@ -670,6 +711,67 @@ export function createPmApi(ctx: PmApiContext) {
         principal: me,
       });
       ctx.json(res, 200, { target: target ? { release: slice.id, date: target } : null });
+      return true;
+    }
+
+    // Teams item 28, DB-N9-2: a release's lead, named by the project lead or an
+    // Admin (checked centrally as `release.lead` first); null clears it.
+    const postReleaseLead = /^\/api\/slices\/([\w.-]+)\/lead$/.exec(url);
+    if (postReleaseLead && req.method === "POST") {
+      if (!mutationGuard(req, res)) return true;
+      if (!ctx.cardStore) {
+        ctx.json(res, 501, { error: "This server was started read-only" });
+        return true;
+      }
+      const slice = await ctx.cardStore.slices.get(postReleaseLead[1] as string);
+      if (!slice) {
+        ctx.json(res, 404, { error: `No release ${postReleaseLead[1]}` });
+        return true;
+      }
+      const b = await ctx.readJsonBody(req);
+      const lead = b.lead === null || b.lead === "" ? null : b.lead;
+      const a = audience();
+      const me = personOf(req);
+      if (lead !== null) {
+        const level =
+          typeof lead === "string" && /^p_[0-9a-z]+$/.test(lead)
+            ? a.levelOf(lead, slice.projectId)
+            : undefined;
+        if (!level) {
+          ctx.json(res, 400, {
+            error: "A release's lead is a person in this workspace, named by their id (p_…).",
+          });
+          return true;
+        }
+        if (level !== "member" && level !== "admin") {
+          const who = a.nameOf(lead as string) ?? (lead as string);
+          const where = ctx.cardStore.getProject(slice.projectId)?.name ?? "this project";
+          const word = level === "stakeholder" ? "a Stakeholder" : "a Viewer";
+          ctx.json(res, 400, {
+            error: `${who} is ${word} on ${where}: a release's lead is a Member or an Admin there.`,
+          });
+          return true;
+        }
+      }
+      if (
+        a.setup === "team" &&
+        a.leadOf(slice.projectId) !== me &&
+        a.levelOf(me, slice.projectId) !== "admin"
+      ) {
+        ctx.json(res, 403, { error: "The project lead or an Admin names a release's lead." });
+        return true;
+      }
+      await setReleaseLead(ctx.log, {
+        sliceId: slice.id,
+        projectId: slice.projectId,
+        lead: lead as string | null,
+        principal: me,
+      });
+      ctx.json(res, 200, {
+        lead: lead
+          ? { release: slice.id, principal: lead, name: a.nameOf(lead as string) ?? lead }
+          : null,
+      });
       return true;
     }
 

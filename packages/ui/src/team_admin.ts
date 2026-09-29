@@ -36,6 +36,8 @@ export interface ControlRule {
   level: AccessLevel;
   /** The project's lead may too; `only`, the project's lead alone (health, item 28). */
   lead?: true | "only";
+  /** A Member who leads one of the project's releases not yet accepted may too (item 28). */
+  releaseLead?: true;
   /** Held by the people the project's Accept rule names (`only`), or the level or being named (`or`). */
   acceptRule?: "only" | "or";
   /** What the person tried, as the note says it: "A Member can <does>." */
@@ -98,7 +100,13 @@ export const CONTROL_RULES = {
   "audit.view": { level: "admin", does: "open the audit view" },
   "playbook.approve_all": { level: "admin", does: "approve a Playbook rule for all projects" },
   "project.update": { level: "admin", lead: true, does: "post this project's update" },
-  "project.health": { level: "member", lead: "only", does: "set this project's health" },
+  "project.health": {
+    level: "member",
+    lead: "only",
+    releaseLead: true,
+    does: "set this project's health",
+  },
+  "release.lead": { level: "admin", lead: true, does: "name a release's lead" },
   "release.target": { level: "admin", lead: true, does: "set a release's target date" },
   "brief.accept": { level: "admin", lead: true, does: "accept a brief" },
 } as const satisfies Record<string, ControlRule>;
@@ -110,7 +118,7 @@ export interface ViewerAccess {
   mode: "solo" | "team";
   level?: string | undefined;
   /** The person's own per-project levels and the projects they lead. */
-  projects?: Record<string, { level?: string; lead?: boolean }> | undefined;
+  projects?: Record<string, { level?: string; lead?: boolean; releaseLead?: boolean }> | undefined;
 }
 
 /**
@@ -145,8 +153,13 @@ export function levelNote(
   const rank = LEVEL_ORDER.indexOf(level);
   const article = (l: AccessLevel) => (l === "admin" ? "an" : "a");
   if (rule.lead === "only") {
-    if (own?.lead && rank >= LEVEL_ORDER.indexOf("member")) return undefined;
-    return `You're ${article(level)} ${LEVEL_WORD[level]} ${place}. The project lead can ${rule.does}.`;
+    const member = rank >= LEVEL_ORDER.indexOf("member");
+    if (own?.lead && member) return undefined;
+    if (rule.releaseLead && own?.releaseLead && member) return undefined;
+    const who = rule.releaseLead
+      ? "The project lead or a Member who leads a release"
+      : "The project lead";
+    return `You're ${article(level)} ${LEVEL_WORD[level]} ${place}. ${who} can ${rule.does}.`;
   }
   const needs = rule.acceptRule === "only" ? "member" : rule.level;
   if (rank >= LEVEL_ORDER.indexOf(needs)) return undefined;
@@ -156,6 +169,15 @@ export function levelNote(
       ? "A Member this project's Accept rule names"
       : `${article(rule.level) === "an" ? "An" : "A"} ${LEVEL_WORD[rule.level]}${rule.lead ? " or the project lead" : ""}`;
   return `You're ${article(level)} ${LEVEL_WORD[level]} ${place}. ${who} can ${rule.does}.`;
+}
+
+/**
+ * The permission an inline edit of an issue's field needs, as the server's
+ * `PATCH /api/cards/:id` asks it (`team/access.ts`): priority is
+ * `priority.change`, every other field `issue.edit` (DB-N9-17).
+ */
+export function fieldPermission(field: string): ControlPermission {
+  return field === "priority" ? "priority.change" : "issue.edit";
 }
 
 /* ---------- Members (DB-N9-16) ---------- */
@@ -372,6 +394,8 @@ export const AUDIT_CATEGORIES: readonly {
       "member/level_changed",
       "member/label_changed",
       "member/removed",
+      // Teams item 28: a release's lead may set the project's health.
+      "release/lead_set",
     ],
   },
   { id: "invite", label: "Invites", types: ["member/invited"] },
@@ -540,6 +564,8 @@ export function auditAction(type: string, p: Payload): string {
       return "Configuration changed";
     case "project/settings_changed":
       return "Project settings changed";
+    case "release/lead_set":
+      return str(p.lead) ? "Release lead named" : "Release lead cleared";
     case "setup/switched":
       return `Switched to ${str(p.to) === "solo" ? "Solo" : "Team"}`;
     default:
@@ -566,10 +592,12 @@ export interface AuditEntry {
   project?: string;
 }
 
-/** The names the entries use: people and projects, by id. */
+/** The names the entries use: people, projects and releases, by id. */
 export interface AuditNames {
   person(principal: string): string | undefined;
   project(id: string): string | undefined;
+  /** A release's name as a person reads it (its title, else *Release N*); never its id (DEC-31). */
+  release?(project: string, id: string): string | undefined;
 }
 
 const AI_ACTORS: Record<string, string> = {
@@ -614,15 +642,21 @@ export function auditEntry(
     : row.principal
       ? { principal: row.principal, name: person(row.principal) }
       : { name: AUDIT_COPY.sekhemet };
-  const project = str(p.project) || row.cardProject || undefined;
+  const project = str(p.project) || str(p.projectId) || row.cardProject || undefined;
   const projectName = project ? (names.project(project) ?? project) : "";
-  const targetPrincipal = str(p.principal) || undefined;
+  const targetPrincipal =
+    str(p.principal) || (row.type === "release/lead_set" ? str(p.lead) : "") || undefined;
   let target = "";
   if (row.type === "config/changed_outside" || row.type === "config/changed") {
     target = Array.isArray(p.keys) ? p.keys.filter((k) => typeof k === "string").join(", ") : "";
   } else if (row.type === "project/settings_changed") {
     const fields = Object.keys(p).filter((k) => k !== "project");
     target = `${projectName}${fields.length ? ` (${fields.join(", ")})` : ""}`;
+  } else if (row.type === "release/lead_set") {
+    // DEC-31: a person reads the release's name; its internal id never shows.
+    const named = project ? names.release?.(project, str(p.sliceId)) : undefined;
+    const release = `${named ?? "a release"}${projectName ? ` on ${projectName}` : ""}`;
+    target = targetPrincipal ? `${person(targetPrincipal)} for ${release}` : release;
   } else if (row.type === "access/refused") {
     target = `${str(p.permission)}${projectName ? ` on ${projectName}` : ""}`;
   } else if (targetPrincipal) {

@@ -10,7 +10,8 @@ import type { Permission } from "./team/access.js";
  * directions).
  *
  * Every change is a person's act at the Admin level in the Team setup
- * (`config.manage`; review capacity: `review.capacity`), recorded on the
+ * (`config.manage`; the queue's cap: `queue.caps`; review capacity:
+ * `review.capacity`, an Admin or the Accept rule's people), recorded on the
  * ledger with the principal. Nothing here downloads, loads or benchmarks on
  * its own initiative. `module` names the harness module that will serve the
  * route (B4.1 part (b): `config_api`; part (c): `benchmark_api`). Within one
@@ -47,6 +48,14 @@ export const CONFIG_ROUTES: readonly ConfigRoute[] = [
     permission: "review.capacity",
     module: "config_api",
     spec: "NEW-dashboard-4; review-git §2.2.3",
+  },
+  // The queue's per-person Agent cap (teams item 30, TEAM-30; dashboard §2.16).
+  {
+    method: "PUT",
+    path: "/api/config/queue",
+    permission: "queue.caps",
+    module: "config_api",
+    spec: "TEAM-30; dashboard §2.16",
   },
   // Model folders and the scan (DB-N6, MD-N12-1, MD-N12-8, MD-N13-1, SEC-N10).
   {

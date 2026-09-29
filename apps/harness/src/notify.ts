@@ -6,6 +6,7 @@ import {
   SWAP_EVENTS,
   describeSlowLoad,
 } from "@sekhemet/models";
+import { emailAccepts, personAddresses, readEmail, sendEmail } from "./email.js";
 import { egressRecorder, integrationFetch } from "./github_transport.js";
 import { readSettings, writeSettings } from "./integrations.js";
 import { setupFor } from "./planner_live.js";
@@ -344,19 +345,25 @@ export function noticeFor(e: EventRecord, dashboard?: string): Notice | undefine
   return undefined;
 }
 
-/** A place notices go: push (ntfy or Gotify) or Slack, each with its kinds and budget. */
+/**
+ * A place notices go, each with its kinds and budget: push (ntfy or Gotify)
+ * and Slack, which everyone reading them shares, or email, which is personal
+ * (`reaches`): one person at their own address (TEAM-43).
+ */
 interface Channel {
   name: string;
   accepts: (kind: NotifyEvent) => boolean;
   limit: number;
+  /** A personal channel: whether it reaches this person (email: an address is recorded). */
+  reaches?: (to: string) => boolean;
   send: (n: Notice, record: NoticeRecord) => Promise<{ ok: boolean }>;
 }
 
-function channelsOf(
+async function channelsOf(
   repoPath: string,
   log: EventLog,
   opts: { fetch?: typeof fetch; timeoutMs?: number },
-): Channel[] {
+): Promise<Channel[]> {
   const out: Channel[] = [];
   const push = readPush(repoPath);
   if (push) {
@@ -380,6 +387,26 @@ function channelsOf(
           record,
           ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
         }),
+    });
+  }
+  const email = readEmail(repoPath);
+  if (email) {
+    // Each person's own address, read at send time and never recorded.
+    const addresses = await personAddresses(log);
+    out.push({
+      name: "email",
+      accepts: (k) => emailAccepts(email, k),
+      limit: dailyLimit(email.dailyBudget),
+      reaches: (to) => addresses.has(to),
+      send: async (n, record) => {
+        const address = record.to ? addresses.get(record.to) : undefined;
+        if (!address) return { ok: false };
+        return sendEmail(repoPath, n, address, {
+          log,
+          record,
+          ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+        });
+      },
     });
   }
   return out;
@@ -590,7 +617,8 @@ const STANDUP_ATTEMPTS = 6;
 
 /**
  * The one notifier (integrations items 20-23a): tail the ledger and send what
- * needs a person through every channel the user connected — push and Slack —
+ * needs a person through every channel the user connected — push, Slack and
+ * email, the last to one person at their own address —
  * each to the kinds it accepts. Starts after the current last event (no
  * replay of history), polls every `intervalMs`, and never sends the same
  * (kind, card) twice within ten minutes. Unsolicited notices are budgeted per
@@ -722,8 +750,25 @@ export async function startNotifier(
     });
   };
 
+  /**
+   * The channels that reach `to`: every shared one; a personal one (email)
+   * only when the person has an address, and — in the Team setup — only
+   * about an issue in a project they can see (TEAM-43).
+   */
+  const reaching = async (list: Channel[], to: string, cardId?: string): Promise<Channel[]> => {
+    const out: Channel[] = [];
+    for (const c of list) {
+      if (c.reaches) {
+        if (!c.reaches(to)) continue;
+        if (cardId && opts.inbox?.visible && !(await opts.inbox.visible(to, cardId))) continue;
+      }
+      out.push(c);
+    }
+    return out;
+  };
+
   const tick = async (): Promise<number> => {
-    const channels = channelsOf(repoPath, log, opts);
+    const channels = await channelsOf(repoPath, log, opts);
     if (channels.length === 0) {
       seq = (await log.getLastEvent())?.seq ?? seq;
       return 0;
@@ -745,7 +790,11 @@ export async function startNotifier(
       const key = n.key ?? `${n.event}:${n.cardId ?? ""}`;
       const at = Date.now();
       if ((recent.get(key) ?? 0) > at - 600_000) continue;
-      const accepting = channels.filter((c) => c.accepts(n.event));
+      const accepting = await reaching(
+        channels.filter((c) => c.accepts(n.event)),
+        person,
+        n.cardId,
+      );
       if (accepting.length === 0) continue;
       recent.set(key, at);
       const record = { to: person, notice: e.id, day: dayOf(now()) };
@@ -790,10 +839,11 @@ export async function startNotifier(
    * it reached, within that person's own budget — held past it, and shown in
    * Seshat's panel instead while they have the board in focus. One claim per
    * person and event, so the install's person, already told by the path
-   * above, is not told twice. The channels are the install's, which everyone
-   * reading them shares (no personal address yet): each change goes out once
-   * per channel, naming everyone it is for, and counts against each of their
-   * budgets — never one copy per watcher.
+   * above, is not told twice. On the install's push and Slack, which
+   * everyone reading them shares, each change goes out once per channel,
+   * naming everyone it is for, and counts against each of their budgets —
+   * never one copy per watcher. By email each person gets their own
+   * message at their own address, naming no one else.
    */
   const watchersNotified = async (channels: Channel[], from: number, upTo: number) => {
     if (!opts.inbox || upTo <= from) return 0;
@@ -811,7 +861,11 @@ export async function startNotifier(
       // Per channel, the people it goes to there.
       const going = new Map<Channel, WatcherNotice[]>();
       for (const w of notices) {
-        const accepting = channels.filter((c) => c.accepts(w.kind));
+        const accepting = await reaching(
+          channels.filter((c) => c.accepts(w.kind)),
+          w.to,
+          w.cardId,
+        );
         if (accepting.length === 0) continue;
         const record = { to: w.to, notice: eventId, day };
         const claimed = await claim(
@@ -838,6 +892,14 @@ export async function startNotifier(
         for (const c of open) going.set(c, [...(going.get(c) ?? []), w]);
       }
       for (const [c, to] of going) {
+        if (c.reaches) {
+          // Personal: one message each, in that person's own words.
+          for (const w of to) {
+            const r = await c.send(personalNotice(w), { to: w.to, notice: eventId, day });
+            if (r.ok) sent++;
+          }
+          continue;
+        }
         const [lead, ...rest] = to as [WatcherNotice, ...WatcherNotice[]];
         const result = await c.send(watcherNotice(first, to), {
           to: lead.to,
@@ -865,6 +927,18 @@ export async function startNotifier(
     }
     return sent;
   };
+
+  /** One person's own message for a change: their line, under the issue's or project's name. */
+  const personalNotice = (w: WatcherNotice): Notice => ({
+    event: w.kind,
+    title: w.title,
+    message: w.message,
+    priority: w.kind === "mentioned" ? 4 : 3,
+    ...(w.cardId ? { cardId: w.cardId } : {}),
+    ...(w.cardId && opts.dashboard
+      ? { click: `${opts.dashboard}/#/card/${encodeURIComponent(w.cardId)}/activity` }
+      : {}),
+  });
 
   /** One message for a change, naming each person it is for with their own words. */
   const watcherNotice = (first: WatcherNotice, to: WatcherNotice[]): Notice => {
@@ -924,17 +998,22 @@ export async function startNotifier(
     for (const [to, cards] of heldCards) {
       const notice = `digest-${day}`;
       if (log.hasEvent(claimId(`notify:${to}:${notice}`))) continue;
+      const reach = await reaching(accepting, to);
+      if (reach.length === 0) continue;
       const digest = await opts.inbox.digest(to, cards);
       if (!digest) continue;
       const record = { to, notice, day };
       if (!(await claim(`notify:${to}:${notice}`, { kind: "digest", ...record }))) continue;
-      const n: Notice = {
-        event: "digest",
-        title: digest.title,
-        message: digest.message,
-        priority: 3,
-      };
-      for (const c of accepting) if ((await c.send(n, record)).ok) sent++;
+      for (const c of reach) {
+        // A shared channel's title names whom it is for; a person's own email need not.
+        const n: Notice = {
+          event: "digest",
+          title: c.reaches ? digest.head : digest.title,
+          message: digest.message,
+          priority: 3,
+        };
+        if ((await c.send(n, record)).ok) sent++;
+      }
     }
     return sent;
   };
@@ -953,7 +1032,7 @@ export async function startNotifier(
     const day = dayOf(clock);
     const setup = opts.setup ?? setupFor(repoPath);
     let sent = 0;
-    const owed: { to: string; n: Notice & { key: string } }[] = (
+    const owed: { to: string; n: Notice & { key: string }; forName?: string }[] = (
       await remindersFor(log, person, { day, now: clock, setup })
     ).map((n) => ({ to: person, n }));
     if (setup === "team") {
@@ -968,20 +1047,24 @@ export async function startNotifier(
         const name = await personNameOn(log, lead);
         for (const n of await remindersFor(log, lead, { day, now: clock, setup })) {
           if (!n.key.startsWith("reminder-update-")) continue;
-          owed.push({ to: lead, n: { ...n, title: `For ${name ?? "the lead"}: ${n.title}` } });
+          owed.push({ to: lead, n, forName: name ?? "the lead" });
         }
       }
     }
-    for (const { to, n } of owed) {
-      const record = { to, notice: n.key, day };
-      const claimed = await claim(`notify:${to}:${n.key}`, { kind: "reminder", ...record });
+    for (const { to, n: own, forName } of owed) {
+      // On a shared channel it names whom it is for; a person's own email need not.
+      const shared = forName ? { ...own, title: `For ${forName}: ${own.title}` } : own;
+      const reach = await reaching(accepting, to);
+      if (reach.length === 0) continue;
+      const record = { to, notice: own.key, day };
+      const claimed = await claim(`notify:${to}:${own.key}`, { kind: "reminder", ...record });
       if (!claimed) continue;
       if (await boardInFocus(to)) {
-        await showInPanel(n, record);
+        await showInPanel(shared, record);
         continue;
       }
-      const used = await budgetUsed(claimed.seq, n.key, to);
-      const open = accepting.filter((c) => used < c.limit);
+      const used = await budgetUsed(claimed.seq, own.key, to);
+      const open = reach.filter((c) => used < c.limit);
       if (open.length === 0) {
         await log.append({
           actor: "harness",
@@ -990,7 +1073,7 @@ export async function startNotifier(
         });
         continue;
       }
-      for (const c of open) if ((await c.send(n, record)).ok) sent++;
+      for (const c of open) if ((await c.send(c.reaches ? own : shared, record)).ok) sent++;
     }
     return sent;
   };
@@ -1002,7 +1085,10 @@ export async function startNotifier(
    */
   const standupIfDue = async (channels: Channel[]): Promise<number> => {
     if (!opts.standup) return 0;
-    const accepting = channels.filter((c) => c.accepts("standup"));
+    const accepting = await reaching(
+      channels.filter((c) => c.accepts("standup")),
+      person,
+    );
     if (accepting.length === 0) return 0;
     const clock = now();
     const due = minutesOf(opts.standupAt ?? readSettings(repoPath).standupAt);

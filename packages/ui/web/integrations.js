@@ -70,6 +70,14 @@ const CATALOG = [
       "The alert title and one line naming the issue, to the ntfy or Gotify server you choose (your own, or ntfy.sh).",
   },
   {
+    id: "email",
+    name: "Email notifications",
+    mono: "EM",
+    does: "Each person gets their own notices at their own address: what they watch, mentions, project updates and the daily digest of what is still unread, within their daily limit.",
+    leaves:
+      "The issue or project name and one line saying what changed, to each person's own address through the SMTP server you choose. Comment and update text stay here.",
+  },
+  {
     id: "jira-sync",
     name: "Jira live sync",
     mono: "JI",
@@ -216,6 +224,12 @@ function controls(e) {
         return `<div class="iacts"><button class="btn sm" type="button" data-push-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test alert"}</button><button class="btn sm ghost" type="button" data-push-off data-needs="integration.connect">Disconnect</button></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
       }
       return `<form class="iacts push-form" data-push-form><select name="kind" aria-label="Server"><option value="ntfy">ntfy</option><option value="gotify">Gotify</option></select><input name="url" type="url" required placeholder="https://ntfy.sh or http://192.168.1.5:8080" aria-label="Server URL" autocomplete="off" spellcheck="false"><input name="topic" type="text" placeholder="Topic (ntfy)" aria-label="ntfy topic" autocomplete="off" spellcheck="false"><input name="token" type="password" placeholder="Token (optional for ntfy, required for Gotify)" aria-label="Access token" autocomplete="off"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The server URL and token stay in <code>~/.config/sekhemet/repos/…</code> with mode 0600, never in the repository or the ledger.</span></p>`;
+    }
+    case "email": {
+      if (e.connected) {
+        return `<div class="iacts"><button class="btn sm" type="button" data-email-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test email to me"}</button><button class="btn sm ghost" type="button" data-email-off data-needs="integration.connect">Disconnect</button></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
+      }
+      return `<form class="iacts email-form" data-email-form><input name="host" type="text" required placeholder="SMTP server, e.g. smtp.example.com" aria-label="SMTP server" autocomplete="off" spellcheck="false"><input name="port" type="number" required min="1" max="65535" value="587" aria-label="Port"><label class="sec"><input name="secure" type="checkbox"> TLS from the start (port 465)</label><input name="user" type="text" placeholder="User name (optional)" aria-label="SMTP user name" autocomplete="off" spellcheck="false"><input name="password" type="password" placeholder="Password (optional)" aria-label="SMTP password" autocomplete="off"><input name="from" type="email" required placeholder="Send from, e.g. sekhemet@example.com" aria-label="Sender address" autocomplete="off" spellcheck="false"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The password is a credential. Sekhemet keeps it in your keychain (or <code>~/.config/sekhemet/repos/…</code> with mode 0600), never in the repository or the ledger, and never shows it again.</span></p>`;
     }
     case "jira":
     case "linear": {
@@ -401,6 +415,30 @@ async function onClick(e) {
     await load();
     return;
   }
+  if (t.closest("[data-email-test]") && !blocked()) {
+    await withBusy("email:test", async () => {
+      const r = await postJSON("/api/integrations/email/test");
+      if (r.ok && r.data?.ok !== false)
+        toast({ tone: "pass", text: "Test email sent to your address" });
+      else
+        toast({
+          tone: "fail",
+          text: "The SMTP server didn't take the test email.",
+          detail: r.data?.error ?? err(r),
+        });
+    });
+    return;
+  }
+  if (t.closest("[data-email-off]") && !blocked()) {
+    const r = await send("DELETE", "/api/integrations/email");
+    if (r.ok)
+      toast({
+        text: "Email notifications are off. The server details and password were removed from this machine.",
+      });
+    else toast({ tone: "fail", text: "Couldn't disconnect email notifications.", detail: err(r) });
+    await load();
+    return;
+  }
   if (t.closest("[data-slack-test]") && !blocked()) {
     await withBusy("slack:test", async () => {
       const r = await postJSON("/api/integrations/slack/test");
@@ -455,6 +493,27 @@ async function onSubmit(e) {
       if (r.ok)
         toast({ tone: "pass", text: "Push notifications are on. Send a test alert to check." });
       else toast({ tone: "fail", text: "Couldn't connect push notifications.", detail: err(r) });
+      await load();
+    });
+    return;
+  }
+  if (form.matches("[data-email-form]")) {
+    e.preventDefault();
+    if (blocked()) return;
+    const f = form.elements;
+    const body = {
+      host: f.host.value.trim(),
+      port: Number(f.port.value),
+      ...(f.secure.checked ? { secure: true } : {}),
+      ...(f.user.value.trim() ? { user: f.user.value.trim() } : {}),
+      ...(f.password.value ? { password: f.password.value } : {}),
+      from: f.from.value.trim(),
+    };
+    await withBusy("email:connect", async () => {
+      const r = await send("PUT", "/api/integrations/email", body);
+      if (r.ok)
+        toast({ tone: "pass", text: "Email notifications are on. Send a test email to check." });
+      else toast({ tone: "fail", text: "Couldn't connect email notifications.", detail: err(r) });
       await load();
     });
     return;

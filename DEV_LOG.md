@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 57 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 58 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,73 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 58 — 2026-09-28 (Phase B close-out; Apache-2.0; the finish-line plan)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver.
+- **The close-out:** one workflow: four groups one at a time, a sweep, one independent review and a fixer (7 agents, 2.0M tokens), beside the overnight baseline.
+- **The finish-line plan:** one planning agent with its own research, then one completeness critic.
+- **The owner's rulings (2026-09-28):**
+  - every finish-line decision is delegated to the lead (DEC-47);
+  - beta users and CI are deferred;
+  - the licence is Apache-2.0 (DEC-46).
+
+**C1, F23 and F24 fixed:**
+- Qualifications are kept per context version. A build never invalidates another build's records; an upgrade still re-qualifies, because the new version has none.
+- Each role has its own prompt version (`computeRolePromptVersion`, `prompt_roles.ts`), so a Seshat or Reviewer prompt change no longer touches the Coding model's qualification.
+- `qualify --role`.
+- `doctor` names what this build owes.
+- Every card now records the full context version (PROMPT_STANDARD rule 37), which the review found missing; that was fixed.
+
+**C2, email and the config audit:**
+- Watcher and reminder email through nodemailer (10.0.12, MIT-0; the owner's yes), within each person's budget. TLS is required whenever a password is sent: a review major, fixed.
+- Every in-product writer of the user config is recorded, so it no longer reports itself as an outside change.
+
+**C3, B4.11's partials:**
+- Release leads.
+- The Admin's per-person Agent cap control.
+- DB-N9-17 level notes on Status and the List view (a review major, fixed).
+- The approver's question in the plan thread.
+- The Inbox's start requests and the AI state on tiles.
+- The Team queue standing on the status line.
+
+**C4, milestone evidence runners (`pnpm milestone <id>`; evidence/milestones; docs/reference/MILESTONES.md):**
+- **B3 PASS:** accept, undo and send-back on a real repository; a real `kill -9` mid-write on the WAL ledger with the chain verified after restart; the baseline commit's older ledger opened and migrated by this build.
+- **B4.10 PASS:** a real Team server, five people at four levels, 25 permitted and refused attempts, the Accept rule, and fair turns with a stand-in model server.
+- **B1:** the macOS containment suite 162/162 with 0 skipped. The injection evidence is re-run when its surface changed (a review major, fixed). Linux NOT RUN, waiting on the Lima VM.
+- **B2.5 NOT RUN:** the baseline's round 2 is still running.
+- **B4.4 and B4.11 NOT RUN:** they need a live model and the capstone.
+- Evidence now records the exact tree it ran on (a review major, fixed).
+
+**The review:** 0 blockers and 6 majors, all fixed, with 9 minors (12 fixes).
+
+**Licence (DEC-46):** Apache-2.0, copyright 2026 Brennan Kelley. LICENSE is the canonical text; NOTICE is unchanged; the `license` fields are set.
+
+**The finish-line plan (docs/reference/FINISH_LINE_PLAN.md):**
+- **Research:** where AI-built software fails, release practice, fast prioritised testing, and UI/UX and usability evaluation, all cited.
+- **A gap audit:** 20 release blockers, top two verified by the lead:
+  - the Linux sandbox leaves home secrets readable;
+  - the dashboard has no Host check, CSP or framing guard against DNS rebinding.
+- **The plan itself:** a quality bar, a test strategy, and the vibe-coding gap audit (52 failure modes, each with a scheduled check for Sekhemet and for the software it builds).
+- **The dual-stream schedule:** local models run tests day and night while Claude workflows build.
+- **Workflows:** W1–W17, including W16 (completeness: hollow and missing features) and W17 (vibe-gap checks).
+- **Exit criteria.**
+
+The rest of the owner's decisions are DEC-47.
+
+**Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1534 files), vitest 658 files, 5,111 passed, 37 skipped, and 1 failure: `smart_swap_wiring.spec.ts` mixed the ledger's real clock with a fixed "night" of 2026-09-28 22:00, the very time the gate ran. The test now takes night three days after the real stamp, with the same assertions, and its 18 tests pass.
+
+**Where the cards stop:**
+- Phase B's build and close-out are done.
+- **Owed before the milestone runs:**
+  - one re-qualification of every model on this build: the Coding model's prompt version is now `03ceeed1…` under the per-role formula, so every earlier Worker qualification is refused here, by design;
+  - builds older than this commit still carry the F23 code, so frozen builds keep their own registry.
+- **Open, minor:**
+  - legacy registries show per-model status for every role;
+  - the queue cap is not compared with qualified parallel slots;
+  - B4.10's fairness verdict comes from the runner's own loop, not `sekhemet queue`;
+  - `gate_start.spec.ts` passes only when vitest is on PATH (it does under `pnpm gate`).
+- **Next:** the finish-line plan from W1 (security hardening), with Stream 1 continuing the baseline's round 2 and then re-qualification.
 
 ### Entry 57 — 2026-09-28 (B4.11 done in code: working together; live-test F25 fixed; Sprint 3's first A/B verdicts)
 

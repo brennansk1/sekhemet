@@ -602,16 +602,27 @@ export function resolveConfig(options: ResolveConfigOptions): ResolvedConfig {
   };
 }
 
+/** The tables and keys `project` reads from the user config only. */
+const USER_ONLY_TABLES = ["team", "identity", "sessions", "tokens", "queue"];
+const USER_ONLY_KEYS = ["scheduler.fair_share", "scheduler.max_wait_s", "models.folders"];
+const isUserOnlyKey = (dotted: string): boolean =>
+  USER_ONLY_KEYS.includes(dotted) ||
+  USER_ONLY_TABLES.some((t) => dotted === t || dotted.startsWith(`${t}.`));
+
 /**
  * Which layer each value set in a file came from (dashboard DB-N4-1): the
  * last layer to set a dotted key wins. A key no layer sets is the default's
  * and is absent; so is a value that was refused, whose default applies.
+ * A key read from the user config only (`userOnly`, the scheduler's aging
+ * and the model folders) is never attributed to another layer, which cannot
+ * set it (teams item 30: the per-person Agent cap is an Admin's).
  */
 function keySources(layers: ConfigLayer[], problems: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   const walk = (values: TomlTable, prefix: string, layer: string) => {
     for (const [key, value] of Object.entries(values)) {
       const dotted = prefix ? `${prefix}.${key}` : key;
+      if (layer !== "user" && isUserOnlyKey(dotted)) continue;
       if (value && typeof value === "object" && !Array.isArray(value)) {
         walk(value as TomlTable, dotted, layer);
       } else {

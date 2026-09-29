@@ -103,7 +103,8 @@ export function dashboardQualify(o: {
       const adapter = (
         o.adapterFor ?? ((m: string, r: ModelRole) => describeModel(m, r, { registry: o.registry }))
       )(model, role);
-      const combination = () => qualificationCombination(adapter, { registry: o.registry });
+      // Qualified for this role, under this build's prompt version for it (CX-N6-4).
+      const combination = () => qualificationCombination(adapter, { registry: o.registry, role });
       // A measurement run (MS-NM14-3, DEC-42): unloaded at its end, even on failure.
       const { best } = await alone(() =>
         withMeasurementRun(

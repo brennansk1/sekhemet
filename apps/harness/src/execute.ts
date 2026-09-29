@@ -89,6 +89,7 @@ import { type LearningStore, RULES_PER_PROMPT } from "./learning/store.js";
 import { recordLedgerRun } from "./ledger_evidence.js";
 import { withLiveGate } from "./live_gate.js";
 import { loadBaseline, recordBaselineShrink } from "./onboard.js";
+import { fullContextVersion, rolePromptVersion } from "./prompt_versions.js";
 import { buildReproRecord } from "./repro.js";
 import { workerWebDocs } from "./research/service.js";
 import { Tracer, toolCallSpan, traced } from "./tracing.js";
@@ -653,6 +654,11 @@ export async function executeCard(
     evidenceGate:
       ctx.runProfile?.switches.evidenceGate ??
       (process.env.SEKHEMET_EVIDENCE_GATE === "on" ? "on" : "off"),
+    // PROMPT_STANDARD rule 37 (context rule 27, CX-N6-4): every card records
+    // the full context version and the Coding model's prompt version, so its
+    // result is compared only with cards run at the same prompts.
+    contextVersion: fullContextVersion(),
+    promptVersion: rolePromptVersion("worker"),
     // Gates rule 6a (lead ruling): the frozen suite names its staged tests
     // external, so its measurement never changes with a record; unnamed,
     // each staged file's origin is its own.

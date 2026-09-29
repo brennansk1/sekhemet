@@ -1,6 +1,7 @@
 {
   "name": "@sekhemet/harness",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "type": "module",
   "bin": {
     "sekhemet": "./dist/index.js"
@@ -26,12 +27,14 @@
     "@sekhemet/ui": "workspace:*",
     "@simplewebauthn/server": "14.0.3",
     "marked": "18.0.14",
+    "nodemailer": "10.0.12",
     "openid-client": "6.8.8",
     "semver": "7.8.5",
     "yaml": "2.9.1"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
+    "@types/nodemailer": "8.0.2",
     "@types/semver": "7.8.0"
   }
 }

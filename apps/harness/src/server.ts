@@ -990,20 +990,30 @@ export function startDashboardServer(
       };
     };
   };
-  /** A person's own per-project levels and the projects they lead (DB-N9-17). */
+  /**
+   * A person's own per-project levels, the projects they lead and those
+   * where they lead a release not yet accepted (DB-N9-17; teams item 28).
+   */
   const ownProjects = (principal: string) => {
-    const out: Record<string, { level?: string; lead?: boolean }> = {};
+    const out: Record<string, { level?: string; lead?: boolean; releaseLead?: boolean }> = {};
     const m = access.projection().members.get(principal);
     const ids = new Set([
       ...Object.keys(m?.projects ?? {}),
       ...[...access.projection().projects.entries()]
         .filter(([, settings]) => settings.lead === principal)
         .map(([id]) => id),
+      ...access.projection().releaseLeads.keys(),
     ]);
     for (const id of ids) {
       const level = m?.projects[id];
       const lead = access.isLead(principal, id);
-      if (level || lead) out[id] = { ...(level ? { level } : {}), ...(lead ? { lead } : {}) };
+      const releaseLead = access.leadsRelease(principal, id);
+      if (level || lead || releaseLead)
+        out[id] = {
+          ...(level ? { level } : {}),
+          ...(lead ? { lead } : {}),
+          ...(releaseLead ? { releaseLead } : {}),
+        };
     }
     return out;
   };
@@ -1308,6 +1318,9 @@ export function startDashboardServer(
         principalOf,
         ceilingOf,
         projectName: (id) => options.cardStore?.getProject(id)?.name,
+        ...(options.cardStore
+          ? { releases: () => (options.cardStore as CardStore).slices.list() }
+          : {}),
       })
     ) {
       return;
@@ -2128,7 +2141,9 @@ export function startDashboardServer(
 
     // Teams NEW-teams-5 (TEAM-15, -39, -40): comments, the AI teammates' state, start requests.
     if (
-      (url.startsWith("/api/cards/") || url === "/api/agent/requests") &&
+      (url.startsWith("/api/cards/") ||
+        url === "/api/agent/requests" ||
+        url === "/api/agent/states") &&
       (await handleAiTeammateRoute(req, res, url, {
         deps: aiDeps,
         json,

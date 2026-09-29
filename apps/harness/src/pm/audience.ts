@@ -19,6 +19,12 @@ export interface Audience {
   canSee(principal: string, project: string | undefined): boolean;
   /** The project's lead, when one is named. */
   leadOf(project: string | undefined): string | undefined;
+  /** A release's lead, when one is named (teams item 28). */
+  releaseLeadOf?(project: string, release: string): string | undefined;
+  /** Whether the person leads one of the project's releases not yet accepted, at Member or above. */
+  leadsRelease?(principal: string, project: string): boolean;
+  /** The workspace's people now (approved, not removed); the Team setup's only. */
+  people?(): string[];
   /**
    * The Admin whose auto-apply rule applies Seshat's suggestion of this kind
    * on this project (planner-pm PM-N9-2, teams TEAM-41); undefined, or
@@ -52,6 +58,12 @@ export function audienceFromAccess(access: () => Access, db: DatabaseSync): Audi
     levelOf: (p, project) => access().level(p, project),
     canSee: (p, project) => access().level(p, project) !== undefined,
     leadOf: (project) => (project ? access().settings(project).lead : undefined),
+    releaseLeadOf: (project, release) => access().releaseLead(project, release),
+    leadsRelease: (p, project) => access().leadsRelease(p, project),
+    people: () =>
+      [...access().projection().members.values()]
+        .filter((m) => !m.pending && !m.removed)
+        .map((m) => m.principal),
     autoApplier: (project, kind) => access().autoApplier(project, kind),
   };
 }

@@ -5,6 +5,7 @@ import {
   choicesOf,
   keptCandidates,
   moveLine,
+  planThreadHtml,
   reviewPlanHtml,
   reviewState,
   setAnswer,
@@ -288,5 +289,65 @@ describe("DS-P2-1..3 on the card's Plan tab", () => {
     for (const l of ["card-zero", "card-one"])
       expect(startCardNote({ labels: [l] })).not.toMatch(/\bcards?\b|\bgates?\b/i);
     expect(startCardNote({ labels: [] })).toBe("");
+  });
+});
+
+describe("design-stage §2.9 item 7: the approver asks a question in the plan's thread", () => {
+  const sent = {
+    state: "sent",
+    approver: "p_member",
+    approverName: "Mo Member",
+    requestedBy: "p_stake",
+    requestedByName: "Sam Stakeholder",
+  };
+  const asked = {
+    ...sent,
+    thread: [
+      {
+        id: "pcm_1",
+        by: "p_member",
+        byName: "Mo Member",
+        text: "Why is <search> first?",
+        at: "2026-09-28T10:00:00.000Z",
+      },
+    ],
+  };
+
+  it("offers the approver Ask a question, and the sender the answer box, while it is sent", () => {
+    const approver = planThreadHtml(sent, "p_member");
+    expect(approver).toContain("Questions");
+    expect(approver).toContain("No questions yet.");
+    expect(approver).toContain("data-plan-comment");
+    expect(approver).toContain(">Ask a question</label>");
+    expect(approver).toContain(">Ask</button>");
+    const sender = planThreadHtml(asked, "p_stake");
+    expect(sender).toContain("Mo Member");
+    // The words are escaped: a person's text is never markup.
+    expect(sender).toContain("Why is &lt;search&gt; first?");
+    expect(sender).toContain(">Answer</label>");
+    expect(sender).toContain(">Send answer</button>");
+  });
+
+  it("shows the thread read-only to anyone else, and once approved", () => {
+    expect(planThreadHtml(asked, "p_member2")).not.toContain("data-plan-comment");
+    expect(planThreadHtml(asked, "p_member2")).toContain("Why is &lt;search&gt; first?");
+    expect(planThreadHtml({ ...asked, state: "approved" }, "p_member")).not.toContain(
+      "data-plan-comment",
+    );
+    expect(planThreadHtml(undefined, "p_member")).toBe("");
+  });
+
+  it("is part of Review plan for a sent plan, and the thread's note says a question waits", () => {
+    const html = reviewPlanHtml(group(), reviewState(group()), {
+      setup: "team",
+      level: "stakeholder",
+      me: "p_stake",
+      approval: asked,
+    });
+    expect(html).toContain("data-plan-comment");
+    expect(approvalNoteHtml(asked, "p_stake")).toContain(
+      "Mo Member asked a question: open Review plan to answer.",
+    );
+    expect(approvalNoteHtml(asked, "p_member")).not.toContain("asked a question");
   });
 });

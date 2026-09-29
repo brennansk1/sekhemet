@@ -73,6 +73,21 @@ export interface PmPlanApproval {
   approvedBy?: string;
   approverName?: string;
   requestedByName?: string;
+  /**
+   * The plan's thread (design-stage §2.9 item 7): the approver's questions and
+   * the sender's answers, oldest first, while and after it was sent.
+   */
+  thread?: PmPlanMessage[];
+}
+
+/** One message in a sent plan's thread; its words are private to the ledger. */
+export interface PmPlanMessage {
+  id: string;
+  /** Its author: the approver or the person who sent the plan. */
+  by: string;
+  byName?: string;
+  text: string;
+  at: string;
 }
 
 export interface PmCite {
@@ -153,4 +168,6 @@ export const PM_EVENTS = {
   planSent: "plan/sent_for_approval",
   /** The approver approved it; the project exists from here (TEAM-20, TEAM-42). */
   planApproved: "plan/approved",
+  /** A message in a sent plan's thread: the approver's question or the sender's answer (design-stage §2.9 item 7). */
+  planCommented: "plan/commented",
 } as const;

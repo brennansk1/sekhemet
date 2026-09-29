@@ -27,7 +27,50 @@ export function namedApproval(approval: PmPlanApproval, audience: Audience): PmP
     ...approval,
     approverName: nameOf(audience, approval.approver),
     requestedByName: nameOf(audience, approval.requestedBy),
+    ...(approval.thread
+      ? { thread: approval.thread.map((m) => ({ ...m, byName: nameOf(audience, m.by) })) }
+      : {}),
   };
+}
+
+/** The longest message a plan's thread keeps, in characters. */
+const PLAN_MESSAGE_MAX = 8000;
+
+/**
+ * A message in a sent plan's thread (design-stage §2.9 item 7): the
+ * approver asks a question, or the person who sent the plan answers — they
+ * alone, while it waits for approval. Nothing is created; the plan's
+ * choices are unchanged.
+ */
+export async function commentOnSentPlan(
+  pmStore: PmStore,
+  proposal: PmProposal,
+  input: { principal: string; text: unknown; audience: Audience },
+): Promise<PmProposal> {
+  const approval = proposal.approval;
+  if (!approval) throw new ProposalError("This plan was not sent for approval.", 409);
+  if (approval.state === "approved") {
+    throw new ProposalError("This plan is already approved.", 409);
+  }
+  if (proposal.state !== "open") {
+    throw new ProposalError(`This plan is already ${proposal.state}.`, 409);
+  }
+  const { audience, principal } = input;
+  if (principal !== approval.approver && principal !== approval.requestedBy) {
+    throw new ProposalError(
+      `Only ${nameOf(audience, approval.approver)} and ${nameOf(audience, approval.requestedBy)} write in this plan's thread.`,
+      403,
+    );
+  }
+  const text = typeof input.text === "string" ? input.text.trim() : "";
+  if (!text) throw new ProposalError("Write the question or the answer.", 400);
+  if (text.length > PLAN_MESSAGE_MAX) {
+    throw new ProposalError(`A message is at most ${PLAN_MESSAGE_MAX} characters.`, 400);
+  }
+  const id = await pmStore.commentOnPlan(proposal.id, text);
+  const message = { id, by: principal, text, at: new Date().toISOString() };
+  const next: PmPlanApproval = { ...approval, thread: [...(approval.thread ?? []), message] };
+  return { ...proposal, approval: namedApproval(next, audience) };
 }
 
 /** A reply whose plan was sent to `person`: they read it once it is sent (§2.9 item 1). */

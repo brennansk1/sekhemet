@@ -36,6 +36,14 @@ export interface RunSettings {
   toolSet?: string;
   /** The prompt budget W, fixed for the attempt (worker-loop rule 22, WL-M3-5). */
   promptBudgetTokens?: number;
+  /**
+   * The build's full context version (PROMPT_STANDARD rule 37, context rule
+   * 27): every role's prompts and the literal inventory, so card results are
+   * compared only within one version.
+   */
+  contextVersion?: string;
+  /** The Coding model's own prompt version (CX-N6-4): what its qualification names. */
+  promptVersion?: string;
 }
 
 /**

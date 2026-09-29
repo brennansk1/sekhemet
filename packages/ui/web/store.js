@@ -38,6 +38,13 @@ export const store = {
     presence: { issues: {}, dragging: {} },
     /** The Inbox's unread count (teams item 24), for the sidebar badge. */
     inbox: { unread: 0, at: 0 },
+    /**
+     * The Agent's state on each issue it is on (teams item 19; card id →
+     * its facts) for the tiles, and the person's own place in the Team
+     * queue (item 31) for the Agent status line: `GET /api/agent/states`.
+     */
+    agentStates: new Map(),
+    agentQueue: null,
     /** Memory samples kept client-side (last 120), and per-step model telemetry. */
     telemetry: { memory: [], steps: [] },
     /** The last ledger seq the stream delivered: the replay checkpoint (U9). */

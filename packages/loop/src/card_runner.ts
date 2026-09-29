@@ -2523,6 +2523,9 @@ export class CardRunner {
       workerMethod: this.options.workerMethod ?? "baseline",
       // Rule 27 and WL-N9-4: every bundle records the evidence-gate switch.
       evidenceGate: this.options.evidenceGate ?? "off",
+      // PROMPT_STANDARD rule 37: the versions the card's prompts were built at.
+      ...(this.options.contextVersion ? { contextVersion: this.options.contextVersion } : {}),
+      ...(this.options.promptVersion ? { promptVersion: this.options.promptVersion } : {}),
       isolation: (this.options.sandbox ?? new ProcessSandbox()).confinement,
       // WL-M2-5 and WL-M3-5: the tool arm and the attempt's prompt budget W.
       ...(session ? { toolSet: session.getToolSetArm() } : {}),

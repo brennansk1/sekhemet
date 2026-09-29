@@ -39,7 +39,9 @@ describe("the Configuration API route table (PM_CONTRACT §3 Configuration)", ()
       expect(Object.keys(ACTIONS), key(r.method, r.path)).toContain(r.permission);
       if (r.method === "GET") expect(r.permission, key(r.method, r.path)).toBe("read");
       else
-        expect(["config.manage", "review.capacity"], key(r.method, r.path)).toContain(r.permission);
+        expect(["config.manage", "review.capacity", "queue.caps"], key(r.method, r.path)).toContain(
+          r.permission,
+        );
       expect(r.spec.length, key(r.method, r.path)).toBeGreaterThan(0);
     }
   });

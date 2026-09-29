@@ -66,6 +66,7 @@ import {
   recommendRole,
   registerModelFile,
   restoreRole,
+  roleOf,
   scanModelFolders,
   sekhemetConfigDir,
   sha256File,
@@ -89,6 +90,7 @@ import { CONFIG_ROUTES, type ConfigRoute } from "./config_routes.js";
 import { egressEvent } from "./egress_event.js";
 import { networkHint } from "./github_transport.js";
 import { swapHistory } from "./model_access.js";
+import { rolePromptVersion } from "./prompt_versions.js";
 import { headroomProbeFor } from "./smart_swap.js";
 import { REPLAY_EVENT_TYPES, replayDemand } from "./swap_replay.js";
 
@@ -277,6 +279,49 @@ export function writeModelFolders(path: string, folders: readonly ModelFolderSet
   if (start >= 0) lines.splice(start, end - start + 1, value);
   else if (modelsAt >= 0) lines.splice(modelsAt + 1, 0, value);
   else lines.push(...(text.length && !text.endsWith("\n") ? [""] : []), "[models]", value);
+  const out = lines.join("\n");
+  parseToml(out);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, out.endsWith("\n") ? out : `${out}\n`);
+}
+
+// ── the user configuration's `[queue] agent_issues_per_person` ──────────────
+
+/** Why a typed per-person Agent cap is refused (TEAM-30), said beside the field. */
+export const QUEUE_CAP_REFUSED = "Agent issues per person is a whole number, 1 or more.";
+
+/**
+ * Rewrite `[queue] agent_issues_per_person` in the user config, keeping every
+ * other line (teams item 30, TEAM-30): the one key replaced in place, else
+ * added under `[queue]`, else a `[queue]` table appended.
+ */
+export function writeQueueCap(path: string, cap: number): void {
+  if (!Number.isInteger(cap) || cap < 1) throw new Error(QUEUE_CAP_REFUSED);
+  const value = `agent_issues_per_person = ${cap}`;
+  const text = existsSync(path) ? readFileSync(path, "utf8") : "";
+  const lines = text.split("\n");
+  let section = "";
+  let at = -1;
+  let queueAt = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] as string;
+    const header = /^\s*\[([^\]]+)\]\s*(#.*)?$/.exec(line);
+    if (header) {
+      section = (header[1] as string).trim();
+      if (section === "queue") queueAt = i;
+      continue;
+    }
+    if (section === "queue" && /^\s*agent_issues_per_person\s*=/.test(line)) {
+      at = i;
+      break;
+    }
+  }
+  if (at >= 0) lines.splice(at, 1, value);
+  else if (queueAt >= 0) lines.splice(queueAt + 1, 0, value);
+  else {
+    while (lines.length && lines.at(-1) === "") lines.pop();
+    lines.push(...(lines.length ? [""] : []), "[queue]", value);
+  }
   const out = lines.join("\n");
   parseToml(out);
   mkdirSync(dirname(path), { recursive: true });
@@ -686,17 +731,21 @@ export function createConfigApi(deps: ConfigApiDeps) {
   };
 
   // ── qualification and evidence ─────────────────────────────────────────
+  // The model's qualification for the role on this build (CX-N6-1, CX-N6-4):
+  // its newest record under this build's prompt version for the role. A
+  // record another build made under its own version is that build's (F23);
+  // one qualified only under another version is owed a re-qualification here.
   const qualificationOf = (model: string, role: ModelRole): RoleEvidence["qualification"] => {
     const e = registry.get(model);
     if (!e) return "missing";
-    const lookups = (e.qualifications ?? []).filter(
-      (q) =>
-        (q.combination as { role?: string } | undefined)?.role === undefined ||
-        (q.combination as { role?: string }).role === role,
-    );
-    const newest = lookups.at(-1);
+    const all = e.qualifications ?? [];
+    // A registry from before combinations were recorded: its per-model record.
+    if (all.length === 0) return e.qualification?.status ?? "missing";
+    const version = rolePromptVersion(role);
+    const mine = all.filter((q) => roleOf(q.combination) === role);
+    const newest = mine.filter((q) => q.combination.settings.contextVersion === version).at(-1);
     if (newest) return newest.status;
-    return e.qualification?.status ?? "missing";
+    return mine.some((q) => q.status === "qualified") ? "invalidated" : "missing";
   };
 
   let evalMod: { compareOnItems?: unknown; readQuickScores?: unknown } | undefined;
@@ -1950,6 +1999,20 @@ export function createConfigApi(deps: ConfigApiDeps) {
             minutesPerDay: minutes,
             ...(facts ? { reviewWip: facts.limit } : {}),
           });
+          return true;
+        }
+        case "PUT /api/config/queue": {
+          // The per-person Agent cap (teams item 30, TEAM-30; dashboard §2.16):
+          // an Admin's (`queue.caps`, checked before this handler), written to
+          // the user config and recorded as their configuration change; the
+          // queue reads the config on every pass, so it applies at once.
+          const cap = body.agentIssuesPerPerson;
+          if (typeof cap !== "number" || !Number.isInteger(cap) || cap < 1) {
+            deps.json(res, 400, { error: QUEUE_CAP_REFUSED, key: "agent_issues_per_person" });
+            return true;
+          }
+          configWrite(deps.principalOf(req), () => writeQueueCap(cfgPath, cap));
+          deps.json(res, 200, { agentIssuesPerPerson: cap });
           return true;
         }
         case "GET /api/config/models":

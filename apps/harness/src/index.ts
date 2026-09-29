@@ -91,7 +91,7 @@ import {
   queueDefaults,
   reviewLimit,
 } from "./config_apply.js";
-import { upgradeConfigKeys } from "./config_upgrade.js";
+import { configRenamesDue, upgradeConfigKeys } from "./config_upgrade.js";
 import { daemonStart, daemonStatus, daemonStop, rotateLog } from "./daemon.js";
 import { type DoctorReport, runDoctor } from "./doctor.js";
 import { egressEvent } from "./egress_event.js";
@@ -218,6 +218,8 @@ import { bakeOffOnSuitePath } from "./suite_path.js";
 import { describeSupervisorStart, removeWorktreesOnClose, supervisorStart } from "./supervisor.js";
 import { Access } from "./team/access.js";
 import { agentRefusalFor, runnableByTheirPeople } from "./team/ai_teammates.js";
+import { configWriter, recordConfigWrite } from "./team/config_audit.js";
+import { identityDir } from "./team/credential_store.js";
 import { fairOrder } from "./team/fair_queue.js";
 import { newSetupTokenCommand, recordSwitchToSolo } from "./team/serve.js";
 import { terminalBoardLines } from "./terminal_board.js";
@@ -463,13 +465,21 @@ export function initLocalKernel(repoPath: string): {
   // SUR-43 (surface item 32): renamed config keys are rewritten after a
   // backup in the same step as the ledger migration; doctor reports them.
   upgradeConfigKeys(join(dotSekhemet, "config.toml"));
-  upgradeConfigKeys(userConfigPath());
 
   // The design and the permission engine's protected-path list both name
   // .sekhemet/events.db; opening a differently-named file meant the deny rule
   // guarded a database nothing used.
   // The install's person, the erasure register and the schema check (RUN-44).
   const { db, log } = openLocalLedger(repoPath);
+  // TEAM-44: the user config's upgrade is Sekhemet's own write, recorded as
+  // `config/changed` (no person asked), so the next start does not report
+  // it as a change made outside Sekhemet. Keys only, never a value.
+  const userConfig = userConfigPath();
+  if (configRenamesDue(userConfig).length > 0) {
+    recordConfigWrite({ db, log, path: userConfig, identityDir: identityDir() }, () =>
+      upgradeConfigKeys(userConfig),
+    );
+  }
   const cardStore = new CardStore(db, log);
   // Production boards check every column's entry condition (B1); Review
   // reads the evidence bundle the ledger records for the card (K-S7-7),
@@ -1429,6 +1439,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const research = await planResearch({
       repoPath: config.repoPath,
       log,
+      // TEAM-44: the research answer's write to the user config is the person's, recorded.
+      recordConfigWrite: configWriter({
+        db,
+        log,
+        path: userConfigPath(),
+        identityDir: identityDir(),
+        principal: log.localPrincipal(),
+      }),
       offline,
       newProject: isGreenfield(config.repoPath),
       print: (l) => console.log(l),

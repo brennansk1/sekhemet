@@ -168,6 +168,7 @@ export interface InboxItemFacts {
     | "start_request"
     | "decision"
     | "plan_approval"
+    | "plan_question"
     | "mention_invite"
     | "invite_request";
   cardId?: string;
@@ -191,8 +192,10 @@ export interface InboxItemFacts {
   request?: { id: string; requestedBy: string; ask: string };
   /** A mention of people who cannot see the project (TEAM-22): their names. */
   mention?: { commentId: string; people: string[]; project?: string };
-  /** The Agent's question. */
+  /** The Agent's question, or the approver's question on your plan (`plan_question`). */
   question?: string;
+  /** On a plan sent for your approval: its sender answered your question (design-stage §2.9 item 7). */
+  answered?: boolean;
   link: string;
 }
 
@@ -216,7 +219,19 @@ export function itemLine(item: InboxItemFacts): {
         ...ai,
       };
     case "plan_approval":
-      return { title, line: `${item.by ?? "Someone"} sent this plan for your approval.`, ...ai };
+      return {
+        title,
+        line: item.answered
+          ? `${item.by ?? "Someone"} answered your question on this plan.`
+          : `${item.by ?? "Someone"} sent this plan for your approval.`,
+        ...ai,
+      };
+    case "plan_question":
+      return {
+        title,
+        line: `${item.by ?? "Your approver"} asked about your plan: ${item.question ?? "a question"}`,
+        ...ai,
+      };
     case "mention_invite":
       return {
         title,

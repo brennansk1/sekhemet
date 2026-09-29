@@ -179,6 +179,29 @@ describe("the member projection and the action table", () => {
   });
 });
 
+describe("a release's lead is a person's naming, never a model's (teams item 28)", () => {
+  it("folds release/lead_set and slice/accepted only when a person recorded them", () => {
+    joined(ADMIN, "admin");
+    joined(MEMBER, "member");
+    const access = new Access({ db, setup: "team", localPrincipal: () => log.localPrincipal() });
+    const lead = { sliceId: "SLICE-1", projectId: "proj_a", lead: MEMBER };
+    // A model's record naming a lead, even carrying a person's principal, names no one.
+    log.appendNow({ actor: "planner", type: "release/lead_set", principal: ADMIN, payload: lead });
+    expect(access.releaseLead("proj_a", "SLICE-1")).toBeUndefined();
+    expect(access.leadsRelease(MEMBER, "proj_a")).toBe(false);
+    log.appendNow({ actor: "human", type: "release/lead_set", principal: ADMIN, payload: lead });
+    expect(access.releaseLead("proj_a", "SLICE-1")).toBe(MEMBER);
+    expect(access.leadsRelease(MEMBER, "proj_a")).toBe(true);
+    // A model's acceptance does not end the lead (the slice ledger's own rule).
+    log.appendNow({
+      actor: "planner",
+      type: "slice/accepted",
+      payload: { sliceId: "SLICE-1", projectId: "proj_a", completesProject: false },
+    });
+    expect(access.leadsRelease(MEMBER, "proj_a")).toBe(true);
+  });
+});
+
 describe("the 403 on every write endpoint (TEAM-4, TEAM-5, TEAM-32, INT-24)", () => {
   let project: string;
   let other: string;

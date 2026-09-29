@@ -2,7 +2,7 @@ import type { ModelRegistry, QualificationLookup, RoleAssignmentRecord } from ".
 import type { ModelRole } from "./types.js";
 
 /** The roles as a person reads them (DEC-31). */
-const ROLE_WORDS: Record<string, string> = {
+export const ROLE_WORDS: Record<string, string> = {
   worker: "Coding model",
   planner: "Planning model",
   reviewer: "Review model",
@@ -126,7 +126,7 @@ export function assignRole(
     (input.role === "worker" && input.qualification === "overridden");
   if (!qualified) {
     throw new AssignmentRefusal(
-      `Refusing the assignment: ${input.model} is not verified on this machine for the ${ROLE_WORDS[input.role] ?? input.role} (${input.qualification}). Verify it first: sekhemet qualify --models ${input.model}`,
+      `Refusing the assignment: ${input.model} is not verified on this machine for the ${ROLE_WORDS[input.role] ?? input.role} (${input.qualification}). Verify it first: sekhemet qualify --models ${input.model}${input.role === "worker" ? "" : ` --role ${input.role}`}`,
     );
   }
   // MD-N4-9: the Reviewer reads the Worker's diff, so it is of another family.

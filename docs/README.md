@@ -81,10 +81,12 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | File | Purpose |
 |---|---|
 | [INSTALL.md](reference/INSTALL.md) | The two install paths — the npm package for a person, the server image for a team with its identity proxy and separate inference container — and the source install. |
+| [MILESTONES.md](reference/MILESTONES.md) | The plan's milestones the owner sees, each with the evidence file its runner (`pnpm milestone <id>`) produced on the reference machine, the commit and date, and PASS, FAIL or NOT RUN with the reason. |
 | [SUITE_RUNS.md](reference/SUITE_RUNS.md) | Every recorded frozen-suite score with its hash, and why the failures failed. |
 | [PHASE0.md](reference/PHASE0.md) | The go/no-go measurement and its verdict: what was measured, what it does not establish, and how to reproduce it. |
 | [MVP_PATH.md](reference/MVP_PATH.md) | The one sequence that has to work, and what is deliberately sequenced behind it. The gap lists are ordered by unit; this is ordered by what ships. |
 | [MODERNIZATION_PLAN.md](reference/MODERNIZATION_PLAN.md) | The Opus 5.5 pass over the AI brownfield: review every domain, change what the review justifies, measure every change. Supersedes the 2026-09-18 completion plan. |
+| [FINISH_LINE_PLAN.md](reference/FINISH_LINE_PLAN.md) | From feature complete to a published product: the quality bar, the ranked release gaps, the test strategy, the usability audits, the two-stream schedule of model runs and Claude workflows, release engineering and the exit criteria. |
 | [COVERAGE.md](reference/COVERAGE.md) | Phase A of the modernization: every domain reviewed, the ranked programme, and the decisions that need the owner. |
 | [OPEN_QUESTIONS.md](reference/OPEN_QUESTIONS.md) | Benchmarks still owed, unverified research gaps and open design questions, each with its state and where it is decided. |
 | [DESIGN_TRACE.md](reference/DESIGN_TRACE.md) | The proof that design v3 lost nothing: every item of the 2026-09-17 design, its companions and the feature inventories traced to where it lives now, with what moved to Later and what changed on purpose. |

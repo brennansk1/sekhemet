@@ -90,7 +90,7 @@ export const PROMPT_EMPHASIS_WORDS: readonly string[] = [
  * finding, so a new copy module is registered in the same change that
  * creates it.
  */
-export const COPY_MODULES: Readonly<Record<string, string>> = {
+export const COPY_MODULES = {
   design: "packages/planner/src/design_copy.ts",
   gates: "packages/gates/src/copy.ts",
   pm: "apps/harness/src/pm/pm_copy.ts",
@@ -103,7 +103,7 @@ export const COPY_MODULES: Readonly<Record<string, string>> = {
   review: "apps/harness/src/learning/review_copy.ts",
   sandbox: "packages/sandbox/src/copy.ts",
   worker: "packages/context/src/worker_copy.ts",
-};
+} as const satisfies Readonly<Record<string, string>>;
 
 /** The shape of a copy module's path; a match must be registered in `COPY_MODULES`. */
 export const COPY_MODULE_PATTERN = /(^|\/)(copy\/[^/]+\.ts|copy\.ts|[a-z0-9_]+_copy\.ts)$/;
@@ -111,7 +111,7 @@ export const COPY_MODULE_PATTERN = /(^|\/)(copy\/[^/]+\.ts|copy\.ts|[a-z0-9_]+_c
 const TAGS = new Set(REGISTERED_PROMPT_TAGS);
 const ACRONYMS = new Set(PROMPT_ACRONYM_ALLOWLIST);
 const EMPHASIS = new Set(PROMPT_EMPHASIS_WORDS);
-const COPY_PATHS = new Set(Object.values(COPY_MODULES));
+const COPY_PATHS: ReadonlySet<string> = new Set(Object.values(COPY_MODULES));
 
 const normalise = (path: string) => path.replaceAll("\\", "/");
 

@@ -11,6 +11,7 @@ import {
 import { type NetworkTable, networkConfigs } from "./config_apply.js";
 import { egressEvent } from "./egress_event.js";
 import { researchCopy } from "./research/research_copy.js";
+import type { ConfigWrite } from "./team/config_audit.js";
 import { userPaths } from "./user_dir.js";
 
 /**
@@ -118,11 +119,24 @@ export class ResearchHostAwaitsYes extends Error {
 
 const tomlList = (hosts: readonly string[]) => `[${hosts.map((h) => `"${h}"`).join(", ")}]`;
 
+/** A write not recorded on a ledger: only where no ledger is open. */
+const unrecorded: ConfigWrite = (write) => write();
+
 /**
  * Set keys in the user's config.toml `[network]` table, each set or
- * replaced, every other line kept as it was.
+ * replaced, every other line kept as it was — through `record`, so the write
+ * is on the ledger as Sekhemet's own (`config/changed`, TEAM-44) and the next
+ * start does not report it as a change made outside.
  */
-function writeNetworkKeys(path: string, entries: ReadonlyArray<[string, string]>): void {
+function writeNetworkKeys(
+  path: string,
+  entries: ReadonlyArray<[string, string]>,
+  record: ConfigWrite,
+): void {
+  record(() => writeNetworkKeysNow(path, entries));
+}
+
+function writeNetworkKeysNow(path: string, entries: ReadonlyArray<[string, string]>): void {
   const lines = existsSync(path) ? readFileSync(path, "utf8").split("\n") : [];
   const header = lines.findIndex((l) => /^\s*\[network\]\s*(#.*)?$/.test(l));
   if (header === -1) {
@@ -161,11 +175,16 @@ export function recordResearchAnswer(
   answer: ResearchAnswer,
   path = userConfigPath(),
   hosts: readonly string[] = RESEARCH_HOSTS,
+  record: ConfigWrite = unrecorded,
 ): void {
-  writeNetworkKeys(path, [
-    ["research", `"${answer}"`],
-    ...(answer === "yes" ? [["research_hosts", tomlList(hosts)] as [string, string]] : []),
-  ]);
+  writeNetworkKeys(
+    path,
+    [
+      ["research", `"${answer}"`],
+      ...(answer === "yes" ? [["research_hosts", tomlList(hosts)] as [string, string]] : []),
+    ],
+    record,
+  );
 }
 
 /**
@@ -178,21 +197,26 @@ export function recordResearchHostsAnswer(
   yes: boolean,
   hosts: readonly string[],
   path = userConfigPath(),
+  record: ConfigWrite = unrecorded,
 ): void {
   const user = networkConfigs(process.cwd(), path).user;
   const covered = coveredResearchHosts(user);
   const union = (a: readonly string[], b: readonly string[]) => [...new Set([...a, ...b])];
-  writeNetworkKeys(path, [
-    ["research_hosts", tomlList(yes ? union(covered, hosts) : covered)],
-    ...(yes
-      ? []
-      : [
-          ["research_hosts_declined", tomlList(union(user.researchHostsDeclined ?? [], hosts))] as [
-            string,
-            string,
-          ],
-        ]),
-  ]);
+  writeNetworkKeys(
+    path,
+    [
+      ["research_hosts", tomlList(yes ? union(covered, hosts) : covered)],
+      ...(yes
+        ? []
+        : [
+            [
+              "research_hosts_declined",
+              tomlList(union(user.researchHostsDeclined ?? [], hosts)),
+            ] as [string, string],
+          ]),
+    ],
+    record,
+  );
 }
 
 /**
@@ -206,13 +230,15 @@ export async function askResearchOnce(options: {
   path?: string;
   /** The hosts the question names; a yes covers exactly these (DS-S8-8). */
   hosts?: readonly string[];
+  /** Records the answer's write as Sekhemet's own on the ledger (TEAM-44). */
+  record?: ConfigWrite;
 }): Promise<ResearchAnswer | undefined> {
   const path = options.path ?? userConfigPath();
   const recorded = researchAnswer(path);
   if (recorded) return recorded;
   if (!options.ask) return undefined;
   const answer: ResearchAnswer = (await options.ask()) ? "yes" : "no";
-  recordResearchAnswer(answer, path, options.hosts ?? RESEARCH_HOSTS);
+  recordResearchAnswer(answer, path, options.hosts ?? RESEARCH_HOSTS, options.record);
   return answer;
 }
 

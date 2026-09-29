@@ -92,6 +92,7 @@ export const CONFIG_SOURCE_LABELS: Record<string, string> = {
 };
 
 export interface ConfigLike {
+  queue?: { agentIssuesPerPerson?: number };
   machine?: { tier?: string; reservedHours?: string; overnightHours?: string };
   network?: { mode?: string };
   team?: { mode?: string };
@@ -135,6 +136,47 @@ export function configRows(
     ],
   ];
   return rows.map(([key, label, value]) => ({ key, label, value, source: source(key) }));
+}
+
+// ---------------------------------------------------------------------------
+// The queue's per-person Agent cap (teams item 30, TEAM-30; dashboard §2.16):
+// an Admin's to change, written to the user configuration.
+// ---------------------------------------------------------------------------
+
+/** Why a typed cap is refused, said beside the field (the server's words). */
+export const QUEUE_CAP_REFUSED = "Agent issues per person is a whole number, 1 or more.";
+
+/** The cap in force, where it came from, and whether this person may change it. */
+export function queueCapView(
+  config: { queue?: { agentIssuesPerPerson?: number } },
+  sources: Record<string, string>,
+  readOnly: string,
+): { value: string; source: string; disabled: boolean; note: string } {
+  const layer = sources["queue.agent_issues_per_person"] ?? "defaults";
+  return {
+    value: String(config.queue?.agentIssuesPerPerson ?? 1),
+    source: CONFIG_SOURCE_LABELS[layer] ?? humanize(layer),
+    disabled: readOnly !== "",
+    note: [
+      "How many Agent issues one person may have running at once. At the limit, their next issue waits and other people's issues go first.",
+      readOnly,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  };
+}
+
+/** A typed cap: a whole number of 1 or more, or refused with the previous value kept. */
+export function queueCapInput(
+  raw: string,
+  previous: number,
+): { ok: true; value: number } | { ok: false; value: number; error: string } {
+  const text = String(raw ?? "").trim();
+  const value = /^\d+$/.test(text) ? Number(text) : Number.NaN;
+  if (!Number.isInteger(value) || value < 1) {
+    return { ok: false, value: previous, error: QUEUE_CAP_REFUSED };
+  }
+  return { ok: true, value };
 }
 
 // ---------------------------------------------------------------------------

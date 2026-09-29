@@ -1,0 +1,303 @@
+{
+  "id": "B4.10",
+  "title": "A team shares one server: each person signs in at their access level, the project's Accept rule decides who may accept, and each person gets fair turns on the model",
+  "verdict": "PASS",
+  "reason": "",
+  "commit": "150b7f8ebd5fa95c4c1a540969effda57b94c39f",
+  "treeClean": false,
+  "date": "2026-09-28",
+  "recordedAt": "2026-09-29T02:53:45.318Z",
+  "host": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "release": "25.6.0",
+    "node": "v26.0.0",
+    "memoryGB": 24
+  },
+  "checks": [
+    {
+      "name": "five people at four levels sign in",
+      "ok": true,
+      "detail": "Ada Admin admin, Lee Lead member, Mo Member member, Sam Stakeholder stakeholder, Vi Viewer viewer"
+    },
+    {
+      "name": "an unauthenticated request changes nothing",
+      "ok": true,
+      "detail": "answered 401"
+    },
+    {
+      "name": "the Admin names the lead; the lead sets the Accept rule; a Member who is not lead cannot",
+      "ok": true,
+      "detail": "lead 200, Accept rule [Mo Member] 200, Mo edits settings 403"
+    },
+    {
+      "name": "each person gets only their level's actions, every write naming its person",
+      "ok": true,
+      "detail": "25 attempts (file an issue, comment, change priority, delegate to the Agent, invite a person) × 5 people, each as teams item 6 says"
+    },
+    {
+      "name": "fair turns on the model, in tokens: the queue runs the order each person's tokens call for",
+      "ok": true,
+      "detail": "ran mo, lee, lee, lee, mo (weighted tokens: Mo 48000, Lee 6000); turns by count would have been mo, lee, mo, lee, lee; each passed its checks, 4 in Review and 1 held In Progress while Review is at its limit (RG-S6-2)"
+    },
+    {
+      "name": "the project's Accept rule decides who may accept",
+      "ok": true,
+      "detail": "Ada (Admin) 403, Lee (lead) 403, Sam 403, Vi 403; Mo (named) 200, the issue done; Ada was told: This project's Accept rule doesn't include you. A person this project's Accept rule names can accept this issue."
+    }
+  ],
+  "details": {
+    "matrix": [
+      {
+        "action": "file an issue",
+        "person": "Ada Admin",
+        "level": "admin",
+        "expected": "allowed",
+        "status": 201,
+        "ok": true
+      },
+      {
+        "action": "comment",
+        "person": "Ada Admin",
+        "level": "admin",
+        "expected": "allowed",
+        "status": 200,
+        "ok": true
+      },
+      {
+        "action": "change priority",
+        "person": "Ada Admin",
+        "level": "admin",
+        "expected": "allowed",
+        "status": 200,
+        "ok": true
+      },
+      {
+        "action": "delegate to the Agent",
+        "person": "Ada Admin",
+        "level": "admin",
+        "expected": "allowed",
+        "status": 200,
+        "ok": true
+      },
+      {
+        "action": "invite a person",
+        "person": "Ada Admin",
+        "level": "admin",
+        "expected": "allowed",
+        "status": 200,
+        "ok": true
+      },
+      {
+        "action": "file an issue",
+        "person": "Lee Lead",
+        "level": "member",
+        "expected": "allowed",
+        "status": 201,
+        "ok": true
+      },
+      {
+        "action": "comment",
+        "person": "Lee Lead",
+        "level": "member",
+        "expected": "allowed",
+        "status": 200,
+        "ok": true
+      },
+      {
+        "action": "change priority",
+        "person": "Lee Lead",
+        "level": "member",
+        "expected": "allowed",
+        "status": 200,
+        "ok": true
+      },
+      {
+        "action": "delegate to the Agent",
+        "person": "Lee Lead",
+        "level": "member",
+        "expected": "allowed",
+        "status": 200,
+        "ok": true
+      },
+      {
+        "action": "invite a person",
+        "person": "Lee Lead",
+        "level": "member",
+        "expected": "refused",
+        "status": 403,
+        "ok": true,
+        "refusal": "Only an Admin can invite people. An Admin can grant it."
+      },
+      {
+        "action": "file an issue",
+        "person": "Mo Member",
+        "level": "member",
+        "expected": "allowed",
+        "status": 201,
+        "ok": true
+      },
+      {
+        "action": "comment",
+        "person": "Mo Member",
+        "level": "member",
+        "expected": "allowed",
+        "status": 200,
+        "ok": true
+      },
+      {
+        "action": "change priority",
+        "person": "Mo Member",
+        "level": "member",
+        "expected": "allowed",
+        "status": 200,
+        "ok": true
+      },
+      {
+        "action": "delegate to the Agent",
+        "person": "Mo Member",
+        "level": "member",
+        "expected": "allowed",
+        "status": 200,
+        "ok": true
+      },
+      {
+        "action": "invite a person",
+        "person": "Mo Member",
+        "level": "member",
+        "expected": "refused",
+        "status": 403,
+        "ok": true,
+        "refusal": "Only an Admin can invite people. An Admin can grant it."
+      },
+      {
+        "action": "file an issue",
+        "person": "Sam Stakeholder",
+        "level": "stakeholder",
+        "expected": "allowed",
+        "status": 201,
+        "ok": true
+      },
+      {
+        "action": "comment",
+        "person": "Sam Stakeholder",
+        "level": "stakeholder",
+        "expected": "allowed",
+        "status": 200,
+        "ok": true
+      },
+      {
+        "action": "change priority",
+        "person": "Sam Stakeholder",
+        "level": "stakeholder",
+        "expected": "refused",
+        "status": 403,
+        "ok": true,
+        "refusal": "You're a Stakeholder on chronicle. A Member can change priority."
+      },
+      {
+        "action": "delegate to the Agent",
+        "person": "Sam Stakeholder",
+        "level": "stakeholder",
+        "expected": "refused",
+        "status": 403,
+        "ok": true,
+        "refusal": "You're a Stakeholder on chronicle. A Member can start the Agent on this issue."
+      },
+      {
+        "action": "invite a person",
+        "person": "Sam Stakeholder",
+        "level": "stakeholder",
+        "expected": "refused",
+        "status": 403,
+        "ok": true,
+        "refusal": "Only an Admin can invite people. An Admin can grant it."
+      },
+      {
+        "action": "file an issue",
+        "person": "Vi Viewer",
+        "level": "viewer",
+        "expected": "refused",
+        "status": 403,
+        "ok": true,
+        "refusal": "You're a Viewer on chronicle. A Stakeholder can file an issue."
+      },
+      {
+        "action": "comment",
+        "person": "Vi Viewer",
+        "level": "viewer",
+        "expected": "allowed",
+        "status": 200,
+        "ok": true
+      },
+      {
+        "action": "change priority",
+        "person": "Vi Viewer",
+        "level": "viewer",
+        "expected": "refused",
+        "status": 403,
+        "ok": true,
+        "refusal": "You're a Viewer on chronicle. A Member can change priority."
+      },
+      {
+        "action": "delegate to the Agent",
+        "person": "Vi Viewer",
+        "level": "viewer",
+        "expected": "refused",
+        "status": 403,
+        "ok": true,
+        "refusal": "You're a Viewer on chronicle. A Member can start the Agent on this issue."
+      },
+      {
+        "action": "invite a person",
+        "person": "Vi Viewer",
+        "level": "viewer",
+        "expected": "refused",
+        "status": 403,
+        "ok": true,
+        "refusal": "Only an Admin can invite people. An Admin can grant it."
+      }
+    ],
+    "queue": {
+      "order": [
+        "mo:card_2f7e9d34 passed, review",
+        "lee:card_3cb63203 passed, review",
+        "lee:card_b02a5289 passed, review",
+        "lee:card_f41423f5 passed, review",
+        "mo:card_7f5fabff passed, in_progress"
+      ],
+      "expected": [
+        "card_2f7e9d34",
+        "card_3cb63203",
+        "card_b02a5289",
+        "card_f41423f5",
+        "card_7f5fabff"
+      ],
+      "tokens": {
+        "mo": 48000,
+        "lee": 6000
+      }
+    },
+    "accept": {
+      "Ada Admin": {
+        "status": 403,
+        "error": "This project's Accept rule doesn't include you. A person this project's Accept rule names can accept this issue."
+      },
+      "Lee Lead": {
+        "status": 403,
+        "error": "This project's Accept rule doesn't include you. A person this project's Accept rule names can accept this issue."
+      },
+      "Sam Stakeholder": {
+        "status": 403,
+        "error": "You're a Stakeholder on chronicle. A Member this project's Accept rule names can accept this issue."
+      },
+      "Vi Viewer": {
+        "status": 403,
+        "error": "You're a Viewer on chronicle. A Member this project's Accept rule names can accept this issue."
+      },
+      "Mo Member": {
+        "status": 200
+      }
+    }
+  }
+}

@@ -30,7 +30,7 @@ import { type CardRecord, measuresModel } from "@sekhemet/kernel";
 import { TOOL_CATALOG, cardClassFor, toolsForClass } from "@sekhemet/loop";
 import { effectiveConfig } from "./config_apply.js";
 import { abVerdictLine, contextVersionGate } from "./context_gate.js";
-import { workerContextVersion } from "./qualify.js";
+import { fullContextVersion } from "./prompt_versions.js";
 import { ROLE_EVAL_SUBCOMMANDS, type RoleEvalDeps, runRoleEvalCommand } from "./role_eval_cmd.js";
 import type { Kernel } from "./wave2.js";
 
@@ -262,7 +262,7 @@ export function computeFootprint(root: string): RecordedFootprint {
     commit: git("rev-parse", "--short=12", "HEAD") || "unknown",
     dirty: git("status", "--porcelain") !== "",
     recordedAt: new Date().toISOString(),
-    contextVersion: workerContextVersion(),
+    contextVersion: fullContextVersion(),
   };
 }
 
@@ -563,7 +563,7 @@ export async function runMeasureCommand(
         flag(args, "--suite-runs") ?? join(HARNESS_ROOT, "docs", "reference", "SUITE_RUNS.md");
       const gate = contextVersionGate(
         existsSync(file) ? readFileSync(file, "utf8") : "",
-        workerContextVersion(),
+        fullContextVersion(),
       );
       print(gate.reason);
       return gate.ok ? 0 : 1;

@@ -112,7 +112,7 @@ function actionsHtml(item) {
 /** The row's own answers: Start/Decline, Invite/Don't invite, the plan's Open. */
 function answersHtml(item) {
   if (item.kind === "start_request" && item.request)
-    return `<span class="ib-answers"><button class="btn sm primary" type="button" data-start="${esc(item.request.id)}" data-card="${esc(item.cardId)}">${esc(C.start)}</button><button class="btn sm" type="button" data-decline="${esc(item.request.id)}" data-card="${esc(item.cardId)}">${esc(C.decline)}</button></span>`;
+    return `<span class="ib-answers"><button class="btn sm primary" type="button" data-start="${esc(item.request.id)}" data-card="${esc(item.cardId)}" data-needs="agent.start"${item.project ? ` data-needs-project="${esc(item.project.id)}" data-needs-project-name="${esc(item.project.name)}"` : ""}>${esc(C.start)}</button><button class="btn sm" type="button" data-decline="${esc(item.request.id)}" data-card="${esc(item.cardId)}" data-needs="agent.start" data-needs-quiet${item.project ? ` data-needs-project="${esc(item.project.id)}" data-needs-project-name="${esc(item.project.name)}"` : ""}>${esc(C.decline)}</button></span>`;
   if (item.kind === "mention_invite" && item.mention)
     return `<span class="ib-answers"><button class="btn sm primary" type="button" data-mention="invite" data-comment="${esc(item.mention.commentId)}" data-card="${esc(item.cardId)}">${esc(C.invite)}</button><button class="btn sm" type="button" data-mention="skip" data-comment="${esc(item.mention.commentId)}" data-card="${esc(item.cardId)}">${esc(C.dontInvite)}</button></span>`;
   return "";
