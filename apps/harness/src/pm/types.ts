@@ -53,6 +53,26 @@ export interface PmProposal {
    * reaches the Worker tagged untrusted (B4.9 part 2, M3).
    */
   origin?: "import";
+  /**
+   * A Stakeholder's new project sent to a named Member or Admin (teams
+   * TEAM-20, design-stage §2.9 item 7): nothing is created until they approve.
+   */
+  approval?: PmPlanApproval;
+}
+
+/** Where a sent plan stands (TEAM-20, TEAM-42); names are added for the reader. */
+export interface PmPlanApproval {
+  state: "sent" | "approved";
+  /** The Member or Admin it was sent to, who alone approves it. */
+  approver: string;
+  /** The Stakeholder who sent it. */
+  requestedBy: string;
+  /** Review plan's choices as sent; the approver may edit them before approving. */
+  choices?: Record<string, unknown>;
+  /** Who approved it: the approver, who owns the issues it created. */
+  approvedBy?: string;
+  approverName?: string;
+  requestedByName?: string;
 }
 
 export interface PmCite {
@@ -129,4 +149,8 @@ export const PM_EVENTS = {
    */
   notifyClaimed: "pm/notify_claimed",
   summary: "pm/summary",
+  /** A Stakeholder's plan sent to a named approver (teams §3, TEAM-20). */
+  planSent: "plan/sent_for_approval",
+  /** The approver approved it; the project exists from here (TEAM-20, TEAM-42). */
+  planApproved: "plan/approved",
 } as const;

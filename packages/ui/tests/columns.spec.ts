@@ -405,6 +405,18 @@ describe("DB-P3-4, 5: the tile's anatomy", () => {
       { enteredColumnAt: at(1) },
     );
     expect(tileModel(held, { now: NOW }).status?.text).toBe("Accepted · PR #14 open");
+    // Teams TEAM-24: new commits dismissed the accept; the pull request is still open.
+    const dismissed = boardCard(
+      {
+        id: "card_d",
+        status: "review",
+        hold: { kind: "awaitingMerge", pr: 14, since: at(1), dismissed: true },
+      } as Partial<CardRecord>,
+      { enteredColumnAt: at(1) },
+    );
+    expect(tileModel(dismissed, { now: NOW }).status?.text).toBe(
+      "Accept dismissed · PR #14 has new commits",
+    );
   });
 
   it("says the agent is paused while Seshat replies, with no step count (DB-N7-3)", () => {
@@ -522,6 +534,8 @@ describe("DB-P3-9: headers carry count, limit with its derivation, and points", 
       review("r1", 3),
       review("r2", 5),
       review("r3", undefined, { kind: "awaitingMerge", pr: 9, since: at(1) }),
+      // An accept new commits dismissed waits for a decision: it counts (TEAM-24).
+      review("r4", undefined, { kind: "awaitingMerge", pr: 10, since: at(1), dismissed: true }),
       one("backlog", "b1", { estimate: 1 }),
       one("done", "d1"),
     ];
@@ -534,12 +548,12 @@ describe("DB-P3-9: headers carry count, limit with its derivation, and points", 
     });
     const byId = Object.fromEntries(m.columns.map((c) => [c.id, c]));
     expect(byId.in_review?.limit).toEqual({
-      count: 2,
+      count: 3,
       limit: 2,
-      state: "full",
-      text: "2 / 2",
+      state: "over",
+      text: "3 / 2",
       derivation:
-        "Limit 2, from 60 review minutes a day at ~30 min per issue (the median of 3 reviews). Full. The agent holds finished issues until you clear one. An accepted issue waiting on its pull request does not count.",
+        "Limit 2, from 60 review minutes a day at ~30 min per issue (the median of 3 reviews). Over the limit. An accepted issue waiting on its pull request does not count.",
     });
     expect(byId.in_review?.pointsText).toBe("8 pts");
     expect(byId.backlog?.pointsText).toBe("1 pt");

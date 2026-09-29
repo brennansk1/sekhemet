@@ -21,8 +21,12 @@ export type { Level } from "./settings.js";
 /** One row of the action table: the lowest level that may, and who else. */
 export interface ActionRule {
   level: Level;
-  /** The project's lead may too (item 6's "an Admin or the project lead"). */
-  lead?: true;
+  /**
+   * `true`: the project's lead may too (item 6's "an Admin or the project
+   * lead"). `only`: the project's lead alone, at Member or above — health is
+   * the lead's call (item 28, DB-N9-2); Solo's one person holds it.
+   */
+  lead?: true | "only";
   /**
    * `only`: held by the people the project's Accept rule names, at Member or
    * above (item 7) — the level alone is not enough. `or`: the level, or being named.
@@ -84,6 +88,10 @@ export const ACTIONS = {
   "playbook.approve_all": { level: "admin", does: "approve a Playbook rule for all projects" },
   // PM_CONTRACT: "In the Team setup only the project's lead or an Admin" (teams item 6).
   "project.update": { level: "admin", lead: true, does: "post this project's update" },
+  // Teams item 28, TEAM-28, DB-N9-2: health is the project lead's call.
+  "project.health": { level: "member", lead: "only", does: "set this project's health" },
+  // DB-N9-3, DEC-37: a release's target date, like the project's settings.
+  "release.target": { level: "admin", lead: true, does: "set a release's target date" },
   // Teams item 6: brief acceptance is the project's Admin or lead, like its settings.
   "brief.accept": { level: "admin", lead: true, does: "accept a brief" },
 } as const satisfies Record<string, ActionRule>;
@@ -313,12 +321,15 @@ export class Access {
     const member = level !== undefined && levelRank(level) >= levelRank("member");
     const atLevel = level !== undefined && levelRank(level) >= levelRank(rule.level);
     const isLead =
-      rule.lead === true && project !== undefined && member && this.isLead(principal, project);
+      rule.lead !== undefined && project !== undefined && member && this.isLead(principal, project);
     const accept = rule.acceptRule ? this.acceptRule(project) : undefined;
     // Named by the Accept rule, and acting at Member or above (item 7).
     const named = member && (accept?.holders ?? []).includes(principal);
     let allowed: boolean;
-    if (rule.acceptRule === "only") {
+    if (rule.lead === "only") {
+      // Solo's one person leads everything (item 1); in the Team setup, the lead alone.
+      allowed = isLead || this.isSoloPerson(principal);
+    } else if (rule.acceptRule === "only") {
       // Solo with no rule recorded: the install's person holds Accept, as before.
       allowed = named || (accept?.source === "solo" && this.isSoloPerson(principal));
     } else {
@@ -340,23 +351,30 @@ export class Access {
       (accept?.source === "lead" || accept?.source === "admins")
         ? `No Accept rule set yet; ${this.defaultAccepter(accept.holders ?? [], accept.source)} can ${rule.does}.`
         : undefined;
+    // Item 28: the lead's alone; with no lead named, the refusal says who names one.
+    const noLead =
+      rule.lead === "only" && project !== undefined && !this.settings(project).lead
+        ? ", and none is named yet: an Admin names one in the project's settings"
+        : "";
     const grantedBy =
-      rule.acceptRule === "only"
-        ? accept?.source === "lead"
-          ? "The project lead"
-          : accept?.source === "admins"
-            ? "An Admin"
-            : level !== undefined && !member
-              ? "A Member this project's Accept rule names"
-              : "A person this project's Accept rule names"
-        : `${article(rule.level) === "an" ? "An" : "A"} ${LEVEL_NAME[rule.level]}${rule.lead ? " or the project lead" : ""}${rule.acceptRule === "or" ? " or a person this project's Accept rule names" : ""}`;
+      rule.lead === "only"
+        ? "The project lead"
+        : rule.acceptRule === "only"
+          ? accept?.source === "lead"
+            ? "The project lead"
+            : accept?.source === "admins"
+              ? "An Admin"
+              : level !== undefined && !member
+                ? "A Member this project's Accept rule names"
+                : "A person this project's Accept rule names"
+          : `${article(rule.level) === "an" ? "An" : "A"} ${LEVEL_NAME[rule.level]}${rule.lead ? " or the project lead" : ""}${rule.acceptRule === "or" ? " or a person this project's Accept rule names" : ""}`;
     return {
       allowed,
       permission,
       ...(level !== undefined ? { level } : {}),
       needs: rule.level,
       grantedBy,
-      message: unset ?? `${who} ${grantedBy} can ${rule.does}.`,
+      message: unset ?? `${who} ${grantedBy} can ${rule.does}${noLead}.`,
     };
   }
 
@@ -725,6 +743,46 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
   ],
   [["POST", "PATCH"], new RegExp(`^/api/cards/(${CARD})/gate$`), fixed("gates.run", "card")],
   [["POST"], new RegExp(`^/api/cards/(${CARD})/attachments$`), fixed("issue.file", "card")],
+  // Teams items 19, 19a (TEAM-15, -39, -40): every level comments; what an
+  // `@Agent` in it may do is decided by the commenter's own level there.
+  [["POST"], new RegExp(`^/api/cards/(${CARD})/comments$`), fixed("comment", "card")],
+  // TEAM-39: a Member starts the Agent on a Stakeholder's or Viewer's request, or declines it.
+  [
+    ["POST"],
+    new RegExp(`^/api/cards/(${CARD})/agent-requests/asr_[A-Za-z0-9_-]+/(?:start|decline)$`),
+    fixed("agent.start", "card"),
+  ],
+  // Teams items 22–24 (TEAM-21, -22, -23): a person's own Inbox marks and
+  // Watch toggle need only to read (every level); a comment's author answers
+  // whether to invite the people it mentioned as they comment.
+  [
+    ["POST"],
+    /^\/api\/inbox\/items\/[A-Za-z0-9_.:%-]+\/(?:read|done|undone|snooze|save|unsave)$/,
+    fixed("read"),
+  ],
+  [["POST"], new RegExp(`^/api/issues/(${CARD})/watch$`), fixed("read", "card")],
+  // Teams item 26 (TEAM-26): a page says which issue it shows or which card
+  // it drags — presence, held in memory, never recorded — at every level.
+  [["POST"], /^\/api\/presence$/, fixed("read")],
+  // Teams item 25 (NEW-teams-8): the *Comment* verdict and a reply in a
+  // review thread are comments (every level, as anyone who can read a pull
+  // request may review it); resolving or reopening a thread is a reviewer's.
+  [["POST"], new RegExp(`^/api/cards/(${CARD})/reviews$`), fixed("comment", "card")],
+  [
+    ["POST"],
+    new RegExp(`^/api/cards/(${CARD})/threads/thr_[A-Za-z0-9_-]+/replies$`),
+    fixed("comment", "card"),
+  ],
+  [
+    ["POST"],
+    new RegExp(`^/api/cards/(${CARD})/threads/thr_[A-Za-z0-9_-]+/(?:resolve|reopen)$`),
+    fixed("review", "card"),
+  ],
+  [
+    ["POST"],
+    new RegExp(`^/api/cards/(${CARD})/comments/cmt_[A-Za-z0-9_-]+/mention$`),
+    fixed("comment", "card"),
+  ],
   [
     ["PATCH"],
     new RegExp(`^/api/cards/(${CARD})$`),
@@ -733,6 +791,12 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
         ? { permissions: [], cardId: m[1], needsBody: true }
         : {
             permissions: [
+              // Delegating the issue to the Agent starts it (teams item 6, TEAM-15),
+              // and a refusal says so first, offering to ask a Member (item 19a).
+              ...(typeof body.assignee === "string" &&
+              body.assignee.trim().toLowerCase() === "worker"
+                ? (["agent.start"] as const)
+                : []),
               "priority" in body ? "priority.change" : "issue.edit",
               ...("title" in body ? (["scope.change"] as const) : []),
             ],
@@ -810,6 +874,20 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
                 : {}),
           },
   ],
+  // TEAM-20 (design-stage §2.9 item 7): a Stakeholder sends their project
+  // conversation's plan to a named Member or Admin; approving it is a
+  // Member's (item 6: "approve plans"), and creates the project. The named
+  // approver accepts its brief by approving, so it needs no `brief.accept`.
+  [
+    ["POST"],
+    /^\/api\/pm\/proposals\/[A-Za-z0-9_-]+\/send-for-approval$/,
+    fixed("project.converse"),
+  ],
+  [
+    ["POST"],
+    /^\/api\/pm\/proposals\/[A-Za-z0-9_-]+\/approve$/,
+    () => ({ permissions: ["plan.approve", "project.create"] }),
+  ],
   // Applying a proposal names it, so the server can add what its kind needs
   // (a new project's group accepts a brief: teams item 6, design-stage §2.9 item 7).
   [
@@ -838,7 +916,7 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
   [["POST"], /^\/api\/import$/, fixed("issue.create")],
   [
     ["POST"],
-    /^\/api\/members(?:\/p_[0-9a-z]+\/(unlock|password-reset))?$/,
+    /^\/api\/members(?:\/p_[0-9a-z]+\/(unlock|password-reset|label))?$/,
     fixed("members.manage"),
   ],
   [["POST"], /^\/api\/projects$/, fixed("project.create")],
@@ -891,6 +969,18 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
     ["POST"],
     new RegExp(`^/api/projects/(${PROJ})/update$`),
     (m) => ({ permissions: ["project.update"], projectId: m[1] }),
+  ],
+  // Teams item 28, TEAM-28: the project lead sets its health.
+  [
+    ["POST"],
+    new RegExp(`^/api/projects/(${PROJ})/health$`),
+    (m) => ({ permissions: ["project.health"], projectId: m[1] }),
+  ],
+  // DB-N9-3: a release's target date, checked on the release's own project.
+  [
+    ["POST"],
+    /^\/api\/slices\/([\w.-]+)\/target$/,
+    (m) => ({ permissions: ["release.target"], sliceId: m[1] }),
   ],
   // Teams item 6: brief acceptance is the project's Admin or lead; the body
   // names the project (checked to exist before it grounds a decision, below).

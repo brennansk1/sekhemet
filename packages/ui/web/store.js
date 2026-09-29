@@ -31,6 +31,13 @@ export const store = {
      */
     project: { id: null, list: [], activeCap: undefined },
     decisions: { available: false, items: [], at: 0 },
+    /**
+     * Presence (teams item 26, DB-N9-20): who views which issue and drags
+     * which card, from the stream's `presence` frame. In memory only.
+     */
+    presence: { issues: {}, dragging: {} },
+    /** The Inbox's unread count (teams item 24), for the sidebar badge. */
+    inbox: { unread: 0, at: 0 },
     /** Memory samples kept client-side (last 120), and per-step model telemetry. */
     telemetry: { memory: [], steps: [] },
     /** The last ledger seq the stream delivered: the replay checkpoint (U9). */

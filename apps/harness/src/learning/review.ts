@@ -4,7 +4,13 @@ import {
   charsForTokens,
   estimatePromptTokens,
 } from "@sekhemet/context";
-import type { LocalInferenceAdapter } from "@sekhemet/models";
+import {
+  type InferenceRequest,
+  type InferenceResponse,
+  type LocalInferenceAdapter,
+  REASONING_BUDGET_TOKENS,
+  extractJsonObject,
+} from "@sekhemet/models";
 import { reviewCoverage } from "@sekhemet/ui";
 import { type ReviewPromptData, reviewCopy } from "./review_copy.js";
 
@@ -31,6 +37,10 @@ import { type ReviewPromptData, reviewCopy } from "./review_copy.js";
  * - the Worker's transcript never reaches it (RG-P8-11): its input is the
  *   issue, the criteria, the staged cases, the checks, the recorded
  *   assumptions, the preferences and the diff;
+ * - each request states its answer cap and its thinking cap (worker-loop
+ *   rule 22), and a reply cut off at its cap or holding no readable JSON is
+ *   a failed review ({@link ReviewFailedError}), never a set of `unclear`
+ *   verdicts (live-test F25);
  * - its authority is none: it returns findings, which the harness records.
  */
 
@@ -212,6 +222,69 @@ export function splitFile(file: DiffFile, budget: number): DiffFile[] | undefine
 
 /** The answer's cap: one short entry per criterion. */
 export const REVIEW_ANSWER_TOKENS = 1_200;
+/**
+ * The thinking cap every request states (worker-loop rule 22). The Reviewer
+ * asks for no reasoning, but a model whose template cannot turn it off
+ * thinks at its floor (models MD-N4-2a): gpt-oss thought 1,072 tokens on a
+ * request for none (live-test F25), over the medium budget, so the high one
+ * is stated. The window reserves only what the adapter would add for it
+ * ({@link reviewThinkingReserve}), so a model that never thinks keeps the
+ * room for the diff.
+ */
+export const REVIEW_THINKING_TOKENS = REASONING_BUDGET_TOKENS.high;
+
+/** What every Reviewer request asks of reasoning: none, with its thinking cap stated. */
+const REVIEW_REASONING: Pick<InferenceRequest, "reasoning" | "reasoningBudgetTokens"> = {
+  reasoning: "off",
+  reasoningBudgetTokens: REVIEW_THINKING_TOKENS,
+};
+
+/**
+ * The thinking room a request reserves in the window: what the adapter
+ * would add to the answer cap for it (0 on a model it would not let think),
+ * or the whole stated cap when the adapter does not say.
+ */
+export function reviewThinkingReserve(
+  model: Pick<LocalInferenceAdapter, "thinkingAllowance">,
+): number {
+  return model.thinkingAllowance
+    ? Math.max(0, model.thinkingAllowance(REVIEW_REASONING))
+    : REVIEW_THINKING_TOKENS;
+}
+
+/**
+ * A review that did not happen (live-test F25): a reply cut off at its
+ * length cap, or one holding no readable JSON. Handled like any review that
+ * could not run — recorded with its reason, shown on Review, refused by
+ * `--auto-accept` — never read as `unclear` verdicts.
+ */
+export class ReviewFailedError extends Error {
+  constructor(
+    public readonly reason: "length" | "unreadable",
+    message: string,
+  ) {
+    super(message);
+    this.name = "ReviewFailedError";
+  }
+}
+
+/** The failed review a reply is, or undefined when it can be read. */
+function failedReply(res: InferenceResponse): ReviewFailedError | undefined {
+  if (res.finishReason === "length") {
+    const total = res.usage.completionTokens;
+    const thinking = res.usage.thinkingTokens;
+    return new ReviewFailedError(
+      "length",
+      thinking
+        ? `the Review model's reply was cut off at its length cap: ${thinking} of ${total} tokens went to thinking`
+        : `the Review model's reply was cut off at its length cap (${total} tokens)`,
+    );
+  }
+  if (parseReply(res.text) === undefined) {
+    return new ReviewFailedError("unreadable", "the Review model's reply held no readable JSON");
+  }
+  return undefined;
+}
 /** The Review model's window when its adapter does not say (the reviewer profile's). */
 export const REVIEW_DEFAULT_WINDOW_TOKENS = 8_192;
 /** Room kept for the one line saying which part of the change a request shows. */
@@ -224,20 +297,20 @@ function windowOf(model: Pick<LocalInferenceAdapter, "contextWindow">): number {
 
 /**
  * The numbered-diff budget of one request, in characters: the Review model's
- * window less the answer cap and the allocator's margin (context's
+ * window less the answer and thinking caps (rule 22) and the allocator's margin (context's
  * `allocationBudget`, role `reviewer`), less the system text and every fixed
  * part of the task — issue, criteria, tests, checks, assumptions and
  * preferences — counted with context's one estimator. Zero when the fixed
  * parts alone fill the window.
  */
 export function reviewBudgetChars(
-  model: Pick<LocalInferenceAdapter, "contextWindow">,
+  model: Pick<LocalInferenceAdapter, "contextWindow" | "thinkingAllowance">,
   fixed: { system: string; task: string } = { system: "", task: "" },
 ): number {
   const budget = allocationBudget({
     role: "reviewer",
     windowTokens: windowOf(model),
-    answerTokens: REVIEW_ANSWER_TOKENS,
+    answerTokens: REVIEW_ANSWER_TOKENS + reviewThinkingReserve(model),
   });
   const room =
     budget -
@@ -253,7 +326,7 @@ export function reviewBudgetChars(
  * does not fit — the request is then not sent, and its files are named.
  */
 function fitRequest(
-  model: Pick<LocalInferenceAdapter, "contextWindow">,
+  model: Pick<LocalInferenceAdapter, "contextWindow" | "thinkingAllowance">,
   system: string,
   task: string,
 ): string | undefined {
@@ -272,7 +345,7 @@ function fitRequest(
     {
       role: "reviewer",
       windowTokens: windowOf(model),
-      answerTokens: REVIEW_ANSWER_TOKENS,
+      answerTokens: REVIEW_ANSWER_TOKENS + reviewThinkingReserve(model),
       overheadTokens: estimatePromptTokens(system),
     },
   );
@@ -295,16 +368,15 @@ interface RawReply {
   outside?: RawEntry[];
 }
 
-function parseReply(text: string): RawReply {
+/**
+ * The reply's JSON object through the harness's one reader (MD-N4-8): the
+ * first balanced object, so trailing braces in prose after it are not a
+ * failed review; undefined when it holds none that parses (F25).
+ */
+function parseReply(text: string): RawReply | undefined {
   const clean = text.replace(/<think>[\s\S]*?<\/think>/g, "");
-  const json = /\{[\s\S]*\}/.exec(clean)?.[0];
-  if (!json) return {};
-  try {
-    const o = JSON.parse(json) as RawReply;
-    return typeof o === "object" && o ? o : {};
-  } catch {
-    return {};
-  }
+  const o = extractJsonObject(clean);
+  return typeof o === "object" && o !== null && !Array.isArray(o) ? (o as RawReply) : undefined;
 }
 
 const arr = (x: unknown): RawEntry[] =>
@@ -464,11 +536,15 @@ export async function reviewCard(
       toolArm: "arm_b_json",
       temperature: 0,
       maxTokens: REVIEW_ANSWER_TOKENS,
+      ...REVIEW_REASONING,
       role: "reviewer",
     });
     requests++;
+    // F25: a cut-off or unreadable reply fails the whole review.
+    const failed = failedReply(res);
+    if (failed) throw failed;
     for (const f of b) read.add(f.path);
-    const reply = parseReply(res.text);
+    const reply = parseReply(res.text) ?? {};
     for (const e of arr(reply.criteria)) {
       const i = Number(e.n) - 1;
       const cur = perCriterion[i];

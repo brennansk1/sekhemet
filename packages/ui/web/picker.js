@@ -11,7 +11,10 @@ export function closePicker() {
 }
 
 /**
- * options: [{ value, label, html?, detail?, checked? }]
+ * options: [{ value, label, html?, detail?, checked?, group?, badge?, disabled? }]
+ * group: a heading shown above the first option of each group (teams item 18:
+ * *Members*, then *AI teammates*); badge: html after the label (the AI badge);
+ * disabled: listed, not pickable — its detail says why.
  * multi: checkable list; onChange(values[]) runs on every toggle.
  * single: onPick(value) runs once and closes.
  * create: (text) => void, shows `Create “text”` when nothing matches exactly.
@@ -56,23 +59,29 @@ export function openPicker(
   function render() {
     items = visible();
     active = Math.min(active, Math.max(0, items.length - 1));
+    let group;
     list.innerHTML =
       items
         .map((o, i) => {
           const on = checked.has(o.value);
-          const num = i < 9 ? `<kbd>${i + 1}</kbd>` : "";
+          const num = i < 9 && !o.disabled ? `<kbd>${i + 1}</kbd>` : "";
           const box =
             multi && !o.create
               ? `<span class="cbx${on ? " on" : ""}" aria-hidden="true"></span>`
               : "";
-          return `<button type="button" role="option" data-i="${i}" aria-selected="${multi ? on : i === active}" class="${i === active ? "act" : ""}${!multi && o.checked ? " cur" : ""}">${box}${o.html ?? ""}<span class="pl">${esc(o.label)}${o.detail ? `<small class="${o.plain ? "" : "mono"}">${esc(o.detail)}</small>` : ""}</span>${num}</button>`;
+          const head =
+            o.group && o.group !== group
+              ? `<div class="pk-grp" role="presentation">${esc(o.group)}</div>`
+              : "";
+          group = o.group;
+          return `${head}<button type="button" role="option" data-i="${i}" aria-selected="${multi ? on : i === active}"${o.disabled ? ' aria-disabled="true"' : ""} class="${i === active ? "act" : ""}${!multi && o.checked ? " cur" : ""}">${box}${o.html ?? ""}<span class="pl">${o.badge ? `<span class="pl-t">${esc(o.label)}${o.badge}</span>` : esc(o.label)}${o.detail ? `<small class="${o.plain ? "" : "mono"}">${esc(o.detail)}</small>` : ""}</span>${num}</button>`;
         })
         .join("") || '<div class="pk-none">No match</div>';
   }
 
   function choose(i) {
     const o = items[i];
-    if (!o) return;
+    if (!o || o.disabled) return;
     if (o.create) {
       const text = q.value.trim();
       close();

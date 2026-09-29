@@ -13,6 +13,8 @@ import { plainTitle } from "./pm/standup.js";
 import { PmStore } from "./pm/store.js";
 import { PM_EVENTS } from "./pm/types.js";
 import { readSlack, sendSlack } from "./slack.js";
+import { UPDATE_CLOCK_EVENTS, updateClock } from "./team/health.js";
+import type { InboxNotifier, WatcherNotice } from "./team/inbox.js";
 
 /**
  * Self-hosted push notifications (H20): ntfy or Gotify, for the moments a
@@ -45,6 +47,11 @@ export type NotifyEvent =
   | "requantised"
   /** A neutral reminder to an item's owner (planner-pm PM-N9-6). */
   | "reminder"
+  /** Teams TEAM-43: a watched issue's change, a mention, a posted update, the digest of what is unread. */
+  | "watching"
+  | "mentioned"
+  | "project_update"
+  | "digest"
   | "test";
 
 export const ALL_EVENTS: NotifyEvent[] = [
@@ -59,6 +66,10 @@ export const ALL_EVENTS: NotifyEvent[] = [
   "slow_load",
   "requantised",
   "reminder",
+  "watching",
+  "mentioned",
+  "project_update",
+  "digest",
 ];
 
 /**
@@ -102,6 +113,12 @@ const UNSOLICITED = new Set<NotifyEvent>([
   "needs_you",
   "standup",
   "reminder",
+  // TEAM-43: a watcher's notices and posted project updates share the budget;
+  // the digest, like the standup, counts but is never held.
+  "watching",
+  "mentioned",
+  "project_update",
+  "digest",
 ]);
 
 export interface PushSettings {
@@ -368,6 +385,22 @@ function channelsOf(
   return out;
 }
 
+/** A person's name from their `person/created` record's private part (the notifier holds no people). */
+async function personNameOn(log: EventLog, principal: string): Promise<string | undefined> {
+  for (const e of (await log.getEventsByTypes(["person/created"])).reverse()) {
+    if (e.principal !== principal) continue;
+    const name = (e.private as { name?: unknown } | undefined)?.name;
+    if (typeof name === "string" && name && name !== "[erased]") return name;
+  }
+  return undefined;
+}
+
+/** "Ann", "Ann and Ben", "Ann, Ben and Cy". */
+const namesList = (names: readonly string[]): string =>
+  names.length <= 1
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
 /** The local calendar day of a time, the budget's day. */
 const dayOf = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -471,21 +504,23 @@ export async function remindersFor(
     });
   }
   if (options.setup === "team") {
-    const since = new Map<string, number>();
-    for (const e of await log.getEventsByTypes(["project/created", "project/update_posted"])) {
-      const p = (e.payload ?? {}) as Record<string, unknown>;
-      const project = String(p.project ?? p.id ?? "");
-      if (project) since.set(project, Date.parse(e.createdAt));
-    }
+    // TEAM-29: Status's own clock — the last update, else the current release's start.
+    const clock = await log.getEventsByTypes([...UPDATE_CLOCK_EVENTS]);
     for (const [project, who] of lead) {
-      const last = since.get(project);
-      if (who !== person || last === undefined) continue;
-      if (options.now.getTime() - last < 7 * 24 * 3_600_000) continue;
+      const started = updateClock(clock, project);
+      if (who !== person || started === undefined) continue;
+      const age = options.now.getTime() - started.at;
+      if (age < 7 * 24 * 3_600_000) continue;
+      const days = Math.floor(age / (24 * 3_600_000));
+      const name = started.name ?? "The project";
       out.push({
         event: "reminder",
         key: `reminder-update-${project}-${options.day}`,
         title: "Update due",
-        message: `${project}: no update posted in the last 7 days.`,
+        message:
+          started.since === "update"
+            ? `${name}: no project update posted in the last ${days} days.`
+            : `${name}: no project update posted since the ${started.since} started ${days} days ago.`,
         priority: 3,
       });
     }
@@ -536,6 +571,13 @@ export interface NotifierOptions {
   recipient?: string;
   /** Solo or Team (`[team] mode`); read from the configuration when absent. */
   setup?: "solo" | "team";
+  /**
+   * Teams TEAM-43: what the Inbox owes its watchers — each watched change, a
+   * mention and a posted project update to each person it reached — sent
+   * within that person's own budget, and the day's digest of what is still
+   * unread. Absent: only the install's person is notified.
+   */
+  inbox?: InboxNotifier;
 }
 
 /** A claim's event id, derived from what is claimed, so two notifiers derive the same one. */
@@ -601,9 +643,10 @@ export async function startNotifier(
     }
   };
 
-  const mine = (e: EventRecord, day: string) => {
+  /** A notice record of today's for this person (the install's person unless named). */
+  const mine = (e: EventRecord, day: string, who = person) => {
     const p = e.payload as NoticeRecord;
-    return (p.day ?? dayOf(new Date(e.createdAt))) === day && !(p.to && p.to !== person);
+    return (p.day ?? dayOf(new Date(e.createdAt))) === day && !(p.to && p.to !== who);
   };
 
   /**
@@ -612,7 +655,7 @@ export async function startNotifier(
    * `beforeSeq` that is still being sent (not held, no result yet). A failed
    * send is no interruption and does not count.
    */
-  const budgetUsed = async (beforeSeq: number, except: string): Promise<number> => {
+  const budgetUsed = async (beforeSeq: number, except: string, who = person): Promise<number> => {
     const day = dayOf(now());
     const ok = new Set<string>();
     const tried = new Set<string>();
@@ -626,7 +669,7 @@ export async function startNotifier(
     ];
     for (const e of await log.getEventsByTypes(types)) {
       const p = e.payload as NoticeRecord & { kind?: NotifyEvent; ok?: boolean };
-      if (!p.kind || !UNSOLICITED.has(p.kind) || !mine(e, day)) continue;
+      if (!p.kind || !UNSOLICITED.has(p.kind) || !mine(e, day, who)) continue;
       const id = p.notice ?? e.id;
       if (e.type === PM_EVENTS.notify) {
         tried.add(id);
@@ -648,18 +691,18 @@ export async function startNotifier(
    * folded from the ledger as it grows.
    */
   let focusSeq = 0;
-  let focusedAt = Number.NEGATIVE_INFINITY;
-  const boardInFocus = async (): Promise<boolean> => {
+  const focusedAt = new Map<string, number>();
+  const boardInFocus = async (whose = person): Promise<boolean> => {
     for (;;) {
       const page = await log.getEventsByTypes([PM_EVENTS.boardFocus], focusSeq + 1, 10_000);
       for (const e of page) {
         focusSeq = e.seq;
         const who = (e.payload as { principal?: string }).principal ?? e.principal;
-        if (who === person) focusedAt = Math.max(focusedAt, Date.parse(e.createdAt));
+        if (who) focusedAt.set(who, Math.max(focusedAt.get(who) ?? 0, Date.parse(e.createdAt)));
       }
       if (page.length < 10_000) break;
     }
-    return focusedAt >= now().getTime() - BOARD_FOCUS_MS;
+    return (focusedAt.get(whose) ?? Number.NEGATIVE_INFINITY) >= now().getTime() - BOARD_FOCUS_MS;
   };
 
   /** The item in Seshat's panel instead of a notice (PM-P6-10); it interrupts no one. */
@@ -685,6 +728,7 @@ export async function startNotifier(
       seq = (await log.getLastEvent())?.seq ?? seq;
       return 0;
     }
+    const from = seq;
     const events = await log.getEvents(seq + 1, 500);
     let sent = 0;
     let owners: Awaited<ReturnType<typeof cardsOnLedger>> | undefined;
@@ -734,8 +778,164 @@ export async function startNotifier(
       }
       for (const c of open) if ((await c.send(n, record)).ok) sent++;
     }
+    sent += await watchersNotified(channels, from, seq);
     sent += await standupIfDue(channels);
     sent += await remindersIfDue(channels);
+    sent += await digestsIfDue(channels);
+    return sent;
+  };
+
+  /**
+   * TEAM-43: each change the Inbox delivered in (from, upTo], to each person
+   * it reached, within that person's own budget — held past it, and shown in
+   * Seshat's panel instead while they have the board in focus. One claim per
+   * person and event, so the install's person, already told by the path
+   * above, is not told twice. The channels are the install's, which everyone
+   * reading them shares (no personal address yet): each change goes out once
+   * per channel, naming everyone it is for, and counts against each of their
+   * budgets — never one copy per watcher.
+   */
+  const watchersNotified = async (channels: Channel[], from: number, upTo: number) => {
+    if (!opts.inbox || upTo <= from) return 0;
+    let sent = 0;
+    const day = dayOf(now());
+    const byEvent = new Map<string, WatcherNotice[]>();
+    for (const w of await opts.inbox.notices(from)) {
+      if (w.seq > upTo) continue;
+      const list = byEvent.get(w.eventId) ?? [];
+      list.push(w);
+      byEvent.set(w.eventId, list);
+    }
+    for (const [eventId, notices] of byEvent) {
+      const first = notices[0] as WatcherNotice;
+      // Per channel, the people it goes to there.
+      const going = new Map<Channel, WatcherNotice[]>();
+      for (const w of notices) {
+        const accepting = channels.filter((c) => c.accepts(w.kind));
+        if (accepting.length === 0) continue;
+        const record = { to: w.to, notice: eventId, day };
+        const claimed = await claim(
+          `notify:${w.to}:${eventId}`,
+          { kind: w.kind, ...record },
+          w.cardId,
+        );
+        if (!claimed) continue;
+        if (await boardInFocus(w.to)) {
+          await showInPanel(watcherNotice(w, [w]), record);
+          continue;
+        }
+        const used = await budgetUsed(claimed.seq, eventId, w.to);
+        const open = accepting.filter((c) => used < c.limit);
+        if (open.length === 0) {
+          await log.append({
+            actor: "harness",
+            type: PM_EVENTS.noticeHeld,
+            ...(w.cardId ? { cardId: w.cardId } : {}),
+            payload: { kind: w.kind, ...record },
+          });
+          continue;
+        }
+        for (const c of open) going.set(c, [...(going.get(c) ?? []), w]);
+      }
+      for (const [c, to] of going) {
+        const [lead, ...rest] = to as [WatcherNotice, ...WatcherNotice[]];
+        const result = await c.send(watcherNotice(first, to), {
+          to: lead.to,
+          notice: eventId,
+          day,
+        });
+        // The one message reached everyone it names: each budget is charged.
+        for (const w of rest) {
+          await log.append({
+            actor: "harness",
+            type: PM_EVENTS.notify,
+            ...(w.cardId ? { cardId: w.cardId } : {}),
+            payload: {
+              channel: c.name,
+              kind: w.kind,
+              ok: result.ok,
+              to: w.to,
+              notice: eventId,
+              day,
+            },
+          });
+        }
+        if (result.ok) sent++;
+      }
+    }
+    return sent;
+  };
+
+  /** One message for a change, naming each person it is for with their own words. */
+  const watcherNotice = (first: WatcherNotice, to: WatcherNotice[]): Notice => {
+    const lines = new Map<string, string[]>();
+    for (const w of to) {
+      const names = lines.get(w.message) ?? [];
+      names.push(w.name ?? "a watcher");
+      lines.set(w.message, names);
+    }
+    return {
+      event: to.some((w) => w.kind === "mentioned") ? "mentioned" : first.kind,
+      title: first.title,
+      message: [...lines]
+        .map(([message, names]) => `For ${namesList(names)}: ${message}`)
+        .join("\n"),
+      priority: to.some((w) => w.kind === "mentioned") ? 4 : 3,
+      ...(first.cardId ? { cardId: first.cardId } : {}),
+      ...(first.cardId && opts.dashboard
+        ? { click: `${opts.dashboard}/#/card/${encodeURIComponent(first.cardId)}/activity` }
+        : {}),
+    };
+  };
+
+  /**
+   * TEAM-23, TEAM-43: once a day, when the standup is due, each person whose
+   * watcher notices were held gets one digest of those issues still unread
+   * in their Inbox — nothing when all of them were read or done. Like the
+   * standup it counts against the budget and is never held.
+   */
+  const digestsIfDue = async (channels: Channel[]): Promise<number> => {
+    if (!opts.inbox) return 0;
+    const accepting = channels.filter((c) => c.accepts("digest"));
+    if (accepting.length === 0) return 0;
+    const clock = now();
+    const due = minutesOf(opts.standupAt ?? readSettings(repoPath).standupAt);
+    if (clock.getHours() * 60 + clock.getMinutes() < due) return 0;
+    const day = dayOf(clock);
+    // INT-20a: a notice held waits for the next standup — one held after
+    // the day's digest went out is carried by the next day's, not dropped.
+    const lastDigest = new Map<string, number>();
+    const heldEvents: EventRecord[] = [];
+    for (const e of await log.getEventsByTypes([PM_EVENTS.noticeHeld, PM_EVENTS.notifyClaimed])) {
+      const p = e.payload as NoticeRecord & { kind?: NotifyEvent };
+      if (e.type === PM_EVENTS.noticeHeld) heldEvents.push(e);
+      else if (p.kind === "digest" && p.to) lastDigest.set(p.to, e.seq);
+    }
+    const heldCards = new Map<string, Set<string>>();
+    for (const e of heldEvents) {
+      const p = e.payload as NoticeRecord & { kind?: NotifyEvent };
+      if (!p.to || !e.cardId || (p.kind !== "watching" && p.kind !== "mentioned")) continue;
+      if (e.seq <= (lastDigest.get(p.to) ?? 0)) continue;
+      const set = heldCards.get(p.to) ?? new Set<string>();
+      set.add(e.cardId);
+      heldCards.set(p.to, set);
+    }
+    let sent = 0;
+    for (const [to, cards] of heldCards) {
+      const notice = `digest-${day}`;
+      if (log.hasEvent(claimId(`notify:${to}:${notice}`))) continue;
+      const digest = await opts.inbox.digest(to, cards);
+      if (!digest) continue;
+      const record = { to, notice, day };
+      if (!(await claim(`notify:${to}:${notice}`, { kind: "digest", ...record }))) continue;
+      const n: Notice = {
+        event: "digest",
+        title: digest.title,
+        message: digest.message,
+        priority: 3,
+      };
+      for (const c of accepting) if ((await c.send(n, record)).ok) sent++;
+    }
     return sent;
   };
 
@@ -751,20 +951,36 @@ export async function startNotifier(
     const due = minutesOf(opts.standupAt ?? readSettings(repoPath).standupAt);
     if (clock.getHours() * 60 + clock.getMinutes() < due) return 0;
     const day = dayOf(clock);
+    const setup = opts.setup ?? setupFor(repoPath);
     let sent = 0;
-    for (const n of await remindersFor(log, person, {
-      day,
-      now: clock,
-      setup: opts.setup ?? setupFor(repoPath),
-    })) {
-      const record = { to: person, notice: n.key, day };
-      const claimed = await claim(`notify:${person}:${n.key}`, { kind: "reminder", ...record });
+    const owed: { to: string; n: Notice & { key: string } }[] = (
+      await remindersFor(log, person, { day, now: clock, setup })
+    ).map((n) => ({ to: person, n }));
+    if (setup === "team") {
+      // TEAM-29: Update due reaches each project's lead, not only the
+      // install's person; on the shared channel it names whom it is for.
+      const leads = new Set<string>();
+      for (const e of await log.getEventsByTypes(["project/settings_changed"])) {
+        const lead = (e.payload as { lead?: unknown }).lead;
+        if (typeof lead === "string" && lead !== person) leads.add(lead);
+      }
+      for (const lead of leads) {
+        const name = await personNameOn(log, lead);
+        for (const n of await remindersFor(log, lead, { day, now: clock, setup })) {
+          if (!n.key.startsWith("reminder-update-")) continue;
+          owed.push({ to: lead, n: { ...n, title: `For ${name ?? "the lead"}: ${n.title}` } });
+        }
+      }
+    }
+    for (const { to, n } of owed) {
+      const record = { to, notice: n.key, day };
+      const claimed = await claim(`notify:${to}:${n.key}`, { kind: "reminder", ...record });
       if (!claimed) continue;
-      if (await boardInFocus()) {
+      if (await boardInFocus(to)) {
         await showInPanel(n, record);
         continue;
       }
-      const used = await budgetUsed(claimed.seq, n.key);
+      const used = await budgetUsed(claimed.seq, n.key, to);
       const open = accepting.filter((c) => used < c.limit);
       if (open.length === 0) {
         await log.append({

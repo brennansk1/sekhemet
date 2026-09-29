@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 // The browser module as-is: the same code the page runs.
 import {
+  approvalNoteHtml,
   choicesOf,
   keptCandidates,
   moveLine,
@@ -166,7 +167,7 @@ describe("DS-P2-7: candidates by priority, the release line, the Type, two quest
     expect(html).toContain("Create project");
   });
 
-  it("in the Team setup never promises a Send for approval that is not built (TEAM-20)", () => {
+  it("for a Member or an Admin in the Team setup, says an Admin creates it and accepts its brief", () => {
     const g = group();
     const html = reviewPlanHtml(g, reviewState(g), { setup: "team" });
     expect(html).not.toContain("Send for approval");
@@ -175,6 +176,107 @@ describe("DS-P2-7: candidates by priority, the release line, the Type, two quest
     expect(html).toMatch(/data-create[^>]*>Create project and accept its brief</);
     // Who may create it is said before the press, not after a 403.
     expect(html).toMatch(/an Admin creates the project/i);
+  });
+});
+
+describe("TEAM-20: a Stakeholder sends the plan for approval instead of creating it", () => {
+  const approvers = [
+    { principal: "p_member", name: "Mo Member" },
+    { principal: "p_admin", name: "Ada Admin" },
+  ];
+
+  it("offers Send for approval with a Member or Admin to name, and no Create project", () => {
+    const g = group();
+    const html = reviewPlanHtml(g, reviewState(g), {
+      setup: "team",
+      level: "stakeholder",
+      me: "p_stake",
+      approvers,
+    });
+    expect(html).toMatch(/data-send[^>]*>Send for approval</);
+    expect(html).not.toContain("data-create");
+    expect(html).not.toMatch(/>Create project/);
+    expect(html).toMatch(/<select[^>]*data-approver/);
+    expect(html).toContain('value="p_member"');
+    expect(html).toContain("Ada Admin");
+    // What pressing it does is said before the press.
+    expect(html).toMatch(/Nothing is created until they approve it/);
+  });
+
+  it("with no Member or Admin to send it to, says so and sends nothing", () => {
+    const g = group();
+    const html = reviewPlanHtml(g, reviewState(g), {
+      setup: "team",
+      level: "stakeholder",
+      approvers: [],
+    });
+    expect(html).toMatch(/data-send[^>]*disabled/);
+    expect(html).toMatch(/No Member or Admin/);
+  });
+
+  it("once sent, tells the Stakeholder who approves it, with nothing to press", () => {
+    const g = group();
+    const approval = {
+      state: "sent",
+      approver: "p_member",
+      approverName: "Mo Member",
+      requestedBy: "p_stake",
+      requestedByName: "Sam Stakeholder",
+    };
+    const html = reviewPlanHtml(g, reviewState(g), {
+      setup: "team",
+      level: "stakeholder",
+      me: "p_stake",
+      approval,
+    });
+    expect(html).toMatch(/Sent to Mo Member for approval/);
+    expect(html).not.toContain("data-send");
+    expect(html).not.toContain("data-create");
+    expect(html).not.toContain("data-approve");
+  });
+
+  it("says in Seshat's thread who approves a sent plan, or who sent it to you", () => {
+    const approval = {
+      state: "sent",
+      approver: "p_member",
+      approverName: "Mo Member",
+      requestedBy: "p_stake",
+      requestedByName: "Sam Stakeholder",
+    };
+    expect(approvalNoteHtml(approval, "p_stake")).toContain("Sent to Mo Member for approval.");
+    expect(approvalNoteHtml(approval, "p_member")).toContain(
+      "Sam Stakeholder sent this plan for your approval.",
+    );
+    expect(approvalNoteHtml(undefined, "p_member")).toBe("");
+  });
+
+  it("offers the approver Approve, starting from the choices sent, which they can edit", () => {
+    const g = group();
+    const choices = { remove: ["c_b"], releaseLine: 1, type: "prototype", answers: { "0": 1 } };
+    const approval = {
+      state: "sent",
+      approver: "p_member",
+      approverName: "Mo Member",
+      requestedBy: "p_stake",
+      requestedByName: "Sam Stakeholder",
+      choices,
+    };
+    const state = reviewState(g, choices);
+    expect(choicesOf(state)).toEqual(choices);
+    const html = reviewPlanHtml(g, state, {
+      setup: "team",
+      level: "member",
+      me: "p_member",
+      approval,
+    });
+    expect(html).toMatch(/data-approve[^>]*>Approve</);
+    expect(html).toMatch(/Sam Stakeholder sent this plan for your approval/);
+    // TEAM-42, said before the press: its issues will be the approver's.
+    expect(html).toMatch(/you own its issues/i);
+    expect(html).not.toContain("data-send");
+    // The approver edits the plan as anyone reviewing it does.
+    expect(html).toContain("data-accept");
+    expect(html).toContain("data-line-up");
   });
 });
 

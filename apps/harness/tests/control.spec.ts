@@ -228,6 +228,32 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
     expect(seen.length).toBeLessThanOrEqual(3);
   });
 
+  it("TEAM-16: stops a running card between steps once its person may no longer start the Agent", async () => {
+    const card = await newCard("card_level");
+    let lowered = false;
+    const { adapter, seen } = scripted((n) => {
+      if (n === 2) lowered = true;
+      return [{ name: "read_file", arguments: { path: "src/a.ts", start: 1, end: 1 + n } }];
+    });
+    const said: string[] = [];
+    const result = await executeCard(
+      {
+        ...ctx,
+        log: (line) => said.push(line),
+        agentRefusal: async (id) =>
+          id === card.id && lowered
+            ? "You're a Viewer on Chronicle. A Member can start the Agent on this issue."
+            : undefined,
+      },
+      card,
+      adapter,
+    );
+    expect(result.passed).toBe(false);
+    expect(result.stopReason).toBe("human_abort");
+    expect(seen.length).toBeLessThanOrEqual(3);
+    expect(said.some((l) => /stopped: You're a Viewer on Chronicle/.test(l))).toBe(true);
+  });
+
   it("rewinds to a step, keeps the abandoned state, and the next run resumes from there with history replayed (H19, H17)", async () => {
     const card = await newCard("card_rw", { stepBudget: 3 });
     // Three writes, a checkpoint after each; the budget ends the card (and the

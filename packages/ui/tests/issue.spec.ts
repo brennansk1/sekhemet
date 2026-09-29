@@ -599,3 +599,60 @@ describe("the browser can load it", () => {
     expect(UI_LIB_MODULES).toContain("issue.js");
   });
 });
+
+describe("TEAM-15, TEAM-39: comments and the AI teammates in Activity", () => {
+  it("shows each comment as a name, a time and its text, Seshat's with the AI badge", () => {
+    const items = activityItems({
+      cardId: "card_a",
+      events: [
+        {
+          seq: 1,
+          type: "issue/commented",
+          actor: "human",
+          payload: { id: "cmt_1", cardId: "card_a", ai: ["seshat"] },
+          createdAt: "2026-09-28T10:00:00.000Z",
+        },
+        {
+          seq: 2,
+          type: "agent/start_requested",
+          actor: "human",
+          payload: { id: "asr_1", cardId: "card_a", requested_by: "p_sam" },
+          createdAt: "2026-09-28T10:01:00.000Z",
+        },
+        {
+          seq: 3,
+          type: "agent/start_answered",
+          actor: "human",
+          principalName: "Lee Lead",
+          payload: { id: "asr_1", answer: "started" },
+          createdAt: "2026-09-28T10:02:00.000Z",
+        },
+      ],
+      messages: [],
+      decisions: [],
+      comments: [
+        {
+          id: "cmt_1",
+          by: "person",
+          name: "Vic Viewer",
+          text: "@Seshat should this be urgent?",
+          postedAt: "2026-09-28T10:00:00.000Z",
+        },
+        {
+          id: "pmr_1",
+          by: "seshat",
+          name: "Seshat",
+          text: "Not yet: nothing waits on it.",
+          postedAt: "2026-09-28T10:00:30.000Z",
+        },
+      ],
+    });
+    expect(items.map((i) => [i.kind, i.who, i.ai, i.text, i.quote ?? ""])).toEqual([
+      ["comment", "Vic Viewer", false, "commented", "@Seshat should this be urgent?"],
+      ["comment", "Seshat", true, "answered", "Not yet: nothing waits on it."],
+      // Solo's one person is "You"; in the Team setup the server names each person.
+      ["event", "You", false, "asked the Agent to start", ""],
+      ["event", "Lee Lead", false, "started the Agent", ""],
+    ]);
+  });
+});

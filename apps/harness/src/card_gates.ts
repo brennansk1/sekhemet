@@ -26,6 +26,7 @@ import {
   withoutCardOneStaging,
 } from "./card_zero.js";
 import { withLicenseGate } from "./license_gate.js";
+import { withLiveGate } from "./live_gate.js";
 import { withReachabilityGate } from "./reachability_gate.js";
 import { withRegressionGate } from "./regression_gate.js";
 import { withTrailerGate } from "./trailer_gate.js";
@@ -233,7 +234,12 @@ export async function verifyCardWorktree(
     root: input.worktree,
     base: input.base,
     rungs: session.gateRungs,
-    runner: input.runner ?? cardGateRunner(input),
+    // DB-N2-10: the running check named on the issue's badge while it runs.
+    runner:
+      input.runner ??
+      (input.card.id
+        ? withLiveGate(cardGateRunner(input), input.repoPath, input.card.id)
+        : cardGateRunner(input)),
     staged: withoutCardOneStaging(input.card).acceptanceTests ?? [],
     bounds: session.bounds,
     ...(input.toolApplied ? { toolApplied: input.toolApplied } : {}),

@@ -17,6 +17,8 @@ const STYLES = [
   "status.css",
   "projects.css",
   "learn.css",
+  "inbox.css",
+  "admin.css",
 ];
 
 /**

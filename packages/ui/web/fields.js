@@ -1,7 +1,7 @@
 // Inline and bulk field edits (PM_DESIGN §3.3–3.4): one menu per field, an
 // optimistic change, then PATCH /api/cards/:id per card. On failure the value
 // reverts and the toast says why, verbatim.
-import { esc, icon, sendJSON } from "./dom.js";
+import { aiBadge, esc, icon, sendJSON } from "./dom.js";
 import {
   ESTIMATES,
   PRIORITY_LABELS,
@@ -11,6 +11,7 @@ import {
   formatPoints,
   showsPoints,
 } from "./lib/pm.js";
+import { teammatePicker } from "./lib/teammates.js";
 import { prioMark } from "./marks.js";
 import { openMenu } from "./overlay.js";
 import { openPicker } from "./picker.js";
@@ -199,19 +200,31 @@ export function editField(field, cardIds, anchor) {
       return;
     }
     case "assignee": {
-      const people = new Set(["worker", "human"]);
-      for (const c of s.cards) if (c.assignee) people.add(c.assignee);
+      // TEAM-17: the people under Members, the Agent and Seshat under AI
+      // teammates with the AI badge — never mixed in with the people.
+      const people = new Set(["human"]);
+      for (const c of s.cards) if (c.assignee && c.assignee !== "worker") people.add(c.assignee);
+      const groups = teammatePicker({
+        people: [...people].map((a) => ({
+          value: a,
+          label: assigneeLabel(a),
+          ...(a === "human" && s.meta?.gitUser ? { detail: s.meta.gitUser } : {}),
+        })),
+        purpose: "assign",
+      });
       openPicker(anchor, {
         heading,
         options: [
-          ...[...people].map((a) => ({
-            value: a,
-            label: assigneeLabel(a),
-            detail:
-              a === "worker" ? "The local model" : a === "human" ? (s.meta?.gitUser ?? "") : "",
-            checked: cur === a,
-          })),
           { value: "", label: "Unassigned", checked: !cur },
+          ...groups.flatMap((g) =>
+            g.options.map((o) => ({
+              ...o,
+              group: g.heading,
+              plain: true,
+              ...(o.ai ? { badge: aiBadge() } : {}),
+              checked: cur === o.value,
+            })),
+          ),
         ],
         onPick: (v) => setField(ids, field, v || null),
       });

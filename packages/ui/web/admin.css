@@ -1,0 +1,84 @@
+/* Members and Audit (dashboard §2.17.4–5, DB-N9-16; TEAM-27) and the level
+   note beside a control a person's access level does not allow (DB-N9-17,
+   §2.2.7). One table each, terse labels, one primary action. Tokens only.
+   Below 768 px a table's rows stack, each cell with its label. */
+
+.mb,
+.au {
+  max-width: 1080px;
+  gap: 16px;
+}
+.mb-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.mb-form,
+.au-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+}
+.mb-form .auth-field,
+.au-filters .auth-field {
+  min-width: 160px;
+}
+.mb-person {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.mb-person > span:last-child {
+  display: flex;
+  flex-direction: column;
+}
+.mb-person .dot {
+  margin-left: -12px;
+  align-self: flex-end;
+}
+.mb-email,
+.mb-state {
+  font-size: var(--text-xs);
+}
+.mb-state.warn {
+  color: var(--state-parked);
+}
+.mb-ov {
+  display: block;
+  font-size: var(--text-sm);
+}
+.mb-edit td {
+  background: var(--bg-raised);
+}
+.mb-tbl td[data-col="actions"] {
+  text-align: right;
+  white-space: nowrap;
+}
+.au-export {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.au-tbl td[data-col="time"] {
+  white-space: nowrap;
+}
+
+/* DB-N9-17: the level held and a level that can, written beside the control. */
+.level-note {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+[data-needs][disabled] + .level-note {
+  margin-left: 6px;
+}
+
+@media (max-width: 767px) {
+  .au-export {
+    margin-left: 0;
+  }
+  .mb-tbl td[data-col="actions"] {
+    text-align: left;
+  }
+}

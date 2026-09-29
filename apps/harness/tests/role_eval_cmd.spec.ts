@@ -105,6 +105,34 @@ describe("measure reviewer (RG-P8-13)", () => {
     expect(lines.at(-2)).toMatch(/Does not meet RG-P8-13/);
   });
 
+  it("records each failed review and its reason on the ledger, apart from the reviewed (F25)", async () => {
+    // Every reply unreadable: no review happened, and the durable record says so.
+    const h = holder(() => "The change looks fine to me.");
+    const code = await runMeasureCommand(
+      ["reviewer", "--model", "review-x", "--only", "onyx-vault-project-case", "--out", "r.json"],
+      k(),
+      print,
+      { acquire: h.acquire, harnessRoot: ROOT, registry: registry() },
+    );
+    expect(code).toBe(0);
+    const [recorded] = (await events(MEASURE_REVIEWER)) as {
+      items: number;
+      reviewed: number;
+      failed: number;
+      passes: boolean;
+      perItem: { id: string; caught: boolean; failed?: string }[];
+    }[];
+    expect(recorded).toMatchObject({ items: 1, reviewed: 0, failed: 1, passes: false });
+    expect(recorded?.perItem).toEqual([
+      {
+        id: "onyx-vault-project-case",
+        caught: false,
+        falsePositives: 0,
+        failed: "the Review model's reply held no readable JSON",
+      },
+    ]);
+  });
+
   it("refuses to run without a Review model", async () => {
     const code = await runMeasureCommand(["reviewer"], k(), print, {
       harnessRoot: ROOT,

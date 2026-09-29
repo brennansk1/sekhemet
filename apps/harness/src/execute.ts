@@ -87,6 +87,7 @@ import { RULE_SIGNAL_MINIMUM, learnFromAttempt } from "./learning/reflect.js";
 import { playbookRuleOf, standingErrorCode } from "./learning/scoping.js";
 import { type LearningStore, RULES_PER_PROMPT } from "./learning/store.js";
 import { recordLedgerRun } from "./ledger_evidence.js";
+import { withLiveGate } from "./live_gate.js";
 import { loadBaseline, recordBaselineShrink } from "./onboard.js";
 import { buildReproRecord } from "./repro.js";
 import { workerWebDocs } from "./research/service.js";
@@ -193,6 +194,13 @@ export interface ExecutionContext {
   loadVisionModel?: (model: string) => Promise<LocalInferenceAdapter>;
   /** The registry's vision models; default the model registry's (tests pass their own). */
   visionModels?: () => ModelEntry[];
+  /**
+   * Teams TEAM-16: why the Agent may no longer work on this issue for the
+   * person it works for (their level was lowered while it ran), checked
+   * between steps; the card then stops as a person's stop would. Absent in
+   * Solo, where the one person may always.
+   */
+  agentRefusal?: (cardId: string) => Promise<string | undefined>;
 }
 
 /**
@@ -409,18 +417,24 @@ export async function executeCard(
       ctx.cardStore.recordLedgerEvent(p),
   };
   const baseline = await loadBaseline(ledger).catch(() => undefined);
-  const gateRunner = cardGateRunner({
-    repoPath: ctx.repoPath,
-    gatesConfig,
-    restricted: ctx.restrictedMode,
-    card: withoutCardOneStaging(inputCard),
-    ...(baseline
-      ? {
-          ...baselineInput(baseline),
-          onBaselineShrink: (gone, gates) => recordBaselineShrink(ledger, gone, card.id, gates),
-        }
-      : {}),
-  });
+  // DB-N2-10: each check announced to the card's live gate file as it starts,
+  // so the dashboard's badge names the running check (*Running Tests…*).
+  const gateRunner = withLiveGate(
+    cardGateRunner({
+      repoPath: ctx.repoPath,
+      gatesConfig,
+      restricted: ctx.restrictedMode,
+      card: withoutCardOneStaging(inputCard),
+      ...(baseline
+        ? {
+            ...baselineInput(baseline),
+            onBaselineShrink: (gone, gates) => recordBaselineShrink(ledger, gone, card.id, gates),
+          }
+        : {}),
+    }),
+    ctx.repoPath,
+    card.id,
+  );
   // C10 with S9: skills pinned in the user directory's lock, never one the
   // repository ships (SEC-31).
   const skills = loadRepoSkills(ctx.repoPath);
@@ -751,6 +765,12 @@ export async function executeCard(
       if (stop !== undefined && !abort.signal.aborted) {
         log(`   stop requested: ${stop}`);
         abort.abort(stop);
+      }
+      // TEAM-16: the Agent does only what its person may; lowered, it stops here.
+      const refused = await ctx.agentRefusal?.(cardId).catch(() => undefined);
+      if (refused !== undefined && !abort.signal.aborted) {
+        log(`   stopped: ${refused}`);
+        abort.abort(refused);
       }
       const pause = await pendingPause(ctx.cardStore, cardId, pauseSinceSeq).catch(() => undefined);
       if (pause !== undefined) {
@@ -1425,6 +1445,10 @@ export async function explainCard(ctx: ExecutionContext, cardId: string): Promis
   if (waiting.length > 0) lines.push(`It waits on ${waiting.join(", ")}, not done yet.`);
   if (card.hold?.kind === "backpressure") {
     lines.push(`Held, waiting for ${card.hold.awaiting}: ${card.hold.reason}.`);
+  } else if (card.hold?.kind === "awaitingMerge" && card.hold.dismissed) {
+    lines.push(
+      `Its accept was dismissed: pull request #${card.hold.pr} has new commits; it waits for a new decision.`,
+    );
   } else if (card.hold?.kind === "awaitingMerge") {
     lines.push(`Accepted; waits for pull request #${card.hold.pr} to merge.`);
   }
@@ -2166,6 +2190,13 @@ export async function openPullRequest(
     remote: string;
     accepter?: string;
     evidence?: Parameters<typeof evidenceSummary>[1];
+    /**
+     * Teams TEAM-24: the pull request an accept new commits dismissed, still
+     * open. The branch is pushed without force — the remote refuses it when
+     * the pull request holds commits the verified branch lacks — and that
+     * pull request is re-approved at the pushed head; none is opened.
+     */
+    existing?: { pr: number; url: string };
   },
 ): Promise<{ pr: number; url: string; headSha: string }> {
   const run = promisify(execFile);
@@ -2191,10 +2222,18 @@ export async function openPullRequest(
     detail: `git push ${options.remote} ${branch}:${branch} ${headSha}`,
     recordAllowed: true,
   });
-  await run("git", ["push", "-u", options.remote, `${branch}:${branch}`], {
-    cwd: ctx.repoPath,
-    timeout: 120_000,
-  });
+  try {
+    await run("git", ["push", "-u", options.remote, `${branch}:${branch}`], {
+      cwd: ctx.repoPath,
+      timeout: 120_000,
+    });
+  } catch (err) {
+    if (!options.existing) throw err;
+    throw new Error(
+      `pull request #${options.existing.pr} has commits this issue's branch does not: bring them into the branch and verify it again before accepting (${err instanceof Error ? err.message.split("\n")[0] : String(err)})`,
+    );
+  }
+  if (options.existing) return { ...options.existing, headSha };
   let ev = options.evidence;
   if (!ev) {
     try {

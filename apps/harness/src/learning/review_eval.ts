@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { clopperPearson, verifyAsset } from "@sekhemet/eval";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
-import { type ReviewInput, type ReviewResult, reviewCard } from "./review.js";
+import { ReviewFailedError, type ReviewInput, type ReviewResult, reviewCard } from "./review.js";
 
 /**
  * The Reviewer's seeded-defect measure (review-git RG-P8-13; measurement
@@ -25,6 +25,11 @@ import { type ReviewInput, type ReviewResult, reviewCard } from "./review.js";
  * other `unmet` finding the model made is a **false positive**. `unclear`
  * findings claim no defect and count as neither; findings the harness makes
  * itself (the fail-only test check) are not the model's and are left out.
+ *
+ * A review that failed — its reply cut off at its length cap, or holding no
+ * readable JSON (live-test F25) — is counted apart: recall is over the
+ * reviews that completed, never over truncated replies read as clean ones,
+ * and a run with a failed review is never RG-P8-13's verdict.
  */
 
 /** How far from a changed line a finding may cite and still catch the defect. */
@@ -166,6 +171,17 @@ export interface DefectScore {
   /** The model's `unmet` findings, each with where it cited and whether it caught the defect. */
   unmet: { criterion: string; at: string; catches: boolean }[];
   ranges: [number, number][];
+  /** Why the review failed (F25); such an item is neither caught nor missed. */
+  failed?: string;
+}
+
+/** A seeded item whose review failed (F25): no catch, no false positive, the reason kept. */
+export function failedDefectReview(
+  id: string,
+  ranges: [number, number][],
+  reason: string,
+): DefectScore {
+  return { id, caught: false, falsePositives: 0, unmet: [], ranges, failed: reason };
 }
 
 /** Score one review of one seeded item (RG-P8-13). */
@@ -199,7 +215,12 @@ export function scoreDefectReview(
 
 export interface SeededDefectReport {
   items: number;
+  /** Items whose review completed: the recall's denominator. */
+  reviewed: number;
+  /** Items whose review failed (F25): cut off or unreadable, never counted as clean. */
+  failed: number;
   caught: number;
+  /** Caught over reviewed. */
   recall: number;
   /** Clopper–Pearson 95% interval on the recall. */
   interval: { low: number; high: number };
@@ -210,32 +231,41 @@ export interface SeededDefectReport {
    */
   overFalsePositiveBound: string[];
   maxFalsePositives: number;
-  /** RG-P8-13: recall ≥ 0.3 and no card over 1 false positive. */
+  /** RG-P8-13: recall ≥ 0.3, no card over 1 false positive, and no failed review. */
   passes: boolean;
   line: string;
 }
 
-/** The measure over one run (RG-P8-13): recall, and false positives counted per card. */
+/**
+ * The measure over one run (RG-P8-13): recall over the reviews that
+ * completed, false positives counted per card, failed reviews apart (F25).
+ */
 export function seededDefectReport(scores: readonly DefectScore[]): SeededDefectReport {
-  const caught = scores.filter((s) => s.caught).length;
-  const n = scores.length;
+  const done = scores.filter((s) => s.failed === undefined);
+  const failed = scores.length - done.length;
+  const caught = done.filter((s) => s.caught).length;
+  const n = done.length;
   const recall = n ? caught / n : 0;
-  const over = scores
-    .filter((s) => s.falsePositives > MAX_FALSE_POSITIVES_PER_CARD)
-    .map((s) => s.id);
-  const maxFalsePositives = Math.max(0, ...scores.map((s) => s.falsePositives));
-  const passes = n > 0 && recall >= MIN_RECALL && over.length === 0;
+  const over = done.filter((s) => s.falsePositives > MAX_FALSE_POSITIVES_PER_CARD).map((s) => s.id);
+  const maxFalsePositives = Math.max(0, ...done.map((s) => s.falsePositives));
+  const passes = n > 0 && failed === 0 && recall >= MIN_RECALL && over.length === 0;
   const interval = clopperPearson(caught, n);
   const pct = (x: number) => `${Math.round(x * 100)}%`;
+  const failedLine =
+    failed === 0
+      ? ""
+      : ` ${failed} of ${scores.length} review${scores.length === 1 ? "" : "s"} failed (the reply was cut off or unreadable) and ${failed === 1 ? "is" : "are"} not counted.`;
   return {
-    items: n,
+    items: scores.length,
+    reviewed: n,
+    failed,
     caught,
     recall,
     interval,
     overFalsePositiveBound: over,
     maxFalsePositives,
     passes,
-    line: `AI review caught ${caught} of ${n} seeded defects (recall ${pct(recall)}, 95% interval ${pct(interval.low)}–${pct(interval.high)}); ${over.length === 0 ? `no reviewed change had more than ${MAX_FALSE_POSITIVES_PER_CARD} false positive` : `${over.length} reviewed change${over.length === 1 ? "" : "s"} had more than ${MAX_FALSE_POSITIVES_PER_CARD} false positive`}. ${passes ? "Meets" : "Does not meet"} RG-P8-13 (recall at least ${MIN_RECALL}, at most ${MAX_FALSE_POSITIVES_PER_CARD} false positive per reviewed change).`,
+    line: `AI review caught ${caught} of ${n} seeded defects reviewed (recall ${pct(recall)}, 95% interval ${pct(interval.low)}–${pct(interval.high)}); ${over.length === 0 ? `no reviewed change had more than ${MAX_FALSE_POSITIVES_PER_CARD} false positive` : `${over.length} reviewed change${over.length === 1 ? "" : "s"} had more than ${MAX_FALSE_POSITIVES_PER_CARD} false positive`}.${failedLine} ${passes ? "Meets" : "Does not meet"} RG-P8-13 (recall at least ${MIN_RECALL}, at most ${MAX_FALSE_POSITIVES_PER_CARD} false positive per reviewed change, every review completed).`,
   };
 }
 
@@ -301,8 +331,20 @@ export async function runSeededDefects(
     );
     const seeded = applyEdits(reference, d.edits);
     const card = fixtureCard(set.root, d.fixture, d.card);
-    const review = await reviewCard(model, seededReviewInput(card, d.file, seeded));
-    const score = scoreDefectReview(d.id, d.file, changedRanges(reference, seeded), review);
+    const ranges = changedRanges(reference, seeded);
+    // F25: a cut-off or unreadable reply is a failed review, counted apart.
+    const review = await reviewCard(model, seededReviewInput(card, d.file, seeded)).catch(
+      (err: unknown) => {
+        if (err instanceof ReviewFailedError) return err;
+        throw err;
+      },
+    );
+    if (review instanceof ReviewFailedError) {
+      scores.push(failedDefectReview(d.id, ranges, review.message));
+      opts.say?.(`review failed ${d.id}: ${review.message}`);
+      continue;
+    }
+    const score = scoreDefectReview(d.id, d.file, ranges, review);
     scores.push(score);
     opts.say?.(
       `${score.caught ? "caught" : "missed"} ${d.id}${score.falsePositives ? ` · ${score.falsePositives} false positive${score.falsePositives === 1 ? "" : "s"}` : ""}`,

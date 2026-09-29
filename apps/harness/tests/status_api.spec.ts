@@ -94,8 +94,8 @@ describe("Status facts (DB-N9-1..4, DB-N9-8)", () => {
       project: { id: p.chronicle.id, name: "Chronicle" },
       isLead: true,
       canSetHealth: true,
-      // Health is recorded by B4.11 (teams NEW-teams-11): nothing offers to set it yet.
-      healthWritable: false,
+      // Health is recorded (B4.11, TEAM-28): Solo's one person may set it; none is set yet.
+      healthWritable: true,
       health: null,
       update: null,
       updateMissing: false,

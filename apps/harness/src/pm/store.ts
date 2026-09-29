@@ -7,6 +7,7 @@ import {
   type PmCite,
   type PmContext,
   type PmMessage,
+  type PmPlanApproval,
   type PmProposal,
   type PmProposalState,
   type PmStatus,
@@ -15,7 +16,8 @@ import { voiceGuard } from "./voice.js";
 
 interface MessagePayload {
   id: string;
-  text: string;
+  /** Only on messages written before the text moved to the private part. */
+  text?: string;
   context?: PmContext;
   createdAt: string;
 }
@@ -45,11 +47,24 @@ interface ProposalStatePayload {
   cardIds?: string[];
 }
 
+interface PlanSentPayload {
+  proposalId: string;
+  approver: string;
+  choices?: Record<string, unknown>;
+}
+
+interface PlanApprovedPayload {
+  proposalId: string;
+  projectId?: string;
+}
+
 const THREAD_TYPES = [
   PM_EVENTS.message,
   PM_EVENTS.reply,
   PM_EVENTS.proposalState,
   PM_EVENTS.status,
+  PM_EVENTS.planSent,
+  PM_EVENTS.planApproved,
 ];
 
 /**
@@ -73,9 +88,10 @@ export class PmStore {
     context?: PmContext,
     actor = "human",
   ): Promise<PmMessage> {
+    // The text is free text (an `@Seshat` comment's body among them): the
+    // event's erasable private part, never the hashed payload (teams §3).
     const payload: MessagePayload = {
       id: `pmm_${randomUUID().slice(0, 12)}`,
-      text,
       createdAt: new Date().toISOString(),
       ...(context && (context.cardId || context.view) ? { context } : {}),
     };
@@ -83,6 +99,7 @@ export class PmStore {
       actor,
       type: PM_EVENTS.message,
       payload,
+      private: { text },
       ...(context?.cardId ? { cardId: context.cardId } : {}),
     });
     return {
@@ -166,6 +183,7 @@ export class PmStore {
     p: ReplyPayload,
     seq: number,
     states: Map<string, PmProposalState>,
+    approvals: Map<string, PmPlanApproval> = new Map(),
   ): PmMessage {
     return {
       id: p.id,
@@ -176,7 +194,14 @@ export class PmStore {
       state: p.error ? "error" : "done",
       ...(p.proposals
         ? {
-            proposals: p.proposals.map((pr) => ({ ...pr, state: states.get(pr.id) ?? pr.state })),
+            proposals: p.proposals.map((pr) => {
+              const approval = approvals.get(pr.id);
+              return {
+                ...pr,
+                state: states.get(pr.id) ?? pr.state,
+                ...(approval ? { approval } : {}),
+              };
+            }),
           }
         : {}),
       ...(p.cites ? { cites: p.cites } : {}),
@@ -191,11 +216,33 @@ export class PmStore {
   public async thread(since = 0): Promise<PmMessage[]> {
     const events = await this.events();
     const states = new Map<string, PmProposalState>();
+    const approvals = new Map<string, PmPlanApproval>();
     const answered = new Set<string>();
     for (const e of events) {
       if (e.type === PM_EVENTS.proposalState) {
         const p = e.payload as ProposalStatePayload;
         states.set(p.proposalId, p.state);
+      } else if (e.type === PM_EVENTS.planSent) {
+        // TEAM-20: the first send stands; the route refuses a second.
+        const p = e.payload as PlanSentPayload;
+        if (!approvals.has(p.proposalId)) {
+          approvals.set(p.proposalId, {
+            state: "sent",
+            approver: p.approver,
+            requestedBy: e.principal ?? "",
+            ...(p.choices ? { choices: p.choices } : {}),
+          });
+        }
+      } else if (e.type === PM_EVENTS.planApproved) {
+        const p = e.payload as PlanApprovedPayload;
+        const was = approvals.get(p.proposalId);
+        if (was) {
+          approvals.set(p.proposalId, {
+            ...was,
+            state: "approved",
+            ...(e.principal ? { approvedBy: e.principal } : {}),
+          });
+        }
       } else if (e.type === PM_EVENTS.reply) {
         for (const id of (e.payload as ReplyPayload).replyTo) answered.add(id);
       }
@@ -209,6 +256,7 @@ export class PmStore {
       if (e.seq <= since) continue;
       if (e.type === PM_EVENTS.message) {
         const p = e.payload as MessagePayload;
+        const text = messageText(e);
         const state = answered.has(p.id)
           ? "done"
           : status.phase === "thinking"
@@ -218,14 +266,14 @@ export class PmStore {
           id: p.id,
           seq: e.seq,
           role: "user",
-          text: p.text,
+          text,
           createdAt: p.createdAt,
           state,
           ...(p.context ? { context: p.context } : {}),
           ...(e.principal ? { principal: e.principal } : {}),
         });
       } else if (e.type === PM_EVENTS.reply) {
-        out.push(this.replyToMessage(e.payload as ReplyPayload, e.seq, states));
+        out.push(this.replyToMessage(e.payload as ReplyPayload, e.seq, states, approvals));
       }
     }
     return out;
@@ -251,6 +299,34 @@ export class PmStore {
       if (hit) return hit;
     }
     return undefined;
+  }
+
+  /** Who a proposal's reply answered (PM-N9-8): the person whose conversation it is. */
+  public async askerOf(proposalId: string): Promise<string | undefined> {
+    for (const m of await this.thread()) {
+      if (m.role === "pm" && m.proposals?.some((p) => p.id === proposalId)) return m.principal;
+    }
+    return undefined;
+  }
+
+  /**
+   * A Stakeholder's plan sent to a named Member or Admin (teams TEAM-20,
+   * `plan/sent_for_approval`); the sender is the event's principal, and
+   * nothing is created.
+   */
+  public async sendForApproval(
+    proposalId: string,
+    approver: string,
+    choices?: Record<string, unknown>,
+  ): Promise<void> {
+    const payload: PlanSentPayload = { proposalId, approver, ...(choices ? { choices } : {}) };
+    await this.log.append({ actor: "human", type: PM_EVENTS.planSent, payload });
+  }
+
+  /** The approver approved the plan and it created `projectId` (TEAM-20, TEAM-42). */
+  public async recordPlanApproved(proposalId: string, projectId?: string): Promise<void> {
+    const payload: PlanApprovedPayload = { proposalId, ...(projectId ? { projectId } : {}) };
+    await this.log.append({ actor: "human", type: PM_EVENTS.planApproved, payload });
   }
 
   // --- Conversation summary (hybrid compaction) --------------------------------
@@ -307,4 +383,15 @@ export class PmStore {
     await this.log.append({ actor, type: PM_EVENTS.cycleUpdated, payload: { ...patch, id } });
     return { ...existing, ...patch };
   }
+}
+
+/**
+ * A `pm/message`'s text: the private part's (erased, it reads as the erased
+ * marker), or the payload's on a message written before it moved there.
+ */
+export function messageText(e: { payload: unknown; private?: Record<string, unknown> }): string {
+  const own = e.private?.text;
+  if (typeof own === "string") return own;
+  const old = (e.payload as { text?: unknown } | null)?.text;
+  return typeof old === "string" ? old : "";
 }

@@ -276,6 +276,23 @@ export interface Standing {
   place: number;
   estimateSeconds: number;
   message: string;
+  /** Its person is at the per-person cap (TEAM-30): the cap and their running Agent issues. */
+  capped?: { cap: number; running: number };
+}
+
+/** Running Agent issues per person, now (TEAM-30): what the per-person cap counts. */
+export function runningAgentIssues(store: CardStore): Promise<Map<string, number>> {
+  return runningByPerson(store, new Set());
+}
+
+/**
+ * Why an issue waits at the per-person cap (TEAM-30, item 31), in plain
+ * words: whose issues run, how many, the limit, and that others go first.
+ * `who` is a name, or "you" for the reader; `opening` false continues a sentence.
+ */
+export function capNote(who: string, running: number, cap: number, opening = true): string {
+  const has = who === "you" ? (opening ? "You have" : "you have") : `${who} has`;
+  return `${has} ${running} Agent issue${running === 1 ? "" : "s"} running and the limit is ${cap} per person, so other people's issues go first`;
 }
 
 /**

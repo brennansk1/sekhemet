@@ -34,6 +34,29 @@
 .brand kbd {
   margin-left: auto;
 }
+/* Search under the brand (DB-N9-10): opens the palette, as the topbar's does. */
+.side-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  margin: 0 0 12px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.side-search:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+.side-search kbd {
+  margin-left: auto;
+}
 .project {
   display: flex;
   align-items: center;
@@ -117,6 +140,15 @@
 }
 .foot a.row {
   text-decoration: none;
+}
+/* The Agent status line leads the foot (§2.2.3); the Coding model under it. */
+.foot .agent-line {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+.foot .row.sub {
+  margin-top: -6px;
+  padding-left: 16px;
 }
 .foot a.row:hover {
   color: var(--text-primary);
@@ -471,6 +503,7 @@
     width: var(--sidebar-w-narrow);
   }
   .brand kbd,
+  .side-search kbd,
   .foot .meter {
     display: none;
   }

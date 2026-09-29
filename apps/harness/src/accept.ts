@@ -15,6 +15,11 @@ import { ownersOf } from "./codeowners.js";
 import { effectiveConfig } from "./config_apply.js";
 import { localPersonDetails } from "./ledger_cmds.js";
 import { latestLedgerEvidence } from "./ledger_evidence.js";
+import {
+  openThreadRefusal,
+  requiresResolvedThreads,
+  reviewThreads,
+} from "./team/review_threads.js";
 
 /**
  * Accept, safely (review-git §2.5, S5, NEW-review-git-5).
@@ -51,6 +56,13 @@ export interface AcceptOptions {
    * rule is recorded; without one, the ledger's Accept-holders (the Solo person).
    */
   acceptHolders?: readonly string[];
+  /**
+   * The project requires every review thread resolved before Accept (teams
+   * item 25, TEAM-25): an open thread refuses it, naming the thread.
+   */
+  requireResolvedThreads?: boolean;
+  /** People's names, for naming who opened the open thread. */
+  nameOf?: (principal: string | undefined) => string | undefined;
 }
 
 /** A refused accept: nothing moved. `code` says which precondition failed. */
@@ -69,7 +81,8 @@ export class AcceptRefusedError extends Error {
       | "conflict"
       | "no_branch"
       | "not_code_owner"
-      | "pr_unavailable",
+      | "pr_unavailable"
+      | "open_thread",
     message: string,
   ) {
     super(message);
@@ -439,7 +452,8 @@ export async function acceptPreconditions(
       `Issue ${cardId} is in '${card?.status ?? "nowhere"}'. Only an issue in Review can be accepted.`,
     );
   }
-  if (card.hold?.kind === "awaitingMerge") {
+  // A dismissed accept (TEAM-24) waits for a new decision on the same pull request.
+  if (card.hold?.kind === "awaitingMerge" && !card.hold.dismissed) {
     throw new AcceptRefusedError(
       "not_in_review",
       `${cardId} was accepted and awaits pull request #${card.hold.pr}`,
@@ -494,6 +508,17 @@ export async function acceptPreconditions(
       );
     }
   }
+  // TEAM-25: a project that requires resolved threads refuses Accept — a
+  // person's or a standing auto-accept — while one is open, naming it.
+  const required =
+    options.requireResolvedThreads ??
+    (ctx.eventLog && card.projectId
+      ? await requiresResolvedThreads(ctx.eventLog, card.projectId)
+      : false);
+  if (required) {
+    const open = openThreadRefusal(await reviewThreads(ctx.cardStore, cardId, options.nameOf));
+    if (open) throw new AcceptRefusedError("open_thread", open);
+  }
   const adapter = new NodeGitSyncAdapter(ctx.repoPath);
   const branch = adapter.cardBranch(cardId);
   if (!branch) {
@@ -533,6 +558,18 @@ export async function acceptCard(
   // §2.5.7: with pull-request-on-accept, a person's Accept opens a pull
   // request and the card waits in Review under `awaitingMerge` (rule 24).
   const { readSettings } = await import("./integrations.js");
+  // TEAM-24: an accept new commits dismissed is decided again on the same
+  // pull request — still open on GitHub — never by opening a second one.
+  const reopen =
+    stored.hold?.kind === "awaitingMerge" && stored.hold.dismissed && stored.hold.url
+      ? { pr: stored.hold.pr, url: stored.hold.url }
+      : undefined;
+  if (reopen && (auto || !readSettings(ctx.repoPath).githubPrOnAccept)) {
+    throw new AcceptRefusedError(
+      "pr_unavailable",
+      `${stored.id} stays in Review: its pull request #${reopen.pr} is still open, so it is accepted there, with pull request on accept.`,
+    );
+  }
   if (!auto && readSettings(ctx.repoPath).githubPrOnAccept) {
     const branch = adapter.cardBranch(stored.id) as string;
     let opened: Awaited<ReturnType<typeof execute.openPullRequest>>;
@@ -542,6 +579,7 @@ export async function acceptCard(
         remote: effectiveConfig(ctx.repoPath).config.review.remote,
         accepter: await accepterName(ctx.repoPath, ctx.cardStore, principal),
         evidence: ev,
+        ...(reopen ? { existing: reopen } : {}),
       });
     } catch (err) {
       // INT-15: nothing moved — the card stays in Review, the reason said.

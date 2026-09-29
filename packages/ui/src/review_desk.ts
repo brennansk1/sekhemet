@@ -92,6 +92,151 @@ export const REVIEW_DESK_COPY = {
   needsApprovalAgain: "Needs approval again",
 } as const;
 
+/**
+ * Review threads and the *Comment* verdict (teams item 25, NEW-teams-8;
+ * GitHub's pull-request review): every word the triage bar, the Comment
+ * form and the Changes tab's threads show.
+ */
+export const THREAD_COPY = {
+  comment: "Comment",
+  commentKey: "C",
+  heading: "Review threads",
+  none: "No review threads. Comment leaves a review with no verdict: its comments open threads here.",
+  formLabel: "Comment on this change",
+  formHint:
+    "A review with no verdict. It opens a thread on the whole change, and one for each line comment you add in Changes.",
+  placeholder: "Leave a comment for the people reviewing this issue.",
+  carried: (n: number) =>
+    `${n === 1 ? "1 line comment opens its own thread" : `${n} line comments open their own threads`}.`,
+  send: "Comment",
+  sent: (n: number) => `Comment posted. ${n === 1 ? "1 thread" : `${n} threads`} opened.`,
+  empty: "Add a comment, or line comments in Changes.",
+  wholeChange: "the whole change",
+  reply: "Reply",
+  replyLabel: (place: string) => `Reply on ${place}`,
+  resolve: "Resolve conversation",
+  reopen: "Unresolve conversation",
+  resolved: (name: string | undefined) => (name ? `Resolved by ${name}` : "Resolved"),
+  open: "Open",
+  resolveNeeds: "A Member can resolve conversations.",
+  count: (open: number, total: number) =>
+    total === 0 ? "" : open === 0 ? `${total} resolved` : `${open} open of ${total}`,
+  /** TEAM-25: Accept's reason while a thread is open, naming it. */
+  openThread: (place: string, name: string | undefined, quote: string, more: number) =>
+    `This project needs every review thread resolved before Accept. Open thread on ${place}${name ? ` from ${name}` : ""}: “${quote}”${more > 0 ? ` (and ${more} more open)` : ""}.`,
+  /** TEAM-24: the triage bar's note after new commits dismissed an accept. */
+  dismissed: "Accept dismissed: new commits since it was accepted",
+  dismissedDetail: (who: string | undefined, pr: number | undefined) =>
+    `${who ? `${who}'s accept` : "The accept"}${pr ? ` of pull request #${pr}` : ""} no longer holds. Review the new commits, then accept again.`,
+} as const;
+
+/** A review thread as `GET /api/cards/:id/threads` returns it. */
+export interface ReviewThreadLike {
+  id: string;
+  file?: string;
+  line?: number;
+  name?: string;
+  resolved: boolean;
+  comments: readonly { text: string }[];
+}
+
+/** Where a thread is: `src/a.ts:12`, a file, or the whole change. */
+export function threadPlace(t: { file?: string; line?: number }): string {
+  if (!t.file) return THREAD_COPY.wholeChange;
+  return t.line !== undefined ? `${t.file}:${t.line}` : t.file;
+}
+
+/**
+ * TEAM-25: why Accept waits while a thread is open — the first open one
+ * named by place, who opened it and its first words — or "" when none is
+ * open or the project does not require it. The server's refusal says the same.
+ */
+export function openThreadText(threads: readonly ReviewThreadLike[], required: boolean): string {
+  if (!required) return "";
+  const open = threads.filter((t) => !t.resolved);
+  const first = open[0];
+  if (!first) return "";
+  const words = (first.comments[0]?.text ?? "").replace(/\s+/g, " ").trim();
+  const quote = words.length > 60 ? `${words.slice(0, 59)}…` : words;
+  return THREAD_COPY.openThread(threadPlace(first), first.name, quote, open.length - 1);
+}
+
+/** What the review desk (`GET /api/cards/:id/review`) says about threads and a dismissed accept. */
+export interface ThreadDesk {
+  threads?: readonly (ReviewThreadLike & {
+    principal?: string;
+    resolvedByName?: string;
+    comments: readonly { text: string; name?: string; principal?: string }[];
+  })[];
+  requireResolvedThreads?: boolean;
+  /** The server's own wording of the open thread Accept waits on. */
+  openThread?: string;
+  acceptDismissed?: { pr?: number; accepterName?: string };
+}
+
+/** TEAM-25: the open thread Accept waits on, as the server said it (or as the page works it out). */
+export function threadBlocker(desk: ThreadDesk | null | undefined): string {
+  if (!desk) return "";
+  return (
+    desk.openThread ?? openThreadText(desk.threads ?? [], desk.requireResolvedThreads === true)
+  );
+}
+
+/** TEAM-24: the triage bar's note while a dismissed accept has not been given again. */
+export function dismissalNote(
+  desk: ThreadDesk | null | undefined,
+): { text: string; detail: string } | undefined {
+  const d = desk?.acceptDismissed;
+  if (!d) return undefined;
+  return { text: THREAD_COPY.dismissed, detail: THREAD_COPY.dismissedDetail(d.accepterName, d.pr) };
+}
+
+/**
+ * The Changes tab's review threads (teams item 25): open ones first, each
+ * with its place, who opened it, its comments by name ("You" for the
+ * reader), and what the reader may do — reply (every level) and resolve or
+ * reopen (`canResolve`: a Member or above).
+ */
+export function threadRows(
+  desk: ThreadDesk | null | undefined,
+  reader: string | undefined,
+  canResolve: boolean,
+): {
+  heading: string;
+  count: string;
+  rows: {
+    id: string;
+    place: string;
+    resolved: boolean;
+    state: string;
+    comments: { who: string; text: string }[];
+    /** `disabled`: the reader's level may not, and the reason names the level that may (DB-N9-17). */
+    action: { verb: "resolve" | "reopen"; label: string; disabled?: string };
+  }[];
+} {
+  const threads = desk?.threads ?? [];
+  const who = (c: { text: string; name?: string; principal?: string }) =>
+    reader && c.principal === reader ? "You" : c.name || "A person";
+  const ordered = [...threads.filter((t) => !t.resolved), ...threads.filter((t) => t.resolved)];
+  return {
+    heading: THREAD_COPY.heading,
+    count: THREAD_COPY.count(threads.filter((t) => !t.resolved).length, threads.length),
+    rows: ordered.map((t) => ({
+      id: t.id,
+      place: threadPlace(t),
+      resolved: t.resolved,
+      state: t.resolved ? THREAD_COPY.resolved(t.resolvedByName) : THREAD_COPY.open,
+      comments: t.comments.map((c) => ({ who: who(c), text: c.text })),
+      action: {
+        ...(t.resolved
+          ? { verb: "reopen" as const, label: THREAD_COPY.reopen }
+          : { verb: "resolve" as const, label: THREAD_COPY.resolve }),
+        ...(canResolve ? {} : { disabled: THREAD_COPY.resolveNeeds }),
+      },
+    })),
+  };
+}
+
 const VERDICTS: readonly FindingVerdict[] = ["unmet", "unclear", "met"];
 
 function verdictOf(v: string | undefined): FindingVerdict | undefined {

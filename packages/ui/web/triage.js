@@ -3,10 +3,11 @@
 import { errorCode, isAcceptanceTest, matchesAny } from "./diff_parse.js";
 import { MOD, copyText, esc, icon, kbd, postJSON } from "./dom.js";
 import { ISSUE_COPY, lineCommentLabel, sendBackBody } from "./lib/issue.js";
-import { acceptVerdict } from "./lib/review_desk.js";
+import { THREAD_COPY, acceptVerdict, dismissalNote } from "./lib/review_desk.js";
 import { gateLabel } from "./lib/vocabulary.js";
 import { placeUnder, pushOverlay } from "./overlay.js";
 import { acknowledgedIds, deskBlocker } from "./review_desk.js";
+import { getSession } from "./session.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
 
@@ -260,6 +261,75 @@ export function wireComposer(form, card, { onSent, onClose, comments }) {
   return close;
 }
 
+/* ---------- Comment (teams item 25) ---------- */
+
+/**
+ * The *Comment* verdict's form: a review with no verdict, as GitHub's. Its
+ * text opens a thread on the whole change; each line comment drafted in
+ * Changes opens one on its line. Nothing moves on the board.
+ */
+export function commentFormHtml({ comments = [] } = {}) {
+  const carried = comments.length
+    ? `<div class="carried" data-carried><span class="sec">${esc(THREAD_COPY.carried(comments.length))}</span><ul class="plain">${comments.map((c) => `<li><span class="mono">${esc(lineCommentLabel(c))}</span> ${esc(c.text)}</li>`).join("")}</ul></div>`
+    : "";
+  return `<form class="composer" data-comment-form aria-label="${esc(THREAD_COPY.formLabel)}"><label class="lbl" for="rv-body">${esc(THREAD_COPY.formLabel)}</label><p class="sec">${esc(THREAD_COPY.formHint)}</p><textarea id="rv-body" name="body" placeholder="${esc(THREAD_COPY.placeholder)}" aria-describedby="rv-err"></textarea><div class="err" id="rv-err" role="alert" hidden>${esc(THREAD_COPY.empty)}</div>${carried}<div class="row"><span></span><span class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("chat")}${esc(THREAD_COPY.send)} ${kbd(`${MOD}↵`)}</button></span></div></form>`;
+}
+
+/** Wire a rendered Comment form; `onSent` runs once the review is recorded. Returns a close function. */
+export function wireCommentForm(form, card, { onSent, onClose, comments }) {
+  const area = form.querySelector("textarea");
+  const err = form.querySelector(".err");
+  let removeOverlay = () => {};
+  const close = () => {
+    removeOverlay();
+    form.remove();
+    onClose?.();
+  };
+  removeOverlay = pushOverlay({ kind: "composer", modal: false, close, onKey: () => false });
+  form.querySelector("[data-cancel]").addEventListener("click", close);
+  area.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = area.value.trim();
+    const lines = (comments?.() ?? []).map((c) => ({ file: c.file, line: c.line, text: c.text }));
+    if (!body && lines.length === 0) {
+      err.hidden = false;
+      area.setAttribute("aria-invalid", "true");
+      area.focus();
+      return;
+    }
+    if (blockedToast()) return;
+    const res = await postJSON(`/api/cards/${encodeURIComponent(card.id)}/reviews`, {
+      ...(body ? { body } : {}),
+      ...(lines.length ? { comments: lines } : {}),
+    });
+    if (res.ok) {
+      removeOverlay();
+      form.remove();
+      toast({
+        text: THREAD_COPY.sent(res.data?.threads?.length ?? 0),
+        iconName: "chat",
+        tone: "info",
+      });
+      onSent?.(card);
+      onClose?.();
+    } else {
+      toast({ ...explainFailure("comment", res), tone: "fail" });
+    }
+  });
+  area.focus();
+  return close;
+}
+
 /* ---------- Park ---------- */
 
 const PRESETS = ["Waiting on me", "Needs a decision", "Not now"];
@@ -341,6 +411,8 @@ export function triageBarHtml(card, evidence, { hint = true, detail } = {}) {
   const offline = s.connection === "offline";
   // A disabled button's reason is adjacent text, never a hover title (DB-P12-3).
   const dis = offline ? ' disabled aria-describedby="accept-why"' : "";
+  // DB-N9-17: Send back and Park need the review permission on the issue's project.
+  const needs = `data-needs="review"${card?.projectId ? ` data-needs-project="${esc(card.projectId)}"` : ""}`;
   const st = acceptState(card, evidence, detail);
   const merging = acceptPending(card?.id);
   const acceptBtn = !evidence
@@ -351,14 +423,24 @@ export function triageBarHtml(card, evidence, { hint = true, detail } = {}) {
       ? `<span class="why" id="accept-why">${esc(st.reason)}</span>`
       : "";
   const back = evidence
-    ? `<button class="btn" type="button" data-back${dis}>${icon("send-back")}Send back ${kbd("R")}</button>`
+    ? `<button class="btn" type="button" data-back ${needs}${dis}>${icon("send-back")}Send back ${kbd("R")}</button>`
     : "";
   const park =
     card?.status === "parked"
       ? ""
-      : `<button class="btn ghost" type="button" data-park${dis}>${icon("park")}Park ${kbd("P")}</button>`;
+      : `<button class="btn ghost" type="button" data-park ${needs}${dis}>${icon("park")}Park ${kbd("P")}</button>`;
+  // Teams item 25: in the Team setup, Comment — a review with no verdict — beside Accept and Send back.
+  const comment =
+    getSession().mode === "team" && evidence
+      ? `<button class="btn ghost" type="button" data-comment${dis}>${icon("chat")}${esc(THREAD_COPY.comment)}</button>`
+      : "";
+  // TEAM-24: an accept new commits dismissed says so until a new decision.
+  const note = dismissalNote(detail?.desk);
+  const dismissed = note
+    ? `<span class="why" role="note">${icon("alert", 14, "ic s14")}<b>${esc(note.text)}</b> ${esc(note.detail)}</span>`
+    : "";
   const hints = hint
     ? `<span class="hint">${kbd("j")}${kbd("k")} next · ${kbd("?")} keys</span>`
     : "";
-  return `<div class="triage" role="toolbar" aria-label="Triage">${acceptBtn}${back}${park}${why}${hints}</div>`;
+  return `<div class="triage" role="toolbar" aria-label="Triage">${acceptBtn}${back}${comment}${park}${why}${dismissed}${hints}</div>`;
 }

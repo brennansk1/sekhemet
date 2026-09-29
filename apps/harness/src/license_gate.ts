@@ -10,6 +10,7 @@ import {
   RERUN_GATES,
   type RunGatesOptions,
   type RungOutcome,
+  announceGateStart,
   gateCopy,
 } from "@sekhemet/gates";
 import { judgeLicence } from "./pm/libraries.js";
@@ -264,6 +265,8 @@ export function withLicenseGate(inner: GateRunner, repoRoot: string, base = "mai
       runOptions?: RunGatesOptions,
     ): Promise<GateResult> => {
       const res = await inner.runGates(rungs, cwd, runOptions);
+      // DB-N2-10: the page names this check while it runs.
+      announceGateStart(runOptions, { gate: "licenses", rung: "security" });
       const started = Date.now();
       let lic: { failures: GateFailure[]; skipped?: string };
       try {

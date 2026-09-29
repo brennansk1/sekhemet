@@ -51,7 +51,7 @@ function healthHtml(r) {
     ? `<span class="pj-health"><span class="stp-dot t-${esc(r.health.tone || "none")}" aria-hidden="true"></span>${esc(r.health.text)}</span>`
     : "";
   const missing = r.updateMissing ? `<span class="pj-missing">${esc(r.updateMissing)}</span>` : "";
-  // Solo has no Health column (the model leaves it out), as Status shows no health there.
+  // Solo shows the Health column only once a health is set (TEAM-45; the model decides).
   return `${h}${missing}`;
 }
 

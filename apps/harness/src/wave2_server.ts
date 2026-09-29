@@ -210,6 +210,8 @@ export async function applyWebhookIntent(
       // Kernel rule 24 (K-N3-4): the accepted card awaiting this pull request
       // moves to Done on a merge, or waits in Review again when it closed
       // unmerged — with the merge commit and who closed it (INT-13, INT-14).
+      // A pull request whose accept new commits dismissed (TEAM-24) is still
+      // the issue's: its merge is recorded, and Done waits for a new accept.
       // Matched by repository and number (M3): the same number in another
       // repository is another pull request.
       const card = (await store.listCards({ status: "review" })).find(
@@ -234,6 +236,28 @@ export async function applyWebhookIntent(
         },
         "github",
       );
+      return card.id;
+    }
+    case "pull_request_pushed": {
+      // Teams TEAM-24 (GitHub's dismissal of a stale approval): new commits
+      // on an accepted issue's branch before its merge dismiss the accept,
+      // recorded with why; the issue waits in Review for a new decision.
+      // The head the accept was given on is not new; another repository's
+      // pull request of the same number is not this one (M3).
+      const card = (await store.listCards({ status: "review" })).find(
+        (c) =>
+          c.hold?.kind === "awaitingMerge" &&
+          c.hold.pr === intent.pr &&
+          intent.repo !== undefined &&
+          pullRequestRepo(c.hold.url) === intent.repo.toLowerCase(),
+      );
+      if (!card || card.hold?.kind !== "awaitingMerge") return undefined;
+      // Already dismissed: no accept is left to dismiss.
+      if (card.hold.dismissed) return undefined;
+      if (!/^[0-9a-f]{7,64}$/.test(intent.headSha) || card.hold.headSha === intent.headSha) {
+        return undefined;
+      }
+      await store.dismissAccept(card.id, { pr: intent.pr, headSha: intent.headSha }, "github");
       return card.id;
     }
     default:

@@ -18,6 +18,7 @@ import {
   type CardRecord,
   type CardStore,
   EventLog,
+  type EventRecord,
   PRINCIPAL_PATTERN,
   STOP_REASONS,
   isCardStatus,
@@ -35,6 +36,7 @@ import {
   generateTokenCss,
   generateTokenJson,
   parseTitle,
+  runningCheckText,
   vocabularyTables,
 } from "@sekhemet/ui";
 import { checkoutNotice, integrationBranch } from "./accept.js";
@@ -49,7 +51,7 @@ import {
   submitTakenOver,
   takeOver,
 } from "./collaborate.js";
-import { resolveConfig } from "./config.js";
+import { resolveConfig, userConfigPath } from "./config.js";
 import { type ConfigApiDeps, createConfigApi } from "./config_api.js";
 import { effectiveConfig, queueDefaults } from "./config_apply.js";
 import {
@@ -76,6 +78,7 @@ import {
   requestAbort,
   rewindCard,
 } from "./execute.js";
+import { readLiveGate } from "./live_gate.js";
 import {
   type ModelAccess,
   describeModel,
@@ -103,15 +106,25 @@ import {
   LastAdminError,
   type Level,
   parseSettingsPatch,
+  recordLabelChange,
   recordLevelChange,
   recordSettingsChange,
   refuse,
   routePermissions,
 } from "./team/access.js";
+import { handleAiTeammateRoute } from "./team/ai_routes.js";
+import { type AiTeammatesDeps, aiStates } from "./team/ai_teammates.js";
+import { handleAuditRoute } from "./team/audit.js";
+import { recordConfigAtStart, recordConfigWrite } from "./team/config_audit.js";
 import { identityDir } from "./team/credential_store.js";
-import { personOf, queueStanding } from "./team/fair_queue.js";
-import { personName } from "./team/members.js";
+import { capNote, personOf, queueStanding, runningAgentIssues } from "./team/fair_queue.js";
+import { type InboxDeps, inboxNotifier } from "./team/inbox.js";
+import { handleInboxRoute } from "./team/inbox_routes.js";
+import { allMembers, personName } from "./team/members.js";
+import { Presence, handlePresenceRoute, presenceFrame } from "./team/presence.js";
 import { requester as requesterOf } from "./team/requester.js";
+import { handleReviewRoute } from "./team/review_routes.js";
+import { acceptDismissal, openThreadRefusal, reviewThreads } from "./team/review_threads.js";
 import { handleIdentityRoute, identityGate } from "./team/routes.js";
 import {
   type ServerIdentityOptions,
@@ -189,6 +202,8 @@ export interface DashboardServerOptions {
   benchmarkEnv?: (env: BenchmarkEnv) => BenchmarkEnv;
   /** Configuration's live headroom probe (rule 20g); `null` fits by total memory (tests). */
   headroomProbe?: ConfigApiDeps["headroomProbe"];
+  /** The user config.toml (TEAM-44); `userConfigPath()` when omitted. */
+  userConfigPath?: string;
 }
 
 /** A body the access check read already, so the route's handler reads the same one. */
@@ -364,6 +379,15 @@ export function startDashboardServer(
       ? soloStartBlocked(options.db, options.identity?.dir ?? identityDir())
       : undefined;
   if (refusal) return Promise.reject(new Error(refusal));
+  // TEAM-44: a change to the user config.toml made outside Sekhemet since the
+  // last recorded state, recorded now by its keys, never its values.
+  const credentialDir = options.identity?.dir ?? identityDir();
+  const configPath = options.userConfigPath ?? userConfigPath();
+  try {
+    recordConfigAtStart({ db: options.db, log, path: configPath, identityDir: credentialDir });
+  } catch (err) {
+    return Promise.reject(err);
+  }
   const host = bindHost(identity.mode, options.host, identity.settings);
   // The PM conversation, proposals, cycles, inline edits, flow metrics and
   // integrations (docs/design/PM_CONTRACT.md) live in their own module.
@@ -405,6 +429,13 @@ export function startDashboardServer(
     readJsonBody,
     isTrustedMutation,
     principalOf: (req) => principalOf(req),
+    ...(options.userConfigPath ? { userConfigPath: options.userConfigPath } : {}),
+    // TEAM-27, TEAM-44: Sekhemet's own config writes, recorded with the person.
+    recordConfigWrite: (principal, write) =>
+      recordConfigWrite(
+        { db: options.db, log, path: configPath, identityDir: credentialDir, principal },
+        write,
+      ),
     registry: configRegistry,
     ...(options.headroomProbe !== undefined ? { headroomProbe: options.headroomProbe } : {}),
     ...(options.cardStore ? { cardStore: options.cardStore } : {}),
@@ -667,6 +698,8 @@ export function startDashboardServer(
     const startedAt = starts.get(card.id);
     const ownerName = nameOf(card.owner);
     const delegateName = card.delegate?.kind === "person" ? nameOf(card.delegate.id) : undefined;
+    // DB-N2-10: the check the card's process announced it is running.
+    const runningGate = card.status === "verify" ? readLiveGate(repoPath, card.id) : undefined;
     const display = describeCard(card, {
       now,
       ...(evidence ? { evidence } : {}),
@@ -679,6 +712,7 @@ export function startDashboardServer(
       ...(startedAt ? { startedAt } : {}),
       ...(ownerName ? { ownerName } : {}),
       ...(delegateName ? { delegateName } : {}),
+      ...(runningGate ? { runningGate } : {}),
       configuredGates: config.gates.map((g) => ({ id: g.id, rung: g.rung })),
       limits: { maxFiles: config.project.maxFiles, maxDiffLines: config.project.maxDiffLines },
     });
@@ -762,6 +796,73 @@ export function startDashboardServer(
     // Version is informational.
   }
 
+  /**
+   * The Team stream's visibility (PM-N9-8, NEW-dashboard-3, as `liveAudience`
+   * does for the model's output): an `append` frame carries, for each
+   * person, only the events and board cards of the projects they can see,
+   * and no event's private part — names, emails, token names and comment
+   * text reach a page through the routes that check who asks, never the
+   * broadcast. A person who can see nothing of the workspace (removed, or
+   * never a member) gets no frame. `undefined` in Solo: its one person sees
+   * everything.
+   */
+  /**
+   * PM-N9-8: a person reads their own part of Seshat's thread, on the stream
+   * as on `/api/pm/thread` — a message is its asker's, a reply its `to`'s;
+   * one with neither reaches those who see every project.
+   */
+  const ownSeshatPart = (e: EventRecord, who: string, seesAll: boolean): boolean => {
+    if (e.type === "pm/message") return e.principal ? e.principal === who : seesAll;
+    if (e.type === "pm/reply") {
+      const to = (e.payload as { to?: unknown } | null)?.to;
+      return typeof to === "string" ? to === who : seesAll;
+    }
+    return true;
+  };
+  const appendView = async (
+    events: EventRecord[],
+    board: Awaited<ReturnType<typeof boardWithEvidence>>,
+  ): Promise<
+    | ((who: string | undefined) => {
+        events: EventRecord[];
+        board: Awaited<ReturnType<typeof boardWithEvidence>>;
+      } | null)
+    | undefined
+  > => {
+    if (setup !== "team") return undefined;
+    const audience = audienceFromAccess(() => access, options.db);
+    const projectOf = new Map<string, string | undefined>(
+      board.cards.map((c) => [c.id, projectOfCard(c as unknown as CardRecord)]),
+    );
+    for (const e of events) {
+      if (e.cardId && !projectOf.has(e.cardId)) {
+        const card = options.cardStore ? await options.cardStore.getCard(e.cardId) : undefined;
+        projectOf.set(e.cardId, projectOfCard(card ?? undefined));
+      }
+    }
+    const eventProject = (e: EventRecord): string | undefined => {
+      if (e.cardId) return projectOf.get(e.cardId);
+      const p = (e.payload as { project?: unknown } | null)?.project;
+      return typeof p === "string" ? p : undefined;
+    };
+    const projects = options.cardStore?.listProjects() ?? [];
+    return (who) => {
+      if (!who || !audience.canSee(who, undefined)) return null;
+      const sees = (project: string | undefined) => audience.canSee(who, project);
+      const seesAll = projects.every((p) => sees(p.id));
+      return {
+        events: events
+          .filter((e) => sees(eventProject(e)) && ownSeshatPart(e, who, seesAll))
+          .map(({ private: _private, ...e }) => e as EventRecord),
+        board: {
+          ...board,
+          cards: board.cards.filter((c) => sees(projectOf.get(c.id))),
+          epics: board.epics.filter((ep) => sees(projectOf.get(ep.id))),
+        },
+      };
+    };
+  };
+
   const pump = async (): Promise<void> => {
     if (streams.size === 0) return;
     try {
@@ -775,10 +876,38 @@ export function startDashboardServer(
       // it back as Last-Event-ID and the stream replays what it missed (U9).
       const frame = `id: ${lastSeq}\nevent: append\ndata: ${JSON.stringify({ events, board, verification })}\n\n`;
       const pmFrames = (await pmApi.streamFrames(events)).join("");
+      // Team: each person's own frame, of what they can see (PM-N9-8).
+      const view = await appendView(events, board);
+      const byPerson = new Map<string, string | null>();
       for (const res of streams) {
+        let out = frame + pmFrames;
+        if (view) {
+          const who = streamPrincipal.get(res) ?? "";
+          if (!byPerson.has(who)) {
+            const seen = view(who || undefined);
+            byPerson.set(
+              who,
+              seen
+                ? `id: ${lastSeq}\nevent: append\ndata: ${JSON.stringify({ ...seen, verification })}\n\n${pmFrames}`
+                : null,
+            );
+          }
+          const mine = byPerson.get(who);
+          if (!mine) {
+            // No longer in the workspace (removed while the page was open): the stream ends.
+            streams.delete(res);
+            try {
+              res.end();
+            } catch {
+              // Already gone.
+            }
+            continue;
+          }
+          out = mine;
+        }
         // A slow or dead client must not stall the others.
         try {
-          res.write(frame + pmFrames);
+          res.write(out);
         } catch {
           streams.delete(res);
         }
@@ -831,6 +960,53 @@ export function startDashboardServer(
     const projects = options.cardStore?.listProjects() ?? [];
     return projects.length === 1 ? projects[0]?.id : undefined;
   };
+  /**
+   * Members' columns beyond the level (DB-N9-16): the profile label and
+   * per-project levels from the access projection, last active from the
+   * ledger (a person's latest event, Smart Swap's `session/active` included),
+   * active now from the page's presence (in memory), and a lock. The ledger
+   * is read once per request, and only when Members asks.
+   */
+  const memberFactsReader = () => {
+    let last: Map<string, string> | undefined;
+    return (principal: string) => {
+      last ??= new Map(
+        (
+          options.db
+            .prepare(
+              "SELECT principal, MAX(created_at) AS at FROM events WHERE principal IS NOT NULL GROUP BY principal",
+            )
+            .all() as { principal: string; at: string }[]
+        ).map((r) => [r.principal, r.at]),
+      );
+      const m = access.projection().members.get(principal);
+      const at = last.get(principal);
+      return {
+        ...(m?.label ? { label: m.label } : {}),
+        ...(m && Object.keys(m.projects).length ? { projects: { ...m.projects } } : {}),
+        ...(at ? { lastActive: at } : {}),
+        ...(teamPresence.active().includes(principal) ? { active: true } : {}),
+        ...(identity.limits.accountLocked(principal) ? { locked: true } : {}),
+      };
+    };
+  };
+  /** A person's own per-project levels and the projects they lead (DB-N9-17). */
+  const ownProjects = (principal: string) => {
+    const out: Record<string, { level?: string; lead?: boolean }> = {};
+    const m = access.projection().members.get(principal);
+    const ids = new Set([
+      ...Object.keys(m?.projects ?? {}),
+      ...[...access.projection().projects.entries()]
+        .filter(([, settings]) => settings.lead === principal)
+        .map(([id]) => id),
+    ]);
+    for (const id of ids) {
+      const level = m?.projects[id];
+      const lead = access.isLead(principal, id);
+      if (level || lead) out[id] = { ...(level ? { level } : {}), ...(lead ? { lead } : {}) };
+    }
+    return out;
+  };
   const atLeastMember = (p: string | undefined, project?: string): p is string => {
     const level: Level | undefined = p ? access.level(p, project) : undefined;
     return level === "member" || level === "admin";
@@ -865,15 +1041,49 @@ export function startDashboardServer(
       parallelSlots: (options.parallelSlots ?? workerParallelSlots)(),
     });
     const scopes = new Map(ready.map((c) => [c.id, c.scopeFiles]));
+    // TEAM-30: whose issues wait at the per-person cap (the Team setup's), and why.
+    const running = setup === "team" ? await runningAgentIssues(store) : new Map<string, number>();
     return entries.map((e) => {
       const waits = slotWaitReason(
         repoPath,
         { id: e.cardId, scopeFiles: scopes.get(e.cardId) ?? [] },
         capacity,
       );
-      return { ...e, ...(waits ? { waits } : {}) };
+      const n = running.get(e.person) ?? 0;
+      return {
+        ...e,
+        ...(waits ? { waits } : {}),
+        ...(n >= q.cap ? { capped: { cap: q.cap, running: n } } : {}),
+      };
     });
   };
+  /**
+   * Whom an `@Name` can mention (teams item 23): the Team workspace's people
+   * by name — a removed or pending one too, so a mention of them is held and
+   * its author asked (TEAM-22). Solo's one person mentions no one.
+   */
+  const workspacePeople = (): { principal: string; name: string }[] =>
+    setup === "team"
+      ? allMembers(options.db).flatMap((m) => {
+          const name = personName(options.db, m.principal);
+          return name ? [{ principal: m.principal, name }] : [];
+        })
+      : [];
+  /** The AI teammates on an issue (teams NEW-teams-5): comments, `@Agent`, `@Seshat`, start requests. */
+  const aiDeps = (): (AiTeammatesDeps & InboxDeps) | undefined =>
+    options.cardStore
+      ? {
+          cardStore: options.cardStore,
+          log,
+          access,
+          audience: audienceFromAccess(() => access, options.db),
+          projectOf: (card) => projectOfCard(card),
+          askSeshat: async (text, cardId) => (await pmApi.ask(text, { cardId })).id,
+          standing,
+          people: workspacePeople,
+          localPrincipal: () => log.localPrincipal(),
+        }
+      : undefined;
   /** RUN-35: the configured Worker's qualified slots, as the queue reads them; one if unqualified. */
   const workerParallelSlots = (): number => {
     try {
@@ -1000,6 +1210,8 @@ export function startDashboardServer(
           cardId: card.id,
           cap: q.cap,
           running,
+          // The cap's visible part: the place and estimate, and why it waits.
+          capNote: `${capNote("you", running, q.cap)}.`,
           ...(mine
             ? { place: mine.place, estimateSeconds: mine.estimateSeconds, message: mine.message }
             : {
@@ -1042,6 +1254,11 @@ export function startDashboardServer(
         ...(serverIdentity.sso ? { sso: serverIdentity.sso } : {}),
         json,
         readJsonBody,
+        memberFacts: memberFactsReader(),
+        sessionFacts: (principal) => {
+          const label = access.projection().members.get(principal)?.label;
+          return { projects: ownProjects(principal), ...(label ? { label } : {}) };
+        },
       }))
     ) {
       return;
@@ -1079,6 +1296,58 @@ export function startDashboardServer(
         }
         return;
       }
+    }
+
+    // Teams NEW-teams-10 (TEAM-27): the audit log and its export, an Admin's.
+    if (
+      handleAuditRoute(req, res, url, query, {
+        db: options.db,
+        log,
+        access,
+        json,
+        principalOf,
+        ceilingOf,
+        projectName: (id) => options.cardStore?.getProject(id)?.name,
+      })
+    ) {
+      return;
+    }
+
+    // Teams item 8, DB-N9-16: a person's profile label, an Admin's; it grants nothing.
+    const labelMatch = /^\/api\/members\/(p_[0-9a-z]+)\/label$/.exec(url);
+    if (labelMatch && req.method === "POST") {
+      if (!isTrustedMutation(req)) {
+        json(res, 403, { error: "Labels must come from the dashboard itself" });
+        return;
+      }
+      const body = await readJsonBody(req).catch(() => ({}) as Record<string, unknown>);
+      const raw = body.label;
+      const label = typeof raw === "string" ? raw.trim() : null;
+      if ((raw !== null && typeof raw !== "string") || (label !== null && label.length > 80)) {
+        json(res, 400, { error: "A profile label is text of at most 80 characters, or null." });
+        return;
+      }
+      const principal = labelMatch[1] as string;
+      const target = access.projection().members.get(principal);
+      if (!target || target.removed) {
+        json(res, 404, { error: `${principal} is not a member of this workspace` });
+        return;
+      }
+      try {
+        await recordLabelChange(log, access, {
+          by: principalOf(req),
+          principal,
+          label: label || null,
+        });
+      } catch (err) {
+        if (err instanceof AccessRefusedError) {
+          refuse(res, json, log, err.decision, { principal: principalOf(req) });
+          return;
+        }
+        throw err;
+      }
+      json(res, 200, { principal, label: label || null });
+      return;
     }
 
     // teams TEAM-6: a person's level, for the workspace or one project.
@@ -1248,9 +1517,12 @@ export function startDashboardServer(
             log.verifyHashChain(),
           ]);
           const through = missed[missed.length - 1]?.seq ?? since;
-          res.write(
-            `id: ${through}\nevent: append\ndata: ${JSON.stringify({ events: missed, board, verification, replay: { from: since + 1, through, complete: through >= upTo } })}\n\n`,
-          );
+          const view = await appendView(missed, board);
+          const seen = view ? view(principalOf(req)) : { events: missed, board };
+          if (seen)
+            res.write(
+              `id: ${through}\nevent: append\ndata: ${JSON.stringify({ ...seen, verification, replay: { from: since + 1, through, complete: through >= upTo } })}\n\n`,
+            );
         }
       }
       streams.add(res);
@@ -1326,12 +1598,18 @@ export function startDashboardServer(
         query.has(k),
       );
       if (!paged) {
-        // The original contract: the first 200 events, oldest first.
+        // The original contract: the first 200 events, oldest first. Team:
+        // the view the stream gives this person — their projects' events,
+        // their own part of Seshat's thread, no event's private part.
         const [events, verification] = await Promise.all([
           log.getEvents(1, 200),
           log.verifyHashChain(),
         ]);
-        json(res, 200, { events, verification });
+        const view = await appendView(events, await boardWithEvidence());
+        json(res, 200, {
+          events: view ? (view(principalOf(req))?.events ?? []) : events,
+          verification,
+        });
         return;
       }
       const num = (k: string) => {
@@ -1348,6 +1626,35 @@ export function startDashboardServer(
         order: query.get("order") === "asc" ? ("asc" as const) : ("desc" as const),
       };
       const [page, verification] = [queryEvents(options.db, q), await log.verifyHashChain()];
+      // Team setup: each person's event carries their name, so Activity says
+      // who did it rather than "You" (teams item 17; Solo's one person stays "You").
+      if (setup === "team" && page.events.length) {
+        const nameOf = namesOf();
+        const seqs = page.events.map((e) => e.seq);
+        const principals = new Map(
+          (
+            options.db
+              .prepare(
+                `SELECT seq, principal FROM events WHERE principal IS NOT NULL AND seq IN (${seqs.map(() => "?").join(",")})`,
+              )
+              .all(...seqs) as { seq: number; principal: string }[]
+          ).map((r) => [r.seq, r.principal]),
+        );
+        // The same view as the stream's: this person's projects and their own
+        // part of Seshat's thread (the page carries no private part).
+        const records = page.events.map((e) => {
+          const principal = principals.get(e.seq);
+          return { ...e, ...(principal ? { principal } : {}) } as unknown as EventRecord;
+        });
+        const view = await appendView(records, await boardWithEvidence());
+        const kept = new Set((view?.(principalOf(req))?.events ?? []).map((e) => e.seq));
+        page.events = page.events
+          .filter((e) => kept.has(e.seq))
+          .map((e) => {
+            const principalName = nameOf(principals.get(e.seq));
+            return principalName ? { ...e, principalName } : e;
+          });
+      }
       json(res, 200, { ...page, verification });
       return;
     }
@@ -1492,6 +1799,15 @@ export function startDashboardServer(
         return;
       }
       const holders = access.acceptHolders(projectOfCard(card));
+      // Teams item 25 (TEAM-24, -25): the review threads, whether the project
+      // requires them resolved and the open one Accept then waits on, and an
+      // accept that new commits dismissed.
+      const nameOf = namesOf();
+      const threads = await reviewThreads(store, card.id, nameOf);
+      const requireResolvedThreads =
+        access.settings(projectOfCard(card)).require_resolved_threads === true;
+      const openThread = requireResolvedThreads ? openThreadRefusal(threads) : undefined;
+      const acceptDismissed = await acceptDismissal(store, card.id, nameOf);
       json(res, 200, {
         // P12, P14, RG-N5-3: the route's earlier fields stay in its contract.
         ...(await reviewBrief(repoPath, store, log, card)),
@@ -1499,8 +1815,12 @@ export function startDashboardServer(
           { repoPath, cardStore: store, boardService: boardService as never, eventLog: log },
           card,
           principalOf(req),
-          { acceptHolders: holders, nameOf: namesOf() },
+          { acceptHolders: holders, nameOf },
         )),
+        threads,
+        requireResolvedThreads,
+        ...(openThread ? { openThread } : {}),
+        ...(acceptDismissed ? { acceptDismissed } : {}),
       });
       return;
     }
@@ -1520,6 +1840,11 @@ export function startDashboardServer(
         acceptance: acceptanceSources(card),
         // PM-N8-2: what the card waits on and why (declared, named, imported).
         dependencies: options.cardStore?.getDependencyReasons(card.id) ?? [],
+        // TEAM-15: the AI teammates' state on the issue, as the harness knows it.
+        ai: await (async () => {
+          const deps = aiDeps();
+          return deps ? aiStates(deps, card.id, principalOf(req)) : [];
+        })(),
       });
       return;
     }
@@ -1649,6 +1974,10 @@ export function startDashboardServer(
             principal: principalOf(req),
             acknowledgedFindings: strings(body.acknowledgedFindings),
             ...(holders ? { acceptHolders: holders } : {}),
+            // TEAM-25: the project's rule, from the same fold as its Accept rule.
+            requireResolvedThreads:
+              access.settings(projectOfCard(card)).require_resolved_threads === true,
+            nameOf: namesOf(),
           });
           // A checkout on the integration branch is told how to catch up (RG-S5-2).
           const notice = sha.startsWith("http")
@@ -1751,6 +2080,84 @@ export function startDashboardServer(
       } catch (err) {
         json(res, 404, { error: err instanceof Error ? err.message : String(err) });
       }
+      return;
+    }
+
+    // Teams NEW-teams-9 (item 26; TEAM-26, DB-N9-20): presence, in memory over the stream.
+    // Solo has none (teams item 1): its one person has no one to see.
+    if (url === "/api/presence" && setup !== "team") {
+      json(res, 200, { viewers: [], active: [] });
+      return;
+    }
+    if (
+      await handlePresenceRoute(req, res, url, query, {
+        presence: teamPresence,
+        cardStore: options.cardStore,
+        projectOf: (card) => projectOfCard(card),
+        nameOf: namesOf,
+        json,
+        readJsonBody,
+        isTrustedMutation,
+        principalOf,
+        canSee: planningCanSee,
+        changed: () => {
+          void pushPresence();
+        },
+      })
+    ) {
+      return;
+    }
+
+    // Teams NEW-teams-8 (item 25; TEAM-24, -25): review threads, the Comment verdict, resolving.
+    if (
+      url.startsWith("/api/cards/") &&
+      (await handleReviewRoute(req, res, url, {
+        cardStore: options.cardStore,
+        projectOf: (card) => projectOfCard(card),
+        requiresResolved: (project) => access.settings(project).require_resolved_threads === true,
+        nameOf: namesOf,
+        json,
+        readJsonBody,
+        isTrustedMutation,
+        principalOf,
+        canSee: planningCanSee,
+      }))
+    ) {
+      return;
+    }
+
+    // Teams NEW-teams-5 (TEAM-15, -39, -40): comments, the AI teammates' state, start requests.
+    if (
+      (url.startsWith("/api/cards/") || url === "/api/agent/requests") &&
+      (await handleAiTeammateRoute(req, res, url, {
+        deps: aiDeps,
+        json,
+        readJsonBody,
+        isTrustedMutation,
+        principalOf,
+        ceilingOf,
+        canSee: planningCanSee,
+      }))
+    ) {
+      return;
+    }
+
+    // Teams NEW-teams-7 (TEAM-21, -22, -23): the Inbox, its marks, Watch, My issues, a mention's answer.
+    if (
+      (url === "/api/inbox" ||
+        url === "/api/my-issues" ||
+        url.startsWith("/api/inbox/") ||
+        url.startsWith("/api/issues/") ||
+        url.startsWith("/api/cards/")) &&
+      (await handleInboxRoute(req, res, search ? `${url}?${search}` : url, {
+        deps: aiDeps,
+        json,
+        readJsonBody,
+        isTrustedMutation,
+        principalOf,
+        canSee: planningCanSee,
+      }))
+    ) {
       return;
     }
 
@@ -2134,6 +2541,81 @@ export function startDashboardServer(
     }
   };
 
+  // DB-N2-10: the running check each card's process announced
+  // (`.sekhemet/live/<card>.gate.json`, `live_gate.ts`), pushed as a `gate`
+  // frame when it starts, changes or ends — to the streams whose person can
+  // see the card's project. In memory; never on the ledger.
+  const liveGates = new Map<string, string>();
+  const pushLiveGates = async (): Promise<void> => {
+    if (streams.size === 0) return;
+    const dir = join(repoPath, ".sekhemet", "live");
+    const now = new Map<string, string>();
+    if (existsSync(dir)) {
+      for (const name of readdirSync(dir)) {
+        if (!name.endsWith(".gate.json")) continue;
+        const cardId = name.slice(0, -".gate.json".length);
+        const g = readLiveGate(repoPath, cardId);
+        if (g) now.set(cardId, JSON.stringify(g));
+      }
+    }
+    const changed = [...new Set([...liveGates.keys(), ...now.keys()])].filter(
+      (id) => liveGates.get(id) !== now.get(id),
+    );
+    for (const cardId of changed) {
+      const g = now.get(cardId);
+      if (g) liveGates.set(cardId, g);
+      else liveGates.delete(cardId);
+      const gate = g ? (JSON.parse(g) as { gate: string; rung: string }) : undefined;
+      const frame = `event: gate\ndata: ${JSON.stringify(
+        gate ? { cardId, ...gate, label: runningCheckText(gate) } : { cardId, gate: null },
+      )}\n\n`;
+      const sees = await liveAudience(cardId);
+      for (const res of streams) {
+        if (sees && !sees(res)) continue;
+        try {
+          res.write(frame);
+        } catch {
+          streams.delete(res);
+        }
+      }
+    }
+  };
+
+  // TEAM-26, DB-N9-20: who views which issue and drags which card, in
+  // memory only (`team/presence.ts`), pushed as a `presence` frame — each
+  // stream told only of the issues its person can see. Never on the ledger.
+  const teamPresence = new Presence();
+  const pushPresence = async (): Promise<void> => {
+    if (setup !== "team" || streams.size === 0) return;
+    const nameOf = namesOf();
+    const audience = audienceFromAccess(() => access, options.db);
+    const projects = new Map<string, { project: string | undefined } | undefined>();
+    const projectFor = async (id: string) => {
+      if (!projects.has(id)) {
+        const card = options.cardStore ? await options.cardStore.getCard(id) : undefined;
+        projects.set(id, card ? { project: projectOfCard(card) } : undefined);
+      }
+      return projects.get(id);
+    };
+    for (const res of streams) {
+      const who = streamPrincipal.get(res);
+      const frame = await presenceFrame(
+        teamPresence,
+        async (id) => {
+          const found = await projectFor(id);
+          if (!found) return false;
+          return setup !== "team" || (who !== undefined && audience.canSee(who, found.project));
+        },
+        nameOf,
+      );
+      try {
+        res.write(`event: presence\ndata: ${JSON.stringify(frame)}\n\n`);
+      } catch {
+        streams.delete(res);
+      }
+    }
+  };
+
   // K6: appends made in this process (triage, PM, decisions) reach the
   // stream at once through the log's subscription; the timer below stays as
   // the fallback for writers in other processes (the queue), which share
@@ -2157,6 +2639,8 @@ export function startDashboardServer(
       timer = setInterval(() => {
         void pump();
         void pushLiveTokens();
+        void pushLiveGates();
+        if (teamPresence.sweep()) void pushPresence();
         // Memory is pushed on its own cadence: cheap to read, and the sidebar
         // and Machine view should move without a ledger event to carry them.
         ticks++;
@@ -2181,8 +2665,11 @@ export function startDashboardServer(
       // INT-17 to INT-20a: one notifier for push and Slack, budgeted, with
       // Seshat's daily standup when a channel accepts it.
       const standupStore = options.cardStore;
+      // TEAM-43: in the Team setup each watcher is notified within their own budget.
+      const inboxDeps = setup === "team" ? aiDeps() : undefined;
       const notifier = startNotifier(options.log, repoPath, {
         dashboard: `http://127.0.0.1:${boundPort}`,
+        ...(inboxDeps ? { inbox: inboxNotifier(inboxDeps) } : {}),
         ...(standupStore
           ? {
               standup: (person: string) =>

@@ -41,7 +41,7 @@ export interface TileCardLike {
   blockedReason?: string;
   stepsUsed?: number;
   stepBudget?: number;
-  hold?: { kind: string; pr?: number };
+  hold?: { kind: string; pr?: number; dismissed?: boolean };
   display?: Partial<CardDisplay>;
 }
 
@@ -125,9 +125,13 @@ function statusOf(card: TileCardLike, ctx: TileContext): TileStatus | undefined 
   if (d.quiet || (early && d.mark === "blocked")) return undefined;
   const entered = since(d.enteredColumnAt, ctx.now);
   const held = card.status === "review" && card.hold?.kind === "awaitingMerge";
+  const dismissed = held && card.hold?.dismissed === true;
   let text = d.statusLine ?? "";
   if (ctx.pmPaused && card.status === "in_progress") {
     text = "Paused for Seshat";
+  } else if (dismissed) {
+    // TEAM-24: the triage bar's words, short.
+    text = `Accept dismissed · PR #${card.hold?.pr ?? "?"} has new commits`;
   } else if (held) {
     text = `Accepted · PR #${card.hold?.pr ?? "?"} open`;
   } else if (card.status === "review" && entered !== undefined) {

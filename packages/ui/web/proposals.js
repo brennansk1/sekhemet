@@ -13,7 +13,7 @@ import { ISSUE_TYPE_LABELS, issueTypeOf } from "./lib/vocabulary.js";
 import { cardChip, diffContext, prioMark } from "./marks.js";
 import { applyAll, decide, discardAll } from "./pm_client.js";
 import { hasReviewPlan, openReviewPlan } from "./review_plan.js";
-import { reviewPlanButtonHtml } from "./review_plan_view.js";
+import { approvalNoteHtml, reviewPlanButtonHtml } from "./review_plan_view.js";
 import { getSession } from "./session.js";
 import { store } from "./store.js";
 
@@ -127,9 +127,9 @@ export function proposalHtml(p, ctx = diffContext()) {
         // DS-P2-6: a new project is reviewed, with the person's choices, before it is created.
         hasReviewPlan(p)
           ? reviewPlanButtonHtml(isBusy)
-          : `<button class="btn sm" type="button" data-apply ${isBusy ? "disabled" : ""}>${isBusy ? "Applying…" : `Apply ${kbd("y")}`}</button>`
+          : `<button class="btn sm" type="button" data-apply data-needs="proposal.apply" ${isBusy ? "disabled" : ""}>${isBusy ? "Applying…" : `Apply ${kbd("y")}`}</button>`
       }</div>`;
-  return `<li class="prop open${stale ? " stale" : ""}" tabindex="-1" data-prop="${esc(p.id)}" role="group" aria-label="${esc(`${k.label}: ${p.summary}`)}"><div class="ph">${icon(k.icon, 14, "ic s14")}<span class="pk">${esc(k.label)}</span>${chip}</div><p class="sum">${esc(p.summary)}</p>${body(p, ctx)}${staleNote}${acts}</li>`;
+  return `<li class="prop open${stale ? " stale" : ""}" tabindex="-1" data-prop="${esc(p.id)}" role="group" aria-label="${esc(`${k.label}: ${p.summary}`)}"><div class="ph">${icon(k.icon, 14, "ic s14")}<span class="pk">${esc(k.label)}</span>${chip}</div><p class="sum">${esc(p.summary)}</p>${body(p, ctx)}${approvalNoteHtml(p.approval, getSession().principal)}${staleNote}${acts}</li>`;
 }
 
 /**
@@ -143,7 +143,7 @@ export function proposalGroupHtml(proposals, { title = "Proposed changes", group
   // A new project is never applied in bulk: it goes through Review plan.
   const bulk = withoutReviewPlan(open).length > 0;
   const head = open.length
-    ? `<span class="sec tnum">${open.length} open</span><div class="gacts">${open.length > 1 ? `<button class="btn ghost sm" type="button" data-discard-all>Discard all</button>` : ""}${bulk ? `<button class="btn primary sm" type="button" data-apply-all>${esc(applyAllLabel(withoutReviewPlan(proposals)))} ${kbd("⇧Y")}</button>` : ""}</div>`
+    ? `<span class="sec tnum">${open.length} open</span><div class="gacts">${open.length > 1 ? `<button class="btn ghost sm" type="button" data-discard-all>Discard all</button>` : ""}${bulk ? `<button class="btn primary sm" type="button" data-apply-all data-needs="proposal.apply">${esc(applyAllLabel(withoutReviewPlan(proposals)))} ${kbd("⇧Y")}</button>` : ""}</div>`
     : `<span class="sec">All decided</span>`;
   return `<section class="pgroup" data-group="${esc(groupId)}" aria-label="${esc(title)}"><header><b>${esc(title)}</b>${head}</header><ul class="plist" role="list">${proposals.map((p) => proposalHtml(p, ctx)).join("")}</ul></section>`;
 }
@@ -189,7 +189,9 @@ export function bindProposals(root, { sources = threadSources, onChange = () => 
   // DS-P2-6: Review plan applies the proposal itself, with the person's choices.
   const review = async (p) => {
     if (busy.has(p.id)) return;
-    const result = await openReviewPlan(p, { setup: getSession().mode });
+    // TEAM-20: the person's level and principal choose Send for approval or Approve.
+    const { level, principal: me } = getSession();
+    const result = await openReviewPlan(p, { setup: getSession().mode, level, me });
     if (result?.proposal) Object.assign(p, result.proposal);
     onChange();
     store.set({});

@@ -21,7 +21,7 @@ import { currentThemeChoice, setTheme, setTopbar } from "./shell.js";
 import { toast } from "./toast.js";
 
 /** Account pages this build has beyond Profile; a page not built is never linked. */
-const PAGES = new Set();
+const PAGES = new Set(["members", "audit"]);
 
 const THEMES = [
   ["system", T.themeSystem],

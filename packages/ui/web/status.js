@@ -32,6 +32,10 @@ const ui = {
   editor: null,
   /** The release whose Extend form is open. */
   extend: null,
+  /** The Set health picker is open (TEAM-28). */
+  health: false,
+  /** The Set target date form is open (DB-N9-3). */
+  target: false,
   busy: false,
   timer: 0,
   off: null,
@@ -112,9 +116,15 @@ function headerHtml(v) {
   const health = v.health
     ? `<p class="stp-health">${toneDot(v.health.tone)}<span>${esc(v.health.text)}</span></p>`
     : "";
-  const setHealth = v.setHealth
-    ? `<button class="btn sm" type="button" data-set-health>${esc(C.setHealth)}</button>`
-    : "";
+  const setHealth =
+    v.setHealth && !ui.health
+      ? `<button class="btn sm" type="button" data-set-health aria-expanded="false">${esc(C.setHealth)}</button>`
+      : "";
+  const target = v.target ? `<p class="stp-by sec">${esc(v.target)}</p>` : "";
+  const setTarget =
+    v.setTarget && !ui.target
+      ? `<button class="btn sm ghost" type="button" data-set-target aria-expanded="false">${esc(v.setTarget.date ? C.changeTarget : C.setTarget)}</button>`
+      : "";
   const missing = v.updateMissing
     ? `<p class="stp-missing" role="status">${icon("clock", 14, "ic s14")}${esc(v.updateMissing)}</p>`
     : "";
@@ -125,7 +135,29 @@ function headerHtml(v) {
     v.writeUpdate && !ui.editor
       ? `<button class="btn sm" type="button" data-write>${icon("pencil", 14, "ic s14")}${esc(C.writeUpdate)}</button>`
       : "";
-  return `<header class="stp-head"><p class="stp-headline">${esc(v.headline)}</p><div class="stp-row">${health}${setHealth}${write}</div>${missing}${editorHtml()}${update}</header>`;
+  return `<header class="stp-head"><p class="stp-headline">${esc(v.headline)}</p><div class="stp-row">${health}${setHealth}${write}</div>${healthFormHtml(v)}${target || setTarget ? `<div class="stp-row">${target}${setTarget}</div>` : ""}${targetFormHtml(v)}${missing}${editorHtml()}${update}</header>`;
+}
+
+/** The lead's health call (TEAM-28): three words, one checked; nothing changes until Save. */
+function healthFormHtml(v) {
+  if (!ui.health || !v.setHealth) return "";
+  const radios = v.healthChoices
+    .map(
+      (c) =>
+        `<label class="stp-choice"><input type="radio" name="health" value="${esc(c.value)}"${c.checked ? " checked" : ""}> ${esc(c.label)}</label>`,
+    )
+    .join("");
+  return `<form class="stp-editor" data-health><fieldset aria-describedby="stp-health-hint"><legend>${esc(C.healthLegend)}</legend><p class="sec" id="stp-health-hint">${esc(C.healthHint)}</p>${radios}</fieldset><div class="acts"><button class="btn ghost" type="button" data-cancel-health>${esc(C.cancel)}</button><button class="btn" type="submit"${ui.busy ? " disabled" : ""}>${esc(C.save)}</button></div></form>`;
+}
+
+/** The current release's target date (DB-N9-3): a day, drawn against the forecast range. */
+function targetFormHtml(v) {
+  if (!ui.target || !v.setTarget) return "";
+  const t = v.setTarget;
+  const clear = t.date
+    ? `<button class="btn ghost" type="button" data-clear-target>${esc(C.clearTarget)}</button>`
+    : "";
+  return `<form class="stp-editor" data-target="${esc(t.release)}"><label for="stp-target">${esc(C.targetLabel)}: ${esc(t.name)}</label><p class="sec" id="stp-target-hint">${esc(C.targetHint)}</p><input type="date" id="stp-target" required value="${esc(t.date ?? "")}" aria-describedby="stp-target-hint"><div class="acts"><button class="btn ghost" type="button" data-cancel-target>${esc(C.cancel)}</button>${clear}<button class="btn" type="submit"${ui.busy ? " disabled" : ""}>${esc(C.save)}</button></div></form>`;
 }
 
 function editorHtml() {
@@ -155,7 +187,7 @@ function blockedReason() {
 function buttonHtml(b) {
   if (b.href) return `<a class="btn sm" href="${esc(b.href)}">${esc(b.label)}</a>`;
   const why = blockedReason();
-  const data = `data-act="${esc(b.act)}" data-id="${esc(b.id ?? "")}"${b.ids ? ` data-ids="${esc(b.ids.join(","))}"` : ""}${b.cards ? ` data-cards="${b.cards}"` : ""}`;
+  const data = `data-act="${esc(b.act)}" data-id="${esc(b.id ?? "")}"${b.ids ? ` data-ids="${esc(b.ids.join(","))}"` : ""}${b.cards ? ` data-cards="${b.cards}"` : ""}${b.card ? ` data-card="${esc(b.card)}"` : ""}`;
   return `<button class="btn sm" type="button" ${data}${why ? " disabled" : ""}>${esc(b.label)}</button>${why ? `<span class="why sec">${esc(why)}</span>` : ""}`;
 }
 
@@ -356,6 +388,67 @@ async function postUpdate() {
   $("[data-write]", ui.root)?.focus();
 }
 
+function openHealth() {
+  ui.health = true;
+  render();
+  (
+    $('[data-health] input[name="health"]:checked', ui.root) ?? $("[data-health] input", ui.root)
+  )?.focus();
+}
+
+function closeHealth() {
+  ui.health = false;
+  render();
+  $("[data-set-health]", ui.root)?.focus();
+}
+
+async function saveHealth(form) {
+  const id = ui.facts.data?.project?.id;
+  const health = form.querySelector('input[name="health"]:checked')?.value;
+  if (!id || !health || ui.busy) return;
+  ui.busy = true;
+  const r = await postJSON(`/api/projects/${encodeURIComponent(id)}/health`, { health });
+  ui.busy = false;
+  if (!r.ok) {
+    fail("set the health", r);
+    return;
+  }
+  ui.health = false;
+  toast({ tone: "pass", text: C.healthSaved });
+  announce(C.healthSaved);
+  await load();
+  $("[data-set-health]", ui.root)?.focus();
+}
+
+function openTarget() {
+  ui.target = true;
+  render();
+  $("#stp-target", ui.root)?.focus();
+}
+
+function closeTarget() {
+  ui.target = false;
+  render();
+  $("[data-set-target]", ui.root)?.focus();
+}
+
+async function saveTarget(release, date) {
+  if (!release || ui.busy) return;
+  ui.busy = true;
+  const r = await postJSON(`/api/slices/${encodeURIComponent(release)}/target`, { date });
+  ui.busy = false;
+  if (!r.ok) {
+    fail(date ? "set the target date" : "clear the target date", r);
+    return;
+  }
+  ui.target = false;
+  const said = date ? C.targetSaved : C.targetCleared;
+  toast({ tone: "pass", text: said });
+  announce(said);
+  await load();
+  $("[data-set-target]", ui.root)?.focus();
+}
+
 async function act(btn) {
   const { act: kind, id } = btn.dataset;
   if (kind === "slice-extend") {
@@ -369,6 +462,20 @@ async function act(btn) {
     const r = await postJSON(`/api/cards/${encodeURIComponent(id)}/unpark`, {});
     if (r.ok) toast({ tone: "pass", text: "Unparked. It is back where it was parked from." });
     else fail("unpark it", r);
+  } else if (kind === "agent-start" || kind === "agent-decline") {
+    // TEAM-39: a Member starts the Agent on the request, on their own behalf, or declines it.
+    const card = btn.dataset.card ?? "";
+    const verb = kind === "agent-start" ? "start" : "decline";
+    const r = await postJSON(
+      `/api/cards/${encodeURIComponent(card)}/agent-requests/${encodeURIComponent(id)}/${verb}`,
+      {},
+    );
+    if (r.ok)
+      toast({
+        tone: "pass",
+        text: verb === "start" ? "The Agent is on it, on your behalf." : "Request declined.",
+      });
+    else fail(verb === "start" ? "start the Agent" : "decline the request", r);
   } else if (kind === "slice-accept") {
     const r = await postJSON(`/api/slices/${encodeURIComponent(id)}/accept`, {});
     if (r.ok) toast({ tone: "pass", text: "Release accepted." });
@@ -433,10 +540,18 @@ export function mount(view) {
   ui.last = "";
   ui.editor = null;
   ui.extend = null;
+  ui.health = false;
+  ui.target = false;
   root.addEventListener("click", (e) => {
     const t = e.target instanceof Element ? e.target : null;
     if (!t) return;
     if (t.closest("[data-write]")) openEditor();
+    else if (t.closest("[data-set-health]")) openHealth();
+    else if (t.closest("[data-cancel-health]")) closeHealth();
+    else if (t.closest("[data-set-target]")) openTarget();
+    else if (t.closest("[data-cancel-target]")) closeTarget();
+    else if (t.closest("[data-clear-target]"))
+      saveTarget(t.closest("[data-target]")?.dataset.target, null);
     else if (t.closest("[data-cancel]")) closeEditor();
     else if (t.closest("[data-cancel-extend]")) {
       const id = ui.extend;
@@ -455,6 +570,9 @@ export function mount(view) {
     const f = e.target;
     if (!(f instanceof HTMLFormElement)) return;
     if (f.matches("[data-editor]")) postUpdate();
+    else if (f.matches("[data-health]")) saveHealth(f);
+    else if (f.matches("[data-target]"))
+      saveTarget(f.dataset.target, $("#stp-target", f)?.value || null);
     else if (f.matches("[data-extend]")) extend(f);
     else if (f.matches("[data-ask]")) ask(f);
   });
@@ -465,6 +583,12 @@ export function mount(view) {
     if (t?.closest("[data-editor]")) {
       e.stopPropagation();
       closeEditor();
+    } else if (t?.closest("[data-health]")) {
+      e.stopPropagation();
+      closeHealth();
+    } else if (t?.closest("[data-target]")) {
+      e.stopPropagation();
+      closeTarget();
     } else if (t?.closest("[data-extend]")) {
       e.stopPropagation();
       t.closest("form").querySelector("[data-cancel-extend]")?.click();

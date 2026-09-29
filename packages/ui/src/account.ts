@@ -22,6 +22,10 @@ export interface SessionInfo {
   csrf?: string;
   name?: string;
   email?: string;
+  /** Team: the person's profile label, which sets their default page (§2.2.5). */
+  label?: string;
+  /** Team: the person's own per-project levels and the projects they lead (DB-N9-17). */
+  projects?: Record<string, { level?: string; lead?: boolean }>;
 }
 
 /** Every word the Sign in, setup, invite and account pages show. */

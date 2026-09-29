@@ -908,7 +908,9 @@ export class BoardServiceImpl implements BoardService {
    * The pull request closed (rule 24, K-N3-4): merged, the card moves to Done
    * — the accepting decision is already on the ledger, and the merge was its
    * last condition; closed unmerged, the hold and the accepter clear and the
-   * card waits in Review, counted toward the WIP limit again.
+   * card waits in Review, counted toward the WIP limit again. Merged after
+   * its accept was dismissed (teams TEAM-24), the merge is recorded and the
+   * card stays in Review for a person's decision.
    */
   public async closePullRequest(
     cardId: string,
@@ -922,8 +924,11 @@ export class BoardServiceImpl implements BoardService {
     },
     actor = "harness",
   ): Promise<void> {
+    const accepted = (await this.cardStore.getCard(cardId))?.accepter !== undefined;
     await this.cardStore.recordPullRequestClosed(cardId, pr, actor);
-    if (!pr.merged) return;
+    // A merge after the accept was dismissed (teams TEAM-24) is recorded, and
+    // no accept covers the commits that dismissed it: the card stays in Review.
+    if (!pr.merged || !accepted) return;
     await this.move(
       {
         cardId,
@@ -942,8 +947,9 @@ export class BoardServiceImpl implements BoardService {
     const counts = {} as Record<CardStatus, number>;
     for (const column of Object.keys(limits) as CardStatus[]) counts[column] = 0;
     for (const c of cards) {
-      // An accepted card awaiting its merge is not counted (rule 24).
-      if (c.hold?.kind === "awaitingMerge") continue;
+      // An accepted card awaiting its merge is not counted (rule 24); one
+      // whose accept was dismissed waits for a decision again (TEAM-24).
+      if (c.hold?.kind === "awaitingMerge" && !c.hold.dismissed) continue;
       counts[c.status] = (counts[c.status] ?? 0) + 1;
     }
 

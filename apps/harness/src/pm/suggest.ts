@@ -137,12 +137,16 @@ export async function postSuggestions(
 ): Promise<{ drafts: ProposalDraft[]; notes: string[] }> {
   const { audience, asker } = ctx;
   if (asker && audience.levelOf(asker) === "viewer") return { drafts: [], notes: [] };
+  // TEAM-40, TEAM-6: a Viewer on an issue's own project is offered nothing on it.
+  const viewerOn = (project: string | undefined) =>
+    asker !== undefined && project !== undefined && audience.levelOf(asker, project) === "viewer";
   const byId = new Map(ctx.cards.map((c) => [c.id, c]));
   const out: ProposalDraft[] = [];
   const notes: string[] = [];
   const noted = new Set<string>();
   for (const draft of drafts) {
     const card = draft.cardId ? byId.get(draft.cardId) : undefined;
+    if (card && viewerOn(card.projectId)) continue;
     let next: ProposalDraft = draft;
     // Said once per issue, unless an Admin's rule applied the change instead.
     let ownerNote: (() => void) | undefined;

@@ -236,6 +236,14 @@ export const NEW_PROJECT_REFUSAL = {
   notAType: (type: string) => `"${type}" is not a project Type.`,
 };
 
+/** A plan sent for approval (TEAM-20, TEAM-42): why it cannot be applied or discarded around its approver. */
+export const PLAN_APPROVAL_REFUSAL = {
+  applied: (approver: string) =>
+    `This plan was sent to ${approver} for approval: ${approver} approves it with Approve.`,
+  discarded: (approver: string, sender: string) =>
+    `This plan was sent to ${approver} for approval; only ${approver} or ${sender} can discard it.`,
+};
+
 /**
  * Card zero and card one (design-stage §2.4, DS-P2-1..3): the words of the
  * two cards a project started by conversation begins with, each read by the

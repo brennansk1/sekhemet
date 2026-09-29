@@ -21,6 +21,30 @@ export interface IdentityRouteDeps {
   sso?: Sso;
   json: (res: ServerResponse, status: number, body: unknown) => void;
   readJsonBody: (req: IncomingMessage) => Promise<Record<string, unknown>>;
+  /**
+   * What Members shows beside a person's level (DB-N9-16): their profile
+   * label, per-project levels, last active and whether they are active now
+   * or locked. Read from the access projection and the ledger.
+   */
+  memberFacts?: (principal: string) => MemberFacts;
+  /**
+   * A person's own per-project levels and the projects they lead, for the
+   * page's level notes (DB-N9-17), and their profile label, which sets their
+   * default page in the Team setup (dashboard §2.2.5, teams item 8).
+   */
+  sessionFacts?: (principal: string) => {
+    projects: Record<string, { level?: string; lead?: boolean }>;
+    label?: string;
+  };
+}
+
+/** Members' columns beyond the level (DB-N9-16). */
+export interface MemberFacts {
+  label?: string;
+  projects?: Record<string, string>;
+  lastActive?: string;
+  active?: boolean;
+  locked?: boolean;
 }
 
 const INVITE = /^\/api\/invites\/([A-Za-z0-9_-]+)$/;
@@ -187,6 +211,7 @@ export async function handleIdentityRoute(
         ...(email ? { email } : {}),
         ...(deps.sso ? { company: deps.sso.displayName } : {}),
         ...(csrf ? { csrf } : {}),
+        ...(deps.sessionFacts ? deps.sessionFacts(who.principal) : {}),
       });
       return true;
     }
@@ -405,7 +430,10 @@ export async function handleIdentityRoute(
         ...(m.name ? { name: m.name } : {}),
         // Emails are personal: the Admin who manages members sees them.
         ...(admin && m.email ? { email: m.email } : {}),
+        ...(deps.memberFacts ? deps.memberFacts(m.principal) : {}),
       })),
+      // The Admin's actions show only for an Admin (DB-N9-16).
+      canManage: admin,
     });
     return true;
   }

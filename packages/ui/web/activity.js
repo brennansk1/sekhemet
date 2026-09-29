@@ -3,10 +3,12 @@
 // issue's conversation. A question's options are buttons; while the agent
 // runs, a message box reaches it at its next step (DB-N8-2). The timeline's
 // rules and words are `/app/lib/issue.js`; every ledger entry is one toggle away.
-import { esc, getJSON, icon, postJSON } from "./dom.js";
+import { aiBadge, esc, getJSON, icon, postJSON } from "./dom.js";
 import { refreshDecisions } from "./inbox.js";
-import { aiBadge } from "./issue_view.js";
+import { INBOX_COPY, mentionInviteLine } from "./lib/inbox.js";
 import { ISSUE_COPY, activityItems, agentPanel } from "./lib/issue.js";
+import { COMMENT_COPY, aiStateLine, teammatePicker } from "./lib/teammates.js";
+import { openPicker } from "./picker.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
 import { blockedToast } from "./triage.js";
@@ -50,14 +52,65 @@ function rowHtml(item, confirm) {
 
 /** Mount the Activity tab into `host`. */
 export function renderActivity(host, ctx) {
-  const state = { messages: null, all: false, confirm: "", last: "", first: true, seq: 0 };
+  const state = {
+    messages: null,
+    comments: [],
+    all: false,
+    confirm: "",
+    last: "",
+    first: true,
+    seq: 0,
+    people: null,
+  };
 
   const loadMessages = async () => {
     const seq = ++state.seq;
-    const res = await getJSON(`/api/cards/${encodeURIComponent(ctx.id)}/messages`);
+    const [res, com] = await Promise.all([
+      getJSON(`/api/cards/${encodeURIComponent(ctx.id)}/messages`),
+      // Teams TEAM-15: the issue's comments, with Seshat's answers to this person.
+      getJSON(`/api/cards/${encodeURIComponent(ctx.id)}/comments`),
+    ]);
     if (seq !== state.seq || !host.isConnected) return;
     state.messages = res.ok ? (res.data?.messages ?? []) : [];
+    state.comments = com.ok ? (com.data?.comments ?? []) : [];
     draw();
+  };
+
+  /** The people a comment can mention (teams item 23): the members, else the issues' assignees. */
+  const people = async () => {
+    if (state.people) return state.people;
+    const res = await getJSON("/api/members");
+    const members = res.ok ? (res.data?.members ?? []) : [];
+    state.people = members
+      .filter((m) => !m.pending && m.name)
+      .map((m) => ({ value: m.name.replace(/\s+/g, ""), label: m.name }));
+    return state.people;
+  };
+
+  /** `@` in the comment box: Members, then the AI teammates with the AI badge (TEAM-17). */
+  const mention = async (area) => {
+    const groups = teammatePicker({ people: await people(), purpose: "mention" });
+    openPicker(area, {
+      heading: COMMENT_COPY.mention,
+      search: true,
+      options: groups.flatMap((g) =>
+        g.options.map((o) => ({
+          ...o,
+          group: g.heading,
+          plain: true,
+          ...(o.ai ? { badge: aiBadge() } : {}),
+        })),
+      ),
+      onPick: (value) => {
+        const at = area.selectionStart ?? area.value.length;
+        // Replace the "@" just typed with the chosen mention.
+        const before = area.value.slice(0, at).replace(/@$/, "");
+        area.value = `${before}${value} ${area.value.slice(at)}`;
+        const caret = before.length + value.length + 1;
+        area.focus();
+        area.setSelectionRange(caret, caret);
+      },
+    });
   };
 
   const draw = () => {
@@ -72,6 +125,7 @@ export function renderActivity(host, ctx) {
       events,
       messages: state.messages,
       decisions: store.state.decisions?.items ?? [],
+      comments: state.comments,
       all: state.all,
     });
     const panel = agentPanel(card, events);
@@ -84,17 +138,32 @@ export function renderActivity(host, ctx) {
     const list = items.length
       ? `<ol class="thread activity">${items.map((i) => rowHtml(i, state.confirm)).join("")}</ol>`
       : `<p class="sec">${esc(ISSUE_COPY.activityEmpty)}</p>`;
-    const next = `<h3 class="sh" style="margin:0">Activity ${toggle}</h3>${list}${composer}`;
+    // Every level comments (teams item 6); `@` mentions a person, the Agent or Seshat.
+    const comment = `<form class="act-msg" data-comment><label for="issue-comment">${esc(COMMENT_COPY.label)}</label><textarea id="issue-comment" name="text" rows="2" aria-describedby="issue-comment-hint issue-comment-err"></textarea><div class="sec" id="issue-comment-hint">${esc(COMMENT_COPY.hint)}</div><div class="err" id="issue-comment-err" role="alert" hidden>${esc(COMMENT_COPY.empty)}</div><div class="acts"><button class="btn" type="submit">${icon("send", 14, "ic s14")}${esc(COMMENT_COPY.post)}</button></div></form>`;
+    // TEAM-22: the author answers before a mention of someone who cannot see the project goes out.
+    const asks = (state.comments ?? [])
+      .filter((c) => c.invite?.people?.length)
+      .map(
+        (c) =>
+          `<div class="invite-ask" role="group" aria-label="${esc(INBOX_COPY.invite)}"><span>${esc(mentionInviteLine(c.invite.people, c.invite.project))}</span><button class="btn sm primary" type="button" data-mention="invite" data-comment="${esc(c.id)}">${esc(INBOX_COPY.invite)}</button><button class="btn sm" type="button" data-mention="skip" data-comment="${esc(c.id)}">${esc(INBOX_COPY.dontInvite)}</button></div>`,
+      )
+      .join("");
+    const next = `<h3 class="sh" style="margin:0">Activity ${toggle}</h3>${list}${asks}${composer}${comment}`;
     if (next === state.last) return;
-    // A half-written message survives a redraw, and keeps its focus.
+    // A half-written message or comment survives a redraw, and keeps its focus.
     const draft = host.querySelector("#agent-msg")?.value ?? "";
     const typing = document.activeElement?.id === "agent-msg";
+    const commentDraft = host.querySelector("#issue-comment")?.value ?? "";
+    const commenting = document.activeElement?.id === "issue-comment";
     const top = host.scrollTop;
     host.innerHTML = next;
     state.last = next;
     const area = host.querySelector("#agent-msg");
     if (area) area.value = draft;
     if (typing) area?.focus();
+    const box = host.querySelector("#issue-comment");
+    if (box) box.value = commentDraft;
+    if (commenting) box?.focus();
     if (state.first) {
       // The conversation reads down to now, like a thread.
       host.scrollTop = host.scrollHeight;
@@ -146,9 +215,66 @@ export function renderActivity(host, ctx) {
     }
     const a = t.closest("[data-answer]");
     if (a) void answer(a.dataset.answer, Number(a.dataset.option), a.dataset.source);
+    const m = t.closest("[data-mention]");
+    if (m) void answerMention(m.dataset.comment, m.dataset.mention);
   });
 
+  /** TEAM-22: Invite, or Don't invite; the comment then reaches the people it mentions. */
+  const answerMention = async (commentId, answer) => {
+    const res = await postJSON(
+      `/api/cards/${encodeURIComponent(ctx.id)}/comments/${encodeURIComponent(commentId)}/mention`,
+      { answer },
+    );
+    if (!res.ok) {
+      toast({
+        text: "Couldn't record the answer.",
+        detail: res.data?.error ?? `The server returned ${res.status}.`,
+        tone: "fail",
+      });
+      return;
+    }
+    await loadMessages();
+  };
+
+  const postComment = async (form) => {
+    const area = form.querySelector("textarea");
+    const err = form.querySelector(".err");
+    const text = area.value.trim();
+    if (!text) {
+      err.hidden = false;
+      area.setAttribute("aria-invalid", "true");
+      area.focus();
+      return;
+    }
+    if (blockedToast()) return;
+    const res = await postJSON(`/api/cards/${encodeURIComponent(ctx.id)}/comments`, { text });
+    if (!res.ok) {
+      toast({
+        text: "Couldn't post the comment.",
+        detail: res.data?.error ?? `The server returned ${res.status}.`,
+        tone: "fail",
+      });
+      return;
+    }
+    area.value = "";
+    // TEAM-15: what the harness did with an AI teammate's mention, at once.
+    const said = (res.data?.ai ?? []).map((a) => COMMENT_COPY.reached(aiStateLine(a)));
+    toast({
+      text: COMMENT_COPY.posted,
+      ...(said.length ? { detail: said.join("\n") } : {}),
+      tone: "info",
+    });
+    ctx.reloadDetail?.();
+    await loadMessages();
+  };
+
   host.addEventListener("submit", async (e) => {
+    const commentForm = e.target instanceof Element ? e.target.closest("[data-comment]") : null;
+    if (commentForm) {
+      e.preventDefault();
+      await postComment(commentForm);
+      return;
+    }
     const form = e.target instanceof Element ? e.target.closest("[data-agent-msg]") : null;
     if (!form) return;
     e.preventDefault();
@@ -177,6 +303,17 @@ export function renderActivity(host, ctx) {
   });
 
   host.addEventListener("keydown", (e) => {
+    const box = e.target instanceof Element ? e.target.closest("#issue-comment") : null;
+    if (box) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        box.form?.requestSubmit();
+      } else if (box.getAttribute("aria-invalid") && box.value.trim()) {
+        box.removeAttribute("aria-invalid");
+        box.form?.querySelector(".err")?.setAttribute("hidden", "");
+      }
+      return;
+    }
     const area = e.target instanceof Element ? e.target.closest("#agent-msg") : null;
     if (!area) return;
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -188,13 +325,29 @@ export function renderActivity(host, ctx) {
     }
   });
 
+  // `@` typed in the comment box, as a word of its own, opens the mention picker.
+  host.addEventListener("input", (e) => {
+    const box = e.target instanceof HTMLTextAreaElement ? e.target : null;
+    if (box?.id !== "issue-comment" || !String(e.inputType ?? "").startsWith("insert")) return;
+    const at = box.selectionStart ?? 0;
+    if (box.value.charAt(at - 1) !== "@") return;
+    if (at === 1 || /[\s(]/.test(box.value.charAt(at - 2))) void mention(box);
+  });
+
   void loadMessages();
   refreshDecisions().catch(() => {});
   return {
     onEvents(fresh) {
       if (
         (fresh ?? []).some((e) =>
-          ["card/message", "card/handed_back", "card/message_delivered"].includes(e.type),
+          [
+            "card/message",
+            "card/handed_back",
+            "card/message_delivered",
+            "issue/commented",
+            "agent/start_requested",
+            "agent/start_answered",
+          ].includes(e.type),
         )
       ) {
         void loadMessages();

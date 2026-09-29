@@ -198,6 +198,45 @@ describe("the suite runner for the benchmark", () => {
     expect(roles.find((r) => r.role === "worker")?.score).toBe(1);
   }, 240_000);
 
+  it("counts a failed AI review as a failed card with its reason, never as a pass (F25)", async () => {
+    const { dir } = ledger();
+    const planner = new MockInferenceAdapter("mock-planner", [
+      { text: "1. Implement the hasher in src/hasher.ts.", toolCalls: [], usage },
+    ]);
+    // The reply was cut off at its length cap: no review happened.
+    const reviewer = new MockInferenceAdapter("mock-reviewer", [
+      {
+        text: '{"criteria":[{"n":1,"ver',
+        toolCalls: [],
+        finishReason: "length",
+        usage: { ...usage, completionTokens: 1200, thinkingTokens: 1072 },
+      },
+    ]);
+    const models = adapters({
+      "mock-good": worker("mock-good", HASHER),
+      "mock-planner": planner,
+      "mock-reviewer": reviewer,
+    });
+    const runner = suiteScreenRunner({
+      harnessRoot: ROOT,
+      workDir: join(dir, "work"),
+      adapterFor: models.adapterFor,
+      runProfile: () => profile,
+      headroomCheck: false,
+    });
+    const card = hasherSets().endToEnd.items[0];
+    if (!card) throw new Error("no end-to-end card");
+    const r = await runner.endToEnd({
+      combination: { worker: "mock-good", planner: "mock-planner", reviewer: "mock-reviewer" },
+      card,
+      capSeconds: 120,
+    });
+    await runner.release?.();
+    expect(reviewer.callHistory.length).toBeGreaterThan(0);
+    expect(r).toMatchObject({ passed: false, stopReason: "review_failed" });
+    expect(r.reviewFailed).toMatch(/cut off at its length cap.*1072 of 1200/);
+  }, 240_000);
+
   it("never reads a report the Worker could have planted: a fresh name, deleted after", async () => {
     const { dir } = ledger();
     // A planted report at the old fixed name, and a stale one of the same shape.

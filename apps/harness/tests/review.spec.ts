@@ -3,6 +3,8 @@ import { MockInferenceAdapter } from "@sekhemet/models";
 import { describe, expect, it } from "vitest";
 import {
   REVIEW_ANSWER_TOKENS,
+  REVIEW_THINKING_TOKENS,
+  ReviewFailedError,
   type ReviewInput,
   numberedDiff,
   parseDiff,
@@ -149,10 +151,9 @@ describe("the Reviewer judges the card's criteria (RG-P8-1, -4)", () => {
     );
   });
 
-  it("an unparseable reply still gives every criterion a finding", async () => {
-    const model = new MockInferenceAdapter("gemma-4-26b", [
-      { text: "I think it is fine.", toolCalls: [], usage },
-    ]);
+  it("a readable reply that names no criterion still gives every criterion a finding", async () => {
+    // F25: an unreadable reply is a failed review instead (below), never "unclear".
+    const model = new MockInferenceAdapter("gemma-4-26b", [reply({})]);
     const r = await reviewCard(model, base());
     expect(r.findings.map((f) => f.verdict)).toEqual(["unclear", "unclear"]);
   });
@@ -335,8 +336,9 @@ describe("a diff over the Reviewer's budget (RG-P8-5, -6)", () => {
 
   it("counts the whole prompt against the Review model's window through the allocator", async () => {
     // A small window, a long issue and many preferences: every request, system
-    // text included, fits the window less the answer cap and the margin.
-    const window = 4_096;
+    // text included, fits the window less the answer and thinking caps and
+    // the margin (worker-loop rule 22).
+    const window = 6_144;
     const model = new MockInferenceAdapter(
       "gemma-4-26b",
       Array.from({ length: 40 }, () => reply({ criteria: [] })),
@@ -356,7 +358,8 @@ describe("a diff over the Reviewer's budget (RG-P8-5, -6)", () => {
       }),
     );
     expect(r.notRead).toEqual([]);
-    const budget = window - REVIEW_ANSWER_TOKENS - ALLOCATOR_WINDOW_MARGIN_TOKENS;
+    const budget =
+      window - REVIEW_ANSWER_TOKENS - REVIEW_THINKING_TOKENS - ALLOCATOR_WINDOW_MARGIN_TOKENS;
     for (const c of model.callHistory) {
       const used =
         estimatePromptTokens(c.systemPrompt ?? "") + estimatePromptTokens(c.prompt ?? "");
@@ -408,5 +411,103 @@ describe("a diff over the Reviewer's budget (RG-P8-5, -6)", () => {
     expect(r.coverage).toBe(
       "AI review read 2 of 2 files; 6 of 6 changed lines are cited by no finding.",
     );
+  });
+});
+
+describe("a reply cut off or unreadable is a failed review, never unclear verdicts (F25)", () => {
+  // Live-test F25: gpt-oss thought through 1,072 of its 1,200 tokens, the
+  // JSON stopped mid-array, and every criterion fell to "unclear" — read by
+  // the measure as a clean review that caught nothing.
+  const cut = '{"criteria":[{"n":1,"verdict":"met","at":"src/ledger.ts:3","note":""},{"n":2,"ver';
+
+  it("states its answer cap and its thinking cap, with reasoning off (rule 22)", async () => {
+    const model = new MockInferenceAdapter("gemma-4-26b", [reply({ criteria: [] })]);
+    await reviewCard(model, base());
+    expect(model.callHistory[0]).toMatchObject({
+      maxTokens: REVIEW_ANSWER_TOKENS,
+      reasoning: "off",
+      reasoningBudgetTokens: REVIEW_THINKING_TOKENS,
+    });
+  });
+
+  it("fails a reply that ended at its length cap, even one whose JSON parses", async () => {
+    for (const text of [cut, JSON.stringify({ criteria: [] })]) {
+      const model = new MockInferenceAdapter("gpt-oss-20b", [
+        {
+          text,
+          toolCalls: [],
+          finishReason: "length",
+          usage: { ...usage, completionTokens: 1200, thinkingTokens: 1072 },
+        },
+      ]);
+      const err = await reviewCard(model, base()).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ReviewFailedError);
+      expect((err as ReviewFailedError).reason).toBe("length");
+      expect((err as Error).message).toMatch(/cut off at its length cap.*1072 of 1200/);
+    }
+  });
+
+  it("fails a reply whose JSON does not parse or is missing", async () => {
+    for (const text of [cut, "The change looks fine to me.", "<think>ok</think>"]) {
+      const model = new MockInferenceAdapter("m", [{ text, toolCalls: [], usage }]);
+      const err = await reviewCard(model, base()).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ReviewFailedError);
+      expect((err as ReviewFailedError).reason).toBe("unreadable");
+      expect((err as Error).message).toMatch(/no readable JSON/);
+    }
+  });
+
+  it("fails the whole review when one of several requests fails", async () => {
+    const model = new MockInferenceAdapter("m", [
+      reply({ criteria: [{ n: 1, verdict: "met", at: "src/ledger.ts:3", note: "" }] }),
+      { text: cut, toolCalls: [], usage, finishReason: "length" },
+    ]);
+    const budgetChars =
+      numberedDiff(parseDiff(DIFF)[0] as ReturnType<typeof parseDiff>[0]).length + 5;
+    await expect(reviewCard(model, base({ budgetChars }))).rejects.toBeInstanceOf(
+      ReviewFailedError,
+    );
+    expect(model.callHistory).toHaveLength(2);
+  });
+});
+
+describe("the thinking room and the JSON reader (F25 review fixes)", () => {
+  const spec = "Keep every entry in the order it arrived. ".repeat(30);
+  // Room for the issue and the diff with nothing reserved for thinking, and
+  // less than the thinking cap: a model that never thinks keeps the room.
+  const windowTokens =
+    REVIEW_ANSWER_TOKENS + ALLOCATOR_WINDOW_MARGIN_TOKENS + estimatePromptTokens(spec) + 1_500;
+  const sized = (allowance?: number) => {
+    const model = new MockInferenceAdapter("m", [reply({ criteria: [] })]);
+    Object.defineProperty(model, "contextWindow", {
+      value: { contextTokens: windowTokens, maxTokens: 1_200 },
+    });
+    if (allowance !== undefined)
+      Object.defineProperty(model, "thinkingAllowance", { value: () => allowance });
+    return model;
+  };
+
+  it("reserves no thinking room on a model its adapter would not let think", async () => {
+    const model = sized(0);
+    const r = await reviewCard(model, base({ card: { ...base().card, spec } }));
+    expect(model.callHistory).toHaveLength(1);
+    expect(r.notRead).toEqual([]);
+  });
+
+  it("reserves what the adapter would add, and the whole cap when it does not say", async () => {
+    for (const model of [sized(REVIEW_THINKING_TOKENS), sized()]) {
+      const r = await reviewCard(model, base({ card: { ...base().card, spec } }));
+      expect(model.callHistory).toHaveLength(0);
+      expect(r.notRead).toEqual(["src/ledger.ts", "src/extra.ts"]);
+    }
+  });
+
+  it("reads the first JSON object, so trailing braces are not a failed review (MD-N4-8)", async () => {
+    const text = `${JSON.stringify({
+      criteria: [{ n: 1, verdict: "met", at: "src/ledger.ts:3", note: "" }],
+    })}\n\nVerdicts are one of {met, unmet, unclear}.`;
+    const model = new MockInferenceAdapter("m", [{ text, toolCalls: [], usage }]);
+    const r = await reviewCard(model, base());
+    expect(r.findings[0]).toMatchObject({ verdict: "met", evidence: "src/ledger.ts:3" });
   });
 });

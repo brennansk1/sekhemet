@@ -22,6 +22,7 @@ import {
   reviewCapacityView,
   reviewMinutesInput,
 } from "./lib/settings.js";
+import { levelNote } from "./lib/team_admin.js";
 import { getSession } from "./session.js";
 import { currentThemeChoice, setDensity, setTheme, setTopbar } from "./shell.js";
 import { store } from "./store.js";
@@ -45,11 +46,9 @@ export function sectionFor(name, params = []) {
 
 /** Why a non-Admin sees the server's settings read-only in the Team setup (DB-N6-15). */
 function readOnlyReason() {
-  const s = getSession();
-  if (s.mode !== "team") return "";
-  return s.level === "admin"
-    ? ""
-    : "Read-only: an Admin changes the models, the benchmark and the project's configuration.";
+  // DB-N9-17: the level held and the level that can, as the server's refusal says it.
+  const note = levelNote(getSession(), "config.manage");
+  return note ? `Read-only. ${note}` : "";
 }
 
 const ui = { root: null, section: "models", child: null, capacity: null };

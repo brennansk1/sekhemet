@@ -217,6 +217,7 @@ import {
 import { bakeOffOnSuitePath } from "./suite_path.js";
 import { describeSupervisorStart, removeWorktreesOnClose, supervisorStart } from "./supervisor.js";
 import { Access } from "./team/access.js";
+import { agentRefusalFor, runnableByTheirPeople } from "./team/ai_teammates.js";
 import { fairOrder } from "./team/fair_queue.js";
 import { newSetupTokenCommand, recordSwitchToSolo } from "./team/serve.js";
 import { terminalBoardLines } from "./terminal_board.js";
@@ -2083,6 +2084,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const cardWatchdog = createCardWatchdog(pressure, {
       log: (line) => console.log(`   ${line}`),
     });
+    // TEAM-16: in the Team setup the Agent stops if its person may no longer start it here.
+    const runAccess =
+      setupFor(config.repoPath) === "team"
+        ? new Access({ db, setup: "team", localPrincipal: () => log.localPrincipal() })
+        : undefined;
     const ctx = {
       repoPath: config.repoPath,
       restrictedMode: config.restrictedMode,
@@ -2090,6 +2096,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       boardService,
       runProfile,
       watchdog: cardWatchdog.watchdog,
+      ...(runAccess ? { agentRefusal: agentRefusalFor(runAccess, cardStore) } : {}),
     };
     let result: Awaited<ReturnType<typeof executeCard>>;
     // Ctrl+C stops the card cleanly before its next turn (L25); a second exits.
@@ -2303,6 +2310,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // Planning before the pass (wave2.ts): decision deadlines, the seven
     // signals, ceremonies, goals, the throughput floor, and WSJF/RICE order.
     let ready: CardRecord[];
+    // TEAM-16: the Team setup's access, checked again between the Agent's steps.
+    let agentAccess: Access | undefined;
     // Rule 27, MD-N4-4: the person's override the Worker runs under, if any.
     let workerOverride: WorkerOverride | undefined;
     // RUN-35: the Worker's qualified parallel slots (`-np`) bound the cards that run at once.
@@ -2332,6 +2341,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
           reviewWip: (await boardService.getBoardState()).wipLimits.review,
         },
       ));
+      // TEAM-16: the Agent runs an issue only for a person who may start it there.
+      ready = await runnableByTheirPeople(ready, {
+        access: team,
+        store: cardStore,
+        log,
+        say: (line) => console.log(line),
+      });
+      agentAccess = team;
     } catch (err) {
       // M15: below the overnight throughput floor the harness refuses to run;
       // MD-N8-1: so it does with a Worker whose combination has not qualified.
@@ -2692,6 +2709,9 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       teamNote: () => teamNote(),
       askTeam: (cardId: string, question: string, meta: { questionEntryId?: string }) =>
         askTeam(cardId, question, meta),
+      ...(agentAccess?.setup === "team"
+        ? { agentRefusal: agentRefusalFor(agentAccess, cardStore) }
+        : {}),
       watchdog,
       runProfile: queueProfile,
       ...(measurement ? { measurement } : {}),

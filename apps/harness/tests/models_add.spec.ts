@@ -54,6 +54,24 @@ describe("sekhemet models add (MD-N12-9)", () => {
     expect(weightsKey("tiel-coder")).toBe("tiel-coder");
   });
 
+  it("F25: says, and records, that a gpt-oss model cannot turn its reasoning off", async () => {
+    const file = writeGguf(join(dir, "gpt-oss-20b-Q4_K_M.gguf"), {
+      architecture: "gpt-oss",
+      name: "gpt-oss-20b",
+    });
+    const { code, lines } = await run(file, "gpt-oss-20b");
+    expect(code).toBe(0);
+    expect(registry.get("gpt-oss-20b")?.reasoning).toMatchObject({
+      cannotDisable: true,
+      floor: "low",
+    });
+    expect(lines.join("\n")).toMatch(
+      /gpt-oss-20b cannot turn its reasoning off \(architecture gpt-oss\): a request for none thinks at low/,
+    );
+    const qwen = writeGguf(join(dir, "q.gguf"), { architecture: "qwen3moe", name: "Q" });
+    expect((await run(qwen, "q")).lines.join("\n")).not.toMatch(/reasoning off/);
+  });
+
   it("a managed name as the id makes the file that managed model's weights (MD-N14-41a)", async () => {
     const file = writeGguf(join(dir, "Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf"), {
       architecture: "qwen3",

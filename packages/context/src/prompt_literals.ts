@@ -131,6 +131,11 @@ const PERSON_FACING_REFUSALS: ReadonlySet<string> = new Set([
   // ledger when a take-over requirement is recorded, to the person applying the take-over
   // plan on the CLI or the dashboard (design-stage DS-TO-14); no model's tool reaches it.
   "takeoverClaimRefusal",
+  // apps/harness/src/pm/send_for_approval.ts: "Only a new project's plan is sent for
+  // approval." / "This plan is already <state>.", the 400/409 of `POST
+  // /api/pm/proposals/:id/send-for-approval` to the person who pressed Send for approval;
+  // no model's tool reaches it.
+  "refuseUnlessNewProject",
 ]);
 
 function nameOf(node: ts.Node | undefined): string | undefined {

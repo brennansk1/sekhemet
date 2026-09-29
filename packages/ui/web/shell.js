@@ -2,7 +2,7 @@
 import { MOD, brandLockup, esc, icon, kbd, tip } from "./dom.js";
 import { tipsToggleHtml } from "./learn.js";
 import { ACCOUNT_COPY, accountHeader, initials, themeChoice, themeFor } from "./lib/account.js";
-import { bottomBar, navNameOf, visibleNav } from "./lib/nav.js";
+import { agentStatusLine, bottomBar, navNameOf, visibleNav } from "./lib/nav.js";
 import { stopReasonLabel } from "./lib/vocabulary.js";
 import { getSession } from "./session.js";
 import { ledgerAltered, store } from "./store.js";
@@ -188,8 +188,12 @@ function renderSide() {
   } else if (openProposals) {
     counts.pm = { n: String(openProposals), title: `${openProposals} open proposals` };
   }
+  // Inbox: unread (§2.2.1), once the Inbox answered; the decisions waiting before it has.
+  const unread = s.inbox?.at ? (s.inbox.unread ?? 0) : 0;
   const waiting = s.decisions.items?.length ?? 0;
-  if (waiting)
+  if (unread)
+    counts.inbox = { n: String(unread), warn: true, title: `${unread} unread in your Inbox` };
+  else if (!s.inbox?.at && waiting)
     counts.inbox = {
       n: String(waiting),
       warn: true,
@@ -240,18 +244,36 @@ function renderSide() {
         // counts reclaimable cache), so the sidebar says the level, as Machine does.
         `<a class="row" href="#/machine" ${tip(`Memory pressure ${m.memoryLevel || "normal"}. ${m.memoryPercent}% used, including cache the system can reclaim.`)}><span class="dot${memCls}" aria-hidden="true"></span><span class="lbl">Memory ${esc(m.memoryLevel || "normal")}</span><span class="lbl sec tnum mem-pct">${m.memoryPercent}% used</span></a>`
       : `<div class="row">${icon("memory", 14, "ic s14")}<span class="lbl">Memory: checking…</span></div>`;
-  const working = s.cards.some((c) => c.status === "in_progress");
+  // The Agent status line (§2.2.3, DB-N9-10): the Agent's state in one line,
+  // with the Coding model it uses under it in secondary text.
+  const running = s.cards
+    .filter((c) => c.status === "in_progress")
+    .map((c) => ({
+      key: c.key ?? c.display?.shortId ?? c.id,
+      step: c.display?.lastStep?.turn,
+      budget: c.stepBudget,
+    }));
+  const paused = s.pm.status?.workerPaused && s.pm.status.phase !== "idle";
+  const agent = agentStatusLine({
+    running,
+    ...(paused ? { pausedForSeshat: { step: s.pm.step } } : {}),
+  });
   // The Coding model from Sekhemet's roster; the served-model probe is the fallback.
   const worker = (s.roster ?? s.machine?.roster ?? []).find((r) => r.role === "worker");
   const modelName = worker?.model
     ? `Coding model ${worker.model}`
     : m.model || (m.inferenceUp === false ? "No model server" : "Model: checking…");
-  const model = `<div class="row" title="${esc(modelName)}"><span class="dot ${working ? "run" : "idle"}"></span><span class="lbl${m.model || worker?.model ? " mono" : ""}">${esc(modelName)}${m.model || worker?.model ? ` · ${working ? "working" : "idle"}` : ""}</span></div>`;
+  const dot = agent.state === "working" ? "run" : agent.state === "paused" ? "warn" : "idle";
+  const model = `<div class="row agent-line" title="${esc(agent.text)}"><span class="dot ${dot}"></span><span class="lbl">${esc(agent.text)}</span></div><div class="row sub" title="${esc(modelName)}"><span class="lbl sec${m.model || worker?.model ? " mono" : ""}">${esc(modelName)}</span></div>`;
   // Theme and Keys live in the account menu (§2.2.6); the account closes the sidebar.
   const head = accountHeader(getSession());
   const account = `<button class="account-btn" type="button" data-account aria-haspopup="menu"><span class="avatar" aria-hidden="true">${esc(initials(head.name))}</span><span class="lbl">${esc(head.name)}</span><span class="sr-only">, ${esc(ACCOUNT_COPY.account)}</span></button>`;
 
-  const html = `<div class="brand">${brandLockup(18)}${kbd(`${MOD}K`)}</div><div class="nav">${nav}</div><div class="foot">${live}${mem}${model}<div class="nav">${bottom}</div>${account}</div>`;
+  // Top to bottom (DB-N9-10): the brand and Search; the workspace and project
+  // groups; at the foot the Agent status line (with live, ledger and memory
+  // under it), Configuration and the account.
+  const search = `<button class="side-search" type="button" data-palette aria-keyshortcuts="${MOD === "⌘" ? "Meta+K" : "Control+K"}">${icon("search", 14, "ic s14")}<span class="lbl">Search</span>${kbd(`${MOD}K`)}</button>`;
+  const html = `<div class="brand">${brandLockup(18)}</div>${search}<div class="nav">${nav}</div><div class="foot">${model}${live}${mem}<div class="nav">${bottom}</div>${account}</div>`;
   if (html !== lastSide) {
     side.innerHTML = html;
     lastSide = html;

@@ -218,12 +218,16 @@ export async function runRoleEvalCommand(
         assetVersion: run.assetVersion,
         model: run.model,
         items: run.report.items,
+        // F25: the reviews that happened and those that failed, each with its reason.
+        reviewed: run.report.reviewed,
+        failed: run.report.failed,
         caught: run.report.caught,
         recall: run.report.recall,
         perItem: run.scores.map((s) => ({
           id: s.id,
           caught: s.caught,
           falsePositives: s.falsePositives,
+          ...(s.failed !== undefined ? { failed: s.failed } : {}),
         })),
         passes: run.report.passes,
         partial: run.partial === true,

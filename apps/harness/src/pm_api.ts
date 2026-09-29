@@ -22,11 +22,18 @@ import { learnFromProposalChoices } from "./learning/reflect.js";
 import { LearningStore } from "./learning/store.js";
 import { sharedModelAccess } from "./model_access.js";
 import { ProposalError, applyProposal } from "./pm/apply.js";
-import { type Audience, soloAudience } from "./pm/audience.js";
+import { type Audience, nameFor, soloAudience } from "./pm/audience.js";
 import { capabilityReport } from "./pm/capability.js";
 import { recordSprintClose } from "./pm/judgement.js";
 import { burnupMetrics, flowMetrics, pmQuality } from "./pm/metrics.js";
 import type { ProjectChoices } from "./pm/pipeline.js";
+import {
+  approvalRefusal,
+  approveSentPlan,
+  sendPlanForApproval,
+  sentTo,
+  withApprovalNames,
+} from "./pm/send_for_approval.js";
 import { DEFAULT_PM_MODEL, answerQueued, pmModelFor, runnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import {
@@ -36,12 +43,13 @@ import {
   suggestionsOn,
   undoSuggestion,
 } from "./pm/suggest.js";
-import { PM_EVENTS, type PmMessage, type PmStatus } from "./pm/types.js";
+import { PM_EVENTS, type PmContext, type PmMessage, type PmStatus } from "./pm/types.js";
 import { draftWeeklyUpdate, postWeeklyUpdate } from "./pm/weekly.js";
 import { seshatWait } from "./pm/while_worker.js";
 import { oneShotResearcher } from "./research/service.js";
 import { quickAnswererFor } from "./smart_swap.js";
 import { statusFacts } from "./status_api.js";
+import { isDay, isHealth, setProjectHealth, setReleaseTarget } from "./team/health.js";
 import { modelRegistry, ruleGateVerdict } from "./wave2.js";
 
 /** How often a focused dashboard's presence is recorded (PM-P6-10; the notifier's window is 5 minutes). */
@@ -128,7 +136,10 @@ export function createPmApi(ctx: PmApiContext) {
     if (a.setup !== "team") return all;
     const me = personOf(req);
     const seesAll = (ctx.cardStore?.listProjects() ?? []).every((p) => a.canSee(me, p.id));
-    return all.filter((m) => (m.principal ? m.principal === me : seesAll));
+    // TEAM-20: a plan sent for approval is read by its approver too (design-stage §2.9 item 1).
+    return all
+      .filter((m) => (m.principal ? m.principal === me || sentTo(m, me) : seesAll))
+      .map((m) => withApprovalNames(m, a));
   };
   // On a host that can hold both, the dashboard's Seshat can use the Researcher too.
   const researcherModel = process.env.SEKHEMET_RESEARCHER;
@@ -215,6 +226,29 @@ export function createPmApi(ctx: PmApiContext) {
       });
   };
 
+  /**
+   * Put a person's message in Seshat's queue and start answering it (the
+   * chat's composer, and an issue comment's `@Seshat`, teams TEAM-15): the
+   * running queue answers after the Worker's current step; otherwise this
+   * process does, without waiting for the reply.
+   */
+  const ask = async (text: string, context: PmContext): Promise<PmMessage> => {
+    const message = await pmStore.appendUserMessage(text, context);
+    const lease = runnerLease(ctx.repoPath);
+    if (lease) {
+      // The queue answers after the Worker's current step.
+      await pmStore.setStatus({
+        phase: "waiting_for_step",
+        detail: "Pausing the agent after its current step",
+        model: lease.pmModel ?? pmModel,
+        workerPaused: false,
+      });
+    } else {
+      kick();
+    }
+    return message;
+  };
+
   const mutationGuard = (req: IncomingMessage, res: ServerResponse): CardStore | undefined => {
     if (!ctx.isTrustedMutation(req)) {
       ctx.json(res, 403, { error: "Actions must come from the dashboard itself" });
@@ -280,19 +314,7 @@ export function createPmApi(ctx: PmApiContext) {
         ...(typeof raw.cardId === "string" ? { cardId: raw.cardId } : {}),
         ...(typeof raw.view === "string" ? { view: raw.view } : {}),
       };
-      const message = await pmStore.appendUserMessage(text, context);
-      const lease = runnerLease(ctx.repoPath);
-      if (lease) {
-        // The queue answers after the Worker's current step.
-        await pmStore.setStatus({
-          phase: "waiting_for_step",
-          detail: "Pausing the agent after its current step",
-          model: lease.pmModel ?? pmModel,
-          workerPaused: false,
-        });
-      } else {
-        kick();
-      }
+      const message = await ask(text, context);
       ctx.json(res, 200, { message });
       return true;
     }
@@ -344,10 +366,16 @@ export function createPmApi(ctx: PmApiContext) {
     if (proposal && req.method === "POST") {
       const cardStore = mutationGuard(req, res);
       if (!cardStore) return true;
-      const [, id, verb] = proposal as unknown as [string, string, string];
+      const [, id, verb] = proposal as unknown as [string, string, "apply" | "discard"];
       const found = await pmStore.proposal(id);
       if (!found) {
         ctx.json(res, 404, { error: `No proposal ${id}` });
+        return true;
+      }
+      // TEAM-20: a plan sent for approval is its named approver's to decide.
+      const aside = approvalRefusal(found, verb, personOf(req), audience());
+      if (aside) {
+        ctx.json(res, aside.status, { error: aside.message });
         return true;
       }
       if (verb === "discard") {
@@ -401,6 +429,62 @@ export function createPmApi(ctx: PmApiContext) {
           }),
         );
         await learnChoices();
+      } catch (err) {
+        ctx.json(res, err instanceof ProposalError ? err.status : 409, {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return true;
+    }
+
+    // TEAM-20, TEAM-42 (design-stage §2.9 item 7): a Stakeholder's plan is
+    // sent to a named Member or Admin, and created only when they approve it.
+    const planAct = /^\/api\/pm\/proposals\/([A-Za-z0-9_-]+)\/(send-for-approval|approve)$/.exec(
+      url,
+    );
+    if (planAct && req.method === "POST") {
+      const cardStore = mutationGuard(req, res);
+      if (!cardStore) return true;
+      const [, id, verb] = planAct as unknown as [string, string, string];
+      const found = await pmStore.proposal(id);
+      if (!found) {
+        ctx.json(res, 404, { error: `No proposal ${id}` });
+        return true;
+      }
+      const body = await ctx.readJsonBody(req);
+      const choices = projectChoicesOf(body.choices);
+      if (choices === null) {
+        ctx.json(res, 400, {
+          error: `choices must be {accept?: string[], remove?: string[], releaseLine?: number, type?: ${DEPTH_PROFILES.map((p) => `"${p}"`).join(" | ")}, answers?: {index: number}}`,
+        });
+        return true;
+      }
+      try {
+        if (verb === "send-for-approval") {
+          const proposal = await sendPlanForApproval(pmStore, found, {
+            principal: personOf(req),
+            approver: body.approver,
+            choices,
+            audience: audience(),
+          });
+          ctx.json(res, 200, { proposal });
+        } else {
+          ctx.json(
+            res,
+            200,
+            await approveSentPlan(found, {
+              cardStore,
+              boardService: ctx.boardService,
+              pmStore,
+              actor: "human",
+              repoPath: ctx.repoPath,
+              audience: audience(),
+              principal: personOf(req),
+              ...(choices ? { choices } : {}),
+            }),
+          );
+          await learnChoices();
+        }
       } catch (err) {
         ctx.json(res, err instanceof ProposalError ? err.status : 409, {
           error: err instanceof Error ? err.message : String(err),
@@ -517,6 +601,75 @@ export function createPmApi(ctx: PmApiContext) {
       }
       await postWeeklyUpdate(ctx.log, { project, text, principal: me });
       ctx.json(res, 200, { posted: { project } });
+      return true;
+    }
+
+    // --- Health and a release's target date (teams TEAM-28; DB-N9-2, -3) ------
+    const postHealth = /^\/api\/projects\/(proj_[A-Za-z0-9_-]+)\/health$/.exec(url);
+    if (postHealth && req.method === "POST") {
+      if (!mutationGuard(req, res)) return true;
+      if (!ctx.cardStore) {
+        ctx.json(res, 501, { error: "This server was started read-only" });
+        return true;
+      }
+      const project = postHealth[1] as string;
+      if (!ctx.cardStore.getProject(project)) {
+        ctx.json(res, 404, { error: `No project ${project}` });
+        return true;
+      }
+      const b = await ctx.readJsonBody(req);
+      if (!isHealth(b.health)) {
+        ctx.json(res, 400, { error: "Health is on_track, at_risk or off_track" });
+        return true;
+      }
+      const a = audience();
+      const me = personOf(req);
+      // Item 28: the project lead's call (checked centrally as `project.health` first).
+      if (a.setup === "team" && a.leadOf(project) !== me) {
+        ctx.json(res, 403, { error: "The project lead sets its health." });
+        return true;
+      }
+      await setProjectHealth(ctx.log, { project, health: b.health, principal: me });
+      ctx.json(res, 200, {
+        health: { value: b.health, by: nameFor(a, me, me), at: new Date().toISOString() },
+      });
+      return true;
+    }
+    const postTarget = /^\/api\/slices\/([\w.-]+)\/target$/.exec(url);
+    if (postTarget && req.method === "POST") {
+      if (!mutationGuard(req, res)) return true;
+      if (!ctx.cardStore) {
+        ctx.json(res, 501, { error: "This server was started read-only" });
+        return true;
+      }
+      const slice = await ctx.cardStore.slices.get(postTarget[1] as string);
+      if (!slice) {
+        ctx.json(res, 404, { error: `No release ${postTarget[1]}` });
+        return true;
+      }
+      const b = await ctx.readJsonBody(req);
+      const target = b.date === null || b.date === "" ? null : b.date;
+      if (target !== null && !isDay(target)) {
+        ctx.json(res, 400, { error: "A target date is a day, YYYY-MM-DD, or null to clear it" });
+        return true;
+      }
+      const a = audience();
+      const me = personOf(req);
+      if (
+        a.setup === "team" &&
+        a.leadOf(slice.projectId) !== me &&
+        a.levelOf(me, slice.projectId) !== "admin"
+      ) {
+        ctx.json(res, 403, { error: "The project lead or an Admin sets a release's target date." });
+        return true;
+      }
+      await setReleaseTarget(ctx.log, {
+        sliceId: slice.id,
+        projectId: slice.projectId,
+        target,
+        principal: me,
+      });
+      ctx.json(res, 200, { target: target ? { release: slice.id, date: target } : null });
       return true;
     }
 
@@ -803,7 +956,7 @@ export function createPmApi(ctx: PmApiContext) {
     return frames;
   }
 
-  return { handle, streamFrames, pmStore, learning };
+  return { handle, streamFrames, pmStore, learning, ask };
 }
 
 /**

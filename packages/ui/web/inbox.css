@@ -1,0 +1,234 @@
+/* Inbox and My issues (dashboard §2.17.2–3, DB-N9-14, -15; teams items
+   22–24): Linear's Inbox — tabs, rows grouped by reason, an unread dot,
+   Done · Snooze · Save on each row — and My issues' tables by project. The
+   issue header's Watch toggle and a comment's invite question. Tokens only.
+   Below 768 px a row's actions wrap under it. */
+
+.ib-view,
+.mi {
+  max-width: 960px;
+  gap: 20px;
+}
+.ib-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.ib-tabs button {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 8px 12px;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.ib-tabs button[aria-selected="true"] {
+  color: var(--text-primary);
+  border-bottom-color: var(--text-primary);
+}
+.ib-group h2 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+.ib-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+}
+.ib-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.ib-row:last-child {
+  border-bottom: 0;
+}
+.ib-row.focus {
+  box-shadow: inset 2px 0 0 var(--text-primary);
+  background: var(--bg-overlay);
+}
+.ib-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.ib-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  align-self: center;
+}
+.ib-row.unread .ib-dot {
+  background: var(--accent);
+}
+.ib-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+.ib-main:hover .ib-title,
+.ib-main:focus-visible .ib-title {
+  text-decoration: underline;
+}
+.ib-key {
+  font-size: var(--text-xs);
+}
+.ib-title {
+  color: var(--text-primary);
+}
+.ib-row.unread .ib-title {
+  font-weight: 600;
+}
+.ib-proj,
+.ib-time {
+  font-size: var(--text-xs);
+}
+.ib-time {
+  flex: none;
+}
+.ib-what {
+  flex-basis: 100%;
+  font-size: var(--text-sm);
+}
+.ib-ai {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 14px;
+}
+.ib-ai-line {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: var(--text-xs);
+}
+.ib-state {
+  color: var(--text-primary);
+}
+.ib-acts,
+.ib-answers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-left: 14px;
+}
+.ib-answers {
+  padding-left: 0;
+  margin-right: 8px;
+}
+.ib-snooze {
+  position: relative;
+}
+.ib-snooze summary {
+  list-style: none;
+}
+.ib-snooze summary::-webkit-details-marker {
+  display: none;
+}
+.ib-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+}
+.ib-menu button {
+  appearance: none;
+  background: none;
+  border: 0;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.ib-menu button:hover,
+.ib-menu button:focus-visible {
+  background: var(--bg-overlay);
+}
+.ib-row .dq {
+  margin-top: 4px;
+}
+
+/* The issue header's Watch toggle and a comment's invite question (teams items 22–23). */
+.watch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-xs);
+}
+.watch .btn[aria-pressed="true"] {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+.invite-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--bg-overlay);
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 767px) {
+  .ib-view,
+  .mi {
+    padding: 16px;
+  }
+  .ib-line {
+    flex-wrap: wrap;
+  }
+  .mi-tbl thead {
+    display: none;
+  }
+  .mi-tbl,
+  .mi-tbl tbody,
+  .mi-tbl tr,
+  .mi-tbl td {
+    display: block;
+    width: 100%;
+  }
+  .mi-tbl tr {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-card);
+    margin-bottom: 8px;
+  }
+  .mi-tbl td {
+    border-bottom: 0;
+    padding: 4px 12px;
+  }
+  .mi-tbl .pj-lbl {
+    display: flex;
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+  }
+}

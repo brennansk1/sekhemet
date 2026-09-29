@@ -386,7 +386,19 @@ export interface BuiltBy {
  */
 export type CardHold =
   | { kind: "backpressure"; awaiting: CardStatus; reason: string; since: string }
-  | { kind: "awaitingMerge"; pr: number; url?: string; headSha?: string; since: string };
+  | {
+      kind: "awaitingMerge";
+      pr: number;
+      url?: string;
+      headSha?: string;
+      since: string;
+      /**
+       * Teams TEAM-24: new commits dismissed the accept; the pull request is
+       * still open, `headSha` is its new head, and the issue waits for a new
+       * decision — counted in Review's WIP again.
+       */
+      dismissed?: true;
+    };
 
 export interface CheckpointRecord {
   cardId: string;

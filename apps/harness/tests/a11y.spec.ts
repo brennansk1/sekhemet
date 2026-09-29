@@ -182,6 +182,12 @@ describe("the accessibility check (dashboard DB-P12-6)", () => {
         { url: `${teamBase}/#/signin`, as: "out" },
         { url: `${teamBase}/#/invite/${inviteId}`, as: "out" },
         { url: `${teamBase}/#/account/profile`, as: "in" },
+        // B4.11 (DB-N9-14, -15): the Inbox and My issues as a signed-in person sees them.
+        { url: `${teamBase}/#/inbox`, as: "in" },
+        { url: `${teamBase}/#/my-issues`, as: "in" },
+        // B4.11 T5 (DB-N9-16, TEAM-27): Members and Audit as an Admin sees them.
+        { url: `${teamBase}/#/members`, as: "in" },
+        { url: `${teamBase}/#/audit`, as: "in" },
       ];
       const open = async (width: number, height: number, signedIn: boolean): Promise<Page> => {
         const page = await (await browser.newContext({ viewport: { width, height } })).newPage();

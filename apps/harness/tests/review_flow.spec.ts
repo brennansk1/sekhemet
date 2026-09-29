@@ -393,6 +393,35 @@ describe("auto-accept never merges an unreviewed change (RG-P8-2)", () => {
     expect((await store.getDossier("c1")).reviews.map((e) => e.verdict)).toEqual(["not_reviewed"]);
   });
 
+  it("F25: a reply cut off at its length cap is a failed review: recorded, shown, never merged", async () => {
+    await waiting("c1");
+    const model = new MockInferenceAdapter("gpt-oss-20b", [
+      {
+        text: '{"criteria":[{"n":1,"verdict":"met","at":"src/ledger.ts:2","note":""},{"n":2',
+        toolCalls: [],
+        finishReason: "length",
+        usage: { promptTokens: 2962, completionTokens: 1200, durationMs: 1, thinkingTokens: 1072 },
+      },
+    ]);
+    const { access, runTour } = deferredAccess(model);
+    const flow = new ReviewFlow({ ctx: ctx(), role: filled, access, learned });
+    await flow.afterRun("c1");
+    const merged: string[] = [];
+    const accepting = acceptAfterReview(flow, ctx(), "c1", async (card) => {
+      merged.push(card.id);
+      return "abc1234567";
+    });
+    await runTour();
+    expect(await accepting).toBeUndefined();
+    expect(merged).toEqual([]);
+    expect(flow.reviewFailed("c1")).toBe(true);
+    expect((await store.getCard("c1"))?.status).toBe("review");
+    const reviews = (await store.getDossier("c1")).reviews;
+    // No "unclear" verdicts stand in for the review that did not happen.
+    expect(reviews.map((e) => e.verdict)).toEqual(["not_reviewed"]);
+    expect(reviews[0]?.text).toMatch(/^AI review could not run \(.*cut off at its length cap/);
+  });
+
   it("writes which findings cite a checked line beside the bundle", async () => {
     await waiting("c1");
     const model = new MockInferenceAdapter("gemma-4-26b", [verdicts()]);

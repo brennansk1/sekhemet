@@ -58,7 +58,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     group: "workspace",
     chord: "x",
     icon: "inbox",
-    search: "Inbox decisions questions waiting on you",
+    search: "Inbox mentions review requests watching decisions questions waiting on you",
   }),
   item({
     name: "my-issues",
@@ -66,6 +66,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     group: "workspace",
     chord: "y",
     icon: "user",
+    search: "My issues assigned owned delegated review requested",
     when: (c) => c.team,
   }),
   item({
@@ -241,9 +242,10 @@ export const KEY_GROUPS: readonly KeyGroup[] = [
     name: "Inbox",
     views: ["inbox"],
     rows: rows([
+      ["Next or previous item", ["j", "k"]],
+      ["Open, or answer the picked option", ["↵"]],
+      ["Done", ["e"]],
       ["Pick an option", ["1", "…", "9"]],
-      ["Answer", ["↵"]],
-      ["Next or previous request", ["j", "k"]],
     ]),
   },
   {
@@ -348,4 +350,31 @@ export function cheatSheet(visible: readonly NavItem[]): KeyGroup[] {
     note: chordChangeNote(visible),
   };
   return [global, navigate, ...rest];
+}
+
+/**
+ * The Agent status line at the foot of the sidebar (§2.2.3, DB-N9-10): the
+ * Agent's state in one line — *Agent working on CHR-12 · step 14 of 40*,
+ * *Agent idle*, or *Agent paused after step 5 while Seshat replies*.
+ */
+export function agentStatusLine(input: {
+  running: readonly { key: string; step?: number | undefined; budget?: number | undefined }[];
+  pausedForSeshat?: { step?: number | undefined } | undefined;
+}): { text: string; state: "working" | "idle" | "paused" } {
+  if (input.pausedForSeshat) {
+    const step = input.pausedForSeshat.step;
+    return {
+      text: `Agent paused${step ? ` after step ${step}` : ""} while Seshat replies`,
+      state: "paused",
+    };
+  }
+  const [only, ...rest] = input.running;
+  if (!only) return { text: "Agent idle", state: "idle" };
+  if (rest.length)
+    return { text: `Agent working on ${input.running.length} issues`, state: "working" };
+  const step =
+    only.step !== undefined
+      ? ` · step ${only.step}${only.budget !== undefined ? ` of ${only.budget}` : ""}`
+      : "";
+  return { text: `Agent working on ${only.key}${step}`, state: "working" };
 }

@@ -4,6 +4,7 @@
 // rule comes from `/app/lib/issue.js`; this module only renders and posts.
 import { aiBadge, esc, icon, postJSON, teammateName } from "./dom.js";
 import { ISSUE_COPY, agentPanel, criteriaChecks } from "./lib/issue.js";
+import { aiStateLine } from "./lib/teammates.js";
 import { toast } from "./toast.js";
 import { blockedToast } from "./triage.js";
 
@@ -27,18 +28,44 @@ function criteriaHtml(card, evidence) {
   return `<section aria-labelledby="iss-crit-h"><h3 class="sh" id="iss-crit-h">${esc(ISSUE_COPY.criteria)} <span class="sec tnum">${esc(c.summary)}</span></h3>${items ? `<ul class="crit-checks">${items}</ul>` : ""}${c.note ? `<p class="sec">${esc(c.note)}</p>` : ""}</section>`;
 }
 
-function agentHtml(panel, handBackOpen) {
+/**
+ * The AI teammates' state as the server set it (teams item 19, TEAM-15): the
+ * Agent's words replace the panel's when the harness knows more (queued with
+ * its place, a start request waiting on a person); Seshat's is its own line.
+ */
+function withAiState(panel, ai) {
+  const agent = (ai ?? []).find((a) => a.who === "agent");
+  if (!agent) return panel;
+  const line = aiStateLine(agent);
+  return { ...panel, label: line.label, sentence: line.sentence };
+}
+
+function seshatHtml(ai) {
+  const seshat = (ai ?? []).find((a) => a.who === "seshat");
+  if (!seshat) return "";
+  const line = aiStateLine(seshat);
+  return `<div class="ag-line"><span class="ag-who">${teammateName(line.name, "seshat")}</span><span class="ag-state">${esc(line.label)}</span><span class="ag-sentence">${esc(line.sentence)}</span></div>`;
+}
+
+/** DB-N9-17: the permission each of the Agent's controls needs (teams item 6). */
+const AGENT_NEEDS = {
+  pause: "agent.pause",
+  take_over: "agent.take_over",
+  hand_back: "agent.guide",
+};
+
+function agentHtml(panel, handBackOpen, seshat = "", project = "") {
   const buttons = panel.controls
     .map(
       (id) =>
-        `<button class="btn" type="button" data-agent="${esc(id)}"${id === "hand_back" && handBackOpen ? ' aria-expanded="true"' : id === "hand_back" ? ' aria-expanded="false"' : ""}>${icon(id === "pause" ? "pause" : id === "take_over" ? "user" : id === "submit" ? "check-circle" : "send", 14, "ic s14")}${esc(ISSUE_COPY.controls[id])}</button>`,
+        `<button class="btn" type="button" data-agent="${esc(id)}"${AGENT_NEEDS[id] ? ` data-needs="${AGENT_NEEDS[id]}"${project ? ` data-needs-project="${esc(project)}"` : ""}` : ""}${id === "hand_back" && handBackOpen ? ' aria-expanded="true"' : id === "hand_back" ? ' aria-expanded="false"' : ""}>${icon(id === "pause" ? "pause" : id === "take_over" ? "user" : id === "submit" ? "check-circle" : "send", 14, "ic s14")}${esc(ISSUE_COPY.controls[id])}</button>`,
     )
     .join("");
   const form =
     handBackOpen && panel.controls.includes("hand_back")
       ? `<form class="hb-form" data-handback><label for="hb-note">${esc(ISSUE_COPY.handBackNote)}</label><textarea id="hb-note" name="note" rows="2"></textarea><div class="acts"><button type="button" class="btn ghost" data-handback-cancel>${esc(ISSUE_COPY.cancel)}</button><button type="submit" class="btn">${icon("send", 14, "ic s14")}${esc(ISSUE_COPY.handBackConfirm)}</button></div></form>`
       : "";
-  return `<div class="agent-bar" role="group" aria-label="${esc(ISSUE_COPY.agent)}"><div class="ag-line"><span class="ag-who">${teammateName(ISSUE_COPY.agent, "agent")}</span>${panel.label ? `<span class="ag-state ${esc(panel.state)}">${esc(panel.label)}</span>` : ""}<span class="ag-sentence">${esc(panel.sentence)}</span>${buttons ? `<span class="acts">${buttons}</span>` : ""}</div>${form}</div>`;
+  return `<div class="agent-bar" role="group" aria-label="${esc(ISSUE_COPY.agent)}"><div class="ag-line"><span class="ag-who">${teammateName(ISSUE_COPY.agent, "agent")}</span>${panel.label ? `<span class="ag-state ${esc(panel.state)}">${esc(panel.label)}</span>` : ""}<span class="ag-sentence">${esc(panel.sentence)}</span>${buttons ? `<span class="acts">${buttons}</span>` : ""}</div>${form}${seshat}</div>`;
 }
 
 /**
@@ -62,11 +89,11 @@ export function mountIssue(host, ctx) {
     }
     const detail = ctx.detail();
     const full = detail?.card ?? card;
-    const panel = agentPanel(card, ctx.events() ?? []);
+    const panel = withAiState(agentPanel(card, ctx.events() ?? []), detail?.ai);
     if (!panel.controls.includes("hand_back")) state.handBack = false;
     const crit = criteriaChecks(full, detail?.evidence ?? null);
     const spec = String(full.spec ?? "").trim();
-    const next = `<details class="iss-about" data-about${state.about ? " open" : ""}><summary>${esc(ISSUE_COPY.description)} · ${esc(ISSUE_COPY.criteria)} <span class="sec tnum">${esc(crit.summary)}</span></summary><div class="iss-grid"><section aria-labelledby="iss-desc-h"><h3 class="sh" id="iss-desc-h">${esc(ISSUE_COPY.description)}</h3>${spec ? `<p class="prose">${esc(spec)}</p>` : `<p class="sec">${esc(ISSUE_COPY.noDescription)}</p>`}</section>${criteriaHtml(full, detail?.evidence ?? null)}</div></details>${agentHtml(panel, state.handBack)}`;
+    const next = `<details class="iss-about" data-about${state.about ? " open" : ""}><summary>${esc(ISSUE_COPY.description)} · ${esc(ISSUE_COPY.criteria)} <span class="sec tnum">${esc(crit.summary)}</span></summary><div class="iss-grid"><section aria-labelledby="iss-desc-h"><h3 class="sh" id="iss-desc-h">${esc(ISSUE_COPY.description)}</h3>${spec ? `<p class="prose">${esc(spec)}</p>` : `<p class="sec">${esc(ISSUE_COPY.noDescription)}</p>`}</section>${criteriaHtml(full, detail?.evidence ?? null)}</div></details>${agentHtml(panel, state.handBack, seshatHtml(detail?.ai), full.projectId ?? "")}`;
     if (next === state.last) return;
     // Keep a half-written hand-back note across a redraw.
     const note = host.querySelector("#hb-note")?.value ?? "";

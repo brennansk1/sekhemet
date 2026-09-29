@@ -357,10 +357,19 @@ export interface ActivityQuestion {
   line: string;
 }
 
+/** A comment on the issue, or Seshat's answer to its asker (teams items 19, 22; the server's `issueComments`). */
+export interface CommentLike {
+  id: string;
+  by: "person" | "seshat";
+  name: string;
+  text: string;
+  postedAt: string;
+}
+
 export interface ActivityItem {
   key: string;
   at: string;
-  kind: "event" | "plan" | "steps" | "checks" | "message" | "hand_back" | "question";
+  kind: "event" | "plan" | "steps" | "checks" | "message" | "hand_back" | "question" | "comment";
   who: string;
   /** An AI teammate: shown with the AI badge. */
   ai: boolean;
@@ -375,10 +384,18 @@ export interface ActivityItem {
 
 export interface ActivityEvent extends EventLike {
   createdAt?: string;
+  /** Team setup: the name of the person the event names (the server's), shown instead of "You". */
+  principalName?: string;
 }
 
 /** Shown from the messages list (their text is private), or bookkeeping. */
-const NEVER = new Set(["card/message", "card/handed_back", "card/message_delivered"]);
+const NEVER = new Set([
+  "card/message",
+  "card/handed_back",
+  "card/message_delivered",
+  // Shown from the comments list, whose text is private (TEAM-15).
+  "issue/commented",
+]);
 
 /** Events Activity shows unless every entry is asked for. */
 const BRIEF = new Set([
@@ -396,6 +413,9 @@ const BRIEF = new Set([
   "suggestion/applied",
   "suggestion/dismissed",
   "suggestion/undone",
+  // teams TEAM-39: a request to start the Agent, and a Member's answer.
+  "agent/start_requested",
+  "agent/start_answered",
 ]);
 
 /** A suggestion's property as Activity names it (PM-N9-1): never its id. */
@@ -456,7 +476,8 @@ function movedText(p: Record<string, unknown>): string {
 }
 
 function personActor(e: ActivityEvent): string {
-  return eventSentence(e).actor;
+  const person = e.actor === "human" || e.actor === "mcp";
+  return (person && e.principalName?.trim()) || eventSentence(e).actor;
 }
 
 export function activityItems(input: {
@@ -464,6 +485,8 @@ export function activityItems(input: {
   events: readonly ActivityEvent[];
   messages: readonly CardMessageLike[];
   decisions: readonly DecisionLike[];
+  /** The issue's comments (TEAM-15), with Seshat's answers to the reader. */
+  comments?: readonly CommentLike[];
   /** Every ledger entry, not only the ones Activity calls out. */
   all?: boolean;
 }): ActivityItem[] {
@@ -565,6 +588,23 @@ export function activityItems(input: {
       });
       continue;
     }
+    if (e.type === "agent/start_requested" || e.type === "agent/start_answered") {
+      push({
+        key,
+        at,
+        kind: "event",
+        who: personActor(e),
+        ai: false,
+        text:
+          e.type === "agent/start_requested"
+            ? "asked the Agent to start"
+            : p.answer === "started"
+              ? "started the Agent"
+              : "declined to start the Agent",
+        tone: "neutral",
+      });
+      continue;
+    }
     const sug = suggestionLine(e, p);
     if (sug) {
       push({ key, at, kind: "event", ...sug, tone: "neutral" });
@@ -579,7 +619,7 @@ export function activityItems(input: {
       key,
       at,
       kind: "event",
-      who: s.actor,
+      who: personActor(e),
       ai: false,
       text,
       ...(s.quote ? { quote: s.quote } : {}),
@@ -587,6 +627,19 @@ export function activityItems(input: {
     });
   }
   flush();
+  for (const c of input.comments ?? []) {
+    const seshat = c.by === "seshat";
+    push({
+      key: `cmt${c.id}`,
+      at: c.postedAt,
+      kind: "comment",
+      who: c.name,
+      ai: seshat,
+      text: seshat ? "answered" : "commented",
+      quote: c.text,
+      tone: "neutral",
+    });
+  }
   for (const m of input.messages) {
     const hand = m.kind === "hand_back";
     push({

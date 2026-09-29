@@ -484,7 +484,14 @@ export interface ScreenRunner {
     combination: Combination;
     card: ScreeningItem;
     capSeconds: number;
-  }): Promise<{ passed: boolean; seconds: number; capped?: boolean; stopReason?: string }>;
+  }): Promise<{
+    passed: boolean;
+    seconds: number;
+    capped?: boolean;
+    stopReason?: string;
+    /** Why the card's AI review failed (F25): the card is then not passed. */
+    reviewFailed?: string;
+  }>;
   /** Unload what it loaded; called when the screen ends, inside the measurement run. */
   release?(): Promise<void>;
 }
@@ -529,7 +536,14 @@ export interface QuickBenchmarkInput {
 export interface EndToEndResult {
   passed: number;
   total: number;
-  cards: { id: string; passed: boolean; seconds: number; stopReason?: string }[];
+  cards: {
+    id: string;
+    passed: boolean;
+    seconds: number;
+    stopReason?: string;
+    /** Why the card's AI review failed (F25): counted as not passed, never as clean. */
+    reviewFailed?: string;
+  }[];
 }
 
 export interface QuickResult {
@@ -757,6 +771,7 @@ export async function quickBenchmark(
               : r.stopReason
                 ? { stopReason: r.stopReason }
                 : {}),
+            ...(r.reviewFailed !== undefined ? { reviewFailed: r.reviewFailed } : {}),
           });
         }
         if (!stopped)

@@ -95,6 +95,38 @@
   color: var(--text-primary);
   resize: vertical;
 }
+/* The lead's health call and a release's target date (TEAM-28, DB-N9-3). */
+.stp-editor fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.stp-editor legend {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.stp-editor fieldset > .sec {
+  flex-basis: 100%;
+}
+.stp-editor .stp-choice {
+  font-weight: 400;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+.stp-editor input[type="date"] {
+  font: inherit;
+  font-size: var(--text-sm);
+  padding: 6px 8px;
+  border-radius: var(--radius-control);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  max-width: 220px;
+}
 .stp-editor .acts {
   display: flex;
   justify-content: flex-end;

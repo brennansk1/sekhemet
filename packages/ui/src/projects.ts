@@ -140,7 +140,7 @@ export interface ProjectsView {
   /** The server has no Projects route yet. */
   unavailable?: string;
   totals: ProjectTotal[];
-  /** The table's columns: Solo has no Health column, as Status shows no health there. */
+  /** The table's columns: Solo has a Health column only once a health is set (TEAM-45). */
   columns: readonly { id: keyof ProjectRow; label: string; ai?: boolean }[];
   rows: ProjectRow[];
   waiting: { heading: string; items: WaitingItem[]; empty: string } | null;
@@ -358,7 +358,11 @@ export function projectsModel(input: ProjectsInput): ProjectsView {
   return {
     ...base,
     crumb: `${plural(projects.length, "project")} ${team ? "you can see" : "on this machine"}`,
-    columns: team ? PROJECTS_COLUMNS : PROJECTS_COLUMNS.filter((c) => c.id !== "health"),
+    // Solo: health is optional (TEAM-45), so the column shows only once the person set one.
+    columns:
+      team || projects.some((p) => p.health)
+        ? PROJECTS_COLUMNS
+        : PROJECTS_COLUMNS.filter((c) => c.id !== "health"),
     newProject: PROJECTS_COPY.newProject,
     empty: null,
     totals,

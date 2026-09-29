@@ -139,7 +139,28 @@ function prefs() {
       },
     },
     ...(getSession().mode === "team"
-      ? [{ label: ACCOUNT_COPY.signOut, search: "sign out log out", run: signOutAndLeave }]
+      ? [
+          {
+            label: ACCOUNT_COPY.members,
+            search: "members people invite levels access team",
+            run: () => {
+              location.hash = "#/members";
+            },
+          },
+          // Audit is an Admin's (TEAM-27); the palette offers it to no one else.
+          ...(getSession().level === "admin"
+            ? [
+                {
+                  label: ACCOUNT_COPY.audit,
+                  search: "audit log sign-ins refusals levels invites tokens export",
+                  run: () => {
+                    location.hash = "#/audit";
+                  },
+                },
+              ]
+            : []),
+          { label: ACCOUNT_COPY.signOut, search: "sign out log out", run: signOutAndLeave },
+        ]
       : []),
   ];
 }

@@ -65,6 +65,11 @@ export type WebhookIntent =
       closedBy?: string;
       repo?: string;
     }
+  /**
+   * New commits on a pull request's branch (GitHub's `synchronize`): an
+   * accept awaiting that pull request's merge is dismissed (teams TEAM-24).
+   */
+  | { kind: "pull_request_pushed"; pr: number; headSha: string; repo?: string }
   | { kind: "ignored"; reason: string };
 
 const BOTS = /^(dependabot|renovate)\[bot\]$/i;
@@ -189,6 +194,14 @@ export function intentFor(event: string, payload: Record<string, unknown>): Webh
           ? { mergeCommit: p.pull_request.merge_commit_sha }
           : {}),
         ...(closedBy ? { closedBy } : {}),
+        ...(p.repository?.full_name ? { repo: p.repository.full_name } : {}),
+      };
+    }
+    if (p.action === "synchronize") {
+      return {
+        kind: "pull_request_pushed",
+        pr: p.pull_request.number,
+        headSha: p.pull_request.head.sha,
         ...(p.repository?.full_name ? { repo: p.repository.full_name } : {}),
       };
     }

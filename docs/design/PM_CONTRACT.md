@@ -153,6 +153,7 @@ interface PmProposal {
   origin?: "import";                    // an import's proposal: applying it records card/imported,
                                         // and the card's text reaches the Worker tagged untrusted
   state: "open" | "applied" | "discarded" | "stale";
+  approval?: PmPlanApproval;            // a Stakeholder's new project sent for approval (TEAM-20)
 }
 ```
 
@@ -193,10 +194,10 @@ interface PmProposal {
   with **409** and nothing is written (plan there with `/plan`, or take it
   over). In the Team setup applying it also needs `project.create` and
   `brief.accept` — an Admin, since a new project has no lead — so a Member's
-  apply is a **403** naming `brief.accept` (teams item 6). TEAM-20 is
-  partial: *Send for approval* is not built, and in the Team setup Review
-  plan's button says what it does — *Create project and accept its
-  brief* — and beforehand who may press it (*Create project* in Solo). A
+  apply is a **403** naming `brief.accept` (teams item 6); for a Member or
+  an Admin Review plan's button says what it does — *Create project and
+  accept its brief* — and beforehand who may press it (*Create project* in
+  Solo). A Stakeholder sends it for approval instead (below). A
   ledger holding a card or an accepted brief that no project claims is
   refused like a folder's project. Card one's test is the Worker's to
   write, in its scope, never a staged acceptance test (design-stage
@@ -213,6 +214,31 @@ interface PmProposal {
   change cards (`traces`) keep their recorded path.
 - A proposal with `forOwner`, applied by anyone else, is a 403 naming the
   owner.
+- **Send for approval** (teams TEAM-20, TEAM-42; design-stage §2.9 item 7).
+  In the Team setup a Stakeholder's `start_project` group is sent, not
+  created: `POST /api/pm/proposals/:id/send-for-approval { approver,
+  choices? }` (`project.converse`) records `plan/sent_for_approval
+  { proposalId, approver, choices? }` with the sender as principal and
+  returns `{ proposal }` with its `approval`; nothing is created. Refused:
+  in Solo (**409**), for any proposal but a new project's group (**400**),
+  one no longer open or already sent (**409**), by anyone but the person
+  whose conversation it is, or when it is no one's conversation — a reply
+  recorded without `to` (**403**), an approver who is not a Member or an
+  Admin, or the sender themselves (**400**), `choices` of another shape
+  (**400**). From then the proposal carries
+  `approval: { state: "sent" | "approved", approver, requestedBy, choices?,
+  approvedBy?, approverName?, requestedByName? }`, and `GET /api/pm/thread`
+  gives the reply holding it to the approver as well as to the sender.
+  While it is `sent`, `POST /api/pm/proposals/:id/apply` is refused to
+  everyone (**409**, naming the approver, who presses Approve) and
+  `POST …/discard` to anyone but the approver or the sender (**403**).
+  `POST /api/pm/proposals/:id/approve { choices? }` (`plan.approve` and
+  `project.create`: a Member or an Admin, no `brief.accept`) is the named
+  approver's alone (anyone else **403**; not sent or already approved
+  **409**): it applies the group as `apply` does, with the approver's
+  `choices` or else the ones sent, makes the approver the owner of every
+  issue of the new project (`card/owner_changed`), records `plan/approved
+  { proposalId, projectId }` and returns `{ proposal, cards }`.
 - Applying a proposal is not an approval of the planned cards' criteria: the
   proposal shows each card's title, not the criteria the planner wrote, so
   every card it plans keeps its approval hold until a person approves it
@@ -275,7 +301,124 @@ Review writes beside Accept what Accept itself would refuse (review-git
   project the person cannot see (PM-N9-8).
 - `POST /api/cards/:id/accept` with `{ acknowledgedFindings: string[] }`: the
   findings the person acknowledged (`x` in Review), recorded on
-  `review/decided`.
+  `review/decided`. On a project that requires resolved review threads,
+  409 while one is open, its `error` naming it (TEAM-25, below).
+- The review threads and a dismissed accept (teams item 25, B4.11): the
+  same reply adds `threads` (as `GET /api/cards/:id/threads` below),
+  `requireResolvedThreads`, `openThread` — while the project requires
+  resolved threads and one is open, Accept's own refusal word for word —
+  and `acceptDismissed { at, pr?, headSha?, accepter?, accepterName? }`
+  while an accept that new commits dismissed has not been given again.
+
+### Review verdicts and threads (teams NEW-teams-8)
+
+GitHub's pull-request review: beside *Accept* and *Send back*, a *Comment*
+— a review with no verdict — whose comments open threads that people answer
+and resolve (teams item 25; `apps/harness/src/team/review_threads.ts`, the
+words `packages/ui/src/review_desk.ts`'s `THREAD_COPY`). Every answer is a
+fold of the issue's events; the text is private.
+
+- `GET /api/cards/:id/threads` returns `{ threads: { id, cardId, file?,
+  line?, principal?, name?, at, resolved, resolvedBy?, resolvedByName?,
+  resolvedAt?, comments: { id, principal?, name?, text, at }[] }[],
+  requireResolvedThreads: boolean, acceptDismissed? }` (every level that
+  can see the project; 404 otherwise). An erased comment reads *This
+  comment was erased.*
+- `POST /api/cards/:id/reviews` with `{ body?: string, comments?: { file,
+  line?, text }[] }` (`comment`, every level): `body` opens a thread on the
+  whole change, each line comment one on its file and line; at most 50
+  comments of 8,000 characters. Records one `review/commented { id, cardId,
+  threads: [{id, file?, line?}] }` (texts private) and returns `{ id,
+  threads }`. 400 for no text, a file outside the repository (absolute or
+  `..`) or a line below 1; 409 on an accepted or closed issue.
+- `POST /api/cards/:id/threads/:thread/replies` with `{ text }`
+  (`comment`): `review/commented { id, cardId, replyTo }`; returns `{
+  thread }`. 404 for an unknown thread.
+- `POST /api/cards/:id/threads/:thread/resolve` and `…/reopen` (`review`, a
+  Member): `review/thread_resolved` or `review/thread_reopened { cardId,
+  thread }`; returns `{ thread }`; 409 when it already is.
+- A project requires resolved threads by `PATCH /api/projects/:id/settings
+  { require_resolved_threads: true }` (an Admin or its lead).
+- TEAM-24: with pull-request-on-accept, the tracker's `pull_request`
+  `synchronize` for a pull request an accepted issue awaits — a new head —
+  records `review/accept_dismissed { id, reason: "new_commits", pr,
+  headSha, accepter? }`, clears the hold and the accepter, and the issue
+  waits in Review (`POST /webhooks/github`, `wave2_server.ts`).
+
+### Presence (teams NEW-teams-9; dashboard DB-N9-20)
+
+Who is viewing an issue and who is dragging a card, held in the server's
+memory only and never recorded (teams item 26; `team/presence.ts`). The
+Team setup only.
+
+- `POST /api/presence` with `{ tab, issue?: string | null, dragging?:
+  string | null }` (every level: `read`; `tab` the page's own id, letters,
+  digits, `-` and `_`): what this page shows now. Pages send it on opening
+  and leaving an issue, at a drag's start and end, and every 20 seconds
+  while they stay visible (a hidden tab sends `issue: null, dragging: null`
+  and no heartbeat until shown again); a tab quiet for a minute is
+  forgotten. In Solo both routes answer 200 with no viewers and record
+  nothing, and no `presence` frame is pushed. Returns `{
+  viewers: { principal, name, initials }[] }` for the issue. 404 for an
+  issue the person cannot see; 400 for a malformed `tab`.
+- `GET /api/presence?issue=<id>` returns `{ viewers, active: string[] }` —
+  `active` the principals who announced themselves in the last 5 minutes
+  (the Members page's green dot).
+- The live stream sends `event: presence` with `{ issues: { <cardId>:
+  Face[] }, dragging: { <cardId>: Face[] } }` whenever it changes, each
+  stream only the issues its person can see; the page leaves the reader out.
+
+### Members, Audit and the live stream's visibility (teams NEW-teams-10; dashboard DB-N9-16, DB-N9-17)
+
+The Team setup's Admin pages and what the page needs to disable a control
+the person's level does not allow (teams items 6–10, 27; B4.11 T5).
+
+- `GET /api/members` (every signed-in person) returns `{ members: {
+  principal, level, pending, name?, email?, label?, projects?: { <project>:
+  level }, lastActive?, active?, locked? }[], canManage }` — `email` only
+  for an Admin; `label` the profile label; `projects` the per-project
+  overrides; `lastActive` the person's latest event on the ledger (Smart
+  Swap's `session/active` included); `active` whether they announced
+  themselves to presence in the last 5 minutes (memory only); `locked` an
+  account the sign-in limits locked; `canManage` whether the reader may use
+  the Admin's actions.
+- `POST /api/members/:id/label { label: string | null }` (`members.manage`,
+  an Admin): records `member/label_changed {principal, label}` (`""` clears
+  it) with the Admin as principal; 400 for a label over 80 characters or not
+  text, 404 for someone not in the workspace. It grants nothing (TEAM-7).
+- `GET /api/session` adds, in the Team setup, `projects: { <project>: {
+  level?, lead? } }` — the person's own per-project levels and the projects
+  they lead — and `label`, their profile label; the page disables a control
+  from these and the action table (`CONTROL_RULES`, the server's `ACTIONS`),
+  writing the level held and one that can do it beside it (DB-N9-17).
+- `GET /api/audit?person=&action=&project=&before=&limit=` (`audit.view`,
+  an Admin; anyone else gets the 403 of TEAM-4, recorded as
+  `access/refused`) returns `{ entries: { seq, at, type, category, action,
+  actor: { principal?, name, ai?, onBehalfOf? }, target, targetPrincipal?,
+  project? }[], next? }`, newest first, 200 a page (`next` the `before` of
+  the following one). `action` is a kind (`sign_in`, `refusal`, `lock`,
+  `level`, `invite`, `token`, `password`, `model`, `configuration`) or one
+  event type; `person` matches who did it, whom it was about, or whom an AI
+  teammate worked for; `project` the event's project or its issue's. Only
+  the public part of each event is read: no email, token name, address or
+  free text. `&format=csv` or `&format=json` downloads the same filtered
+  entries (`Content-Disposition: attachment; filename="audit-<date>.csv"`);
+  the CSV's columns are `time,actor,on_behalf_of,action,target,project,event,seq`,
+  and a cell that would start a spreadsheet formula is prefixed with `'`.
+- The live stream (`/api/stream`, `/api/ws`), in the Team setup, sends each
+  person an `append` frame of only the events and board issues (and epics)
+  of the projects they can see, and no event's private part; a stream whose
+  person is no longer in the workspace gets no frame and is closed. The same
+  holds for the replay a reconnecting page asks for.
+
+### The running check (dashboard DB-N2-10)
+
+The live stream sends `event: gate` with `{ cardId, gate, rung, label }`
+(`label` *Running Tests…*) when a card's process starts a check, and `{
+cardId, gate: null }` when its checks end; the board's `display.statusLine`
+names the running check for a card in verification. From the card
+process's `.sekhemet/live/<card>.gate.json` (`live_gate.ts`); never on the
+ledger.
 
 ### Suggestions on an issue and the weekly update (planner-pm NEW-planner-pm-9)
 
@@ -326,6 +469,143 @@ one action (planner-pm PM-N9-2, teams TEAM-41).
   (`project.update`, checked centrally in `team/access.ts` before the route's
   own inline check ever runs; 403 otherwise); 400 without text.
 
+### Comments and the AI teammates (teams NEW-teams-5; kernel NEW-kernel-10)
+
+People reach Seshat and the Agent as they reach a colleague: by delegating
+an issue to the Agent (`PATCH /api/cards/:id { assignee: "worker" }`, which
+needs `agent.start` as well as `issue.edit`, named first in a refusal), or by
+writing `@Agent` or `@Seshat` in a comment. The harness sets the AI's state
+at once, before any model loads (teams TEAM-15); the words are
+`aiStateLine`'s (`packages/ui/src/teammates.ts`).
+
+- `GET /api/cards/:id/comments` returns `{ comments: { id, seq, cardId, by:
+  "person" | "seshat", principal?, name, text, postedAt, ai: ("agent" |
+  "seshat")[], invite?: { people: string[], project? } }[], ai: AiStateFacts[],
+  requests: StartRequest[] }`: the
+  issue's comments oldest first, each person's by name ("you" for the
+  reader), with Seshat's answer after a question only for the person who
+  asked it (PM-N9-8); the AI teammates' state; the start requests waiting on
+  the issue; `invite`, to the comment's author only, while they have not
+  answered whether to invite the people it mentions who cannot see the
+  project (TEAM-22). 404 for an issue the person cannot see.
+- `POST /api/cards/:id/comments` with `{ text }` (every level: `comment`)
+  records `issue/commented { id, cardId, ai?, seshatMessage?, people?, held? }`,
+  the text private, the person as principal, and returns `{ comment, ai,
+  request?, invite? }`. `@Name` mentions a person (the name without its
+  spaces, as the mention picker inserts it): `people` are those who can see
+  the issue's project, `held` those who cannot (a pending or removed
+  member); a held mention reaches no one — nor does the comment — until the
+  author answers, and `invite { commentId, people, project? }` asks them
+  (teams item 23, TEAM-22).
+  `@Seshat` puts the text in Seshat's queue with the issue as context (as
+  `POST /api/pm/messages` does), answered at the person's level — a Viewer,
+  on the workspace or the issue's project, gets an answer and no proposal or
+  suggestion (TEAM-40). `@Agent` from a person who may start the Agent there
+  (`agent.start`) delegates the issue to the Agent on their behalf (its
+  events then carry them as `on_behalf_of`, K-N10-1), or, while the Agent
+  runs the issue, reaches its next step as a message (WL-N10-1); from a
+  Stakeholder or Viewer it starts nothing and records `agent/start_requested
+  { id, cardId, requested_by, to?, comment }` (what they asked private),
+  waiting on the issue's owner — or the project lead when the owner cannot
+  start the Agent; with neither, the workspace's Admins (TEAM-39). 400
+  without text.
+- `AiStateFacts` is `{ who: "agent" | "seshat", state: "queued" | "working" |
+  "needs you" | "paused" | "done" | "failed", standing?, waitingFor?:
+  "start" | "answer" | "review", waitsOn?, requestedBy?, step?, of?,
+  checking?, reason? }`: the Agent's from the issue (Ready: queued with its
+  place and estimate, `/api/queue/standing`'s words, and at the per-person
+  cap its reason — *…; you have 1 Agent issue running and the limit is 1 per
+  person, so other people's issues go first*, TEAM-30; In progress: working on
+  step n of m, or paused; Verify: the checks running; In review: done,
+  waiting for review; Done; On hold with a stop reason: failed with its
+  sentence; a pending question: needs you, naming the owner), or needs you
+  while a start request waits (naming who asked and whom it waits on);
+  Seshat's from the latest question put to it on the issue (queued,
+  working while it answers, done, failed). `GET /api/cards/:id` carries the
+  same list as `ai`.
+- `POST /api/cards/:id/agent-requests/:requestId/start` and `…/decline`
+  (`agent.start` at the issue's project: a Member) answer a request once:
+  *Start* delegates the issue to the Agent on the pressing Member's behalf;
+  both record `agent/start_answered { id, answer: "started" | "declined" }`
+  under that Member and return `{ ai }`. 409 when it was already answered.
+- `GET /api/agent/requests` returns `{ requests: { id, cardId, title,
+  requestedBy, requestedByName, to?, toName, ask, requestedAt }[] }`: the
+  start requests waiting on the person (addressed to them; with no one
+  named, to an Admin), for issues they can see — their *Needs you*. Status's
+  facts carry the same for the page's issues as `agentRequests`.
+- In the Team setup `GET /api/events` (paged) adds `principalName` to each
+  person's event, so Activity names who did it rather than "You"; Solo's one
+  person stays "You". In the Team setup both forms — the first 200 and a
+  filtered page — give the stream's view of the person: only events of the
+  projects they can see, their own part of Seshat's thread (a `pm/message`
+  its asker's, a `pm/reply` its `to`'s), and no event's private part.
+- The live stream's `append` frames follow the same rule for Seshat's
+  thread. A `pm/message`'s text is in the event's private part (older
+  messages carry it in `payload.text`); `GET /api/pm/thread` reads it for
+  the person whose message it is.
+
+### Subscriptions, mentions and the Inbox (teams NEW-teams-7; dashboard DB-N9-14, -15)
+
+A person is subscribed to an issue when they create it, own it, are
+delegated or mentioned on it, comment on it, or are asked to review it (the
+issue reaching Review, for the people who may accept it: the Accept rule's,
+else the lead, else the Admins; Solo's one person), and by *Watch* (TEAM-21).
+Each later change reaches each subscriber but the person who made it. Every
+answer is a fold of the event log (`apps/harness/src/team/inbox.ts`); the
+words are `packages/ui/src/inbox.ts`'s.
+
+- `GET /api/inbox?filter=inbox|saved|done` returns `{ items: InboxItem[],
+  unread: number }` (`unread` counts the Inbox tab). `InboxItem` is `{ id,
+  reason: "needs_you" | "mentioned" | "review_requested" | "watching" |
+  "agent_finished", kind: "issue" | "start_request" | "decision" |
+  "plan_approval" | "mention_invite" | "invite_request", cardId?, title,
+  project?: { id, name }, change?: { type: "created" | "commented" |
+  "mentioned" | "status" | "owner" | "delegated" | "updated", by?, byAi?,
+  status?, to?, toAi?, fields? }, count, by?, at, seq, unread, saved, done,
+  snoozedUntil?, ai?: AiStateFacts[], request?: { id, requestedBy, ask },
+  mention?: { commentId, people, project? }, question?, link }`. An issue's
+  changes are one row (`issue:<cardId>`) under the strongest reason among
+  those since it was last marked done (mentioned, Agent finished, review
+  requested, watching) with the latest change and how many; *Needs you*
+  holds the requests to start the Agent waiting on the person, a plan sent
+  for their approval (`plan:<proposalId>`, until approved), the Agent's
+  pending question for whom it waits on (a permission request: the Accept
+  rule's people; any other: the owner, else the lead, else the Admins), the
+  author's invite question (`mention:<commentId>`) and, after *Invite*, the
+  Admins' request (`invite:<commentId>`, until the person can see the
+  project). An item about a project the person cannot see is not listed.
+- `POST /api/inbox/items/:item/read|done|undone|snooze|save|unsave` (the
+  item's id, URL-encoded; every level: `read`) records the person's own
+  `inbox/read { item, seq }`, `inbox/done { item, seq, undo? }`,
+  `inbox/snoozed { item, seq, until }` (body `{ until }`, an ISO time; 400
+  without one) or `inbox/saved { item, saved }` and returns the Inbox. `seq`
+  is the latest change the mark covers, so a later change brings a done row
+  back. 404 for an item not in the person's Inbox.
+- `GET /api/issues/:id/watch` returns `{ watching, watchers: { principal,
+  name }[] }`; `POST` with `{ watch: boolean }` (every level: `read` at the
+  issue's project) records `issue/watched` or `issue/unwatched { cardId }`
+  when it changes, and returns the same.
+- `POST /api/cards/:id/comments/:commentId/mention` with `{ answer: "invite"
+  | "skip" }` (`comment`; only the comment's author, once: 403, 409)
+  records `issue/mention_answered { id, cardId, answer }`; the comment then
+  reaches the people it mentions and its watchers — with *Invite* also the
+  held people once they can see the project, and the Admins are asked.
+- `GET /api/my-issues` returns `{ issues: { id, title, status, priority?,
+  why: ("owner" | "delegated" | "review")[], project?, ai? }[] }`: the open
+  issues (not Done or Rejected) the person owns, is delegated, or is asked
+  to review (In review, and they may accept it), across the projects they
+  can see.
+- Notices (TEAM-43): in the Team setup the dashboard server's notifier
+  pushes each change to each person it reached — kind `mentioned` for a
+  mention, `watching` otherwise (the Agent's own moves into its work are in
+  the Inbox but not pushed) — and each posted project update
+  (`project/update_posted`) to the project's watchers (anyone subscribed to
+  one of its issues, and its lead) as `project_update`, on the connected
+  channels, titled *For <name>: …*, within that person's own daily budget
+  (3 by default); past it the notice is held (`pm/notice_held { to }`), and
+  once a day, when the standup is due, a `digest` lists those held issues
+  still unread in their Inbox — none, no digest.
+
 ### Status (dashboard §2.8, NEW-dashboard-9; DEC-37)
 
 The page reads the board, `/api/story-map`, `/api/standup`,
@@ -338,9 +618,12 @@ the server knows is one read:
 - `GET /api/status?project=` returns `{ facts: { setup: "solo" | "team",
      project: { id, name } | null, isLead, canSetHealth, healthWritable,
      health: { value: "on_track" | "at_risk" | "off_track", by, at } | null,
+     release: { id, name } | null,
+     target: { release, date, by, at } | null, canSetTarget,
      update: { text, by, at } | null, updateMissing, canPostUpdate, canUnpark,
      forecast: { remaining, p50Days?, p85Days?, historyDays, finished, minimum },
      acceptedThisWeek: { title, by, at }[],
+     agentRequests?: { id, cardId, title, requestedBy, ask }[],
      flow: { days, cycleHours: number[], finished, sentBack,
        firstTime: { passed, total } } } }` (`status_api.ts` `statusFacts`).
   Scoped to the named project, or to the one project the person can see
@@ -348,8 +631,17 @@ the server knows is one read:
   only issues they can see count (PM-N9-8). `update` is the latest
   `project/update_posted` of the project with its private text; `by` is the
   person's name ("you" for the asker). `updateMissing` is true only in the
-  Team setup, for the project's lead, 7 days after the last update (or the
-  project's creation, when none was posted; teams TEAM-29). `canPostUpdate`
+  Team setup, for the project's lead, 7 days after the last update — or,
+  when none was posted, after the current release started (the previous
+  release's acceptance, else the first release's creation, else the
+  project's creation; `team/health.ts` `updateClockStart`, the notifier's
+  *Update due* clock too; teams TEAM-29, TEAM-45). `health` is the
+  project's latest `project/health_set` a person recorded, `by` their name;
+  `canSetHealth` is true for the project lead only (in Solo, the one
+  person), and `healthWritable` is true. `release` is the current release
+  (the first no person has accepted; its title, else *Release n*), `target`
+  its date as last set (`release/target_set`), and `canSetTarget` true for
+  the project lead or an Admin (in Solo, always) while there is a release. `canPostUpdate`
   mirrors `POST /api/projects/:id/update`'s rule; `canUnpark` mirrors
   `POST /api/cards/:id/unpark`'s (`review`, a Member's; always in Solo). The
   forecast resamples
@@ -358,12 +650,25 @@ the server knows is one read:
   dates below `minimum` (5) days of history or with none finished: a range
   or nothing, never one date; each issue counts once, at its last move to
   Done (an issue reverted and accepted again is one issue finished). The
-  forecast has no target: a release's target is not recorded yet, and a
-  sprint's end is not the project's. `flow` covers the last 30 days: each finished
+  forecast's target is `target`, the current release's date a person set;
+  a sprint's end is never the project's target. `flow` covers the last 30 days: each finished
   issue's cycle time, the issues finished (each once), those sent back (a return), and
-  the issues whose first model attempt passed its checks. Health is not
-  recorded yet (teams NEW-teams-11): `healthWritable` is false and `health`
-  null until that route exists. Read-only; `501` on a read-only server.
+  the issues whose first model attempt passed its checks. Read-only; `501`
+  on a read-only server.
+- `POST /api/projects/:id/health` with `{ health: "on_track" | "at_risk" |
+  "off_track" }` records `project/health_set { project, health }` with the
+  person as principal and returns `{ health: { value, by, at } }` (teams
+  TEAM-28). In the Team setup only the project's lead (`project.health`,
+  the lead alone: an Admin who does not lead it is refused too, and with no
+  lead named the refusal says an Admin names one); in Solo the one person.
+  `400` for another word, `404` for no such project. A model never sets it:
+  no Seshat path calls it, and a health event with no person is not read.
+- `POST /api/slices/:id/target` with `{ date: "YYYY-MM-DD" | null }` records
+  `release/target_set { sliceId, projectId, target? }` (no `target` clears
+  it) with the person as principal and returns `{ target: { release, date }
+  | null }` (dashboard DB-N9-3). The project lead or an Admin
+  (`release.target`, checked on the release's own project); `400` for a day
+  that does not exist, `404` for no such release.
 - `GET /api/signals?project=` returns `{ signals: { id, value, threshold?,
      triggered, detail, epicId?, response: { action, mode, targets } }[] }`
   (`status_api.ts` `projectSignals` over planner `computeSignals`): the live
@@ -403,8 +708,8 @@ from one read:
   (`statusFacts`, above); `lead` is "you" for the asker and, in Solo, always
   "you"; `release` is the story map's current release (Status's
   `currentRelease`: the first not done), requirements done of those not cut;
-  `target` is null: a release's target date is not recorded yet, and a
-  sprint's end is not a project's target (DEC-37). `waiting` holds what waits on
+  `target` is Status's: the current release's date a person set, else null
+  — a sprint's end is never a project's target (DEC-37). `waiting` holds what waits on
   the person — an issue in review, a pending decision on an issue, a parked
   issue, a plan waiting for approval of its criteria (as Status's *Needs you*) — theirs, or unowned where they lead (in Solo, all), with when it
   began waiting. `shippedThisMonth` counts issues moved to Done in the
@@ -412,8 +717,8 @@ from one read:
   finished today (a person's take-over is not the Agent's). `models` is the
   roster (`/api/models`' roles), the Coding model's qualified slots (RUN-35)
   with the issues In progress, the Ready issues waiting (`/api/queue/standing`)
-  and the machine's memory. `health` stays null until teams NEW-teams-11
-  records it. Read-only; `501` on a read-only server.
+  and the machine's memory. `health` is Status's: the lead's, with their
+  name and the date (TEAM-28). Read-only; `501` on a read-only server.
 
 ### Board practices
 

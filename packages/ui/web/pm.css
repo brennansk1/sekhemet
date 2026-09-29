@@ -1129,7 +1129,16 @@ body.pm-open .col {
 .rp-foot {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 12px;
+}
+/* TEAM-20: the Member or Admin a Stakeholder sends the plan to. */
+.rp-approver {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 @media (max-width: 767px) {
   .rp-dialog {

@@ -55,6 +55,26 @@ describe("the role evaluations' events", () => {
     expect(() =>
       checkEventPayload("measure/reviewer_seeded", { ...run, recall: 1.5 }, undefined),
     ).toThrow(/recall/);
+    // F25: the failed reviews and each one's reason; an event without them still reads.
+    const failedRun = {
+      ...run,
+      reviewed: 21,
+      failed: 1,
+      perItem: [
+        ...run.perItem,
+        {
+          id: "onyx-vault-key-lower-tail",
+          caught: false,
+          falsePositives: 0,
+          failed: "the Review model's reply held no readable JSON",
+        },
+      ],
+      passes: false,
+    };
+    expect(() => checkEventPayload("measure/reviewer_seeded", failedRun, undefined)).not.toThrow();
+    expect(() =>
+      checkEventPayload("measure/reviewer_seeded", { ...failedRun, failed: -1 }, undefined),
+    ).toThrow(/failed/);
   });
 
   it("accept the send-back share with its verdict only", () => {

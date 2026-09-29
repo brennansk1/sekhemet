@@ -106,6 +106,56 @@ describe("PM-N9-6: neutral reminders, to the owner, within the budget", () => {
     n.stop();
   });
 
+  it("in the Team setup, Update due reaches the project's lead, named, though another person runs the notifier (TEAM-29)", async () => {
+    const { log, cards } = ledger();
+    const project = (await cards.ensureProject({ rootPath: repo, name: "Fixture" })).id;
+    log.appendNow({
+      actor: "system",
+      type: "person/created",
+      principal: "p_lee",
+      payload: { principal: "p_lee" },
+      private: { name: "Lee Lead" },
+    });
+    await log.append({
+      actor: "human",
+      type: "project/settings_changed",
+      principal: log.localPrincipal(),
+      payload: { project, lead: "p_lee" },
+    });
+    writePush(repo, { kind: "ntfy", url: "https://ntfy.sh", topic: "t", events: ["reminder"] });
+    const sent: { title: string; body: string }[] = [];
+    const fetch = (async (_u: string, init?: RequestInit) => {
+      const h = init?.headers as Record<string, string>;
+      sent.push({ title: h.Title ?? "", body: String(init?.body) });
+      return new Response("ok");
+    }) as typeof globalThis.fetch;
+    const eightDays = () => {
+      const d = new Date(Date.now() + 8 * 86_400_000);
+      d.setHours(10, 0, 0, 0);
+      return d;
+    };
+    const n = await startNotifier(log, repo, {
+      intervalMs: 60_000,
+      fetch,
+      now: eightDays,
+      standupAt: "09:00",
+      setup: "team",
+    });
+    await n.tick();
+    expect(sent).toEqual([
+      {
+        title: "For Lee Lead: Update due",
+        // Ten in the morning eight days on: seven or eight whole days, by the hour now.
+        body: expect.stringMatching(
+          /^Fixture: no project update posted since the project started [78] days ago\.$/,
+        ),
+      },
+    ]);
+    await n.tick();
+    expect(sent).toHaveLength(1);
+    n.stop();
+  });
+
   it("in the Team setup, an unowned issue's review reminder goes to the project's lead", async () => {
     const { log, cards } = ledger();
     const project = (await cards.ensureProject({ rootPath: repo, name: "Fixture" })).id;

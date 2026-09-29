@@ -265,6 +265,57 @@ describe("the shared queue on the ledger (RUN-34, TEAM-30)", () => {
     ]);
   });
 
+  it("B4.11 T6: says the cap is why a person's issue waits, on the reply, the queue and the issue (TEAM-30)", async () => {
+    process.env.SEKHEMET_USER_CONFIG = join(repo, "none.toml");
+    await card("card_x", "p_a", "in_progress");
+    await card("card_b", "p_b");
+    await store.createCard({ id: "card_a", tier: "task", title: "a", status: "ready" });
+    server = await startDashboardServer({
+      db,
+      log,
+      boardService: new BoardServiceImpl(store),
+      cardStore: store,
+      repoPath: repo,
+      port: 0,
+      streamIntervalMs: 10_000,
+      setup: "team",
+      requester: () => "p_a",
+    });
+    log.appendNow({
+      actor: "system",
+      type: "member/joined",
+      principal: "p_a",
+      payload: { principal: "p_a", level: "admin", via: "invite", pending: false },
+    });
+    const at = `http://127.0.0.1:${server.port}`;
+    const res = await fetch(`${at}/api/cards/card_a/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+      body: "{}",
+    });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.capNote).toBe(
+      "You have 1 Agent issue running and the limit is 1 per person, so other people's issues go first.",
+    );
+    const entries = (
+      (await (await fetch(`${at}/api/queue/standing`)).json()) as {
+        entries: { cardId: string; capped?: { cap: number; running: number } }[];
+      }
+    ).entries;
+    expect(entries.find((e) => e.cardId === "card_a")?.capped).toEqual({ cap: 1, running: 1 });
+    expect(entries.find((e) => e.cardId === "card_b")?.capped).toBeUndefined();
+    // The issue's AI line gives the place, the estimate and the reason, before any model replies.
+    const detail = (await (await fetch(`${at}/api/cards/card_a`)).json()) as {
+      ai: { who: string; state: string; standing?: string }[];
+    };
+    const agent = detail.ai.find((a) => a.who === "agent");
+    expect(agent?.state).toBe("queued");
+    expect(agent?.standing).toMatch(
+      /^2nd in queue, about \d+ minutes?; you have 1 Agent issue running and the limit is 1 per person, so other people's issues go first$/,
+    );
+  });
+
   it("says why each waiting card waits: all slots busy, or its files overlap a running card's (RUN-35)", async () => {
     process.env.SEKHEMET_USER_CONFIG = join(repo, "none.toml");
     const make = (id: string, scopeFiles: string[], status: "ready" | "in_progress" = "ready") =>

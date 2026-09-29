@@ -8,6 +8,7 @@ import { esc, icon } from "./dom.js";
 import { filesTableHtml } from "./files.js";
 import { ISSUE_COPY, addLineComment, lineCommentLabel, removeLineComment } from "./lib/issue.js";
 import { recordShown } from "./review_desk.js";
+import { replyInThread, threadAction, threadsHtml } from "./threads.js";
 
 const C = ISSUE_COPY.lineComment;
 
@@ -40,7 +41,7 @@ function commentsHtml(comments, files, draft, problem, canSend) {
  * comments where Send back can read them.
  */
 export function renderChanges(host, ctx) {
-  const state = { draft: { file: "", line: "", text: "" }, problem: undefined };
+  const state = { draft: { file: "", line: "", text: "" }, problem: undefined, replies: {} };
 
   const files = () => {
     const ev = ctx.detail()?.evidence;
@@ -69,7 +70,9 @@ export function renderChanges(host, ctx) {
           card.status === "review" || card.status === "parked",
         )
       : "";
-    host.innerHTML = `${filesTableHtml(card, detail)}${comments}${ctx.pane.changesOnlyHtml(card, detail)}`;
+    // Teams item 25: the review threads a Comment opened, with Reply and Resolve.
+    const threads = threadsHtml(detail.desk, state.replies);
+    host.innerHTML = `${filesTableHtml(card, detail)}${threads}${comments}${ctx.pane.changesOnlyHtml(card, detail)}`;
     if (keepScroll) host.scrollTop = top;
     shown();
   };
@@ -101,6 +104,13 @@ export function renderChanges(host, ctx) {
     if (!t) return;
     // The pane toggles the file on the page root, after this listener.
     if (t.closest("[data-toggle]")) setTimeout(shown, 0);
+    const act = t.closest("[data-rt-act]");
+    if (act && !act.disabled) {
+      void threadAction(ctx.id, act.dataset.thread, act.dataset.rtAct).then(
+        (done) => done && ctx.reloadDetail?.(),
+      );
+      return;
+    }
     const rm = t.closest("[data-lc-remove]");
     if (rm) {
       ctx.setComments(removeLineComment(ctx.comments(), Number(rm.dataset.lcRemove)));
@@ -144,6 +154,19 @@ export function renderChanges(host, ctx) {
   });
 
   host.addEventListener("submit", (e) => {
+    const reply = e.target instanceof Element ? e.target.closest("[data-rt-reply]") : null;
+    if (reply) {
+      e.preventDefault();
+      const thread = reply.dataset.rtReply;
+      const text = reply.elements.text?.value.trim() ?? "";
+      if (!text) return;
+      void replyInThread(ctx.id, thread, text).then((done) => {
+        if (!done) return;
+        delete state.replies[thread];
+        ctx.reloadDetail?.();
+      });
+      return;
+    }
     const form = e.target instanceof Element ? e.target.closest("[data-lc-form]") : null;
     if (!form) return;
     e.preventDefault();
@@ -164,6 +187,8 @@ export function renderChanges(host, ctx) {
 
   // Typing in the form is kept across the redraws a stream frame causes.
   host.addEventListener("input", (e) => {
+    const reply = e.target instanceof Element ? e.target.closest("[data-rt-reply]") : null;
+    if (reply) state.replies[reply.dataset.rtReply] = reply.elements.text?.value ?? "";
     const form = e.target instanceof Element ? e.target.closest("[data-lc-form]") : null;
     if (form) readDraft(form);
   });

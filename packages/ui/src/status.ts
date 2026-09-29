@@ -13,6 +13,7 @@
  * `web/status.js` renders this; the browser loads it as `/app/lib/status.js`.
  */
 import { type CycleLike, activeCycle, formatHours, formatShortDate, percentile } from "./pm.js";
+import { startRequestLine } from "./teammates.js";
 import { formatWait, parseTitle, plural, stopReasonLabel } from "./vocabulary.js";
 
 // --- Inputs ------------------------------------------------------------------
@@ -39,11 +40,17 @@ export interface StatusFacts {
   project?: { id: string; name: string } | null;
   /** The viewer leads the project (or, in Solo, is its one person). */
   isLead: boolean;
-  /** The viewer may set health: the project lead or a release lead (TEAM-28). */
+  /** The viewer may set health: the project lead (TEAM-28, `project.health`). */
   canSetHealth: boolean;
-  /** Whether the server records health yet (B4.11, teams NEW-teams-11). */
+  /** Whether the server records health (`POST /api/projects/:id/health`, teams NEW-teams-11). */
   healthWritable: boolean;
   health?: { value: HealthValue; by: string; at: string } | null;
+  /** The current release: the first no person has accepted (DB-N9-3). */
+  release?: { id: string; name: string } | null;
+  /** The current release's target date, as a person set it (DB-N9-3, DEC-37). */
+  target?: { release: string; date: string; by: string; at: string } | null;
+  /** The viewer may set it: the project lead or an Admin (`release.target`); always in Solo. */
+  canSetTarget?: boolean;
   update?: { text: string; by: string; at: string } | null;
   /** Team only: 7 days without a posted update, shown to the lead (TEAM-29). */
   updateMissing: boolean;
@@ -62,6 +69,11 @@ export interface StatusFacts {
     minimum: number;
   };
   acceptedThisWeek: { title: string; by: string; at: string }[];
+  /**
+   * Teams TEAM-39, item 19a: Stakeholders' and Viewers' requests to start the
+   * Agent that wait on the viewer — who asked (a name) and what.
+   */
+  agentRequests?: { id: string; cardId: string; title: string; requestedBy: string; ask: string }[];
   /** The project's flow over the last `days` (Insights has the charts). */
   flow: {
     days: number;
@@ -143,15 +155,17 @@ export interface KeyNumber {
 export interface StatusButton {
   label: string;
   href?: string;
-  act?: "unpark" | "slice-accept" | "slice-cut" | "slice-extend";
+  act?: "unpark" | "slice-accept" | "slice-cut" | "slice-extend" | "agent-start" | "agent-decline";
   id?: string;
+  /** The issue an act is about, when `id` names something on it (a start request). */
+  card?: string;
   ids?: string[];
   /** Extend: the release's card appetite now, which the new one must exceed. */
   cards?: number;
 }
 
 export interface NeedsYouItem {
-  kind: "review" | "decision" | "parked" | "slice" | "plan";
+  kind: "review" | "decision" | "parked" | "slice" | "plan" | "agent_request";
   text: string;
   buttons: StatusButton[];
 }
@@ -177,6 +191,12 @@ export interface StatusView {
   headline: string;
   health: { text: string; tone: StatusTone } | null;
   setHealth: boolean;
+  /** The health picker's choices, in order, and the one set now (TEAM-28). */
+  healthChoices: { value: HealthValue; label: string; checked: boolean }[];
+  /** The current release's target line: *Target 20 Nov · set by Lee · 28 Sep*, or null. */
+  target: string | null;
+  /** *Set target date* for the current release, to the lead or an Admin (DB-N9-3); null otherwise. */
+  setTarget: { release: string; name: string; date: string | null } | null;
   update: { text: string; byline: string } | null;
   updateMissing: string | null;
   writeUpdate: boolean;
@@ -224,6 +244,18 @@ export const STATUS_COPY = {
   title: "Status",
   writeUpdate: "Write update",
   setHealth: "Set health",
+  healthLegend: "Project health",
+  healthHint:
+    "Your call as the project lead: it shows with your name and today's date. Seshat never sets it.",
+  setTarget: "Set target date",
+  changeTarget: "Change target date",
+  targetLabel: "Target date",
+  targetHint:
+    "The day this release should be done. Status draws it as a line against the forecast range.",
+  clearTarget: "Clear target",
+  healthSaved: "Health set.",
+  targetSaved: "Target date set.",
+  targetCleared: "Target date cleared.",
   updateLabel: "Project update",
   updateHint:
     "Seshat drafted this from the project's history in five parts: status, done, next, risks and asks. Edit it; nothing is posted until you press Post.",
@@ -502,12 +534,18 @@ export function statusModel(input: StatusInput): StatusView {
   const forecast: StatusView["forecast"] = {};
   let forecastNumber: KeyNumber;
   const dates = forecastDates(fc, now);
+  // The current release's target date, as a person set it (DB-N9-3): the line on the
+  // burn-up and the last part of the forecast, never a date the forecast made.
+  const targetDate = facts?.target?.date;
+  if (targetDate) forecast.target = targetDate;
+  const targetWords = targetDate ? `target ${formatShortDate(targetDate)}` : "no target set";
+  const targetNote = targetDate ? ` Target ${formatShortDate(targetDate)}.` : "";
   if (fc && allDone(fc)) {
     forecastNumber = {
       id: "forecast",
       label: "Forecast",
       value: "All issues done",
-      detail: `${plural(fc.finished, "issue")} finished in the last ${plural(fc.historyDays, "day")}; none left.`,
+      detail: `${plural(fc.finished, "issue")} finished in the last ${plural(fc.historyDays, "day")}; none left.${targetNote}`,
     };
   } else if (fc && dates) {
     const { p50, p85 } = dates;
@@ -515,7 +553,7 @@ export function statusModel(input: StatusInput): StatusView {
     forecastNumber = {
       id: "forecast",
       label: "Forecast",
-      value: `50% ${formatShortDate(p50)} · 85% ${formatShortDate(p85)} · no target set`,
+      value: `50% ${formatShortDate(p50)} · 85% ${formatShortDate(p85)} · ${targetWords}`,
       detail: `From ${plural(fc.historyDays, "day")} of finished issues; ${plural(fc.remaining, "issue")} left.`,
     };
   } else {
@@ -525,7 +563,7 @@ export function statusModel(input: StatusInput): StatusView {
       id: "forecast",
       label: "Forecast",
       value: "Not enough history yet",
-      detail: `A range needs ${plural(need, "day")} of history with finished issues: ${plural(have, "day")} so far, ${fc?.finished ?? 0} finished.`,
+      detail: `A range needs ${plural(need, "day")} of history with finished issues: ${plural(have, "day")} so far, ${fc?.finished ?? 0} finished.${targetNote}`,
     };
   }
 
@@ -634,6 +672,22 @@ export function statusModel(input: StatusInput): StatusView {
       kind: "decision",
       text: `A question waits for your answer: ${withTitles(d.question, titles)}`,
       buttons: [{ label: "Answer", href: "#/inbox" }],
+    });
+  }
+  // TEAM-39: "Dana asked the Agent to … Start it?" — the server lists only those waiting on the viewer.
+  for (const r of facts?.agentRequests ?? []) {
+    const line = startRequestLine({
+      requestedBy: r.requestedBy,
+      ask: r.ask,
+      title: titleOf(r.title),
+    });
+    needs.push({
+      kind: "agent_request",
+      text: line.text,
+      buttons: [
+        { label: line.start, act: "agent-start", id: r.id, card: r.cardId },
+        { label: line.decline, act: "agent-decline", id: r.id, card: r.cardId },
+      ],
     });
   }
   for (const c of work.filter((x) => x.status === "parked" && mine(x))) {
@@ -824,6 +878,18 @@ export function statusModel(input: StatusInput): StatusView {
     headline,
     health,
     setHealth: Boolean(facts?.healthWritable && facts.canSetHealth),
+    healthChoices: (Object.keys(HEALTH_LABELS) as HealthValue[]).map((value) => ({
+      value,
+      label: HEALTH_LABELS[value].label,
+      checked: facts?.health?.value === value,
+    })),
+    target: facts?.target
+      ? `${facts.release?.name ?? "Release"} target ${formatShortDate(facts.target.date)} · set by ${facts.target.by} · ${formatShortDate(facts.target.at)}`
+      : null,
+    setTarget:
+      facts?.release && facts.canSetTarget
+        ? { release: facts.release.id, name: facts.release.name, date: facts.target?.date ?? null }
+        : null,
     update,
     updateMissing,
     writeUpdate: Boolean(facts?.canPostUpdate),

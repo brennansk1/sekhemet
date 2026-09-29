@@ -620,6 +620,10 @@ describe("ledger sentences for Seshat, research, reproducibility and compute", (
       quote: "What is blocking the ledger?",
     });
     expect(eventSentence(ev("pm/message", "human", { text: "/status" })).verb).toBe("ran");
+    // B4.11: a message's text is in its private part, when the reader was given it.
+    expect(
+      eventSentence({ ...ev("pm/message", "human", {}), private: { text: "Is the ledger done?" } }),
+    ).toMatchObject({ verb: "asked Seshat", quote: "Is the ledger done?" });
     const reply = eventSentence(
       ev("pm/reply", "planner", {
         text: "\nThe hasher is next.\nThen the verifier.",

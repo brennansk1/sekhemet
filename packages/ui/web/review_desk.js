@@ -17,6 +17,7 @@ import {
   reviewerFindings,
   supersessionRows,
   testApprovalRows,
+  threadBlocker,
 } from "./lib/review_desk.js";
 import { reportOpened, reportedFiles } from "./opened.js";
 import { store } from "./store.js";
@@ -64,6 +65,9 @@ export function deskBlocker(card, detail) {
   if (!desk) return "";
   const who = acceptPermissionText(desk.accept ?? { may: true });
   if (who) return who;
+  // TEAM-25: a project that requires resolved threads waits on the open one, named.
+  const thread = threadBlocker(desk);
+  if (thread) return thread;
   return acceptBlockers({
     openFindings: findingsOf(card, detail).open,
     implementationFiles: desk.implementationFiles ?? [],

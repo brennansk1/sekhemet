@@ -200,33 +200,33 @@ function controls(e) {
       const dis = !e.connected ? " disabled" : "";
       const anyBusy = ["pull", "push", "both"].some(busy);
       const b = (dir, label, primary) =>
-        `<button class="btn sm${primary ? " primary" : ""}" type="button" data-sync="${dir}"${dis || (anyBusy ? " disabled" : "")}>${busy(dir) ? "Syncing with GitHub…" : esc(label)}</button>`;
+        `<button class="btn sm${primary ? " primary" : ""}" type="button" data-sync="${dir}" data-needs="integration.connect"${dis || (anyBusy ? " disabled" : "")}>${busy(dir) ? "Syncing with GitHub…" : esc(label)}</button>`;
       return `<div class="iacts">${b("pull", "Pull")}${b("push", "Push")}${b("both", "Sync both", true)}<a class="btn sm ghost" href="/api/export?format=github-json" download>${icon("download", 12, "ic s12")}Export GitHub JSON</a></div>${res}`;
     }
     case "github-pr": {
       const on = Boolean(e.enabled ?? e.connected);
-      return `<div class="iacts"><button class="switch" type="button" role="switch" aria-checked="${on}" aria-label="Open a pull request on Accept" data-toggle-pr ${busy("pr") ? "disabled" : ""}><span></span></button><span class="sec">${on ? "Accept opens a pull request." : "Accept merges locally as one commit."}</span></div>`;
+      return `<div class="iacts"><button class="switch" type="button" role="switch" aria-checked="${on}" aria-label="Open a pull request on Accept" data-toggle-pr data-needs="integration.connect" ${busy("pr") ? "disabled" : ""}><span></span></button><span class="sec">${on ? "Accept opens a pull request." : "Accept merges locally as one commit."}</span></div>`;
     }
     case "research-web": {
       const on = Boolean(e.enabled ?? e.connected);
-      return `<div class="iacts"><button class="switch" type="button" role="switch" aria-checked="${on}" aria-label="Research model web access" data-toggle-web ${busy("web") ? "disabled" : ""}><span></span></button><span class="sec">${on ? "The Research model may use the web." : "The Research model stays on this machine."}</span></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
+      return `<div class="iacts"><button class="switch" type="button" role="switch" aria-checked="${on}" aria-label="Research model web access" data-toggle-web data-needs="integration.connect" ${busy("web") ? "disabled" : ""}><span></span></button><span class="sec">${on ? "The Research model may use the web." : "The Research model stays on this machine."}</span></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
     }
     case "push": {
       if (e.connected) {
-        return `<div class="iacts"><button class="btn sm" type="button" data-push-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test alert"}</button><button class="btn sm ghost" type="button" data-push-off>Disconnect</button></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
+        return `<div class="iacts"><button class="btn sm" type="button" data-push-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test alert"}</button><button class="btn sm ghost" type="button" data-push-off data-needs="integration.connect">Disconnect</button></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
       }
-      return `<form class="iacts push-form" data-push-form><select name="kind" aria-label="Server"><option value="ntfy">ntfy</option><option value="gotify">Gotify</option></select><input name="url" type="url" required placeholder="https://ntfy.sh or http://192.168.1.5:8080" aria-label="Server URL" autocomplete="off" spellcheck="false"><input name="topic" type="text" placeholder="Topic (ntfy)" aria-label="ntfy topic" autocomplete="off" spellcheck="false"><input name="token" type="password" placeholder="Token (optional for ntfy, required for Gotify)" aria-label="Access token" autocomplete="off"><button class="btn sm primary" type="submit" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The server URL and token stay in <code>~/.config/sekhemet/repos/…</code> with mode 0600, never in the repository or the ledger.</span></p>`;
+      return `<form class="iacts push-form" data-push-form><select name="kind" aria-label="Server"><option value="ntfy">ntfy</option><option value="gotify">Gotify</option></select><input name="url" type="url" required placeholder="https://ntfy.sh or http://192.168.1.5:8080" aria-label="Server URL" autocomplete="off" spellcheck="false"><input name="topic" type="text" placeholder="Topic (ntfy)" aria-label="ntfy topic" autocomplete="off" spellcheck="false"><input name="token" type="password" placeholder="Token (optional for ntfy, required for Gotify)" aria-label="Access token" autocomplete="off"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The server URL and token stay in <code>~/.config/sekhemet/repos/…</code> with mode 0600, never in the repository or the ledger.</span></p>`;
     }
     case "jira":
     case "linear": {
       const f = `${e.id}-csv`;
-      return `<div class="iacts"><a class="btn sm" href="/api/export?format=${f}" download>${icon("download", 12, "ic s12")}Export ${esc(e.name)} CSV</a><button class="btn sm ghost" type="button" data-import="${f}">${icon("upload", 12, "ic s12")}Import…</button></div>`;
+      return `<div class="iacts"><a class="btn sm" href="/api/export?format=${f}" download>${icon("download", 12, "ic s12")}Export ${esc(e.name)} CSV</a><button class="btn sm ghost" type="button" data-import="${f}" data-needs="issue.create">${icon("upload", 12, "ic s12")}Import…</button></div>`;
     }
     case "slack": {
       if (e.connected) {
-        return `<div class="iacts"><button class="btn sm" type="button" data-slack-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test message"}</button><button class="btn sm ghost" type="button" data-slack-off>Disconnect</button></div>`;
+        return `<div class="iacts"><button class="btn sm" type="button" data-slack-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test message"}</button><button class="btn sm ghost" type="button" data-slack-off data-needs="integration.connect">Disconnect</button></div>`;
       }
-      return `<form class="iacts slack-form" data-slack-form><input type="url" required placeholder="https://hooks.slack.com/services/…" aria-label="Slack incoming webhook URL" autocomplete="off" spellcheck="false"><button class="btn sm primary" type="submit" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The webhook URL is a credential. Sekhemet keeps it in <code>~/.config/sekhemet/repos/…</code> with mode 0600, never in the repository or the ledger.</span></p>`;
+      return `<form class="iacts slack-form" data-slack-form><input type="url" required placeholder="https://hooks.slack.com/services/…" aria-label="Slack incoming webhook URL" autocomplete="off" spellcheck="false"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The webhook URL is a credential. Sekhemet keeps it in <code>~/.config/sekhemet/repos/…</code> with mode 0600, never in the repository or the ledger.</span></p>`;
     }
     default:
       return "";

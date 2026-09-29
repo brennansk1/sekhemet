@@ -216,6 +216,12 @@ export interface LocalInferenceAdapter {
    */
   readonly remote?: boolean;
   generate(req: InferenceRequest): Promise<InferenceResponse>;
+  /**
+   * The thinking tokens this adapter would add to the request's answer cap
+   * (worker-loop rule 22): 0 for a model it would not let think. A caller
+   * that budgets a prompt reserves this, not a fixed cap (live-test F25).
+   */
+  thinkingAllowance?(req: Pick<InferenceRequest, "reasoning" | "reasoningBudgetTokens">): number;
   /** Health contract (M4); every adapter in this package implements it. */
   healthCheck?(): Promise<AdapterHealth>;
 }

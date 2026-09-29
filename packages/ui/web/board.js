@@ -20,6 +20,7 @@ import {
 } from "./lib/columns.js";
 import { QUICK_CREATE_COPY, epicFromFilter } from "./lib/create.js";
 import { columnLessonId } from "./lib/learn.js";
+import { draggedBy } from "./lib/live.js";
 import { formatQuery } from "./lib/pm.js";
 import { START_PROJECT_OPENING } from "./lib/seshat.js";
 import { GATE_STATE_LABELS, formatDuration } from "./lib/vocabulary.js";
@@ -28,7 +29,9 @@ import * as mapView from "./map.js";
 import { openMenu } from "./overlay.js";
 import { openPeek, peekOpenFor } from "./peek.js";
 import { askMerit, togglePmPanel } from "./pm_panel.js";
+import { announceDrag } from "./presence.js";
 import { bindReorder } from "./reorder.js";
+import { getSession } from "./session.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
 import { tileHtml } from "./tile.js";
@@ -269,6 +272,8 @@ function tileOpts(card) {
     estimation: store.state.estimation,
     hidePriority: vb.group === "priority",
     epics: store.state.epics,
+    // DB-N9-20: the others dragging this card, from the stream's presence frame.
+    draggedBy: draggedBy(store.state.presence, card.id, getSession().principal),
   };
 }
 
@@ -826,6 +831,12 @@ export function mount(view, route) {
   container.addEventListener("click", onClick);
   // B11: drag (or Alt+Up/Down) to reorder cards within a column.
   bindReorder(container);
+  // DB-N9-20: the others see this person's avatar on the card being dragged.
+  container.addEventListener("dragstart", (e) => {
+    const tile = e.target instanceof Element ? e.target.closest(".tile") : null;
+    if (tile?.dataset.id) announceDrag(tile.dataset.id);
+  });
+  container.addEventListener("dragend", () => announceDrag(null));
   container.addEventListener("dblclick", (e) => {
     const tile = e.target instanceof Element ? e.target.closest(".tile") : null;
     if (tile) openPeek(tile.dataset.id, { returnFocus: tile });

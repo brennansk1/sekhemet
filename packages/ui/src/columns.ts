@@ -20,7 +20,7 @@ import {
 /** The subset of a board card the columns read. */
 export interface ColumnCardLike extends PmCardLike {
   status: string;
-  hold?: { kind: string };
+  hold?: { kind: string; dismissed?: boolean };
   display?: NonNullable<PmCardLike["display"]> & { enteredColumnAt?: string };
 }
 
@@ -172,7 +172,10 @@ function limitOf<C extends ColumnCardLike>(
   const facts = reviewCol ? input.reviewLimit : undefined;
   const limit = facts?.limit ?? input.wipLimits?.[col.states[0] as string];
   if (typeof limit !== "number" || !Number.isFinite(limit)) return undefined;
-  const held = reviewCol ? all.filter((c) => c.hold?.kind === "awaitingMerge").length : 0;
+  // An accept dismissed by new commits waits for a decision again (TEAM-24).
+  const held = reviewCol
+    ? all.filter((c) => c.hold?.kind === "awaitingMerge" && !c.hold.dismissed).length
+    : 0;
   const count = all.length - held;
   const state = count > limit ? "over" : count === limit ? "full" : "";
   const derivation = facts

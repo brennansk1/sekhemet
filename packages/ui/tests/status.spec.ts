@@ -304,6 +304,18 @@ describe("the page's sections and words (§2.8's order, DB-N9-1)", () => {
       title: "Status",
       writeUpdate: "Write update",
       setHealth: "Set health",
+      healthLegend: "Project health",
+      healthHint:
+        "Your call as the project lead: it shows with your name and today's date. Seshat never sets it.",
+      setTarget: "Set target date",
+      changeTarget: "Change target date",
+      targetLabel: "Target date",
+      targetHint:
+        "The day this release should be done. Status draws it as a line against the forecast range.",
+      clearTarget: "Clear target",
+      healthSaved: "Health set.",
+      targetSaved: "Target date set.",
+      targetCleared: "Target date cleared.",
       updateLabel: "Project update",
       updateHint:
         "Seshat drafted this from the project's history in five parts: status, done, next, risks and asks. Edit it; nothing is posted until you press Post.",
@@ -761,5 +773,97 @@ describe("Status in the Team setup (DB-N9-2, DB-N9-4, DB-N9-7, DB-N9-21)", () =>
       empty: "No one is working on an issue right now.",
     });
     expect(words(v.working).join(" ")).not.toMatch(/\d/);
+  });
+});
+
+describe("TEAM-39: a request to start the Agent in Needs you", () => {
+  it("names who asked and what, and offers Start and Decline", () => {
+    const facts: StatusFacts = {
+      ...solo,
+      setup: "team",
+      isLead: false,
+      agentRequests: [
+        {
+          id: "asr_1",
+          cardId: "card_login",
+          title: "Login",
+          requestedBy: "Dana",
+          ask: "@Agent fix the login redirect",
+        },
+      ],
+    };
+    const item = statusModel(input({ facts })).needsYou.items.find(
+      (i) => i.kind === "agent_request",
+    );
+    expect(item).toEqual({
+      kind: "agent_request",
+      text: "Dana asked the Agent to work on Login: “@Agent fix the login redirect”. Start it?",
+      buttons: [
+        { label: "Start", act: "agent-start", id: "asr_1", card: "card_login" },
+        { label: "Decline", act: "agent-decline", id: "asr_1", card: "card_login" },
+      ],
+    });
+  });
+});
+
+describe("B4.11 T6: health a person sets and a release's target date (TEAM-28, DB-N9-2, DB-N9-3)", () => {
+  const ranged = {
+    remaining: 5,
+    p50Days: 3,
+    p85Days: 6,
+    historyDays: 9,
+    finished: 6,
+    minimum: 5,
+  };
+  const lead: StatusFacts = {
+    ...solo,
+    setup: "team",
+    isLead: true,
+    canSetHealth: true,
+    healthWritable: true,
+    health: { value: "off_track", by: "you", at: "2026-09-26T10:00:00.000Z" },
+    release: { id: "SLICE-2", name: "Release 2" },
+    target: { release: "SLICE-2", date: "2026-10-09", by: "Lee", at: "2026-09-25T09:00:00.000Z" },
+    canSetTarget: true,
+    forecast: ranged,
+  };
+
+  it("offers the lead the three health words, the one set now checked", () => {
+    const v = statusModel(input({ facts: lead }));
+    expect(v.setHealth).toBe(true);
+    expect(v.healthChoices).toEqual([
+      { value: "on_track", label: "On track", checked: false },
+      { value: "at_risk", label: "At risk", checked: false },
+      { value: "off_track", label: "Off track", checked: true },
+    ]);
+    expect(v.health).toEqual({ text: "Off track · set by you · Sep 26", tone: "fail" });
+  });
+
+  it("DB-N9-3: the forecast range ends with the release's target, drawn as the burn-up's line", () => {
+    const v = statusModel(input({ facts: lead }));
+    expect(v.numbers[0]?.value).toBe("50% Sep 30 · 85% Oct 3 · target Oct 9");
+    expect(v.forecast).toEqual({
+      band: { from: "2026-09-30", to: "2026-10-03" },
+      target: "2026-10-09",
+    });
+    expect(v.target).toBe("Release 2 target Oct 9 · set by Lee · Sep 25");
+    expect(v.setTarget).toEqual({ release: "SLICE-2", name: "Release 2", date: "2026-10-09" });
+    // Too little history: still no single date, and the target is still said.
+    const short = statusModel(
+      input({
+        facts: { ...lead, forecast: { ...ranged, p50Days: undefined, p85Days: undefined } },
+      }),
+    );
+    expect(short.numbers[0]?.value).toBe("Not enough history yet");
+    expect(short.numbers[0]?.detail).toMatch(/ Target Oct 9\.$/);
+  });
+
+  it("offers Set target date only where the server says the viewer may, and only with a release", () => {
+    expect(statusModel(input({ facts: { ...lead, canSetTarget: false } })).setTarget).toBeNull();
+    expect(statusModel(input({ facts: { ...lead, release: null } })).setTarget).toBeNull();
+    const none = statusModel(input({ facts: { ...lead, target: null } }));
+    expect(none.target).toBeNull();
+    expect(none.setTarget).toEqual({ release: "SLICE-2", name: "Release 2", date: null });
+    expect(none.numbers[0]?.value).toBe("50% Sep 30 · 85% Oct 3 · no target set");
   });
 });

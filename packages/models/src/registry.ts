@@ -9,7 +9,7 @@ import {
   combinationKey,
   describeCombination,
 } from "./qualification_key.js";
-import type { ModelRole, ToolArm } from "./types.js";
+import type { ModelRole, ReasoningLevel, ToolArm } from "./types.js";
 
 /**
  * The model registry (M11): the harness's memory of what works on this
@@ -173,7 +173,14 @@ export interface ModelEntry {
     minP?: number;
     penalties?: Record<string, number>;
   };
-  reasoning?: { supported: boolean; defaultBudget: number; stripTraces: boolean };
+  reasoning?: ModelReasoning;
+  /**
+   * The most thinking the server reported on a reply to a request resolved
+   * to off (live-test F25): the next such request's output allowance
+   * includes it. Measured, and kept apart from `reasoning` so an unmeasured
+   * model is never recorded as `supported`.
+   */
+  thinksWhenOff?: { tokens: number; at: string };
   /** The winning arm from qualification runs (measured, not assumed). */
   toolArm?: ToolArm;
   armMeasurements?: Partial<Record<ToolArm, ArmMeasurement>>;
@@ -213,6 +220,47 @@ export interface ModelEntry {
     /** When and by whom it was measured. */
     date?: string;
   };
+}
+
+/**
+ * A model's reasoning as the registry records it (MD-N4-2). `supported:
+ * false` turns every request's reasoning off.
+ */
+export interface ModelReasoning {
+  supported: boolean;
+  /** Thinking tokens a reasoning request gets when it states none; 0 takes the level's default. */
+  defaultBudget: number;
+  stripTraces: boolean;
+  /**
+   * Its chat template cannot turn reasoning off (live-test F25): a request
+   * for none resolves to `floor`, and its thinking is budgeted.
+   */
+  cannotDisable?: boolean;
+  /** The lowest level its template takes, when it cannot turn reasoning off. */
+  floor?: Exclude<ReasoningLevel, "off">;
+}
+
+/**
+ * GGUF architectures whose chat template cannot turn reasoning off, with
+ * the lowest level each takes (live-test F25). gpt-oss's harmony format
+ * takes low, medium or high; `reasoning_effort: "none"` and
+ * `enable_thinking: false` are ignored and it thinks anyway.
+ */
+export const REASONING_FLOOR_BY_ARCHITECTURE: Readonly<
+  Record<string, Exclude<ReasoningLevel, "off">>
+> = {
+  "gpt-oss": "low",
+};
+
+/**
+ * The reasoning a GGUF header's architecture implies, recorded at `models
+ * add`; undefined when the architecture sets nothing.
+ */
+export function reasoningFromArchitecture(architecture?: string): ModelReasoning | undefined {
+  const floor = architecture ? REASONING_FLOOR_BY_ARCHITECTURE[architecture] : undefined;
+  return floor
+    ? { supported: true, defaultBudget: 0, stripTraces: true, cannotDisable: true, floor }
+    : undefined;
 }
 
 /** SHA-256 of a chat template, hex. */

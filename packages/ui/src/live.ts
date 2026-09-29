@@ -111,3 +111,94 @@ export function runningRunText(
   const elapsed = formatWait(now - Date.parse(run.startedAt));
   return `Running · ${finished} of ${total} ${total === 1 ? "issue" : "issues"} · ${elapsed}`;
 }
+
+// ---------------------------------------------------------------------------
+// Presence (teams item 26, TEAM-26; dashboard DB-N9-20)
+// ---------------------------------------------------------------------------
+
+/** A person as an avatar, as the `presence` frame carries them. */
+export interface PresenceFace {
+  principal: string;
+  name: string;
+  initials: string;
+}
+
+/** The `presence` frame: who views which issue, who drags which card. In memory, never recorded. */
+export interface PresenceFrame {
+  issues: Record<string, PresenceFace[]>;
+  dragging: Record<string, PresenceFace[]>;
+}
+
+/** Every word presence shows. */
+export const PRESENCE_COPY = {
+  viewer: (name: string) => `${name} is viewing this issue`,
+  dragging: (name: string) => `${name} is moving this issue`,
+  viewing: (names: string[], more: number) => {
+    const all = more > 0 ? [...names, `${more} more`] : names;
+    const list =
+      all.length <= 1 ? (all[0] ?? "") : `${all.slice(0, -1).join(", ")} and ${all.at(-1)}`;
+    return `Also viewing: ${list}`;
+  },
+  more: (n: number) => `+${n}`,
+} as const;
+
+function faceOf(raw: unknown): PresenceFace | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  return typeof r.principal === "string" &&
+    typeof r.name === "string" &&
+    typeof r.initials === "string"
+    ? { principal: r.principal, name: r.name, initials: r.initials }
+    : undefined;
+}
+
+function facesMap(raw: unknown): Record<string, PresenceFace[]> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, PresenceFace[]> = {};
+  for (const [id, list] of Object.entries(raw as Record<string, unknown>)) {
+    out[id] = Array.isArray(list)
+      ? list.map(faceOf).filter((f): f is PresenceFace => f !== undefined)
+      : [];
+  }
+  return out;
+}
+
+/** A `presence` frame, with anything malformed left out. */
+export function presenceFrameOf(raw: unknown): PresenceFrame {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return { issues: facesMap(r.issues), dragging: facesMap(r.dragging) };
+}
+
+/**
+ * DB-N9-20: the other people viewing an issue, for its header — never the
+ * reader — at most `max` avatars and a count of the rest, with the label a
+ * screen reader hears. Empty when the reader is alone.
+ */
+export function viewersStrip(
+  frame: PresenceFrame,
+  issue: string,
+  reader: string | undefined,
+  max = 4,
+): { shown: PresenceFace[]; more: number; label: string } {
+  const others = (frame.issues[issue] ?? []).filter((f) => f.principal !== reader);
+  if (others.length === 0) return { shown: [], more: 0, label: "" };
+  const shown = others.slice(0, max);
+  const more = others.length - shown.length;
+  return {
+    shown,
+    more,
+    label: PRESENCE_COPY.viewing(
+      shown.map((f) => f.name),
+      more,
+    ),
+  };
+}
+
+/** DB-N9-20: the others dragging a card, whose avatar its tile shows. */
+export function draggedBy(
+  frame: PresenceFrame,
+  cardId: string,
+  reader: string | undefined,
+): PresenceFace[] {
+  return (frame.dragging[cardId] ?? []).filter((f) => f.principal !== reader);
+}

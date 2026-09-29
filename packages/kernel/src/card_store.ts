@@ -1369,6 +1369,39 @@ export class CardStore {
   }
 
   /**
+   * New commits landed on an accepted issue's branch before its pull request
+   * merged (teams TEAM-24; GitHub's dismissal of a stale approval): the
+   * accept is dismissed — `review/accept_dismissed {reason: new_commits}`
+   * naming the pull request, the new head and the accepter it no longer
+   * holds — its accepter clears and the issue waits in Review for a new
+   * decision, so the old accept can never take it to Done. The hold keeps
+   * the still-open pull request, marked `dismissed` at its new head.
+   */
+  public async dismissAccept(
+    id: string,
+    pr: { pr: number; headSha: string },
+    actor = "harness",
+  ): Promise<CardRecord> {
+    const card = await this.requireCard(id);
+    if (card.hold?.kind !== "awaitingMerge" || card.hold.pr !== pr.pr) {
+      throw new Error(`Card ${id} does not await pull request #${pr.pr}`);
+    }
+    await this.appendAndApply({
+      actor,
+      type: "review/accept_dismissed",
+      cardId: id,
+      payload: {
+        id,
+        reason: "new_commits",
+        pr: pr.pr,
+        headSha: pr.headSha,
+        ...(card.accepter ? { accepter: card.accepter } : {}),
+      },
+    });
+    return this.requireCard(id);
+  }
+
+  /**
    * Link a person's login on a tracker to their principal (integrations item
    * 6, NEW-integrations-2): `person/identity_linked {principal, system}`, the
    * login in the private part, erasable (rule 33). The latest link of a login
@@ -2237,6 +2270,19 @@ export class CardStore {
               : "UPDATE cards SET hold = NULL, accepter = NULL WHERE id = ?",
           )
           .run(p.id);
+        return true;
+      }
+      case "review/accept_dismissed": {
+        // TEAM-24: the accept no longer holds — the accepter clears and the
+        // issue waits in Review for a new decision. The pull request is still
+        // open on GitHub, so the hold keeps it, marked dismissed at its new
+        // head: a later merge of it is recorded, and a new Accept re-approves it.
+        const p = event.payload as { id: string; headSha?: string };
+        this.db
+          .prepare(
+            "UPDATE cards SET accepter = NULL, hold = CASE WHEN json_extract(hold, '$.kind') = 'awaitingMerge' THEN json_set(hold, '$.dismissed', json('true'), '$.headSha', coalesce(?, json_extract(hold, '$.headSha'))) ELSE hold END WHERE id = ?",
+          )
+          .run(p.headSha ?? null, p.id);
         return true;
       }
       case "card/delegated": {

@@ -297,6 +297,23 @@ interface CachedRun {
   fullSuite?: boolean;
   /** Package directories whose test files the functional gate leaves out. */
   exclude?: readonly string[];
+  /** DB-N2-10: told as the gate's process is about to run (never on a cache hit). */
+  announce?: RunGatesOptions["onGateStart"];
+}
+
+/**
+ * Announce a gate's start (dashboard DB-N2-10, `RunGatesOptions.onGateStart`);
+ * a listener that throws never stops the gates.
+ */
+export function announceGateStart(
+  options: RunGatesOptions | undefined,
+  gate: { gate: string; rung: GateRung },
+): void {
+  try {
+    options?.onGateStart?.(gate);
+  } catch {
+    // The page's badge is a courtesy; the verdict is the gates'.
+  }
 }
 
 /** A repository-relative path in one spelling. */
@@ -785,6 +802,9 @@ export class DeterministicGateRunner implements GateRunner {
         failures: structuredClone(hit.failures),
       };
     }
+    // DB-N2-10: this gate's process is about to run (a cache hit returned above).
+    if (run.announce)
+      announceGateStart({ onGateStart: run.announce }, { gate: gate.id, rung: gate.rung });
     const execute = async (fullSuite: boolean) => {
       const r =
         gate.rung === "test"
@@ -1154,6 +1174,7 @@ export class DeterministicGateRunner implements GateRunner {
           config.gates,
           tree,
           options.fullSuite === true,
+          options.onGateStart,
         )
       : undefined;
     if (pkgs) {
@@ -1164,6 +1185,7 @@ export class DeterministicGateRunner implements GateRunner {
     for (const [i, gate] of ordered.entries()) {
       const { outcome, failures: gateFailures } = await this.runCached(gate, cwd, tree, {
         ...(options.fullSuite ? { fullSuite: true } : {}),
+        ...(options.onGateStart ? { announce: options.onGateStart } : {}),
         // The declared suite leaves out the tests of packages that passed here.
         ...(gate.rung === "test" && pkgs?.passedTests.length ? { exclude: pkgs.passedTests } : {}),
       });
@@ -1233,6 +1255,8 @@ export class DeterministicGateRunner implements GateRunner {
     tree: string | undefined,
     /** B1: asked for the full suite, no package gate answers with impacted tests only. */
     fullSuite = false,
+    /** DB-N2-10: each package gate announced as it starts. */
+    announce?: RunGatesOptions["onGateStart"],
   ): Promise<{
     outcomes: RungOutcome[];
     failures: GateFailure[];
@@ -1262,11 +1286,15 @@ export class DeterministicGateRunner implements GateRunner {
           root,
           toRepo: (f) => repoRelativeFailure(f, root, g.pkg),
           ...(fullSuite ? { fullSuite: true } : {}),
+          ...(announce ? { announce } : {}),
         }),
       ...(build
         ? {
             declaredBuild: () =>
-              this.runCached(build, root, tree, fullSuite ? { fullSuite: true } : {}),
+              this.runCached(build, root, tree, {
+                ...(fullSuite ? { fullSuite: true } : {}),
+                ...(announce ? { announce } : {}),
+              }),
           }
         : {}),
     });

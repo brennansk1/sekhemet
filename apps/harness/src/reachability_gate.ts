@@ -11,6 +11,7 @@ import {
   type RungOutcome,
   type SourceFacts,
   type SourceIndex,
+  announceGateStart,
   createSourceIndex,
   gateCopy,
 } from "@sekhemet/gates";
@@ -399,6 +400,8 @@ export function withReachabilityGate(
       runOptions?: RunGatesOptions,
     ): Promise<GateResult> => {
       const res = await inner.runGates(rungs, cwd, runOptions);
+      // DB-N2-10: the page names this check while it runs.
+      announceGateStart(runOptions, { gate: "reachability", rung: "hygiene" });
       const started = Date.now();
       const verdict = judgeReachability(cwd, base, contract);
       const failures = verdictFailures(verdict, baselined);

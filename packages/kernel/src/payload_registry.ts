@@ -1,4 +1,5 @@
 import * as v from "valibot";
+import { DEPTH_PROFILES } from "./depth_profile.js";
 import { CARD_STATUSES } from "./transitions.js";
 
 /**
@@ -50,9 +51,25 @@ const NOTICE_KIND = v.picklist([
   "requantised",
   // planner-pm PM-N9-6: "Update due", "N issues waiting for review".
   "reminder",
+  // teams TEAM-43 (item 22): a watched issue's change, a mention, a posted
+  // project update, and the daily digest of what is still unread.
+  "watching",
+  "mentioned",
+  "project_update",
+  "digest",
   "test",
 ]);
 const DAY = v.pipe(v.string(), v.regex(/^\d{4}-\d{2}-\d{2}$/, "a local day, YYYY-MM-DD"));
+/** Review plan's choices for a new project (PM_CONTRACT §3; design-stage DS-P2-7). */
+const PLAN_CHOICES = v.strictObject({
+  accept: v.optional(v.array(ID)),
+  remove: v.optional(v.array(ID)),
+  releaseLine: v.optional(v.pipe(v.number(), v.integer(), v.minValue(0))),
+  type: v.optional(v.picklist(DEPTH_PROFILES as readonly string[] as string[])),
+  answers: v.optional(
+    v.record(v.pipe(v.string(), v.regex(/^\d+$/)), v.pipe(v.number(), v.integer(), v.minValue(0))),
+  ),
+});
 /** The access levels of the Team setup (teams item 6). */
 const LEVEL = v.picklist(["admin", "member", "stakeholder", "viewer"]);
 
@@ -69,6 +86,9 @@ const priv = (dataClass: Exclude<DataClass, "structural">, schema: v.GenericSche
 
 /** A model role (models `MODEL_ROLES`, validated by its writer; the kernel does not enumerate them). */
 const ASSIGNED_ROLE = ID;
+/** A user config key as a dotted name (`sessions.idle_minutes`), never a value (TEAM-44). */
+const CONFIG_KEY = v.pipe(v.string(), v.regex(/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/));
+const CONFIG_STATE = v.record(CONFIG_KEY, v.pipe(v.string(), v.regex(/^[A-Za-z0-9_-]{16,64}$/)));
 const ASSIGNMENT_SCOPE = v.picklist(["personal", "baseline", "default"]);
 
 /** A mutation measure (gates `MutationMeasure`), as the nightly run records it. */
@@ -272,6 +292,15 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     qualification: s(v.picklist(["qualified", "overridden", "failed", "invalidated", "missing"])),
     previous: s(ID, true),
     bakeOff: s(ID, true),
+  },
+  // A person's (or the Agent's) message to Seshat (planner-pm PM-N9-8, teams
+  // §3): its text is free text — an `@Seshat` comment's body among them — so
+  // it is in the erasable private part, read by the person whose it is.
+  "pm/message": {
+    id: s(ID),
+    createdAt: s(TEXT),
+    context: s(v.strictObject({ cardId: v.optional(ID), view: v.optional(TEXT) }), true),
+    text: priv("free_text", TEXT),
   },
   // context CX-N3-7: the fit of Seshat's prompt; numbers and section ids only.
   "pm/prompt_fitted": {
@@ -633,6 +662,39 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     acknowledgedFindings: s(v.array(TEXT)),
     project: s(ID, true),
   },
+  // teams item 25 (NEW-teams-8; review-git §2 item 4): a review with no
+  // verdict, GitHub's *Comment*. It opens threads — on a file's line, or on
+  // the whole change — or answers one (`replyTo`). The text is private, one
+  // entry per comment in order; files, lines and threads are structural.
+  "review/commented": {
+    id: s(ID),
+    cardId: s(ID),
+    threads: s(
+      v.array(
+        v.strictObject({
+          id: ID,
+          file: v.optional(TEXT),
+          line: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
+        }),
+      ),
+      true,
+    ),
+    replyTo: s(ID, true),
+    texts: priv("free_text", v.array(TEXT)),
+  },
+  // TEAM-25: a review thread resolved or reopened, by the person as principal.
+  "review/thread_resolved": { cardId: s(ID), thread: s(ID) },
+  "review/thread_reopened": { cardId: s(ID), thread: s(ID) },
+  // TEAM-24: new commits landed on an accepted issue's branch before its
+  // merge; the accept is dismissed (the pull request and the new head, and
+  // the accepter it no longer holds).
+  "review/accept_dismissed": {
+    id: s(ID),
+    reason: s(v.picklist(["new_commits"])),
+    pr: s(v.pipe(v.number(), v.integer(), v.minValue(1)), true),
+    headSha: s(v.pipe(v.string(), v.regex(/^[0-9a-f]{7,64}$/)), true),
+    accepter: s(PRINCIPAL, true),
+  },
   // NEW-kernel-8: requirement versions and suspect links; planner-pm
   // PM-P13-1: its project, slice, dependencies, Kano class, must-have mark
   // and criterion ids (a revision states only what changed). The title and
@@ -728,9 +790,30 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
   },
   "suggestion/dismissed": { id: s(ID) },
   "suggestion/undone": { id: s(ID), kind: s(SUGGESTION_KIND) },
+  // teams TEAM-20, design-stage §2.9 item 7: a Stakeholder's plan sent to a
+  // named Member or Admin; nothing is created until they approve it. The
+  // choices are Review plan's, all structural (candidate keys, the release
+  // line, the Type, the questions' answer indexes).
+  "plan/sent_for_approval": {
+    proposalId: s(ID),
+    approver: s(PRINCIPAL),
+    choices: s(PLAN_CHOICES, true),
+  },
+  // TEAM-20, TEAM-42: the approver approved it (the event's principal); the
+  // project it created, whose issues the approver owns.
+  "plan/approved": { proposalId: s(ID), projectId: s(ID, true) },
   // teams item 29, planner-pm PM-N9-7: a person posted a project's update;
   // Seshat only drafts it. The text is personal free text, private.
   "project/update_posted": { project: s(ID), text: priv("free_text", TEXT) },
+  // teams item 28, TEAM-28: a person set the project's health (the event's
+  // principal); a model never does. One of three words.
+  "project/health_set": {
+    project: s(ID),
+    health: s(v.picklist(["on_track", "at_risk", "off_track"])),
+  },
+  // dashboard DB-N9-3, DEC-37: a person set a release's target date, drawn as
+  // the target line against the forecast range; no `target` clears it.
+  "release/target_set": { sliceId: s(ID), projectId: s(ID), target: s(DAY, true) },
   // The one notifier (integrations items 20-23a): which channel, which kind,
   // whether it went, and for the budget the person, the notice and the day.
   // The notice's text and the channel's URL or token are never on the ledger.
@@ -773,6 +856,13 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
   },
   // teams M6: a recorded switch of setup; Solo starts on a Team ledger only after one.
   "setup/switched": { to: s(v.picklist(["solo", "team"])) },
+  // teams TEAM-44, TEAM-27: the user config.toml's keys that changed — outside
+  // Sekhemet (found at start) or by a person through it — and the state as
+  // keyed digests, one per key. Dotted key names and digests only: a value
+  // is never recorded, and the digests' key is kept beside the credential
+  // store, never in it (team/config_audit.ts), so Solo still starts.
+  "config/changed_outside": { keys: s(v.array(CONFIG_KEY)), state: s(CONFIG_STATE) },
+  "config/changed": { keys: s(v.array(CONFIG_KEY)), state: s(CONFIG_STATE) },
   // teams NEW-teams-2 (TEAM-7): a profile label, which grants nothing.
   "member/label_changed": { principal: s(PRINCIPAL), label: s(TEXT) },
   // teams TEAM-32: only the fields that changed.
@@ -794,6 +884,54 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     level: s(v.picklist(["viewer", "stakeholder", "member", "admin", "none"])),
     needs: s(LEVEL),
     project: s(ID, true),
+  },
+  // teams TEAM-15, -39, -40 (item 19): a comment on an issue, by its author's
+  // principal (Seshat's answer is actor `planner`); the text is personal free
+  // text, private and erasable (§3, O14). `ai` names the AI teammates it
+  // mentions; `seshatMessage` the question it put in Seshat's queue.
+  "issue/commented": {
+    id: s(ID),
+    cardId: s(ID),
+    ai: s(v.array(v.picklist(["agent", "seshat"])), true),
+    seshatMessage: s(ID, true),
+    // teams item 23 (TEAM-21, -22): the people it mentions who can see the
+    // project, and those who cannot — held back until the author answers.
+    people: s(v.array(PRINCIPAL), true),
+    held: s(v.array(PRINCIPAL), true),
+    text: priv("free_text", TEXT),
+  },
+  // teams item 22 (TEAM-21): the *Watch* toggle, by the person's principal.
+  "issue/watched": { cardId: s(ID) },
+  "issue/unwatched": { cardId: s(ID) },
+  // TEAM-22: the author's answer about the people their comment mentioned
+  // who cannot see the project; until it, the comment reaches no one.
+  "issue/mention_answered": {
+    id: s(ID),
+    cardId: s(ID),
+    answer: s(v.picklist(["invite", "skip"])),
+  },
+  // teams item 24 (TEAM-23): the Inbox's marks, by the person's principal.
+  // `item` is the row (`issue:<card>`, or a request's id); `seq` the latest
+  // change the mark covers, so a later change brings the row back.
+  "inbox/read": { item: s(ID), seq: s(COUNT) },
+  "inbox/done": { item: s(ID), seq: s(COUNT), undo: s(v.literal(true), true) },
+  "inbox/snoozed": { item: s(ID), seq: s(COUNT), until: s(v.pipe(v.string(), v.isoTimestamp())) },
+  "inbox/saved": { item: s(ID), saved: s(v.boolean()) },
+  // teams item 19a, TEAM-39: a Stakeholder's or Viewer's `@Agent`, waiting in
+  // the *Needs you* of `to` (the issue's owner, else the project lead; none:
+  // the workspace's Admins). What they asked is private.
+  "agent/start_requested": {
+    id: s(ID),
+    cardId: s(ID),
+    requested_by: s(PRINCIPAL),
+    to: s(PRINCIPAL, true),
+    comment: s(ID, true),
+    ask: priv("free_text", TEXT),
+  },
+  // TEAM-39: a Member started the Agent on that request (on their own behalf) or declined it.
+  "agent/start_answered": {
+    id: s(ID),
+    answer: s(v.picklist(["started", "declined"])),
   },
   // teams TEAM-30: an Agent issue queued because its person is at the cap.
   "queue/capped": {
@@ -1244,15 +1382,28 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     partial: s(v.boolean()),
   },
   // review-git RG-P8-13 (B4.8): the Reviewer on the seeded-defect set —
-  // recall, and each item's catch and false positives.
+  // recall, and each item's catch and false positives. RG-P8-16 (F25): the
+  // reviews that happened, those that failed and each failure's reason (the
+  // harness's own words, never the model's); optional, so older events read.
   "measure/reviewer_seeded": {
     assetHash: s(SHA256),
     assetVersion: s(ID),
     model: s(ID),
     items: s(COUNT),
+    reviewed: s(COUNT, true),
+    failed: s(COUNT, true),
     caught: s(COUNT),
     recall: s(SCORE),
-    perItem: s(v.array(v.strictObject({ id: ID, caught: v.boolean(), falsePositives: COUNT }))),
+    perItem: s(
+      v.array(
+        v.strictObject({
+          id: ID,
+          caught: v.boolean(),
+          falsePositives: COUNT,
+          failed: v.optional(TEXT),
+        }),
+      ),
+    ),
     passes: s(v.boolean()),
     partial: s(v.boolean()),
   },

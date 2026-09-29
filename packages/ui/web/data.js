@@ -8,12 +8,14 @@ import { store } from "./store.js";
 const cache = new Map();
 
 function key(id, attempt) {
-  const ev = store.card(id)?.display?.evidence?.id ?? "none";
-  return `${id}|${ev}|${attempt ?? "latest"}`;
+  const card = store.card(id);
+  const ev = card?.display?.evidence?.id ?? "none";
+  // TEAM-15: the AI teammates' state (`ai`) changes with the issue's column and its delegate.
+  return `${id}|${ev}|${attempt ?? "latest"}|${card?.status ?? ""}|${card?.delegate?.kind ?? ""}`;
 }
 
 /**
- * @returns {Promise<{ card, attempts, acceptance, evidence, review, attachments, desk, error? }>}
+ * @returns {Promise<{ card, attempts, acceptance, evidence, review, attachments, desk, ai, error? }>}
  * `evidence` is null when the card has not run; `error` is set on 5xx/network.
  */
 export function loadDetail(id, attempt) {
@@ -54,6 +56,8 @@ export function loadDetail(id, attempt) {
         review: rv.ok ? latestReview(rv.data?.events) : null,
         attachments: at.ok ? (at.data?.attachments ?? []) : [],
         desk: dk.ok ? dk.data : null,
+        // Teams item 19: the AI teammates' state as the harness set it.
+        ai: c.ok ? (c.data.ai ?? []) : [],
       };
       if (!e.ok && e.status !== 404) out.error = { status: e.status, message: e.data?.error ?? "" };
       if (!c.ok && c.status !== 404) out.error = { status: c.status, message: c.data?.error ?? "" };

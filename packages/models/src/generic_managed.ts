@@ -1,7 +1,7 @@
 import { statSync } from "node:fs";
 import { basename } from "node:path";
 import { readGgufHeader, sha256File } from "./model_scan.js";
-import type { ModelEntry, ModelRegistry } from "./registry.js";
+import { type ModelEntry, type ModelRegistry, reasoningFromArchitecture } from "./registry.js";
 import { volumeOf } from "./swap_cost.js";
 
 /**
@@ -43,7 +43,10 @@ export interface RegisteredModel {
  * model loaded), its SHA-256 computed, and the weights, hash, size, family,
  * quantisation and header recorded under `id` (default: a slug of the
  * header's name, else the file name). A file whose hash differs from the
- * id's recorded weights is refused and the registry left unchanged.
+ * id's recorded weights is refused and the registry left unchanged. An
+ * architecture whose template cannot turn reasoning off records that and
+ * its lowest level (live-test F25), under any reasoning entry already there:
+ * an owner's `supported: false` or floor is kept.
  */
 export async function registerModelFile(
   registry: ModelRegistry,
@@ -75,9 +78,15 @@ export async function registerModelFile(
     sha256,
   });
   const entry = registry.get(id);
+  // F25: a template that cannot turn reasoning off is known from its architecture.
+  const implied = reasoningFromArchitecture(header.architecture);
   registry.upsert(id, {
     sizeBytes,
     header,
+    // An entry of the owner's own (`supported: false`, a floor) is kept over it.
+    ...(implied && entry?.reasoning?.supported !== false
+      ? { reasoning: { ...implied, ...entry?.reasoning } }
+      : {}),
     ...(!entry?.family && read.metadata.family ? { family: read.metadata.family } : {}),
     ...(!entry?.quant && read.metadata.quantisation ? { quant: read.metadata.quantisation } : {}),
   });

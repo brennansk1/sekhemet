@@ -2,6 +2,7 @@
 // route, and mount views.
 import * as profileView from "./account.js";
 import { initAccount } from "./account.js";
+import * as auditView from "./audit.js";
 import * as boardView from "./board.js";
 import { initBulk } from "./bulk.js";
 import * as cardView from "./card.js";
@@ -9,16 +10,20 @@ import * as configurationView from "./configuration.js";
 import { getJSON } from "./dom.js";
 import * as graphView from "./graph.js";
 import * as inboxView from "./inbox.js";
-import { refreshDecisions } from "./inbox.js";
+import { refreshDecisions, refreshInbox } from "./inbox.js";
 import * as insightsView from "./insights.js";
 import * as integrationsView from "./integrations.js";
 import { initKeys } from "./keys.js";
 import { initTips, showFirstRun, storage } from "./learn.js";
 import * as ledgerView from "./ledger.js";
+import { initLevelGates } from "./level_gate.js";
 import { authDecision, refusalMessage } from "./lib/account.js";
 import { defaultRouteFor, firstRunDue, readRole } from "./lib/learn.js";
+import { presenceFrameOf } from "./lib/live.js";
 import { navNameOf } from "./lib/nav.js";
 import * as machineView from "./machine.js";
+import * as membersView from "./members.js";
+import * as myIssuesView from "./my_issues.js";
 import * as playbookView from "./playbook.js";
 import { initPm, loadThread, onPmEvent } from "./pm_client.js";
 import { initPmPanel } from "./pm_panel.js";
@@ -47,6 +52,8 @@ const VIEWS = {
   insights: insightsView,
   integrations: integrationsView,
   inbox: inboxView,
+  // Teams: the issues a person owns, is delegated or reviews (DB-N9-15).
+  "my-issues": myIssuesView,
   graph: graphView,
   // P11 route names; the old ones keep opening the same views (§2.2.1).
   // Projects replaces the Workspace rollup, and `#/workspace` opens it
@@ -59,6 +66,9 @@ const VIEWS = {
   settings: configurationView,
   // The account menu's page (§2.2.6); in the palette, with no chord.
   account: profileView,
+  // Team only, from the account menu (§2.17.4–5, DB-N9-16; TEAM-27): no chord.
+  members: membersView,
+  audit: auditView,
 };
 
 let current = null;
@@ -268,6 +278,17 @@ async function hydrate() {
   await refreshModelSetup();
   store.set({ loaded: true });
   refreshDecisions().catch(() => {});
+  refreshInbox().catch(() => {});
+}
+
+/** The Inbox refetched at most once a second while the ledger is busy (a run moves cards often). */
+let inboxTimer = 0;
+function refreshInboxSoon() {
+  if (inboxTimer) return;
+  inboxTimer = setTimeout(() => {
+    inboxTimer = 0;
+    refreshInbox().catch(() => {});
+  }, 1000);
 }
 
 /** The highest ledger seq seen: the checkpoint a reconnect replays from (U9). */
@@ -325,6 +346,13 @@ export function connect() {
       // A replay after a gap: the Seshat thread may have moved too.
       if (payload.replay) loadThread();
       if ((payload.events ?? []).some((e) => /^decision\//.test(e.type))) refreshDecisions();
+      // What can reach an Inbox (teams items 22–24): a change on an issue, a mark, a request.
+      if (
+        (payload.events ?? []).some((e) =>
+          /^(card|issue|inbox|agent|plan|project)\/|^decision\//.test(e.type),
+        )
+      )
+        refreshInboxSoon();
       if (
         (payload.events ?? []).some(
           (e) => e.type === "card/status_changed" && /^returned/.test(e.payload?.reason ?? ""),
@@ -363,6 +391,20 @@ export function connect() {
     } catch {
       // A malformed frame is dropped; the next one carries the whole tail.
     }
+  });
+  // TEAM-26, DB-N9-20: who else views which issue and drags which card. Kept
+  // in the store for the issue header and the board; never stored beyond it.
+  source.addEventListener("presence", (ev) => {
+    try {
+      store.set({ presence: presenceFrameOf(JSON.parse(ev.data)) });
+    } catch {
+      // A malformed frame is dropped; the next one carries the whole picture.
+    }
+  });
+  // DB-N2-10: a card's running check started, changed or ended: its badge
+  // (*Running Tests…*) is the server's, so the board is read again.
+  source.addEventListener("gate", () => {
+    void refreshBoard().catch(() => {});
   });
   source.addEventListener("machine", (ev) => {
     try {
@@ -447,6 +489,8 @@ async function boot() {
   window.addEventListener("sekhemet:auth", onAuth);
   setNavViews(Object.keys(VIEWS));
   initShell();
+  // DB-N9-17: a control the person's level does not allow is disabled, and says why.
+  initLevelGates();
   initKeys();
   initAccount();
   initTips();
@@ -482,6 +526,8 @@ async function boot() {
   setInterval(refreshDoctor, 30_000);
   // Decision deadlines and new asks: the sidebar count stays current.
   setInterval(() => refreshDecisions().catch(() => {}), 60_000);
+  // A snoozed item comes back when its time does.
+  setInterval(() => refreshInbox().catch(() => {}), 60_000);
   // Wait times count up; frozen while offline (§2.4 shell states).
   setInterval(() => {
     if (store.state.connection !== "offline") store.set({ now: Date.now() });

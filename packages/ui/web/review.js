@@ -1,4 +1,4 @@
-import { loadDetail } from "./data.js";
+import { forget, loadDetail } from "./data.js";
 // Review (FRONTEND_DESIGN §2.4.1): the queue on the left, the evidence in the
 // middle, the facts on the right, and the triage bar under the evidence.
 import { nextDiffMode } from "./diff.js";
@@ -17,11 +17,13 @@ import {
   READ_ONLY_DETAIL,
   READ_ONLY_TEXT,
   accept,
+  commentFormHtml,
   composerHtml,
   mutationsBlocked,
   openPark,
   quickNotes,
   triageBarHtml,
+  wireCommentForm,
   wireComposer,
 } from "./triage.js";
 
@@ -234,6 +236,18 @@ function closeComposer() {
   ui.composerOpen = false;
 }
 
+/** Teams item 25: Comment — a review with no verdict — on the selected issue. */
+function openComment(card = selectedCard()) {
+  if (!card || $("[data-comment-form]", ui.root)) return;
+  $("[data-triage]", ui.root).insertAdjacentHTML("beforebegin", commentFormHtml());
+  wireCommentForm($("[data-comment-form]", ui.root), card, {
+    onSent: () => {
+      forget(card.id);
+      load(card.id);
+    },
+  });
+}
+
 function runAction(key, card = selectedCard()) {
   if (!card) return false;
   const ev = card.id === ui.selected ? ui.detail?.evidence : undefined;
@@ -389,6 +403,7 @@ export function mount(view, route) {
     } else if (t.closest("[data-accept]")) runAction("a");
     else if (t.closest("[data-back]")) runAction("r");
     else if (t.closest("[data-park]")) runAction("p");
+    else if (t.closest("[data-comment]")) openComment();
   });
 
   ui.unsub = store.on((_s, patch) => {

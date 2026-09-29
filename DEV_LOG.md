@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 56 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 57 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,90 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 57 — 2026-09-28 (B4.11 done in code: working together; live-test F25 fixed; Sprint 3's first A/B verdicts)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver.
+- **B4.11:** one workflow, launched after the 5-hour window reset: six groups one at a time, a sweep, one independent review, a fixer and a blocker re-check (10 agents, 2.91M tokens).
+- **F25:** one helper for the fix, one independent reviewer, and one helper for the review's findings.
+- **Sprint 3:** model runs on frozen builds (`scratchpad/gate-cf`, `snap-f25`), each with its own registry copy.
+- **Briefs** carried DEC-31's words and the professional conventions (Linear's Inbox, GitHub's review threads, Atlassian's health and updates), plus the collaboration, team-data and team-server research, and the Phase A reviews 11/14, 12/15, 13, 17 and 02/09.
+
+- **B4.11, working together (NEW-teams-5..10, NEW-teams-11's health and updates, NEW-kernel-10):**
+  - **AI teammates:**
+    - Comments, and `@Agent`/`@Seshat`, with the AI's state shown on the issue within seconds from the harness.
+    - The Agent acts `on_behalf_of` the Member who delegated. It refuses to start, and stops between steps, when that person may not start it.
+    - Pickers list Seshat and the Agent as AI teammates. Seshat is listed but cannot take an issue: it proposes (DEC-36).
+    - A Stakeholder's or Viewer's `@Agent` becomes a start request in the owner's *Needs you*.
+    - A Viewer's `@Seshat` gets an answer with no proposals.
+  - **Suggestions and approval:**
+    - A dismissed suggestion is never re-proposed.
+    - A Stakeholder's project conversation ends in *Send for approval*. Only the named approver can approve, and the generic apply route refuses around them.
+    - The approver owns the issues.
+  - **Subscriptions, mentions and the Inbox:**
+    - Subscriptions on create, own, delegate, comment, mention and review.
+    - `@Name` mentions. A mention of someone who cannot see the project is held until the author answers.
+    - Inbox states Done, Snooze and Save. The Inbox page (Needs you, Mentioned, Review requested, Watching, Agent finished) and My issues.
+    - Watcher notices sent within each person's budget, one message per change on a shared channel.
+  - **Review verdicts and presence:**
+    - The *Comment* verdict and review threads.
+    - `require_resolved_threads` refuses Accept while a thread is open.
+    - New commits dismiss a pull request's accept (GitHub `synchronize`).
+    - Presence avatars, kept in memory only.
+    - Review verdicts reach the Inbox.
+  - **Audit, Members and the shell:**
+    - The Audit log for Admins, filterable and exportable.
+    - `config/changed_outside` names changed keys, never values.
+    - Members with levels, overrides, labels and last active.
+    - Disabled controls name the level the person holds and one that can do it.
+    - The Team stream and `/api/events` send each person only what they can see, private parts withheld. This is the stream fix the stalled side session never landed.
+  - **Health, updates and the queue:**
+    - Health set by a person (On track, At risk, Off track).
+    - *Update missing* after 7 days in the Team setup, optional in Solo.
+    - Posted updates counted in the budget.
+    - A release target date drawn against the forecast range.
+    - The per-person Agent cap's queue place.
+- **B4.11 review:** 1 blocker, 6 majors, all fixed, plus 9 minors; the blocker was re-checked.
+  - The blocker: an `@Seshat` comment's text sat in a public, hash-chained payload and reached every member's stream, and could not be erased.
+  - The majors:
+    - a dismissed accept left the issue stuck;
+    - review verdicts never reached the Inbox;
+    - the shared channel got several copies of each notice;
+    - `/api/events` still leaked;
+    - a plan could be applied around its approver;
+    - spec claims were ahead of the code.
+- **F25, live test (the Reviewer's admission on gpt-oss-20b):**
+  - The first run scored 0 of 22 with no finding at all. gpt-oss cannot turn reasoning off, and the adapter sent `reasoning_effort: "none"` with no thinking room. It thought 1,072 of the 1,200 tokens, and the cut-off JSON was read as a clean review.
+  - The fix:
+    - a registry reasoning floor keyed by GGUF architecture, with the thinking budget added (MD-N4-2a, worker-loop rule 22);
+    - the Reviewer states its thinking cap;
+    - a truncated or unreadable reply is a failed review: recorded, shown, refused by `--auto-accept`, counted apart by `measure reviewer` and by the benchmark, and carried in the durable event (RG-P8-16).
+  - Its independent review found 2 majors, both fixed: the event lacked the failed count, and the benchmark scored a failed review as a pass. Its 5 minors were fixed too.
+- **Sprint 3 results:**
+  - **Regression pair** (nail-mtp, `d377b9d` against `6bdaaa4`, 30 cards; SUITE_RUNS): paired 26, A 20 and B 21, one discordant, median tokens unchanged. No regression. Both builds have the same context version, so this is a regression check, not a prompt admission.
+  - **Reviewer admission, gpt-oss-20b, at its reasoning floor** (low): after F25, 22 of 22 reviews completed, 4 caught. Recall 18% (95% interval 5–40%), 2 false positives, none above 1 per change. It does not meet RG-P8-13 (recall at least 0.3).
+  - At high reasoning, all 22 reviews failed: each spent its whole 3,248-token allowance thinking (2,048 thinking plus the 1,200 answer cap). F25 now counts these as failed instead of scoring them clean. Admitting gpt-oss at medium or high needs a larger thinking cap, which is a measured change, not a guess.
+- **F23 and F24, recorded as open:**
+  - **F23:** a registry shared by every build invalidates qualifications across concurrent frozen builds. The workaround is a registry per build.
+  - **F24:** the context version covers every role, so a Seshat or Reviewer prompt change invalidates the Coding model's qualification.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1499 files), vitest 648 files, 5,020 passed, 37 skipped (the first full run caught two literals outside a copy module, moved into pm_copy; a second full run passed on the exact tree).
+- **Where the cards stop:**
+  - B4.11 is done in code. **Phase B's build workstreams are all committed.**
+  - **Partial, recorded in the specs:**
+    - release leads (no release records a lead);
+    - the per-person cap's Configuration control;
+    - DB-N9-17 marks on every control;
+    - email for watchers (nodemailer is approved by DEC-44 but not installed: the owner's yes is needed for the download);
+    - the approver's question in the plan's thread;
+    - Seshat's comment answers shown only to the asker (a deliberate privacy departure);
+    - TEAM-44 covering only Configuration's own writes;
+    - none of the new UI yet seen in a browser beyond the sweep.
+  - **Owner decision (spine), 2026-09-28:** an issue whose pull request is merged on GitHub after new commits dismissed its accept stays in Review with the merge recorded, until a person accepts the new commits after their checks pass (teams.md NEW-teams-8 row).
+  - **Next:**
+    - the milestone runs (containment on Linux; the baseline's remaining arms with their own registry; the team-of-five run, as the capstone);
+    - Sprint 3's remaining admissions (Seshat, once the owner confirms the scripted conversations; the reuse-query run);
+    - F23 and F24;
+    - the report against the baseline and the Phase C proposal.
 
 ### Entry 56 — 2026-09-28 (B4.8 done in code: the Reviewer rebuilt, the senior-PM skill, how Seshat speaks and proposes; their live admissions queued)
 

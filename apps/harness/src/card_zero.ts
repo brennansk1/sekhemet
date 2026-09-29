@@ -8,6 +8,7 @@ import {
   type GateFailure,
   type GateRunner,
   type RungOutcome,
+  announceGateStart,
   loadGatesConfig,
   runAcceptanceTests,
 } from "@sekhemet/gates";
@@ -589,6 +590,8 @@ export function withCardOneGate(
       const rest = others.length
         ? await inner.runGates(others, cwd, runOptions)
         : { passed: true, failures: [], durationMs: 0, rungResults: [] };
+      // DB-N2-10: the page names this check while it runs.
+      announceGateStart(runOptions, { gate: CARD_ONE_GATE, rung: "test" });
       const started = Date.now();
       const verdict = await checkCardOne({
         sandbox: options.sandbox,

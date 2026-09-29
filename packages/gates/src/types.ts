@@ -106,6 +106,14 @@ export interface RunGatesOptions {
    * `GateResult.workspace`.
    */
   workspace?: { base: string; changed: readonly string[] };
+  /**
+   * Called as each gate starts running — before its process, never for a
+   * verdict read from the cache — so the page can name the running check
+   * (dashboard DB-N2-10, *Running Tests…*). A runner that wraps another
+   * passes it through and announces the gates it adds; an announce that
+   * throws never stops the gates.
+   */
+  onGateStart?: (gate: { gate: string; rung: GateRung }) => void;
 }
 
 export interface RungOutcome {

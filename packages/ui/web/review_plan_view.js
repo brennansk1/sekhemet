@@ -46,15 +46,43 @@ export function reviewPlanButtonHtml(busy) {
   return `<button class="btn primary sm" type="button" data-review-plan${busy ? " disabled" : ""}>${busy ? "Creating…" : "Review plan"}</button>`;
 }
 
-/** The person's choices, starting from what the group proposes. */
-export function reviewState(group) {
+/**
+ * The line a plan sent for approval shows in Seshat's thread (TEAM-20): to
+ * the approver, who sent it; to anyone else, who approves it.
+ */
+export function approvalNoteHtml(approval, me) {
+  if (approval?.state !== "sent") return "";
+  const text =
+    approval.approver === me
+      ? `${approval.requestedByName ?? approval.requestedBy} sent this plan for your approval.`
+      : `Sent to ${approval.approverName ?? approval.approver} for approval.`;
+  return `<p class="pnote">${esc(text)}</p>`;
+}
+
+/**
+ * The person's choices, starting from what the group proposes — or, for the
+ * approver of a plan sent for approval (teams TEAM-20), from the choices sent.
+ */
+export function reviewState(group, from) {
   return {
-    accept: [],
-    remove: [],
-    line: group.releaseLine,
-    type: group.type.profile,
-    answers: {},
+    accept: [...(from?.accept ?? [])],
+    remove: [...(from?.remove ?? [])],
+    line: from?.releaseLine ?? group.releaseLine,
+    type: TYPES.includes(from?.type) ? from.type : group.type.profile,
+    answers: { ...(from?.answers ?? {}) },
   };
+}
+
+/**
+ * What Review plan's button does for this person (teams TEAM-20, design-stage
+ * §2.9 item 7): `create` in Solo and for a Member or an Admin; `send` for a
+ * Stakeholder, who names an approver; once sent, `approve` for the person
+ * it was sent to and `waiting` for anyone else.
+ */
+export function planAction({ setup = "solo", level, me, approval } = {}) {
+  if (setup !== "team") return "create";
+  if (approval?.state === "sent") return approval.approver === me ? "approve" : "waiting";
+  return level === "stakeholder" ? "send" : "create";
 }
 
 /** The candidates still in the plan, in order: proposed-and-kept, or accepted. */
@@ -172,23 +200,62 @@ function questionsHtml(group, state) {
     .join("")}</div>`;
 }
 
+/** The approvers a Stakeholder may name: the Members and Admins, by name. */
+function approverSelectHtml(approvers) {
+  const options = approvers
+    .map((a) => `<option value="${esc(a.principal)}">${esc(a.name ?? a.principal)}</option>`)
+    .join("");
+  return `<label class="rp-approver">Approver <select data-approver aria-describedby="rp-who">${options}</select></label>`;
+}
+
+/**
+ * The foot of Review plan: what pressing its button does, said before the
+ * press, and the button (teams TEAM-20, TEAM-42; design-stage §2.9 item 7).
+ */
+function footHtml(opts) {
+  const action = planAction(opts);
+  const approval = opts.approval;
+  const who = (text) => `<p class="sec" id="rp-who">${esc(text)}</p>`;
+  const foot = (inner) => `<div class="rp-foot">${inner}</div>`;
+  if (action === "waiting") {
+    return `${who(`Sent to ${approval.approverName ?? approval.approver} for approval. Nothing is created until they approve it.`)}`;
+  }
+  if (action === "approve") {
+    return `${who(`${approval.requestedByName ?? approval.requestedBy} sent this plan for your approval. Change it here if it needs it; approving creates the project and accepts its brief, and you own its issues, which can be reassigned later.`)}${foot('<button type="button" class="btn primary" data-approve aria-describedby="rp-count rp-who">Approve</button>')}`;
+  }
+  if (action === "send") {
+    const approvers = opts.approvers;
+    if (approvers === undefined) {
+      return `${who("Finding the Members and Admins who can approve it…")}${foot('<button type="button" class="btn primary" data-send disabled aria-describedby="rp-who">Send for approval</button>')}`;
+    }
+    if (!approvers.length) {
+      return `${who("No Member or Admin can approve it yet: ask an Admin to invite one.")}${foot('<button type="button" class="btn primary" data-send disabled aria-describedby="rp-who">Send for approval</button>')}`;
+    }
+    return `${who("A Member or an Admin approves it, and can change it first. Nothing is created until they approve it.")}${foot(`${approverSelectHtml(approvers)}<button type="button" class="btn primary" data-send aria-describedby="rp-count rp-who">Send for approval</button>`)}`;
+  }
+  // In the Team setup creating the project accepts its brief, an Admin's to
+  // do: the button says so, and who may press it is said beforehand.
+  const team = opts.setup === "team";
+  const note = team
+    ? who("In the Team setup an Admin creates the project, since creating it accepts its brief.")
+    : "";
+  const label = team ? "Create project and accept its brief" : "Create project";
+  return `${note}${foot(`<button type="button" class="btn primary" data-create aria-describedby="rp-count${team ? " rp-who" : ""}">${label}</button>`)}`;
+}
+
 /** Review plan for one group and the person's choices so far. */
-export function reviewPlanHtml(group, state, { setup = "solo" } = {}) {
+export function reviewPlanHtml(group, state, opts = {}) {
   const c = group.creates;
   const counted = `${plural(c.project, "project")}, ${plural(c.epics, "epic")}, ${plural(c.issues, "issue")}, the brief and its setup issue`;
-  // TEAM-20's Send for approval is not built: in the Team setup the button
-  // says what pressing it does — it creates the project and accepts its
-  // brief — and who may press it is said beforehand.
-  const who =
-    setup === "team"
-      ? '<p class="sec" id="rp-who">In the Team setup an Admin creates the project, since creating it accepts its brief.</p>'
-      : "";
-  const label = setup === "team" ? "Create project and accept its brief" : "Create project";
+  const created =
+    planAction(opts) === "create"
+      ? "Nothing exists until you create it."
+      : "Nothing exists until it is approved.";
   return `<section class="rp" aria-labelledby="rp-h"><h3 id="rp-h">Review plan</h3><p class="sec">“${esc(group.sentence)}”</p><h4 class="rp-h2">The brief</h4>${briefHtml(group)}<h4 class="rp-h2">What it does</h4>${typeHtml(group, state)}${candidatesHtml(group, state)}<h4 class="rp-h2">Releases</h4>${releasesHtml(group, state)}${questionsHtml(group, state)}<h4 class="rp-h2">Assumed</h4><ul class="rp-asm">${group.assumptions
     .map((a) => `<li>${esc(a)}</li>`)
     .join(
       "",
-    )}</ul><p class="rp-count" id="rp-count">Creating it makes ${counted}, set up first by ${esc(group.stack.name)}'s own generator. Nothing exists until you create it.</p>${who}<div class="rp-foot"><button type="button" class="btn primary" data-create aria-describedby="rp-count${who ? " rp-who" : ""}">${label}</button></div></section>`;
+    )}</ul><p class="rp-count" id="rp-count">Creating it makes ${counted}, set up first by ${esc(group.stack.name)}'s own generator. ${created}</p>${footHtml(opts)}</section>`;
 }
 
 /**

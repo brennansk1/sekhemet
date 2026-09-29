@@ -2,13 +2,16 @@
 // the group shown before anything exists, Accept and Remove on each
 // candidate, a release line moved with its arrows (or by dragging a
 // candidate across it), the Type, the questions, and one Create project
-// that applies the proposal with the person's choices (PM_CONTRACT §3).
-import { postJSON } from "./dom.js";
+// that applies the proposal with the person's choices (PM_CONTRACT §3). In
+// the Team setup a Stakeholder sends it for approval to a Member or an Admin
+// they name instead, and that person approves it (teams TEAM-20, TEAM-42).
+import { getJSON, postJSON } from "./dom.js";
 import { closeTop, pushOverlay, trapFocus } from "./overlay.js";
 import {
   choicesOf,
   keptCandidates,
   moveLine,
+  planAction,
   reviewPlanHtml,
   reviewState,
   setAnswer,
@@ -20,10 +23,29 @@ import { toast } from "./toast.js";
 /** A proposal Review plan can show; kept pure in the view module. */
 export { hasReviewPlan } from "./review_plan_view.js";
 
-/** Open Review plan for `proposal`; resolves with the apply's result, or undefined when closed. */
-export function openReviewPlan(proposal, { post = postJSON, setup = "solo" } = {}) {
+/** The Members and Admins a Stakeholder may send a plan to, by name; never themselves. */
+async function loadApprovers(me) {
+  const r = await getJSON("/api/members");
+  if (!r.ok) return [];
+  return (r.data?.members ?? [])
+    .filter((m) => !m.pending && (m.level === "member" || m.level === "admin"))
+    .filter((m) => m.principal !== me)
+    .map((m) => ({ principal: m.principal, name: m.name ?? m.principal }));
+}
+
+/**
+ * Open Review plan for `proposal`; resolves with the apply's (or the send's)
+ * result, or undefined when closed. `level` and `me` are the signed-in
+ * person's in the Team setup.
+ */
+export function openReviewPlan(
+  proposal,
+  { post = postJSON, setup = "solo", level, me, approvers: given = loadApprovers } = {},
+) {
   const group = proposal.patch.group;
-  let state = reviewState(group);
+  const approval = proposal.approval;
+  let state = reviewState(group, approval?.choices);
+  const view = { setup, level, me, approval, approvers: undefined };
   const host = document.createElement("div");
   host.className = "rp-dialog";
   host.setAttribute("role", "dialog");
@@ -44,8 +66,38 @@ export function openReviewPlan(proposal, { post = postJSON, setup = "solo" } = {
     onKey: (e) => trapFocus(host, e),
   });
   const draw = () => {
-    host.innerHTML = reviewPlanHtml(group, state, { setup });
+    const approver = host.querySelector("[data-approver]")?.value;
+    host.innerHTML = reviewPlanHtml(group, state, view);
+    const select = host.querySelector("[data-approver]");
+    if (select && approver) select.value = approver;
   };
+  // Who the plan can be sent to, fetched once for a Stakeholder.
+  if (planAction(view) === "send") {
+    Promise.resolve(given(me))
+      .catch(() => [])
+      .then((list) => {
+        view.approvers = list;
+        if (host.isConnected) draw();
+      });
+  }
+  // Send, Approve or Create: one request, its refusal said in a toast.
+  const submit = async (btn, path, body, failed) => {
+    btn.disabled = true;
+    const r = await post(path, body);
+    if (!r.ok) {
+      btn.disabled = false;
+      toast({
+        tone: "fail",
+        text: failed,
+        detail: r.data?.error ?? `The server returned ${r.status || "no response"}.`,
+      });
+      return;
+    }
+    remove();
+    window.dispatchEvent(new CustomEvent("sekhemet:refresh"));
+    close(r.data);
+  };
+  const base = `/api/pm/proposals/${encodeURIComponent(proposal.id)}`;
   host.addEventListener("click", async (e) => {
     const t = e.target instanceof Element ? e.target : null;
     if (!t) return;
@@ -56,23 +108,30 @@ export function openReviewPlan(proposal, { post = postJSON, setup = "solo" } = {
     else if (t.closest("[data-line-up]")) state = moveLine(group, state, -1);
     else if (t.closest("[data-line-down]")) state = moveLine(group, state, +1);
     else if (t.closest("[data-create]")) {
-      const btn = t.closest("[data-create]");
-      btn.disabled = true;
-      const r = await post(`/api/pm/proposals/${encodeURIComponent(proposal.id)}/apply`, {
-        choices: choicesOf(state),
-      });
-      if (!r.ok) {
-        btn.disabled = false;
-        toast({
-          tone: "fail",
-          text: "The project was not created.",
-          detail: r.data?.error ?? `The server returned ${r.status || "no response"}.`,
-        });
-        return;
-      }
-      remove();
-      window.dispatchEvent(new CustomEvent("sekhemet:refresh"));
-      close(r.data);
+      await submit(
+        t.closest("[data-create]"),
+        `${base}/apply`,
+        { choices: choicesOf(state) },
+        "The project was not created.",
+      );
+      return;
+    } else if (t.closest("[data-send]")) {
+      const approver = host.querySelector("[data-approver]")?.value;
+      if (!approver) return;
+      await submit(
+        t.closest("[data-send]"),
+        `${base}/send-for-approval`,
+        { approver, choices: choicesOf(state) },
+        "The plan was not sent.",
+      );
+      return;
+    } else if (t.closest("[data-approve]")) {
+      await submit(
+        t.closest("[data-approve]"),
+        `${base}/approve`,
+        { choices: choicesOf(state) },
+        "The plan was not approved.",
+      );
       return;
     } else return;
     // Keep the line within what is kept after an Accept or a Remove.
@@ -106,7 +165,7 @@ export function openReviewPlan(proposal, { post = postJSON, setup = "solo" } = {
     draw();
   });
   draw();
-  host.querySelector("[data-create]")?.focus();
+  host.querySelector("[data-create],[data-send],[data-approve]")?.focus();
   return done.finally(() => {
     if (host.isConnected) closeTop();
   });

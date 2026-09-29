@@ -1346,3 +1346,86 @@ ul.plain {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+/* Review threads on the Changes tab (teams item 25): open first, resolved
+   ones quieter; a reply box under each open thread. */
+.rt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 16px 0;
+}
+.rt-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rt-row {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rt-row.resolved {
+  color: var(--text-secondary);
+}
+.rt-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+}
+.rt-state {
+  color: var(--text-secondary);
+}
+.rt-acts {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rt-cs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-sm);
+}
+.rt-t {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.rt-reply {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.rt-reply textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  resize: vertical;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  border-radius: var(--radius-control);
+  padding: 6px 8px;
+  font: inherit;
+}
+/* Presence (teams item 26, DB-N9-20): the others viewing an issue, in its
+   header; a card someone else is dragging carries their avatar, ringed. */
+.pres-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.tile .av.pres {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

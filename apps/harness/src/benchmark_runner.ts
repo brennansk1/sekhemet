@@ -412,6 +412,7 @@ export function suiteScreenRunner(deps: SuiteRunnerDeps): ScreenRunner {
           ...(card.tests !== undefined ? { expectedTests: card.tests } : {}),
         });
         let sentBack = false;
+        let reviewFailed: string | undefined;
         if (r.passed && combination.reviewer) {
           const reviewer = await loaded.get("reviewer", combination.reviewer, true);
           let diff = "";
@@ -426,19 +427,31 @@ export function suiteScreenRunner(deps: SuiteRunnerDeps): ScreenRunner {
             // No worktree left: the Reviewer reads the card without its diff.
           }
           // Judged against the card's criteria (RG-P8-1): an unmet finding sends it back.
-          const review = await reviewCard(reviewer, {
-            card: record,
-            diff,
-            preferences: [],
-            rules: [],
-          }).catch(() => undefined);
-          sentBack = review?.findings.some((f) => f.verdict === "unmet") ?? false;
+          // A review that failed — cut off, unreadable, or not run — is a failed
+          // card with its reason, never a clean pass (F25, RG-P8-16).
+          try {
+            const review = await reviewCard(reviewer, {
+              card: record,
+              diff,
+              preferences: [],
+              rules: [],
+            });
+            sentBack = review.findings.some((f) => f.verdict === "unmet");
+          } catch (err) {
+            reviewFailed = err instanceof Error ? err.message : String(err);
+          }
         }
         return {
-          passed: r.passed && !sentBack,
+          passed: r.passed && !sentBack && reviewFailed === undefined,
           seconds: r.seconds,
           capped: r.capped,
-          stopReason: sentBack ? "review_send_back" : r.stopReason,
+          stopReason:
+            reviewFailed !== undefined
+              ? "review_failed"
+              : sentBack
+                ? "review_send_back"
+                : r.stopReason,
+          ...(reviewFailed !== undefined ? { reviewFailed } : {}),
         };
       });
     },

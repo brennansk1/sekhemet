@@ -333,3 +333,24 @@ describe("Projects (DB-N9-9, DB-N9-21)", () => {
     expect(UI_LIB_MODULES).toContain("projects.js");
   });
 });
+
+describe("B4.11 T6: health in Solo is optional (TEAM-45, teams item 28)", () => {
+  it("shows the Health column once the one person has set a project's health, and nothing for the rest", () => {
+    const solo = overview({
+      setup: "solo",
+      projects: [
+        {
+          ...storefront,
+          lead: "you",
+          health: { value: "on_track", by: "you", at: "2026-09-26T10:00:00.000Z" },
+        },
+        { ...storefront, id: "proj_b", name: "Billing", lead: "you", health: null },
+      ],
+    });
+    const v = projectsModel({ now: NOW, overview: solo });
+    expect(v.columns.map((c) => c.id)).toContain("health");
+    expect(v.rows[0]?.health).toEqual({ text: "On track · set by you · Sep 26", tone: "pass" });
+    expect(v.rows[1]?.health).toBeNull();
+    expect(JSON.stringify(v)).not.toMatch(/No health set|Update missing/);
+  });
+});

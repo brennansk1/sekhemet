@@ -338,6 +338,11 @@ export function gateNameOf(id: string, rung?: string): string {
   return rung && !FAMILY_RUNGS.has(rung) ? gateLabel(rung) : gateLabel(id);
 }
 
+/** DB-N2-10: the In progress badge while a check runs: *Running Tests…*, by the check's name. */
+export function runningCheckText(gate: { gate: string; rung?: string }): string {
+  return `Running ${gateNameOf(gate.gate, gate.rung)}…`;
+}
+
 /** `unavailable`: the gate could not produce a verdict (gates rule 9) — not a pass, not a failure of the work. */
 export type GateState = "pass" | "fail" | "unavailable" | "skipped" | "not_run" | "running";
 
@@ -889,6 +894,11 @@ export interface DisplayContext {
   /** The owner's name, and a person delegate's, resolved from their principals. */
   ownerName?: string;
   delegateName?: string;
+  /**
+   * The check running now on a card being verified, as the check runner
+   * announced it (dashboard DB-N2-10): named in the In progress badge.
+   */
+  runningGate?: { gate: string; rung?: string };
 }
 
 /** A tool call as the ledger and transcript record it. */
@@ -996,6 +1006,10 @@ export function statusLine(
         : { text: "Starting", tone: "running", mark: "running" };
     }
     case "verify":
+      // DB-N2-10: the running check by name (*Running Tests…*), as the Checks tab names it.
+      if (ctx.runningGate) {
+        return { text: runningCheckText(ctx.runningGate), tone: "running", mark: "running" };
+      }
       if (!ev) return { text: "Running checks…", tone: "running", mark: "running" };
       if (!ev.passed) return { text: failText, tone: "fail", mark: "pips" };
       return { text: "Holding for review", tone: "neutral", mark: "pips" };
@@ -1199,7 +1213,9 @@ export function eventSentence(
         tone: "neutral",
       };
     case "pm/message": {
-      const text = typeof p.text === "string" ? p.text : "";
+      // The text is in the private part (teams §3); older messages carry it in the payload.
+      const own = (event.private as { text?: unknown } | undefined)?.text;
+      const text = typeof own === "string" ? own : typeof p.text === "string" ? p.text : "";
       return {
         ...base,
         actor: "You",

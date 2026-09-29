@@ -6,6 +6,7 @@ import {
   type GateRunner,
   type RunGatesOptions,
   type RungOutcome,
+  announceGateStart,
   gateCopy,
 } from "@sekhemet/gates";
 import { missingTrailers } from "@sekhemet/sync";
@@ -76,6 +77,8 @@ export function withTrailerGate(inner: GateRunner, base = "main"): GateRunner {
       runOptions?: RunGatesOptions,
     ): Promise<GateResult> => {
       const res = await inner.runGates(rungs, cwd, runOptions);
+      // DB-N2-10: the page names this check while it runs.
+      announceGateStart(runOptions, { gate: "trailers", rung: "hygiene" });
       const started = Date.now();
       const failures = trailerGate(cwd, base);
       const outcome: RungOutcome = {

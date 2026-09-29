@@ -227,6 +227,55 @@ describe("the measure, proved with a scripted Review model", () => {
     expect(run.report.passes).toBe(false);
   });
 
+  it("F25: counts a cut-off or unreadable reply as a failed review, never as a clean one", async () => {
+    // Every other item's reply is cut off at its length cap, as gpt-oss's were.
+    let i = 0;
+    const prompts: string[] = [];
+    const model: LocalInferenceAdapter = {
+      modelId: "gpt-oss-20b",
+      supportedArms: ["arm_b_json"],
+      contextWindow: { contextTokens: 32_768, maxTokens: 1200 },
+      generate: async (req) => {
+        prompts.push(req.prompt);
+        const d = set.items[i];
+        const cut = i++ % 2 === 1;
+        const { ranges } = rangesOf(d?.id ?? "");
+        const whole = JSON.stringify({
+          criteria: [{ n: 1, verdict: "unmet", at: `${d?.file}:${ranges[0]?.[0]}`, note: "x" }],
+        });
+        return {
+          text: cut ? whole.slice(0, 20) : whole,
+          toolCalls: [],
+          usage: { promptTokens: 1, completionTokens: 1200, durationMs: 1, thinkingTokens: 1072 },
+          ...(cut ? { finishReason: "length" } : {}),
+        };
+      },
+    };
+    const said: string[] = [];
+    const run = await runSeededDefects(set, model, { say: (l) => said.push(l) });
+    const failed = Math.floor(set.items.length / 2);
+    const reviewed = set.items.length - failed;
+    expect(run.report.items).toBe(set.items.length);
+    expect(run.report.failed).toBe(failed);
+    expect(run.report.reviewed).toBe(reviewed);
+    // Recall is over the reviews that completed: every one of them caught its defect.
+    expect(run.report.caught).toBe(reviewed);
+    expect(run.report.recall).toBe(1);
+    // A measure with a failed review is never RG-P8-13's verdict.
+    expect(run.report.passes).toBe(false);
+    expect(run.report.line).toMatch(
+      new RegExp(`caught ${reviewed} of ${reviewed} seeded defects reviewed`),
+    );
+    expect(run.report.line).toMatch(
+      new RegExp(`${failed} of ${set.items.length} reviews failed .*not counted`),
+    );
+    const failedScores = run.scores.filter((x) => x.failed);
+    expect(failedScores).toHaveLength(failed);
+    expect(failedScores[0]?.failed).toMatch(/cut off at its length cap/);
+    expect(failedScores.every((x) => !x.caught && x.falsePositives === 0)).toBe(true);
+    expect(said.filter((l) => l.startsWith("review failed "))).toHaveLength(failed);
+  });
+
   it("refuses a set that is not registered (MS-T11-7)", () => {
     const root = mkdtempSync(join(tmpdir(), "seeded-"));
     mkdirSync(join(root, "fixtures"), { recursive: true });

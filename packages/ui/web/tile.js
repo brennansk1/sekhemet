@@ -1,5 +1,6 @@
 // Card tile (dashboard §2.4.4). Returns markup; every model string is escaped.
 import { aiBadge, esc, icon, tip } from "./dom.js";
+import { PRESENCE_COPY } from "./lib/live.js";
 import { tileModel } from "./lib/tiles.js";
 import { GATE_STATE_LABELS, ISSUE_TYPE_LABELS, formatDuration } from "./lib/vocabulary.js";
 import { prioMark } from "./marks.js";
@@ -94,7 +95,14 @@ export function tileHtml(card, opts = {}) {
   const delegate = t.delegate
     ? `<span class="dlg" ${tip(`Delegate: ${t.delegate.text}`)}>${esc(t.delegate.text)}${t.delegate.worker ? aiBadge() : ""}</span>`
     : "";
-  const r1 = `<div class="r1">${sel}${type}${key}${just}<span class="r1-end">${pts}${owner}${delegate}</span></div>`;
+  // DB-N9-20: someone else dragging this card shows their avatar on it (in memory, never recorded).
+  const moving = (opts.draggedBy ?? [])
+    .map(
+      (f) =>
+        `<span class="av pres" role="img" aria-label="${esc(PRESENCE_COPY.dragging(f.name))}" ${tip(PRESENCE_COPY.dragging(f.name))}>${esc(f.initials)}</span>`,
+    )
+    .join("");
+  const r1 = `<div class="r1">${sel}${type}${key}${just}<span class="r1-end">${moving}${pts}${owner}${delegate}</span></div>`;
 
   // Row 3: priority glyph (none for No priority) · epic chip · up to two labels.
   const prio = t.priority !== 0 && !opts.hidePriority ? prioMark(t.priority) : "";

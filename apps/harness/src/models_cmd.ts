@@ -221,6 +221,11 @@ export async function modelsAdd(
           ? `the ${family} family's defaults, not this model's card`
           : "its launch profile's defaults, not this model's card";
     print(`${r.id} runs at ${describeSampling(runs)} (${source}).`);
+    // F25: a template that cannot turn reasoning off, known from the header.
+    if (entry?.reasoning?.cannotDisable)
+      print(
+        `${r.id} cannot turn its reasoning off (architecture ${r.header.architecture ?? "unknown"}): a request for none thinks at ${entry.reasoning.floor ?? "low"}, and its thinking is budgeted.`,
+      );
     if (!given && !entry?.sampling)
       print(
         `Record its model card's sampling with: sekhemet models add ${r.path} --id ${r.id} --sampling temperature=,top_p=,top_k=,min_p=`,

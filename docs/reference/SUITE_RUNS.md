@@ -6,6 +6,27 @@ The number to watch is not the pass count alone. It is **why the failures failed
 
 ---
 
+## Regression pair — Nail-MTP on `d377b9d` against `6bdaaa4`, all four fixtures, 2026-09-28
+
+Sprint 3. The same Coding model (nail-mtp, qualified on both builds), the same 30 cards and the same sampling (temperature 0.7, top_p 0.8, top_k 20). The two builds are the one before B4.5–B4.7 and the compliance fixes, and the compliance-fixes commit. Suite 1.0.0 `d70f689d`. The cost measure was named before the run: median tokens per card.
+
+- **Arm A, `d377b9d`:** 20 passed of 27 measured, 3 blocked.
+  - Chronicle, onyx and vanguard ran in one run (3.1 h).
+  - Basalt-canvas was re-run alone (39 min) after the shared registry refused the model mid-run (F23 below).
+- **Arm B, `6bdaaa4`:** 21 passed of 27 measured, 3 blocked (2.9 h, 2.29M tokens).
+- **Paired on the 26 cards measured in both:** A 20, B 21.
+  - One discordant card: `card_onyx_4_vault` failed on A (oscillation) and passed on B.
+  - The median paired difference in tokens per card is −5.
+- **Verdict: no clear difference, and no regression.** One discordant pair cannot be resolved (an exact test needs far more), and cost is unchanged.
+- **Not a prompt admission.** Both builds have the same context version (`abe6d3e49d00629f`), so no Coding-model template or copy changed between them. The pair checks the non-prompt changes for regressions: gitleaks' rules in the checks, the `marked` invariant parser the architecture gate runs, the DEC-31 issue titles of the first two issues, and B4.5–B4.7. The step-replay screen on `6bdaaa4` passed all three canonical states.
+- **The same failures on both builds** point at the model or the card, not the change:
+  - chronicle's ledger (oscillation, then budget);
+  - vanguard's ingest, replay and SSE (budget and oscillation);
+  - basalt-canvas's store (budget; it passed on A), with the end-to-end cards blocked behind them.
+- **F23, found by this run.** The model registry is shared by every build on the machine, and a build with another context version invalidates the others' qualifications (`registry.ts` `observeContextVersion`). Registering a model from the B4.8 build invalidated nail-mtp while `d377b9d` was running, so its basalt-canvas queue refused the model. From now on, each frozen build runs with its own registry copy (`SEKHEMET_MODEL_REGISTRY`). Nail-mtp re-qualified on `d377b9d` at 100% (arm_b_json).
+
+---
+
 ## The suite hash changes (B2.4, MS-T7-2): the reference solutions are part of the suite
 
 From this build the suite hash also covers the registered, verified reference solutions (`fixtures/reference_solutions`, `reference-solutions` in `fixtures/eval_assets.json`): one per card, each of which failed its card's frozen test at the seed and passes it. They are what independent mode builds a card's `main` from (MS-T7-3), so a changed solution changes what a card is measured against, and the hash must say so; a solution changed without a new registered version stops the suite from loading. The hash moves from `192b6e95` to `d70f689d` (reference solutions version 3; the verifier moved out of the asset, so it no longer changes the hash) with no fixture or task edited. **No run below is comparable with a run on the new hash**, and **B2.5's baseline is the first run on it**.

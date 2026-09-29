@@ -118,6 +118,12 @@ export interface ConfigApiDeps {
   /** A `config` frame on `/api/stream` (PM_CONTRACT: scan, hash, download and copy progress). */
   emit?: (data: Record<string, unknown>) => void;
   userConfigPath?: string;
+  /**
+   * Sekhemet's own write to the user config, recorded as `config/changed`
+   * with the person who asked (teams TEAM-27, TEAM-44), so the next start
+   * does not report it as a change made outside. Writes directly when omitted.
+   */
+  recordConfigWrite?: <T>(principal: string, write: () => T) => T;
   env?: NodeJS.ProcessEnv;
   /** `--models-dir`, when the server was started with it. */
   modelsDirFlag?: string;
@@ -353,6 +359,8 @@ export function createConfigApi(deps: ConfigApiDeps) {
   };
   const env = deps.env ?? process.env;
   const cfgPath = deps.userConfigPath ?? userConfigPath();
+  const configWrite = <T>(principal: string, write: () => T): T =>
+    deps.recordConfigWrite ? deps.recordConfigWrite(principal, write) : write();
   const registry = deps.registry ?? new ModelRegistry();
   const probe =
     deps.headroomProbe === null ? undefined : (deps.headroomProbe ?? headroomProbeFor(true));
@@ -1960,8 +1968,8 @@ export function createConfigApi(deps: ConfigApiDeps) {
             ...current.filter((f) => resolve(f.path) !== resolve(path)),
             { path, includeSubfolders: include },
           ];
-          writeModelFolders(cfgPath, next);
           const principal = deps.principalOf(req);
+          configWrite(principal, () => writeModelFolders(cfgPath, next));
           await deps.log.append({
             actor: "human",
             type: "models/folder_added",
@@ -1985,8 +1993,8 @@ export function createConfigApi(deps: ConfigApiDeps) {
             });
             return true;
           }
-          writeModelFolders(cfgPath, kept);
           const principal = deps.principalOf(req);
+          configWrite(principal, () => writeModelFolders(cfgPath, kept));
           await deps.log.append({
             actor: "human",
             type: "models/folder_removed",

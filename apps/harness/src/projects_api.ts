@@ -18,8 +18,8 @@ import { statusFacts } from "./status_api.js";
  * workspace's totals over those only (PM-N9-8). Each project's forecast,
  * lead and update come from Status's own reader (`statusFacts`), its release
  * from the story map through Status's `currentRelease`, so the two pages
- * never disagree. Health is recorded by B4.11 (teams NEW-teams-11): until
- * then it is null. No figure here is counted per person (DB-N9-7).
+ * never disagree. Health (TEAM-28) and the target date (DB-N9-3) are the
+ * ones Status reads. No figure here is counted per person (DB-N9-7).
  */
 
 const isIssue = (c: CardRecord) => c.tier !== "epic" && c.tier !== "initiative";
@@ -63,9 +63,6 @@ export async function projectsOverview(deps: {
   }
   const since = (c: CardRecord) => entered.get(c.id) ?? c.updatedAt ?? c.createdAt;
 
-  // The target is the release's (DB-N9-3, DEC-37); no release records one yet, and a
-  // sprint's end is not a project's target, so every row says *No target set*.
-  const target = null;
   const pending = store.runs.listDecisions("pending");
   const waiting: WaitingFacts[] = [];
   const projects: ProjectFacts[] = [];
@@ -134,7 +131,9 @@ export async function projectsOverview(deps: {
       updateMissing: facts.updateMissing,
       release: release ? { name: release.name, done: release.done, total: release.total } : null,
       forecast: facts.forecast,
-      target,
+      // The current release's target date as a person set it (DB-N9-3, DEC-37),
+      // Status's own; a sprint's end is never a project's target.
+      target: facts.target?.date ?? null,
       waitingOnYou: here.length,
       agent: {
         working: own.filter((c) => c.status === "in_progress").map((c) => c.title),

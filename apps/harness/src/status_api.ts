@@ -10,6 +10,8 @@ import type { StatusFacts } from "@sekhemet/ui";
 import { type Audience, nameFor, soloAudience } from "./pm/audience.js";
 import { flowMetrics, monteCarloForecast } from "./pm/metrics.js";
 import { UPDATE_POSTED } from "./pm/weekly.js";
+import { startRequests } from "./team/ai_teammates.js";
+import { UPDATE_CLOCK_EVENTS, healthOf, releaseTargets, updateClockStart } from "./team/health.js";
 import { levelRank } from "./team/settings.js";
 
 /**
@@ -20,8 +22,8 @@ import { levelRank } from "./team/settings.js";
  * routes and builds every word with `statusModel` (`@sekhemet/ui`).
  *
  * Scoped to one project and to what the person can see (PM-N9-8): a project
- * they cannot see reads as no project. Health is recorded by B4.11 (teams
- * NEW-teams-11); until then `healthWritable` is false and none is set.
+ * they cannot see reads as no project. Health is the lead's call and a
+ * release's target date a person's (teams TEAM-28, DB-N9-2, -3; `team/health.ts`).
  */
 
 const DAY = 86_400_000;
@@ -86,10 +88,45 @@ export async function statusFacts(deps: {
       update = { text, by: nameFor(a, last.principal ?? undefined, me), at: last.createdAt };
     }
   }
-  // TEAM-29: 7 days since the last update, or since the project began when
-  // none was posted (a release's start is not recorded yet), told to the lead.
-  const since = update ? Date.parse(update.at) : project ? Date.parse(project.createdAt) : now;
-  const updateMissing = team && isLead && Boolean(project) && now - since >= UPDATE_DUE_DAYS * DAY;
+  // TEAM-29: 7 days since the last update, or since the current release started
+  // (the previous release's acceptance, or the first's creation) when none was
+  // posted, else since the project began; told to the lead, in the Team setup only
+  // (TEAM-45: in Solo the update is optional and never missing).
+  const clock = project
+    ? (updateClockStart(await deps.log.getEventsByTypes([...UPDATE_CLOCK_EVENTS]), project.id) ??
+      Date.parse(project.createdAt))
+    : now;
+  const updateMissing = team && isLead && Boolean(project) && now - clock >= UPDATE_DUE_DAYS * DAY;
+
+  // TEAM-28: health as a person last set it, with their name and the date.
+  const set = project ? await healthOf(deps.log, project.id) : null;
+  const health: StatusFacts["health"] = set
+    ? { value: set.value, by: nameFor(a, set.principal, me), at: set.at }
+    : null;
+  // DB-N9-3: the current release (the first no person has accepted) and its target date.
+  const slices = project
+    ? (await deps.cardStore.slices.list(project.id)).map((sl, i) => ({ sl, i }))
+    : [];
+  const current = slices.find(({ sl }) => !sl.accepted);
+  const release = current
+    ? {
+        id: current.sl.id,
+        name: current.sl.title?.trim() ? current.sl.title.trim() : `Release ${current.i + 1}`,
+      }
+    : null;
+  const targetSet =
+    project && release ? (await releaseTargets(deps.log, project.id)).get(release.id) : undefined;
+  const target: StatusFacts["target"] =
+    release && targetSet
+      ? {
+          release: release.id,
+          date: targetSet.date,
+          by: nameFor(a, targetSet.principal, me),
+          at: targetSet.at,
+        }
+      : null;
+  const canSetTarget =
+    Boolean(release) && (!team || (lead !== undefined && lead === me) || level === "admin");
 
   // Finished issues by day, from the project's first issue (at most 60 days back).
   const moves = (await deps.log.getEventsByTypes(["card/status_changed"])).filter((e) =>
@@ -154,14 +191,31 @@ export async function statusFacts(deps: {
     (o) => ids.has(o.cardId) && Date.parse(o.completedAt) >= flowSince,
   );
 
+  // TEAM-39: requests to start the Agent on this page's issues that wait on the viewer.
+  const agentRequests = team
+    ? (await startRequests({ cardStore: deps.cardStore, log: deps.log, audience: a }, { for: me }))
+        .filter((r) => ids.has(r.cardId))
+        .map((r) => ({
+          id: r.id,
+          cardId: r.cardId,
+          title: r.title,
+          requestedBy: r.requestedByName,
+          ask: r.ask,
+        }))
+    : [];
+
   return {
     setup: team ? "team" : "solo",
     project: project ? { id: project.id, name: project.name } : null,
+    ...(agentRequests.length ? { agentRequests } : {}),
     isLead,
-    // A release lead may set health too (teams item 28): releases name no lead yet (B4.11).
-    canSetHealth: isLead,
-    healthWritable: false,
-    health: null,
+    // The project lead (item 28; `project.health`). A release names no lead of its own yet.
+    canSetHealth: Boolean(project) && isLead,
+    healthWritable: true,
+    health,
+    release,
+    target,
+    canSetTarget,
     update,
     updateMissing,
     canPostUpdate,

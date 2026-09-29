@@ -1,7 +1,7 @@
 import { renderActivity } from "./activity.js";
 import { renderApproval } from "./approval.js";
 import { renderChanges } from "./changes.js";
-import { loadDetail } from "./data.js";
+import { forget, loadDetail } from "./data.js";
 // The issue page (dashboard §2.6, NEW-dashboard-8, DEC-34): the header with
 // triage; the description, the acceptance criteria with their check state and
 // the agent's controls; then six tabs — Activity, Checks, Changes, AI review,
@@ -14,23 +14,29 @@ import { mountIssue } from "./issue_view.js";
 import { tip as learnTip } from "./learn.js";
 import { ISSUE_COPY, ISSUE_TABS, issueEventsUrl, issueTab, oldestFirst } from "./lib/issue.js";
 import { kindTip } from "./lib/learn.js";
+import { PRESENCE_COPY, viewersStrip } from "./lib/live.js";
 import { reviewerFindings } from "./lib/review_desk.js";
 import { stateBadge } from "./lib/strip.js";
 import { boardColumnLabel } from "./lib/vocabulary.js";
 import { renderPlan } from "./plan.js";
+import { announceIssue } from "./presence.js";
 import { acknowledgeFocused, focusNextFinding, reviewerHtml } from "./review_desk.js";
+import { getSession } from "./session.js";
 import { setTopbar } from "./shell.js";
 import { renderSteps } from "./steps.js";
 import { store } from "./store.js";
 import { renderSuggestions } from "./suggestions.js";
 import {
   accept,
+  commentFormHtml,
   composerHtml,
   openPark,
   quickNotes,
   triageBarHtml,
+  wireCommentForm,
   wireComposer,
 } from "./triage.js";
+import { mountWatch } from "./watch.js";
 
 const ui = {
   root: null,
@@ -146,10 +152,10 @@ function renderHead() {
     .replace(
       '<div class="outcome">',
       `<div class="outcome">${pill}`,
-    )}</div><div class="acts">${triage}</div></div>`;
+    )}</div>${presenceHtml(card.id)}<div class="acts">${triage}</div></div>`;
   if (head.dataset.html !== next) {
     const active = document.activeElement;
-    const which = ["data-accept", "data-back", "data-park"].find(
+    const which = ["data-accept", "data-back", "data-comment", "data-park"].find(
       (a) => active?.hasAttribute?.(a) && head.contains(active),
     );
     head.innerHTML = next;
@@ -158,6 +164,22 @@ function renderHead() {
   }
   renderTabs();
   ui.issue?.draw();
+}
+
+/** DB-N9-20: the avatars of the others viewing this issue, in its header; "" when alone. */
+function presenceHtml(id) {
+  const strip = viewersStrip(store.state.presence, id, getSession().principal);
+  if (!strip.shown.length) return "";
+  const faces = strip.shown
+    .map(
+      (f) =>
+        `<span class="av" role="img" aria-label="${esc(PRESENCE_COPY.viewer(f.name))}" title="${esc(PRESENCE_COPY.viewer(f.name))}">${esc(f.initials)}</span>`,
+    )
+    .join("");
+  const more = strip.more
+    ? `<span class="sec tnum">${esc(PRESENCE_COPY.more(strip.more))}</span>`
+    : "";
+  return `<div class="pres-strip" role="group" aria-label="${esc(strip.label)}">${faces}${more}</div>`;
 }
 
 function aiReviewHtml(detail) {
@@ -204,6 +226,11 @@ function renderPanel({ keepScroll = true } = {}) {
     refresh: () => {
       void loadEvents();
     },
+    // TEAM-15: a comment's @Agent or @Seshat changes the AI teammates' state the header shows.
+    reloadDetail: () => {
+      forget(ui.id);
+      void load(true);
+    },
     // Files shown on the Changes tab change what Accept's reason says (DB-N5-3).
     shown: () => renderHead(),
     goTab: (t, hash) => {
@@ -235,7 +262,8 @@ async function load(keepScroll = false) {
   const seq = ++ui.loadSeq;
   const card = store.card(id);
   ui.pane.forCard(id);
-  ui.sig = `${card?.status}|${card?.display?.evidence?.id ?? ""}`;
+  // TEAM-15: a delegation to the Agent reloads the detail, which carries the AI's state.
+  ui.sig = `${card?.status}|${card?.display?.evidence?.id ?? ""}|${card?.delegate?.kind ?? ""}`;
   if (!keepScroll) ui.detail = null;
   renderHead();
   if (!keepScroll) renderPanel({ keepScroll });
@@ -297,6 +325,24 @@ function runAction(key) {
   }
   if (key === "p") {
     openPark($("[data-park]", ui.root) ?? $(".cv-h", ui.root), card);
+    return true;
+  }
+  if (key === "comment") {
+    // Teams item 25: Comment — a review with no verdict; the drafted line comments open threads.
+    if ($("[data-comment-form]", ui.root)) return true;
+    $(".cv-body", ui.root).insertAdjacentHTML(
+      "beforebegin",
+      commentFormHtml({ comments: ui.comments }),
+    );
+    wireCommentForm($("[data-comment-form]", ui.root), card, {
+      comments: () => ui.comments,
+      onSent: () => {
+        ui.comments = [];
+        forget(ui.id);
+        void load(true);
+        ui.tabCtl?.rerender?.();
+      },
+    });
     return true;
   }
   return false;
@@ -392,13 +438,16 @@ function setParams(params) {
   }
   load();
   loadEvents();
+  ui.watch?.load();
+  // TEAM-26: the others viewing this issue see this person's avatar.
+  announceIssue(id);
 }
 
 export function mount(view, route) {
   const root = document.createElement("div");
   root.className = "view-host";
   root.innerHTML =
-    '<section class="cv" aria-label="Issue"><div class="cv-h"></div><div class="cv-apv" data-approval hidden></div><div class="cv-sug" data-suggestions hidden></div><div class="cv-issue" data-issue></div><div class="cv-tabs"></div><div class="cv-body"></div></section>';
+    '<section class="cv" aria-label="Issue"><div class="cv-h"></div><div class="cv-watch" data-watch-host hidden></div><div class="cv-apv" data-approval hidden></div><div class="cv-sug" data-suggestions hidden></div><div class="cv-issue" data-issue></div><div class="cv-tabs"></div><div class="cv-body"></div></section>';
   view.append(root);
   ui.root = root;
   ui.id = null;
@@ -417,6 +466,8 @@ export function mount(view, route) {
     reload: () => load(true),
     current: () => ({ card: store.card(ui.id), detail: ui.detail }),
   });
+  // Teams item 22: the watchers and the Watch toggle, in the Team setup.
+  ui.watch = mountWatch($("[data-watch-host]", root), { id: () => ui.id });
   ui.issue = mountIssue($("[data-issue]", root), {
     get id() {
       return ui.id;
@@ -436,10 +487,13 @@ export function mount(view, route) {
     else if (t.closest("[data-accept]")) runAction("a");
     else if (t.closest("[data-back]")) runAction("r");
     else if (t.closest("[data-park]")) runAction("p");
+    else if (t.closest("[data-comment]")) runAction("comment");
   });
   ui.unsub = store.on((_s, patch) => {
     if (!ui.root) return;
     if ("decisions" in patch) ui.tabCtl?.onStore?.(patch);
+    // DB-N9-20: someone opened or left this issue.
+    if ("presence" in patch) renderHead();
     if (!("cards" in patch || "connection" in patch || "verification" in patch)) return;
     const mine = (store.state.feed ?? []).filter((e) => e.cardId === ui.id);
     if ("cards" in patch && mine.length && ui.events) {
@@ -448,10 +502,23 @@ export function mount(view, route) {
       if (fresh.length) {
         ui.events = [...ui.events, ...fresh];
         ui.tabCtl?.onEvents?.(fresh);
+        // Commenting, a mention, an owner, a delegate or a review subscribes someone (TEAM-21).
+        if (
+          fresh.some((e) =>
+            /^(issue\/|card\/(owner_changed|delegated|status_changed))/.test(e.type),
+          )
+        )
+          ui.watch?.load();
+        // Teams item 25: a review comment, a reply, a resolve or a dismissed
+        // accept changes the threads and what Accept waits on.
+        if (fresh.some((e) => /^review\/(commented|thread_|accept_dismissed)/.test(e.type))) {
+          forget(ui.id);
+          void load(true);
+        }
       }
     }
     const card = store.card(ui.id);
-    const sig = `${card?.status}|${card?.display?.evidence?.id ?? ""}`;
+    const sig = `${card?.status}|${card?.display?.evidence?.id ?? ""}|${card?.delegate?.kind ?? ""}`;
     if (sig !== ui.sig && !$("[data-composer]", ui.root)) load(true);
     else renderHead();
     ui.tabCtl?.onStore?.(patch);
@@ -465,6 +532,7 @@ export function mount(view, route) {
       return runAction(key);
     },
     unmount() {
+      announceIssue(null);
       ui.closeComposer?.();
       ui.tabCtl?.destroy?.();
       ui.tabCtl = null;

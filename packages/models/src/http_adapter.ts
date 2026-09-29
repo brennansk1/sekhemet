@@ -487,6 +487,12 @@ interface GenerationResult {
   thinkingTokens?: number;
 }
 
+/**
+ * Thinking on a request resolved to off below this is an empty think block,
+ * not a template that ignored the switch (F25).
+ */
+export const OFF_THINKING_NOTE_TOKENS = 32;
+
 /** Default thinking allowance per level when the request names none. */
 export const REASONING_BUDGET_TOKENS: Record<Exclude<ReasoningLevel, "off">, number> = {
   low: 512,
@@ -663,22 +669,67 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
 
   /**
    * The reasoning level a request resolves to, after the adapter's default.
-   * A registry entry that says the model has no reasoning turns it off (MD-N4-2).
+   * A registry entry that says the model has no reasoning turns it off
+   * (MD-N4-2); one whose template cannot turn it off resolves "off" to its
+   * floor (live-test F25), which is then budgeted like any reasoning request.
    */
   public reasoningFor(req: Pick<InferenceRequest, "reasoning">): ReasoningLevel {
-    if (this.registryEntry()?.reasoning?.supported === false) return "off";
-    if (req.reasoning !== undefined) return req.reasoning;
-    return this.options.disableReasoning === false ? "medium" : "off";
+    const registered = this.registryEntry()?.reasoning;
+    if (registered?.supported === false) return "off";
+    const asked =
+      req.reasoning ?? (this.options.disableReasoning === false ? "medium" : ("off" as const));
+    if (asked === "off" && registered?.cannotDisable) return registered.floor ?? "low";
+    return asked;
   }
 
-  /** Thinking tokens allowed for a request whose reasoning is on. */
-  private thinkingBudget(req: InferenceRequest, level: ReasoningLevel): number {
-    if (level === "off") return 0;
+  /**
+   * Thinking tokens allowed for a request, added to its answer cap (rule 22).
+   * A reasoning level gets the request's stated cap when positive, else the
+   * registry's, else the level's default: a level with no allowance would end
+   * mid-thought. A request resolved to off gets nothing, unless this model
+   * was seen thinking on such a request (F25): then the most it was seen to
+   * think, or the request's stated cap when larger.
+   */
+  private thinkingBudget(
+    req: Pick<InferenceRequest, "reasoningBudgetTokens">,
+    level: ReasoningLevel,
+  ): number {
+    if (level === "off") {
+      const seen = Math.max(this.offThinkingSeen, this.registryEntry()?.thinksWhenOff?.tokens ?? 0);
+      return seen > 0 ? Math.max(seen, req.reasoningBudgetTokens ?? 0) : 0;
+    }
+    if (req.reasoningBudgetTokens !== undefined && req.reasoningBudgetTokens > 0) {
+      return req.reasoningBudgetTokens;
+    }
     const registered = this.registryEntry()?.reasoning?.defaultBudget;
-    return (
-      req.reasoningBudgetTokens ??
-      (registered !== undefined && registered > 0 ? registered : REASONING_BUDGET_TOKENS[level])
-    );
+    return registered !== undefined && registered > 0 ? registered : REASONING_BUDGET_TOKENS[level];
+  }
+
+  /** The thinking tokens a request would add to its answer cap (rule 22, F25). */
+  public thinkingAllowance(
+    req: Pick<InferenceRequest, "reasoning" | "reasoningBudgetTokens">,
+  ): number {
+    return this.thinkingBudget(req, this.reasoningFor(req));
+  }
+
+  /** The most thinking seen on a request resolved to off, in this process (F25). */
+  private offThinkingSeen = 0;
+
+  /**
+   * A reply the server reports thinking on although its request resolved to
+   * off (F25): the model's template ignored the switch. Remembered here and
+   * noted in the registry's `thinksWhenOff`, apart from `reasoning`, so the
+   * next such request budgets for it. Only the server's own report counts —
+   * `reasoning_content`, Ollama's `thinking` or `usage`'s reasoning tokens —
+   * never a `</think>` in the answer, which may be code.
+   */
+  private noteThinkingWhenOff(tokens: number): void {
+    if (tokens < OFF_THINKING_NOTE_TOKENS || tokens <= this.offThinkingSeen) return;
+    this.offThinkingSeen = tokens;
+    const registry = this.options.registry;
+    if (!registry) return;
+    if ((registry.get(this.modelId)?.thinksWhenOff?.tokens ?? 0) >= tokens) return;
+    registry.upsert(this.modelId, { thinksWhenOff: { tokens, at: new Date().toISOString() } });
   }
 
   constructor(options: HttpAdapterOptions) {
@@ -1155,6 +1206,12 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       thinkingTokens,
       answerTokens: Math.max(0, completion - thinkingTokens),
     };
+    if (level === "off") {
+      // F25: learned only from the thinking the server itself reports.
+      const reported =
+        data.thinkingTokens ?? (data.thinking ? Math.round(data.thinking.length / 4) : 0);
+      this.noteThinkingWhenOff(Math.min(completion, reported));
+    }
     this.requests++;
     const telemetry = this.options.telemetry ?? modelTelemetry;
     if (telemetry) {
@@ -1210,14 +1267,16 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
         function: { name: t.name, description: t.description, parameters: t.parameters },
       }));
     }
-    if (this.reasoningFor(req) === "off") {
+    const level = this.reasoningFor(req);
+    if (level === "off") {
       // Ollama otherwise routes the answer into `reasoning` and returns empty content.
       payload.think = false;
       payload.reasoning_effort = "none";
     } else {
       // The thinking lands in `message.thinking`, which is dropped: reasoning
-      // traces never carry over into the next step's prompt.
-      payload.think = true;
+      // traces never carry over into the next step's prompt. A model that
+      // cannot turn reasoning off takes a level, not a boolean (F25).
+      payload.think = this.registryEntry()?.reasoning?.cannotDisable ? level : true;
     }
 
     type OllamaChunk = {
