@@ -220,15 +220,15 @@ for (const { engine, runs } of ENGINES) {
       );
     }
 
-    it.runIf(engine === "srt")(
-      "srt: a socket at a path no table names is refused too, with the network granted",
-      async () => {
+    // Generated for srt only, so no engine's block holds a case it never runs (B1, SEC-43).
+    if (engine === "srt") {
+      it("srt: a socket at a path no table names is refused too, with the network granted", async () => {
         const sock = join(outside, "unlisted.sock");
         await listen(sock);
         const result = await connect(sock, true);
         expect(result.stdout).not.toContain("CONNECTED");
         expect(seen[sock]).toBe(0);
-      },
-    );
+      });
+    }
   });
 }

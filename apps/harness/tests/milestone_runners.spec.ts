@@ -7,7 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 // @ts-expect-error: plain ESM scripts, run by `pnpm milestone` and checked here.
 import {
   INJECTION_SURFACE,
+  acrossPlatforms,
+  appliesTo,
   injectionCheck,
+  platformCheck,
   surfaceChanges,
 } from "../../../scripts/milestones/b1.mjs";
 // @ts-expect-error: as above.
@@ -469,5 +472,113 @@ describe("docs/reference/MILESTONES.md", () => {
     expect(tied).toContain(`tree \`${"b".repeat(40)}\``);
     // A milestone with no evidence yet says so, never a verdict it did not earn.
     expect(page).toMatch(/## B1[^#]*\*\*NOT RUN\*\*[^#]*no evidence/);
+  });
+});
+
+/**
+ * R9: the suite has tests only one platform can run (the keychain on macOS,
+ * bubblewrap's masks on Linux). SEC-43 is read across both: each test passes
+ * on every platform it applies to, and only the tests the runner names as
+ * platform-only may be skipped on the other (R9-L3 review).
+ */
+describe("B1: the containment suite across macOS and Linux (SEC-43)", () => {
+  const run = (files: Record<string, Record<string, string>>) =>
+    m.summarizeVitest({
+      testResults: Object.entries(files).map(([file, states]) => ({
+        name: `/x/packages/sandbox/tests/${file}`,
+        assertionResults: Object.entries(states).map(([title, status]) => ({
+          title,
+          fullName: title,
+          status,
+        })),
+      })),
+    });
+  const write = "containment (srt engine) refuses a write outside the allowed path";
+
+  it("names the tests only one platform can run, and nothing else", () => {
+    expect(appliesTo("linux_sockets.spec.ts: Linux host sockets (srt engine) x")).toBe("Linux");
+    expect(appliesTo("secret_masks.spec.ts: B-2: a planted secret bubblewrap: ~/.ssh")).toBe(
+      "Linux",
+    );
+    expect(appliesTo("keychain_containment.spec.ts: anything")).toBe("macOS");
+    expect(appliesTo("secret_masks.spec.ts: B-2: a planted secret Seatbelt: the entries")).toBe(
+      "macOS",
+    );
+    expect(
+      appliesTo(
+        "containment.spec.ts: containment (native engine) refuses to create git metadata at any depth or in any case",
+      ),
+    ).toBe("macOS");
+    expect(appliesTo(`containment.spec.ts: ${write}`)).toBe("both");
+  });
+
+  it("passes when each test passed on every platform it applies to", () => {
+    const check = acrossPlatforms([
+      {
+        label: "macOS",
+        summary: run({
+          "containment.spec.ts": { [write]: "passed" },
+          "keychain_containment.spec.ts": { k: "passed" },
+          "linux_sockets.spec.ts": { s: "skipped" },
+        }),
+      },
+      {
+        label: "Linux",
+        summary: run({
+          "containment.spec.ts": { [write]: "passed" },
+          "keychain_containment.spec.ts": { k: "skipped" },
+          "linux_sockets.spec.ts": { s: "passed" },
+        }),
+      },
+    ]);
+    expect(check.ok).toBe(true);
+  });
+
+  it("does not excuse a test for both platforms that one of them skipped, or never ran", () => {
+    const skipped = acrossPlatforms([
+      { label: "macOS", summary: run({ "containment.spec.ts": { [write]: "passed" } }) },
+      { label: "Linux", summary: run({ "containment.spec.ts": { [write]: "skipped" } }) },
+    ]);
+    expect(skipped.ok).toBe(false);
+    expect(skipped.detail).toContain(`Linux: containment.spec.ts: ${write} (skipped)`);
+    const absent = acrossPlatforms([
+      { label: "macOS", summary: run({ "containment.spec.ts": { [write]: "passed" } }) },
+      { label: "Linux", summary: run({ "containment.spec.ts": { other: "passed" } }) },
+    ]);
+    expect(absent.ok).toBe(false);
+    expect(absent.detail).toContain(`Linux: containment.spec.ts: ${write} (not run)`);
+  });
+
+  it("fails on a platform-only test its platform skipped (a named residual) or one that failed", () => {
+    const residual = acrossPlatforms([
+      { label: "macOS", summary: run({ "linux_sockets.spec.ts": { abstract: "skipped" } }) },
+      { label: "Linux", summary: run({ "linux_sockets.spec.ts": { abstract: "skipped" } }) },
+    ]);
+    expect(residual.ok).toBe(false);
+    expect(residual.detail).toContain("Linux: linux_sockets.spec.ts: abstract (skipped)");
+    const failed = acrossPlatforms([
+      { label: "macOS", summary: run({ "containment.spec.ts": { [write]: "passed" } }) },
+      { label: "Linux", summary: run({ "containment.spec.ts": { [write]: "failed" } }) },
+    ]);
+    expect(failed.ok).toBe(false);
+  });
+
+  it("is NOT RUN until both platforms have run", () => {
+    expect(
+      acrossPlatforms([
+        { label: "macOS", summary: run({ "containment.spec.ts": { a: "passed" } }) },
+      ]).ok,
+    ).toBeNull();
+  });
+
+  it("judges one platform by its failures and broken files, counting its skips", () => {
+    const check = platformCheck(
+      "Linux",
+      run({ "containment.spec.ts": { a: "passed", b: "skipped" } }),
+    );
+    expect(check.ok).toBe(true);
+    expect(check.detail).toContain("1 skipped");
+    expect(platformCheck("Linux", run({ "containment.spec.ts": { a: "failed" } })).ok).toBe(false);
+    expect(platformCheck("Linux", undefined).ok).toBe(false);
   });
 });

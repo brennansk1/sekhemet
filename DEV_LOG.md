@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 64 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 65 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,39 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 65 — 2026-09-30 (R9-L3: B1's runner runs Linux itself and reads SEC-43 across the platforms; B1 is FAIL, for three named reasons)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. One independent review.
+
+- **The runner:**
+  - `scripts/milestones/b1.mjs` no longer hard-codes Linux as NOT RUN. On a Linux host it runs `packages/sandbox/tests` there. On macOS it copies this tree into the Lima VM that `SEKHEMET_LINUX_VM` names, builds it there and runs the suite once (the suite names both engines itself).
+  - Each platform is judged by its failures and broken files (`platformCheck`).
+  - SEC-43's "no test skipped on either platform" is read across the platforms (`acrossPlatforms`, security.md SEC-43). Only the tests B1 names as platform-only (`PLATFORM_ONLY`) may be skipped on the other platform. Every other test must pass on both, and a test absent from a run it applies to counts as not run.
+  - The tree identity is taken before and after, and the result is not counted if it changed.
+- **Test titles made comparable:**
+  - two bubblewrap cases in `secret_masks.spec.ts` carried their skip reason in the title on macOS, so the two platforms' results did not line up; the titles are now constant, and the reason is logged;
+  - an srt-only socket case was generated, always skipped, inside the native engine's block, and is now generated for srt only.
+- **B1 (`pnpm milestone B1` with the VM): FAIL.** macOS 245/256 passed (11 skipped, all Linux-only); Linux 209/256 (43 skipped, macOS-only). Across both, 256 tests, and three reasons:
+  1. DEC-50's four network tests fail on Linux: the proxy route and a card's named ports (C2).
+  2. One test is skipped everywhere: the native engine's abstract socket with the network granted. That is item 15's named residual, which srt closes (DEC-39, R-srt).
+  3. The live-Worker injection run is stale, because the sandbox changed since 5937e83. It needs a live re-run, which is a model load.
+- **Review:** changes required. All of it is fixed:
+  - (blocker) a stale Linux report could be read as this tree's; it is now removed first;
+  - the Linux half's tree is now checked;
+  - "passes where it applies" had been "passed somewhere", which let a Linux skip be excused by a macOS pass; it is now the explicit platform-only list;
+  - the rsync excludes are anchored;
+  - one Linux run, since the suite names both engines itself.
+
+  The residual stays a gap, on purpose.
+- **Narrow re-check:** confirmed on all 256 real titles, where the new logic finds exactly the five real gaps. Known limit: `linux_sockets`, `keychain_containment` and `session_sockets` are platform-only as whole files, so a test for both platforms must not be added to them.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1588 files), vitest 682 files, 5,435 passed, 54 skipped.
+- **Where the cards stop:**
+  - R9 is complete, as far as it can be without C2.
+  - B1 turns PASS when the C2 relays land, the residual is closed (srt by default, or the native seccomp refusal), and the injection fixtures are re-run.
+  - **Next:**
+    - the owner's 5-hour use, then C1;
+    - Stream 1: the injection re-run, then the Reviewer's R3b and R3c.
 
 ### Entry 64 — 2026-09-30 (R9: the sandbox suite on Linux for the first time — bubblewrap on Ubuntu 24.04, the escape tests on every host, DEC-49 and DEC-50)
 

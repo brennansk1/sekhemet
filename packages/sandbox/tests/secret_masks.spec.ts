@@ -219,8 +219,13 @@ describe("B-2: one secret table for both engines", () => {
  */
 const BWRAP = platform() === "linux" && BWRAP_CANDIDATES.some((p) => existsSync(p));
 const SEATBELT = platform() === "darwin";
-const NO_BWRAP_REASON =
-  "skipped: no bubblewrap on this host (macOS). It runs in R9, the Lima VM, and on the Linux CI runner (W7)";
+// Titles stay the same on every host, so B1 can read macOS and Linux
+// together (SEC-43); the reason for a skip is said here instead.
+if (!BWRAP) {
+  console.warn(
+    "secret_masks: the bubblewrap cases are skipped: no bubblewrap on this host. They run on Linux (R9's Lima VM, B1's runner).",
+  );
+}
 
 describe("B-2: a planted secret cannot be read inside the sandbox", () => {
   let home: string;
@@ -259,7 +264,7 @@ describe("B-2: a planted secret cannot be read inside the sandbox", () => {
   }
 
   it.skipIf(!BWRAP)(
-    `bubblewrap: ~/.ssh/id_ed25519 is unreadable, ~/.npmrc reads empty${BWRAP ? "" : ` (${NO_BWRAP_REASON})`}`,
+    "bubblewrap: ~/.ssh/id_ed25519 is unreadable, ~/.npmrc reads empty",
     async () => {
       const key = plant(join(".ssh", "id_ed25519"));
       const npmrc = plant(".npmrc");
@@ -399,38 +404,35 @@ describe("B-2: the session's sockets are out of the sandbox's reach", () => {
    * the real sandbox, and the connection must fail, with the network granted
    * or not. Where the host has a session bus of its own, that is tried too.
    */
-  it.skipIf(!BWRAP)(
-    `bubblewrap: the session bus's socket cannot be reached${BWRAP ? "" : ` (${NO_BWRAP_REASON})`}`,
-    async () => {
-      const runtime = join(outside, "runtime");
-      mkdirSync(runtime, { mode: 0o700 });
-      const bus = join(runtime, "bus");
-      const server = createServer((c) => c.end("SECRET-CANARY"));
-      await new Promise<void>((ok) => server.listen(bus, ok));
-      vi.stubEnv("XDG_RUNTIME_DIR", runtime);
-      const hostBus = join("/run/user", String(userInfo().uid), "bus");
-      try {
-        for (const target of [bus, ...(existsSync(hostBus) ? [hostBus] : [])]) {
-          for (const allowNetwork of [false, true]) {
-            const sandbox = new ProcessSandbox({ engine: "native" });
-            const result = await sandbox.execute(
-              process.execPath,
-              [
-                "-e",
-                `require('net').connect(${JSON.stringify(target)})
+  it.skipIf(!BWRAP)("bubblewrap: the session bus's socket cannot be reached", async () => {
+    const runtime = join(outside, "runtime");
+    mkdirSync(runtime, { mode: 0o700 });
+    const bus = join(runtime, "bus");
+    const server = createServer((c) => c.end("SECRET-CANARY"));
+    await new Promise<void>((ok) => server.listen(bus, ok));
+    vi.stubEnv("XDG_RUNTIME_DIR", runtime);
+    const hostBus = join("/run/user", String(userInfo().uid), "bus");
+    try {
+      for (const target of [bus, ...(existsSync(hostBus) ? [hostBus] : [])]) {
+        for (const allowNetwork of [false, true]) {
+          const sandbox = new ProcessSandbox({ engine: "native" });
+          const result = await sandbox.execute(
+            process.execPath,
+            [
+              "-e",
+              `require('net').connect(${JSON.stringify(target)})
                   .on('connect', () => { process.stdout.write('CONNECTED'); process.exit(0); })
                   .on('error', (e) => { process.stdout.write('REFUSED ' + e.code); process.exit(3); });`,
-              ],
-              { allowedPaths: [work], allowNetwork, timeoutMs: 20_000, cwd: work },
-            );
-            expect(sandbox.confinement).toBe("bubblewrap");
-            expect(result.stdout, `${target} network=${allowNetwork}`).toMatch(/^REFUSED/);
-            expect(result.exitCode).not.toBe(0);
-          }
+            ],
+            { allowedPaths: [work], allowNetwork, timeoutMs: 20_000, cwd: work },
+          );
+          expect(sandbox.confinement).toBe("bubblewrap");
+          expect(result.stdout, `${target} network=${allowNetwork}`).toMatch(/^REFUSED/);
+          expect(result.exitCode).not.toBe(0);
         }
-      } finally {
-        await new Promise<void>((ok) => server.close(() => ok()));
       }
-    },
-  );
+    } finally {
+      await new Promise<void>((ok) => server.close(() => ok()));
+    }
+  });
 });

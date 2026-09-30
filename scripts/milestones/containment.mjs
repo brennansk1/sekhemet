@@ -12,12 +12,15 @@ export function summarizeVitest(report) {
   const skippedTitles = [];
   const failedTitles = [];
   const brokenFiles = [];
+  /** Each test's status by `file: full name`, to read platforms together. */
+  const statuses = {};
   for (const f of files) {
     const assertions = f.assertionResults ?? [];
     // A file that failed to load has no assertions and a failed status.
     if (assertions.length === 0 && f.status === "failed") brokenFiles.push(basename(f.name));
     for (const a of assertions) {
       const title = `${basename(f.name)}: ${a.fullName ?? a.title}`;
+      statuses[title] = a.status;
       if (a.status === "passed") passed++;
       else if (a.status === "failed") {
         failed++;
@@ -35,6 +38,7 @@ export function summarizeVitest(report) {
     skippedTitles,
     failedTitles,
     brokenFiles,
+    statuses,
     ok: tests > 0 && failed === 0 && skippedTitles.length === 0 && brokenFiles.length === 0,
   };
 }
