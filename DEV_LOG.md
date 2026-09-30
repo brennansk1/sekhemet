@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 61 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 62 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,57 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 62 — 2026-09-29 (W2b: long messages to Seshat, the Sekhemet arm, Web-Bench, the vault, W1's follow-ups)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. One workflow at 10% of the window: five groups, a sweep, one audit review, a fixer and a blocker re-check (9 agents, 2.03M tokens), beside R-tune.
+
+- **Entry 61's commit** (135fc89, pushed at the owner's instruction with `GateStatus: partial`): the full vitest run on its exact tree finished after the push, with 667 files, 5,255 passed and 45 skipped. The gate passed in full.
+- **G1, long messages to Seshat (a product bug found in W2):** the silent 8,000-character cut is gone from every door: the PM route, updates, `sekhemet ask`, MCP, ACP, and, after the review, issue comments.
+  - A long message or pasted document is kept whole. It becomes a project document committed byte for byte under `<product>/inputs/`, which Seshat reads, in parts if the window needs it, with the reading recorded, and cites.
+  - Anything the server must refuse (over 1 MiB, more than 10 documents) is refused in words, with the size, before anything is recorded.
+  - Also fixed: a real UTF-8 corruption in `readJsonBody`, where a character split across network chunks was garbled.
+  - NEW-planner-pm-10, PM-N10-1..5.
+- **G2, the Sekhemet arm** (`scripts/capstone/sekhemet_arm.mjs`): it drives a real `sekhemet serve` only through the dashboard's HTTP API and the CLI, as a person would:
+  - the frozen prompt;
+  - answers from the FAQ;
+  - approval, the queue, and accept or send back;
+  - release 1, then the change request at the fixed point (the review's blocker, fixed and re-checked);
+  - releases.
+
+  Proven end to end against stand-ins. No live run yet.
+- **G3, Web-Bench** (`webbench.mjs`): it materialises the starting tree, gives each task with one retry carrying Playwright's error, and scores pass@1 and pass@2. It checks that the tests' hosts are unreachable during a run. Departures from Web-Bench's own agent protocol are named in choice.md.
+- **G4, the hidden-suite vault** (`vault.mjs`): an AES-256 encrypted disk image made with `hdiutil`, whose random passphrase lives only in the keychain. It supports create, migrate, mount, unmount, status and restore. The real suite is not yet migrated.
+- **G5, W1's follow-ups:**
+  - **macOS Unix-socket containment**, with a real test that plants an agent at `$SSH_AUTH_SOCK`: both engines now deny Unix-socket connects outside the write roots (SEC-15a);
+  - one config resolver for git identity;
+  - `doctor` names the models owed verification (F26);
+  - Solo's CSRF sentence;
+  - `serve` warns when bound beyond loopback without `public_url`;
+  - evidence JSON formatted to the linter's layout.
+- **Review:** 1 blocker (the change request was not at the fixed point) and 6 majors, 13 fixes:
+  - an 8,000-character cut left on issue comments;
+  - document notes that could drop from the prompt while still cited;
+  - Web-Bench's tests reachable over the network;
+  - unnamed departures from Web-Bench's protocol;
+  - the blind packet keeping `docs/product/inputs/`;
+  - unequal token accounting.
+
+  The last is now excluded from the comparison until Seshat's and the other roles' usage is on the ledger.
+- **For the next fix round, found here:**
+  - **(security) keychain items are readable from inside the sandbox under both engines:** `com.apple.SecurityServer` mach-lookup is allowed, and the items trust `/usr/bin/security`, exposing the Slack webhook, push token and SMTP password;
+  - Seshat's and the other roles' token usage recorded on the ledger (`pm/usage`), for fair accounting;
+  - W2b's model-facing prompt changes (the document section, the reader prompt) need their A/B;
+  - `runSlash` builds its own board;
+  - the issue page does not show the checkout notice;
+  - on Linux with the network granted, a socket planted outside the masked paths is still reachable;
+  - the vault's trusted-apps option is test-only;
+  - the operator must block Web-Bench's hosts before R11.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1579 files), vitest 674 files, 5,337 passed, 45 skipped.
+- **Where the cards stop:** W2b is done; the capstone machinery is complete except the live runs and the vault migration.
+  - **Next:**
+    - Stream 2: a fix round, security first (the keychain), then W4 and W16;
+    - Stream 1: R-tune round 2 overnight.
 
 ### Entry 61 — 2026-09-29 (the README, the licence FSL-1.1-ALv2, and the repository on GitHub)
 

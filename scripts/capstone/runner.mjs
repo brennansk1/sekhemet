@@ -12,7 +12,7 @@
  *   node scripts/capstone/runner.mjs one-shot --arm <id> --run <n> --reply <file> [--tokens-in N --tokens-out N]
  *   node scripts/capstone/runner.mjs claude-code --arm <id> --run <n>
  *   node scripts/capstone/runner.mjs sekhemet prepare --run <n>
- *   node scripts/capstone/runner.mjs sekhemet drive --run <n> --url <dashboard url>
+ *   node scripts/capstone/runner.mjs sekhemet drive --run <n> --url <dashboard url> [--cli <sekhemet entry>]
  *   node scripts/capstone/runner.mjs arms
  *
  * One shot: one request per phase, no tools, no retries, the same for every
@@ -28,8 +28,9 @@
  * With its harness: Claude Code is driven by the runner itself (`claude -p`,
  * a pinned configuration, the operator's own files and servers left out),
  * and a question it ends on is answered from the frozen FAQ, as the Sekhemet
- * arm's person-simulator (`person.mjs`) answers Seshat. Both need the OS
- * isolation check (`grid.mjs isolationProblems`) to pass first.
+ * arm's person-simulator (`person.mjs`) answers Seshat. The Sekhemet arm is
+ * driven through its dashboard and command line (`sekhemet_arm.mjs`). Both
+ * need the OS isolation check (`grid.mjs isolationProblems`) to pass first.
  */
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -341,11 +342,15 @@ export async function localAdapter({
   return { adapter, sampling, samplingSource, reasoning, weightsSha256: entry.sha256 ?? null };
 }
 
-/** One request through the product's adapter: one call, no tools, no retries. */
+/**
+ * One request through the product's adapter: one call, no tools, no retries.
+ * The system line is the grid's (`ONE_SHOT.system`) unless the request
+ * carries its benchmark's own (Web-Bench's, `webbench.mjs`).
+ */
 function askLocal(adapter, request) {
   return adapter
     .generate({
-      systemPrompt: ONE_SHOT.system,
+      systemPrompt: request.system ?? ONE_SHOT.system,
       prompt: request.message,
       toolArm: "arm_a_flat",
       tools: [],
@@ -370,7 +375,7 @@ function askLocal(adapter, request) {
  * customisation, no session saved and the one-shot system line in place of
  * Claude Code's own. The message goes on standard input, byte for byte.
  */
-export function claudeArgs(model) {
+export function claudeArgs(model, system = ONE_SHOT.system) {
   return [
     "-p",
     "--model",
@@ -381,7 +386,7 @@ export function claudeArgs(model) {
     "--safe-mode",
     "--no-session-persistence",
     "--system-prompt",
-    ONE_SHOT.system,
+    system,
     "--output-format",
     "json",
   ];
@@ -415,7 +420,7 @@ function claudeUsage(u = {}) {
 function askClaude(model, request, cwd, env) {
   mkdirSync(cwd, { recursive: true });
   const bin = env.SEKHEMET_CLAUDE_BIN || "claude";
-  const r = spawnSync(bin, claudeArgs(model), {
+  const r = spawnSync(bin, claudeArgs(model, request.system ?? ONE_SHOT.system), {
     cwd,
     input: request.message,
     encoding: "utf8",
@@ -775,7 +780,16 @@ export function readStream(text) {
   };
 }
 
-function claudeTurn(a, paths, { message, phase, n, sessionId, resume, settings, timeoutMs, env }) {
+/**
+ * One `claude -p` turn in the run's repository, its stream kept in `input/`
+ * as `<phase>-turn-<n>.jsonl`, the turn and its usage logged. The capstone's
+ * phases and Web-Bench's attempts (`webbench.mjs`) both go through it.
+ */
+export function claudeTurn(
+  a,
+  paths,
+  { message, phase, n, sessionId, resume, settings, timeoutMs, env },
+) {
   const out = join(paths.input, `${phase}-turn-${n}.jsonl`);
   const fd = openSync(out, "w");
   const began = Date.now();
@@ -1029,19 +1043,24 @@ async function main(argv) {
     if (sub === "prepare") {
       const paths = prepareRun("sekhemet-local", f.run);
       console.log(
-        `The run's repository: ${paths.repo}\nStart \`sekhemet serve\` (Solo) on it, then:\n  node scripts/capstone/runner.mjs sekhemet drive --run ${f.run} --url <dashboard url>`,
+        `The run's repository: ${paths.repo}\nStart the dashboard on it in another terminal (Solo), its models assigned beforehand:\n  node apps/harness/dist/index.js serve --repo ${paths.repo} --port 7700\nthen drive the arm:\n  node scripts/capstone/runner.mjs sekhemet drive --run ${f.run} --url http://127.0.0.1:7700`,
       );
       return 0;
     }
     if (sub === "drive") {
-      const { driveSekhemet } = await import("./person.mjs");
-      const r = await driveSekhemet({ run: f.run, url: f.url, csrf: f.csrf });
+      const { driveSekhemet } = await import("./sekhemet_arm.mjs");
+      const r = await driveSekhemet({
+        run: f.run,
+        url: f.url,
+        ...(typeof f.csrf === "string" ? { csrf: f.csrf } : {}),
+        ...(typeof f.cli === "string" ? { cli: resolve(f.cli) } : {}),
+      });
       console.log(JSON.stringify(r, null, 2));
       return r.ok ? 0 : 1;
     }
   }
   console.error(
-    "usage: runner.mjs arms | one-shot --arm <id> --run <n> [--base-url <url>] [--via print] [--reply <file>] | claude-code --arm <id> --run <n> | sekhemet prepare --run <n> | sekhemet drive --run <n> --url <url>",
+    "usage: runner.mjs arms | one-shot --arm <id> --run <n> [--base-url <url>] [--via print] [--reply <file>] | claude-code --arm <id> --run <n> | sekhemet prepare --run <n> | sekhemet drive --run <n> --url <url> [--cli <file>]",
   );
   return 2;
 }

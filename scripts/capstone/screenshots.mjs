@@ -505,6 +505,13 @@ export function readme(showcase = SHOWCASE) {
       });
   };
   const shown = ARMS.map((a) => ({ a, runs: runsOf(a.id) })).filter((x) => x.runs.length);
+  // A count that leaves some of the arm's models out is not set beside one that counts them all.
+  const tokensCell = (s) =>
+    s.effort?.tokensNotCounted
+      ? "not comparable: some models not counted"
+      : s.effort?.inputTokens != null
+        ? `${s.effort.inputTokens} / ${s.effort.outputTokens}`
+        : "—";
   if (!shown.length) {
     lines.push("No run has been captured yet.", "");
     return `${lines.join("\n")}\n`;
@@ -527,9 +534,20 @@ export function readme(showcase = SHOWCASE) {
           .join(" ")
       : "not captured";
     lines.push(
-      `| ${a.row === "one-shot" ? "One shot" : "With its harness"}: ${a.column} (\`${a.id}\`) | ${per((s) => fmt(s.afterChange))} | ${per((s) => fmt(s.releaseOne))} | ${per((s) => String(s.regressions?.count ?? "not run"))} | ${per((s) => String(s.effort?.wallClockMinutes ?? "—"))} | ${per((s) => (s.effort?.inputTokens != null ? `${s.effort.inputTokens} / ${s.effort.outputTokens}` : "—"))} | ${thumbs} |`,
+      `| ${a.row === "one-shot" ? "One shot" : "With its harness"}: ${a.column} (\`${a.id}\`) | ${per((s) => fmt(s.afterChange))} | ${per((s) => fmt(s.releaseOne))} | ${per((s) => String(s.regressions?.count ?? "not run"))} | ${per((s) => String(s.effort?.wallClockMinutes ?? "—"))} | ${per(tokensCell)} | ${thumbs} |`,
     );
   }
+  const partial = shown.flatMap(({ a, runs }) =>
+    runs
+      .filter((r) => r.score?.effort?.tokensNotCounted)
+      .map((r) => `- \`${a.id}\` run ${r.run}: ${r.score.effort.tokensNotCounted}.`),
+  );
+  if (partial.length)
+    lines.push(
+      "",
+      "Tokens are compared only where a run counts every model it used. Not counted:",
+      ...partial,
+    );
   lines.push(
     "",
     'Each run\'s cell lists its runs in order (run 1 · run 2 · run 3). Differences between arms are reported with their intervals in `stats-change-request.json`; where the runs cannot separate two arms, it says "no clear difference".',

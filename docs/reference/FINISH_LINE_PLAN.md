@@ -724,10 +724,10 @@ Every workflow follows the same pattern:
   - Tests: `capstone_runner`, `capstone_score` and `capstone_screenshots` specs. The sealed runs (the scorer and screenshots against the reference) run only with `SEKHEMET_CAPSTONE_SEALED_TESTS=1`, never in every gate, and copy nothing sealed into the shared temp directory.
   - **Open:**
     - **The Sekhemet arm cannot take `prompt.md` whole:** Seshat's message route keeps 8,000 characters. Beyond the first step, its driver is not built.
-    - **No agentic run can start on this machine** until the hidden suite, its scratch directory and Web-Bench's checkout are on a detachable disk image or another user's directory. The isolation check refuses every run until then.
+    - **No agentic run can start on this machine** until the hidden suite, its scratch directory and Web-Bench's checkout are migrated into the vault. The vault is built (W2b G4: `scripts/capstone/vault.mjs`, an AES-256 APFS disk image whose passphrase is only in the keychain and asks the person; the scorer mounts it and unmounts it in a `finally` block; `capstone_vault.spec.ts`). The migration is the lead's step (`vault.mjs create`, then `migrate`; `restore` is the rollback). The isolation check refuses every run until then, and whenever the vault is mounted.
     - **The owner confirms** the agentic budget (360 and 180 minutes, 20 FAQ answers per phase) and Claude Code's `--effort high`. A cheap dry run confirms the pinned `claude -p` command unattended.
     - **Stryker** before the first run, or the report says the mutation metric `prompt.md` promises was not delivered.
-    - **The Web-Bench runner and scorer are not built.** Its isolation is specified in `fixtures/capstone/webbench/choice.md`.
+    - **The Web-Bench runner and scorer are built** (W2b G3: `webbench.mjs prepare`, `run` and `stats`; `fixtures/capstone/webbench/choice.md`, *The run, as built*). The project's packages are still to install (one approved download), and the per-attempt budgets are proposed.
     - **The B4.11 milestone** (teams.md §6, five people) needs R12's scripted-actors driver. This arm is Solo, with one simulated person.
     - **The blind packet** still keeps harness fingerprints: changelogs, card ids and the PM's documents.
 

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { sekhemetConfigDir } from "@sekhemet/kernel";
 
 /**
  * Git configuration the harness always overrides for its own git calls
@@ -133,9 +133,9 @@ export function hardenedGitEnv(
   env: NodeJS.ProcessEnv = process.env,
   options: { identityDir?: string } = {},
 ): NodeJS.ProcessEnv {
-  const identityDir =
-    options.identityDir ??
-    join(process.env.SEKHEMET_CONFIG_DIR || join(homedir(), ".sekhemet"), "git");
+  // The harness's own user directory, through the one resolver: it refuses a
+  // directory inside a repository and resolves a relative one (W1 finding).
+  const identityDir = options.identityDir ?? join(sekhemetConfigDir(process.env), "git");
   const out: NodeJS.ProcessEnv = { ...env, ...HARDENED_GIT_PINS };
   const identityFile = join(identityDir, IDENTITY_FILE);
   out.GIT_CONFIG_GLOBAL =

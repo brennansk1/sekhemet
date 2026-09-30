@@ -1,7 +1,7 @@
 // The conversation with Seshat (PM_DESIGN §2.4–2.6): messages, proposals, the
 // waiting procedure, the context chip and the composer. Mounted twice: in the
 // right-side panel and in the full #/pm view. Both render the one thread.
-import { $, esc, icon, isTyping, kbd, teammateName } from "./dom.js";
+import { $, announce, esc, icon, isTyping, kbd, teammateName } from "./dom.js";
 import {
   formatClock,
   pendingView,
@@ -10,7 +10,14 @@ import {
   statusEtaSeconds,
   threadNotice,
 } from "./lib/pm.js";
-import { composerCostLine, composerHint, composerStarters } from "./lib/seshat.js";
+import {
+  composerCostLine,
+  composerHint,
+  composerStarters,
+  documentChip,
+  pastedDocument,
+  userMessageView,
+} from "./lib/seshat.js";
 import { columnLabel } from "./lib/vocabulary.js";
 import { cardChip } from "./marks.js";
 import { openPeek } from "./peek.js";
@@ -51,11 +58,26 @@ function sourcesHtml(cites) {
   return `<div class="sources"><span class="sh-s">Sources</span><ol>${items}</ol></div>`;
 }
 
+/** An attached document's chip (PM-N10-2): its name and size; where it is kept on hover. */
+function docChipHtml(d, removable) {
+  const chip = documentChip(d);
+  const remove =
+    removable === undefined
+      ? ""
+      : `<button class="icon-btn" type="button" data-doc-remove="${removable}" aria-label="Remove ${esc(d.name)}">${icon("x", 12, "ic s12")}</button>`;
+  return `<span class="dchip" title="${esc(chip.title)}">${icon("file", 12, "ic s12")}<span class="t">${esc(chip.label)}</span>${remove}</span>`;
+}
+
 function citesHtml(cites) {
   if (!cites?.length) return "";
   const parts = [];
   for (const c of cites) {
-    if (c.evidenceId) {
+    if (c.documentId) {
+      // PM-N10-3: the reply read this attached document.
+      parts.push(
+        `<span class="cchip" title="${esc(c.path ? `In the repository at ${c.path}` : "Kept with the conversation")}">${icon("file", 12, "ic s12")}<span class="t">${esc(c.label ?? c.documentId)}</span></span>`,
+      );
+    } else if (c.evidenceId) {
       const href = c.cardId ? `#/card/${encodeURIComponent(c.cardId)}/evidence` : "#/ledger";
       parts.push(
         `<a class="cchip" href="${esc(href)}" title="Evidence ${esc(c.evidenceId)}">${icon("file-diff", 12, "ic s12")}<span class="mono">${esc(c.evidenceId)}</span></a>`,
@@ -108,7 +130,14 @@ function messageHtml(m) {
       m.state === "error"
         ? `<div class="msg pm error">${avatar()}<div><p><b>${PM_NAME} couldn't reply.</b> <span class="sec">The Planning model did not answer this message.</span></p><button class="btn sm" type="button" data-retry="${esc(m.id)}">${icon("refresh", 12, "ic s12")}Retry</button></div></div>`
         : "";
-    return `<article class="msg user" data-msg="${esc(m.id)}"><div class="bubble md">${md(m.text)}</div><div class="meta tnum">${esc(time(m.createdAt))}${note}</div></article>${err}`;
+    // PM-N10-2: a long message shows its opening; its documents show as chips.
+    const view = userMessageView(m);
+    const body = view.preview ? `<div class="bubble md">${md(view.preview)}</div>` : "";
+    const whole = view.note ? `<p class="sec doc-note">${esc(view.note)}</p>` : "";
+    const docs = m.documents?.length
+      ? `<div class="docs">${m.documents.map((d) => docChipHtml(d)).join("")}</div>`
+      : "";
+    return `<article class="msg user" data-msg="${esc(m.id)}">${body}${whole}${docs}<div class="meta tnum">${esc(time(m.createdAt))}${note}</div></article>${err}`;
   }
   const proposals = proposalGroupHtml(m.proposals ?? [], { groupId: m.id });
   return `<article class="msg pm" data-msg="${esc(m.id)}"><header>${avatar()}${teammateName(PM_NAME, "seshat")}<time class="tnum">${esc(time(m.createdAt))}</time></header><div class="md">${md(m.text)}</div>${proposals}${sourcesHtml(m.cites)}${citesHtml(m.cites)}</article>`;
@@ -303,7 +332,7 @@ function matchCards(q) {
  * Returns { focus(), prefill(text), destroy() }.
  */
 export function mountThread(host, { variant = "panel" } = {}) {
-  host.innerHTML = `<div class="pm-thread ${variant}"><div class="pm-log" role="log" aria-live="off" aria-label="Conversation with ${PM_NAME}" tabindex="0"></div><div class="pm-compose"><div class="starters" data-starters></div><div data-ctx></div><div class="box"><textarea rows="1" aria-label="Message ${PM_NAME}" placeholder="Ask ${PM_NAME} about the board, an issue or a run… (/ for commands)"></textarea><button class="send" type="button" data-send aria-label="Send (Enter)">${icon("send", 14, "ic s14")}</button><div class="picker" role="listbox" hidden></div></div><p class="hint" data-hint hidden></p><p class="cost" data-cost></p></div></div>`;
+  host.innerHTML = `<div class="pm-thread ${variant}"><div class="pm-log" role="log" aria-live="off" aria-label="Conversation with ${PM_NAME}" tabindex="0"></div><div class="pm-compose"><div class="starters" data-starters></div><div data-ctx></div><div class="docs" data-docs hidden></div><div class="box"><textarea rows="1" aria-label="Message ${PM_NAME}" placeholder="Ask ${PM_NAME} about the board, an issue or a run… (/ for commands)"></textarea><button class="send" type="button" data-send aria-label="Send (Enter)">${icon("send", 14, "ic s14")}</button><div class="picker" role="listbox" hidden></div></div><p class="hint" data-hint hidden></p><p class="cost" data-cost></p></div></div>`;
   const log = $(".pm-log", host);
   const ta = $("textarea", host);
   const picker = $(".picker", host);
@@ -312,6 +341,16 @@ export function mountThread(host, { variant = "panel" } = {}) {
   let lastCtxKey = "";
   let dismissed = false;
   let pick = { items: [], i: 0, start: 0 };
+  /** Documents attached in the composer, not yet sent (PM-N10-5). */
+  let attached = [];
+  const docsSlot = $("[data-docs]", host);
+
+  function renderDocs() {
+    docsSlot.innerHTML = attached
+      .map((d, i) => docChipHtml({ ...d, chars: d.text.length, pending: true }, i))
+      .join("");
+    docsSlot.hidden = attached.length === 0;
+  }
 
   const atBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 40;
 
@@ -396,16 +435,22 @@ export function mountThread(host, { variant = "panel" } = {}) {
 
   async function send() {
     const text = ta.value.trim();
-    if (!text || disabledReason()) return;
+    if ((!text && !attached.length) || disabledReason()) return;
     const here = currentContext();
     const ctx = dismissed || (here.view === "pm" && !here.cardId) ? undefined : here;
+    const docs = attached;
     ta.value = "";
+    attached = [];
+    renderDocs();
     autosize();
     renderHint();
     closePicker();
-    const ok = await sendMessage(text, ctx);
+    const ok = await sendMessage(text, ctx, docs);
     if (!ok) {
+      // Nothing was sent: the words and the documents wait in the composer.
       ta.value = text;
+      attached = docs;
+      renderDocs();
       autosize();
     }
     log.scrollTop = log.scrollHeight;
@@ -481,6 +526,15 @@ export function mountThread(host, { variant = "panel" } = {}) {
     }
   });
   ta.addEventListener("blur", () => setTimeout(closePicker, 150));
+  // PM-N10-5: a paste longer than a comfortable message is attached whole as a document.
+  ta.addEventListener("paste", (e) => {
+    const doc = pastedDocument(e.clipboardData?.getData("text/plain") ?? "", attached.length);
+    if (!doc) return;
+    e.preventDefault();
+    attached = [...attached, doc];
+    renderDocs();
+    announce(`Attached ${documentChip({ ...doc, chars: doc.text.length }).label}.`);
+  });
 
   host.addEventListener("click", (e) => {
     const t = e.target instanceof Element ? e.target : null;
@@ -494,6 +548,13 @@ export function mountThread(host, { variant = "panel" } = {}) {
     if (chip && !(e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       openPeek(chip.dataset.chip, { returnFocus: chip });
+      return;
+    }
+    const remove = t.closest("[data-doc-remove]");
+    if (remove) {
+      attached = attached.filter((_, i) => i !== Number(remove.dataset.docRemove));
+      renderDocs();
+      ta.focus();
       return;
     }
     if (t.closest("[data-send]")) send();

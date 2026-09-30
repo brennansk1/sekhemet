@@ -14,8 +14,12 @@ import { registrySearch } from "../research/plan_research.js";
 import { takeoverPromptContext } from "../takeover_brief.js";
 import {
   type PmSnapshot,
+  type SnapshotDocument,
   answer,
+  condenseNotes,
+  documentsFitWhole,
   ledgerStandup,
+  readDocumentInParts,
   seshatThreadId,
   standupBody,
   summarizeConversation,
@@ -452,6 +456,13 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
   return done;
 }
 
+/**
+ * A long message kept whole as its own document (PM-N10-3): read by the
+ * model as a document, never routed by a phrase inside it to a ledger or
+ * rule answer meant for a short question.
+ */
+const isDocument = (m: PmMessage): boolean => Boolean(m.documents?.some((d) => d.fromMessage));
+
 /** Slash commands that change the board: a Member's, in the Team setup (TEAM-40). */
 const MEMBER_COMMANDS = new Set(["plan", "ready", "park", "backlog"]);
 /** Of those, the ones that name a card, whose own project's level applies (TEAM-6, -40). */
@@ -627,7 +638,7 @@ async function answerFor(
   const visibleCards = (await snap()).cards;
   const rest: typeof queued = [];
   for (const m of queued) {
-    const a = await authorityAnswer(deps, m, scope, visibleCards);
+    const a = isDocument(m) ? undefined : await authorityAnswer(deps, m, scope, visibleCards);
     if (!a) {
       rest.push(m);
       continue;
@@ -649,7 +660,7 @@ async function answerFor(
   let wait: SeshatWait | undefined;
   const toAnswer: typeof queued = [];
   for (const m of queued) {
-    const kind = ledgerQuestion(m.text);
+    const kind = isDocument(m) ? undefined : ledgerQuestion(m.text);
     if (!kind) {
       toAnswer.push(m);
       continue;
@@ -678,7 +689,7 @@ async function answerFor(
   // local model would write; a retry within the horizon goes on to it.
   const toJudge: typeof queued = [];
   for (const m of queued) {
-    const kind = judgementQuestion(m.text);
+    const kind = isDocument(m) ? undefined : judgementQuestion(m.text);
     const snapshot = kind ? await snap() : undefined;
     const judged =
       kind && snapshot
@@ -790,12 +801,84 @@ async function answerFor(
     const failures = (
       await Promise.all(asked.map((id) => failureFacts(deps.cardStore, deps.repoPath, id)))
     ).filter((f) => f !== undefined);
-    const snapshot = {
+    const snapshot: PmSnapshot = {
       ...base,
       ...(deps.team ? { team: deps.team } : {}),
       ...(inView && dossier?.length ? { dossier: { cardId: inView, lines: dossier } } : {}),
       ...(failures.length ? { failures } : {}),
     };
+    // PM-N10-3: the documents these messages carry, whole when the window
+    // holds them; otherwise each is read in parts first (every character),
+    // the reading recorded so a retry does not read it again.
+    const attached = await deps.pmStore.attachedDocuments(queued.map((m) => m.id));
+    if (attached.length) {
+      snapshot.documents = attached;
+      if (!documentsFitWhole(model, snapshot, history, queued, summary, Boolean(deps.researcher))) {
+        const read: SnapshotDocument[] = [];
+        // The documents read now (not from an earlier reading), with the window they were read at.
+        const freshlyRead = new Map<string, number>();
+        for (const d of attached) {
+          if (d.text === undefined) {
+            read.push(d);
+            continue;
+          }
+          const text = d.text;
+          const notes = await deps.pmStore.documentNotes(d.id);
+          if (notes) {
+            read.push({ ...d, read: notes });
+            continue;
+          }
+          const fresh = await readDocumentInParts(model, { ...d, text }, (i, n) =>
+            deps.pmStore.setStatus({
+              phase: "thinking",
+              model: deps.pmModel,
+              detail: `Reading ${d.name}, part ${i} of ${n}`,
+              ...stepInfo,
+            }),
+          );
+          freshlyRead.set(d.id, fresh.windowTokens);
+          read.push({ ...d, read: { parts: fresh.parts, notes: fresh.notes } });
+        }
+        // PM-N10-3: notes too long to sit beside the prompt are read again in
+        // parts (notes on the notes) until they fit; a reply made without them
+        // never cites them (agent.ts `answer`).
+        const condensed = await condenseNotes(
+          model,
+          read,
+          (docs) =>
+            documentsFitWhole(
+              model,
+              { ...snapshot, documents: docs },
+              history,
+              queued,
+              summary,
+              Boolean(deps.researcher),
+            ),
+          (name, i, n) =>
+            deps.pmStore.setStatus({
+              phase: "thinking",
+              model: deps.pmModel,
+              detail: `Condensing the notes on ${name}, part ${i} of ${n}`,
+              ...stepInfo,
+            }),
+        );
+        // The reading is recorded as it will be used, so a retry reads nothing again.
+        for (const [i, d] of condensed.entries()) {
+          const windowTokens = freshlyRead.get(d.id);
+          const changed = d.read?.condensed !== read[i]?.read?.condensed;
+          if (!d.read || (windowTokens === undefined && !changed)) continue;
+          await deps.pmStore.recordDocumentRead({
+            messageId: d.messageId,
+            documentId: d.id,
+            parts: d.read.parts,
+            windowTokens: windowTokens ?? model.contextWindow?.contextTokens ?? 0,
+            notes: d.read.notes,
+            ...(d.read.condensed ? { condensed: d.read.condensed } : {}),
+          });
+        }
+        snapshot.documents = condensed;
+      }
+    }
     const result = await answer(
       model,
       snapshot,

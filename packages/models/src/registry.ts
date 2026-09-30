@@ -402,8 +402,9 @@ export class ModelRegistry {
 
   /**
    * The models owed a qualification under this role's version (CX-N6-1),
-   * read without writing: each has a qualified combination for the role under
-   * another version and has run none under this one. Nothing is invalidated:
+   * read without writing: each has a qualified (or since invalidated, F26)
+   * combination for the role under another version and has run none under
+   * this one. Nothing is invalidated:
    * the other version's records stay, for a build still running it (F23).
    */
   public requalificationsOwed(
@@ -423,7 +424,15 @@ export class ModelRegistry {
         newest.delete(q.key);
         newest.set(q.key, q);
       }
-      const qualified = [...newest.values()].filter((q) => q.status === "qualified").at(-1);
+      // A combination verified once is owed a verification under this
+      // version whether its newest record is `qualified` or `invalidated`:
+      // before F23 a prompt change marked records invalidated in place, and
+      // skipping those told doctor every model was verified while the Coding
+      // model had none under this build's prompts (F26). Only a combination
+      // that never qualified — failed throughout — owes nothing.
+      const qualified = [...newest.values()]
+        .filter((q) => q.status === "qualified" || q.status === "invalidated")
+        .at(-1);
       if (!qualified) continue;
       owed.push({
         modelId: entry.id,

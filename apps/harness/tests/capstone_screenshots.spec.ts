@@ -218,6 +218,31 @@ describe("the comparison page", () => {
     expect(md).toContain('src="one-shot-opus/1/manager-grid-400.png"');
     expect(md).toContain("no clear difference");
   });
+
+  it("does not compare tokens that leave some of an arm's models out", () => {
+    const showcase = temp();
+    const dir = join(showcase, "sekhemet-local", "1");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "score.json"),
+      JSON.stringify({
+        afterChange: { passed: 70, total: 111, passRate: 0.63 },
+        releaseOne: { passed: 60, total: 84, passRate: 0.71 },
+        regressions: { count: 1 },
+        effort: {
+          wallClockMinutes: 300,
+          inputTokens: 6000,
+          outputTokens: 900,
+          tokensNotCounted: "Seshat's, the Planning model's and the Review model's tokens",
+        },
+      }),
+    );
+    const md = shots.readme(showcase);
+    const row = md.split("\n").find((l: string) => l.includes("`sekhemet-local`")) ?? "";
+    expect(row).not.toContain("6000 / 900");
+    expect(row).toContain("not comparable: some models not counted");
+    expect(md).toContain("Seshat's, the Planning model's and the Review model's tokens");
+  });
 });
 
 describe.skipIf(!process.env.SEKHEMET_CAPSTONE_CHROMIUM || !HAVE_REFERENCE)(

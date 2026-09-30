@@ -1,5 +1,6 @@
 // Small DOM and network helpers shared by every view.
 export { aiBadge, brandLockup, brandMark, icon, teammateName } from "./lib/icons.js";
+import { refusedWriteBody } from "./lib/account.js";
 
 // Card titles, notes, file paths and error text are written by a model or a
 // person, so every interpolation into markup goes through esc(). Never assign
@@ -88,7 +89,7 @@ export async function getJSON(path) {
   const res = await fetch(path, { headers: { Accept: "application/json" } });
   const data = await readBody(res);
   noticeAuth(res.status, data);
-  return { ok: res.ok, status: res.status, data };
+  return { ok: res.ok, status: res.status, data: refusedWriteBody(res.status, data) };
 }
 
 /** A write with a JSON body: the action header and, signed in, the CSRF token. */
@@ -101,7 +102,7 @@ export async function sendJSON(method, path, body) {
     });
     const data = await readBody(res);
     noticeAuth(res.status, data);
-    return { ok: res.ok, status: res.status, data };
+    return { ok: res.ok, status: res.status, data: refusedWriteBody(res.status, data) };
   } catch (err) {
     return { ok: false, status: 0, data: { error: String(err?.message ?? err) } };
   }

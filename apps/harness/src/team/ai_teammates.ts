@@ -74,8 +74,16 @@ export interface AiTeammatesDeps {
   audience: Audience;
   /** The card's project: its own, or the workspace's only project. */
   projectOf: (card: CardRecord) => string | undefined;
-  /** Put the person's question in Seshat's queue; its message id. */
-  askSeshat?: (text: string, cardId: string) => Promise<string>;
+  /**
+   * Put the person's question in Seshat's queue, kept whole and — when long —
+   * committed as a project document like any message to Seshat (PM-N10-1,
+   * -2): its message id, and the notice for a checkout on the branch it moved.
+   */
+  askSeshat?: (
+    text: string,
+    cardId: string,
+    principal: string,
+  ) => Promise<{ id: string; notice?: string }>;
   /** Each Ready issue's place and estimate (teams item 31). */
   standing?: () => Promise<
     {
@@ -142,6 +150,8 @@ export async function postComment(
   comment: IssueComment;
   ai: AiStateFacts[];
   request?: StartRequest;
+  /** RG-S5-2: a long comment to Seshat committed as a document moved the branch; how a checkout catches up. */
+  notice?: string;
   /** TEAM-22: people it mentions who cannot see the project; the author is asked whether to invite them. */
   invite?: { commentId: string; people: string[]; project?: string };
 }> {
@@ -157,8 +167,11 @@ export async function postComment(
   const people = named.filter((p) => deps.audience.canSee(p, project));
   const held = named.filter((p) => !deps.audience.canSee(p, project));
   // Seshat's question first, so the comment can name it (its state reads from it).
-  const seshatMessage =
-    mentions.includes("seshat") && deps.askSeshat ? await deps.askSeshat(text, card.id) : undefined;
+  const asked =
+    mentions.includes("seshat") && deps.askSeshat
+      ? await deps.askSeshat(text, card.id, input.principal)
+      : undefined;
+  const seshatMessage = asked?.id;
   const id = `cmt_${randomUUID().slice(0, 12)}`;
   await deps.cardStore.recordEvent({
     type: COMMENT_EVENT,
@@ -223,6 +236,7 @@ export async function postComment(
     comment,
     ai: await aiStates(deps, card.id, input.principal),
     ...(request ? { request } : {}),
+    ...(asked?.notice ? { notice: asked.notice } : {}),
     ...(held.length
       ? {
           invite: {

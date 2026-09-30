@@ -1,5 +1,6 @@
 import type { CardStore } from "@sekhemet/kernel";
 import type { ModelHold } from "@sekhemet/models";
+import { appendPersonMessage } from "./pm/documents.js";
 import { answerQueued, runnerLease } from "./pm/service.js";
 import type { PmStore } from "./pm/store.js";
 import type { PmMessage } from "./pm/types.js";
@@ -54,7 +55,13 @@ export async function runAsk(question: string, deps: AskDeps): Promise<0 | 1 | 2
     say('Usage: sekhemet ask "<question>"');
     return 2;
   }
-  const asked = await deps.pmStore.appendUserMessage(text.slice(0, 8000), { view: "terminal" });
+  // PM-N10-1, -2: kept whole; a long question is a project document too.
+  const { message: asked, notice } = await appendPersonMessage(
+    deps.pmStore,
+    { repoPath: deps.repoPath, cardStore: deps.cardStore, log: deps.pmStore.log },
+    { text, context: { view: "terminal" }, principal: deps.cardStore.localPrincipal() },
+  );
+  if (notice) say(notice);
   const repliesSince = async () =>
     (await deps.pmStore.thread()).filter((m) => m.role === "pm" && m.seq > asked.seq);
 

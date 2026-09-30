@@ -129,3 +129,16 @@ export function sessionSecretDenies(env: NodeJS.ProcessEnv = process.env): strin
     .filter((v): v is string => !!v && isAbsolute(v));
   return [...new Set([...SESSION_SECRET_PATHS.map((e) => e.path), ...named])];
 }
+
+/**
+ * The Unix sockets outside its granted paths that a macOS command with the
+ * network granted may still connect to (W1 finding, macOS parity). Seatbelt's
+ * `(allow network*)` includes connecting to any Unix socket by its path — the
+ * ssh-agent at `$SSH_AUTH_SOCK` or launchd's agent sockets, a gpg-agent, the
+ * Docker daemon — so both engines refuse every Unix-socket connect outside
+ * the granted paths but these, and then refuse the session and home secrets
+ * above even inside a grant. With the network off, Seatbelt refuses them all.
+ */
+export const SOCKET_CONNECT_ALLOW: readonly { path: string; why: string }[] = [
+  { path: "/var/run/mDNSResponder", why: "the system's name resolver: every DNS lookup on macOS" },
+];

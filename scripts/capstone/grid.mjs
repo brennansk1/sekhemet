@@ -15,6 +15,7 @@
  * never reads. `isolationProblems` is the check an agentic run must pass
  * first: nothing sealed, and no other run, readable by the contestant.
  */
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   constants,
@@ -24,6 +25,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -170,6 +172,70 @@ export function webbenchDir(env = process.env) {
   return resolve(env.SEKHEMET_WEBBENCH_SRC || join(homedir(), ".sekhemet", "webbench-src"));
 }
 
+/**
+ * The vault (`vault.mjs`): an encrypted disk image holding the hidden suite,
+ * its scratch directory and Web-Bench's checkout. By default it sits beside
+ * the hidden suite's directory (`~/.sekhemet/capstone-vault.sparseimage`);
+ * `SEKHEMET_CAPSTONE_VAULT` names another.
+ */
+export function vaultImage(env = process.env) {
+  return resolve(
+    env.SEKHEMET_CAPSTONE_VAULT || join(dirname(hiddenDir(env)), "capstone-vault.sparseimage"),
+  );
+}
+
+/** Where the vault is mounted, and only there: beside its image, named like it. */
+export function vaultMountPoint(env = process.env) {
+  const image = vaultImage(env);
+  return join(
+    dirname(image),
+    image
+      .split(sep)
+      .pop()
+      .replace(/\.sparseimage$/, ""),
+  );
+}
+
+const realOrSelf = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+};
+
+/**
+ * Where the system has this image attached, from `hdiutil info`: one entry
+ * per attachment, `{ device, mountPoints }` (the image's disk, and where its
+ * volume is mounted: none when attached but not mounted). Empty when it is detached, or on a system without
+ * `hdiutil`. Throws when `hdiutil` cannot say.
+ */
+export function vaultAttachments(image) {
+  if (process.platform !== "darwin") return [];
+  const info = spawnSync("/usr/bin/hdiutil", ["info", "-plist"], {
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  if (info.status !== 0) throw new Error(`hdiutil info failed: ${(info.stderr || "").trim()}`);
+  const json = spawnSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", "-"], {
+    input: info.stdout,
+    encoding: "utf8",
+  });
+  if (json.status !== 0) throw new Error("hdiutil info's list could not be read");
+  const want = realOrSelf(image);
+  const out = [];
+  for (const img of JSON.parse(json.stdout).images ?? []) {
+    if (!img["image-path"] || realOrSelf(img["image-path"]) !== want) continue;
+    const entities = img["system-entities"] ?? [];
+    if (!entities.length) continue;
+    out.push({
+      device: entities[0]["dev-entry"],
+      mountPoints: entities.filter((e) => e["mount-point"]).map((e) => e["mount-point"]),
+    });
+  }
+  return out;
+}
+
 const within = (child, parent) => {
   const c = resolve(child);
   const p = resolve(parent);
@@ -215,7 +281,9 @@ const SEALED_SCRATCH = /^(capstone-score-|capstone-findings-|ts-hidden-)/;
  *   another user with mode 700);
  * - no other run's directory under the runs root is readable (a finished run
  *   is moved to the sealed volume before the next agentic run starts);
- * - no scorer scratch copy is left in the shared temp directory.
+ * - no scorer scratch copy is left in the shared temp directory;
+ * - the vault holding them (`vault.mjs`), when there is one, is not mounted
+ *   anywhere.
  * Empty when the run may start.
  */
 export function isolationProblems(paths, env = process.env) {
@@ -229,6 +297,28 @@ export function isolationProblems(paths, env = process.env) {
       problems.push(
         `${what} at ${dir} is readable by this user: detach its volume, or make it another user's with mode 700, before an agentic run`,
       );
+    // A copy left beside it by an interrupted `vault.mjs migrate` or `restore`
+    // is the sealed material in the clear, though the sealed path is a link.
+    for (const left of [`${dir}.moving-to-vault`, `${dir}.restoring`]) {
+      if (readable(left))
+        problems.push(
+          `${left} is readable: a copy of ${what} left by an interrupted move into or out of the vault. Check that \`node scripts/capstone/vault.mjs status\` shows the vault holds it, then delete it`,
+        );
+    }
+  }
+  const image = vaultImage(env);
+  if (existsSync(image)) {
+    try {
+      const at = vaultAttachments(image);
+      if (at.length)
+        problems.push(
+          `the vault ${image} is mounted (${at.map((x) => x.mountPoints.join(", ") || x.device).join("; ")}): unmount it with \`node scripts/capstone/vault.mjs unmount\` before an agentic run`,
+        );
+    } catch (err) {
+      problems.push(
+        `whether the vault ${image} is mounted cannot be told (${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
   }
   const root = runsRoot(env);
   if (existsSync(root)) {

@@ -140,6 +140,10 @@ describe("a refusal says what the server said (teams TEAM-4)", () => {
     );
     expect(ACCOUNT_COPY.csrfSolo).toMatch(/reload the page/i);
     expect(ACCOUNT_COPY.csrfSolo).not.toMatch(/sign in|session|token|csrf/i);
+    expect(refusalMessage(403, { error: "csrf", refused: "origin" }, "solo")).toBe(
+      ACCOUNT_COPY.csrfSoloOrigin,
+    );
+    expect(ACCOUNT_COPY.csrfSoloOrigin).not.toMatch(/sign in|session|token|csrf/i);
     expect(refusalMessage(403, { error: "Waiting for approval.", pending: true })).toBe(
       ACCOUNT_COPY.pending,
     );

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { hardenedGitEnv } from "../src/git_hardening.js";
 
@@ -82,5 +82,40 @@ describe("the harness's git calls ignore config that runs programs", () => {
       ]),
     );
     expect(env.GIT_CONFIG_COUNT).toBe(String(keys.length));
+  });
+});
+
+/**
+ * W1 finding: the identity directory was built straight from
+ * SEKHEMET_CONFIG_DIR, so a user directory inside a repository — refused
+ * everywhere else because it holds tokens and trust records — was written to,
+ * and a relative one named a different directory from each working directory.
+ * The one resolver (sekhemetConfigDir) decides it here too.
+ */
+describe("the identity directory comes from the one user-directory resolver", () => {
+  const saved = process.env.SEKHEMET_CONFIG_DIR;
+  const dirs: string[] = [];
+  afterEach(() => {
+    if (saved === undefined) Reflect.deleteProperty(process.env, "SEKHEMET_CONFIG_DIR");
+    else process.env.SEKHEMET_CONFIG_DIR = saved;
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  it("refuses a user directory inside a repository and writes nothing there", () => {
+    const repo = mkdtempSync(join(tmpdir(), "git-ident-repo-"));
+    dirs.push(repo);
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo, stdio: "ignore" });
+    process.env.SEKHEMET_CONFIG_DIR = join(repo, "user");
+    expect(() => hardenedGitEnv({})).toThrow(/inside the repository/);
+    expect(existsSync(join(repo, "user", "git"))).toBe(false);
+  });
+
+  it("resolves a relative user directory to an absolute identity file", () => {
+    const base = mkdtempSync(join(tmpdir(), "git-ident-rel-"));
+    dirs.push(base);
+    process.env.SEKHEMET_CONFIG_DIR = relative(process.cwd(), join(base, "user"));
+    const env = hardenedGitEnv({});
+    expect(isAbsolute(env.GIT_CONFIG_GLOBAL ?? "")).toBe(true);
+    expect(env.GIT_CONFIG_GLOBAL?.startsWith(join(base, "user", "git"))).toBe(true);
   });
 });

@@ -102,8 +102,32 @@ export function writeEvidence(record, options = {}) {
   };
   mkdirSync(dir, { recursive: true });
   const path = join(dir, `${record.id}_${date}.json`);
-  writeFileSync(path, `${JSON.stringify(evidence, null, 2)}\n`);
+  writeFileSync(path, gateFormattedJson(evidence, `${record.id}_${date}.json`));
   return path;
+}
+
+/**
+ * JSON as the gate's formatter writes it (W1 finding): `JSON.stringify` puts
+ * each item of a short array on its own line, which biome joins, so a fresh
+ * evidence file failed `biome check .`. The repository's own biome formats
+ * it, with the repository's settings, as if it stood in `evidence/milestones/`.
+ * Should biome be missing the plain JSON is kept, and the runner says so.
+ */
+export function gateFormattedJson(value, name = "evidence.json") {
+  const plain = `${JSON.stringify(value, null, 2)}\n`;
+  const biome = join(ROOT, "node_modules", ".bin", "biome");
+  try {
+    return execFileSync(
+      biome,
+      ["format", `--stdin-file-path=${join("evidence", "milestones", name)}`],
+      { cwd: ROOT, input: plain, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
+    );
+  } catch (err) {
+    process.stderr.write(
+      `The evidence file ${name} was written unformatted (${err?.code ?? "biome failed"}); run pnpm format before committing it.\n`,
+    );
+    return plain;
+  }
 }
 
 /** The plan's milestones, in its order (MODERNIZATION_PLAN "Milestones the owner sees"). */

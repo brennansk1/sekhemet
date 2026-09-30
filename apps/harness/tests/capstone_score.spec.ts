@@ -307,6 +307,35 @@ describe("the scorer's parts", () => {
       outputTokens: 44,
       costUsd: 0.75,
       unparsedFiles: 2,
+      tokensNotCounted: null,
+    });
+  });
+
+  it("marks tokens that leave some models out, so they are not compared across arms", () => {
+    const notCounted =
+      "Seshat's, the Planning model's and the Review model's tokens: the product's ledger does not record them";
+    const log = [
+      { at: "2026-10-01T10:00:00.000Z", kind: "start" },
+      {
+        at: "2026-10-01T10:07:00.000Z",
+        kind: "usage",
+        inputTokens: 100,
+        outputTokens: 40,
+        notCounted,
+      },
+      {
+        at: "2026-10-01T10:08:00.000Z",
+        kind: "usage",
+        inputTokens: 10,
+        outputTokens: 4,
+        notCounted,
+      },
+      { at: "2026-10-01T11:30:00.000Z", kind: "end" },
+    ];
+    expect(score.effort(log)).toMatchObject({
+      inputTokens: 110,
+      outputTokens: 44,
+      tokensNotCounted: notCounted,
     });
   });
 
@@ -537,6 +566,34 @@ describe("the blind packet", () => {
     expect(readFileSync(join(out, opus.entry, "src", "main.ts"), "utf8")).toContain(
       "export const thumbnail = 1;",
     );
+  });
+
+  it("drops the frozen input a long message committed, so it is not a fingerprint", () => {
+    const prompt = readFileSync(
+      join(import.meta.dirname, "..", "..", "..", "fixtures", "capstone", "timesheet", "prompt.md"),
+      "utf8",
+    );
+    const runs = [
+      {
+        arm: "sekhemet-local",
+        run: 1,
+        repo: contestant({
+          "docs/product/inputs/2026-09-29-what-i-need-timesheets-and-overtime-for-hollis-bakery.md":
+            prompt.trim(),
+          "docs/product/brief.md": "# The brief\n",
+          "src/pay.ts": "export const pay = 2;\n",
+        }),
+      },
+    ];
+    const base = temp();
+    const out = join(base, "packet");
+    const r = score.blindPacket({ runs, out, keyFile: join(base, "key.json") });
+    const files = readdirSync(join(out, r.entries[0]), { recursive: true }).map(String);
+    expect(files.some((f: string) => f.includes("inputs"))).toBe(false);
+    expect(files).toContain(join("docs", "product", "brief.md"));
+    expect(files).toContain(join("src", "pay.ts"));
+    const keyed = JSON.parse(readFileSync(join(base, "key.json"), "utf8")).key;
+    expect(keyed[0].harnessFilesDropped).toBe(1);
   });
 
   it("refuses a key inside the packet", () => {

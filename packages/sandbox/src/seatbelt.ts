@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
-import { secretReadDenies } from "./secret_paths.js";
+import { SOCKET_CONNECT_ALLOW, secretReadDenies, sessionSecretDenies } from "./secret_paths.js";
 import type { SandboxOptions } from "./types.js";
 
 /**
@@ -147,6 +147,34 @@ function ledgerDirsAbove(root: string): string[] {
 }
 
 /**
+ * The Unix-socket rules for a command granted the network (W1 finding, macOS
+ * parity; SEC-23): every connect by path is refused, then the granted paths
+ * (a card's own dev server or test socket) and the system resolver are
+ * allowed, and last the session sockets and home secrets are refused again,
+ * even inside a grant. Later rules win. One text for both engines: the native
+ * profile ends with it, and srt's profile has it placed after its
+ * `(allow network*)` (srt_engine.ts), which srt cannot scope itself.
+ */
+export function unixSocketRules(
+  roots: string[],
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+): string {
+  const rule = (verb: "allow" | "deny", filter: string) =>
+    `  (${verb} network-outbound (remote unix-socket ${filter}))`;
+  const denies = [...secretReadDenies(home), ...sessionSecretDenies(env)].map(realPath);
+  return [
+    ";; W1: no Unix socket outside the grant (the ssh-agent, gpg-agent, Docker).",
+    rule("deny", '(path-regex #"^/")'),
+    ...[...new Set(roots.map(realPath))].map((r) => rule("allow", `(subpath "${quote(r)}")`)),
+    ...SOCKET_CONNECT_ALLOW.map((e) =>
+      rule("allow", `(path-literal "${quote(realPath(e.path))}")`),
+    ),
+    ...[...new Set(denies)].map((p) => rule("deny", `(subpath "${quote(p)}")`)),
+  ].join("\n");
+}
+
+/**
  * Generate a macOS Seatbelt profile confining a subprocess to `allowedPaths`.
  *
  * The policy is deny-by-default. Reads are permitted broadly because
@@ -187,7 +215,7 @@ export function generateSeatbeltProfile(options: SandboxOptions): string {
   // `(deny default)` already blocks egress; the explicit rule is kept so the
   // profile states its network posture rather than implying it.
   const networkRule = options.allowNetwork
-    ? "  (allow network*)"
+    ? `  (allow network*)\n${unixSocketRules(roots)}`
     : options.egressProxyPort
       ? `  (deny network*)\n  ;; S5: the allowlisting egress proxy is the only way out.\n  (allow network-outbound (remote tcp "localhost:${Math.floor(options.egressProxyPort)}"))`
       : "  (deny network*)";

@@ -24,6 +24,13 @@ import { sharedModelAccess } from "./model_access.js";
 import { ProposalError, applyProposal } from "./pm/apply.js";
 import { type Audience, nameFor, soloAudience } from "./pm/audience.js";
 import { capabilityReport } from "./pm/capability.js";
+import {
+  MessageRefused,
+  attachDocuments,
+  documentsToAttach,
+  parseMessage,
+  readMessageBody,
+} from "./pm/documents.js";
 import { recordSprintClose } from "./pm/judgement.js";
 import { burnupMetrics, flowMetrics, pmQuality } from "./pm/metrics.js";
 import type { ProjectChoices } from "./pm/pipeline.js";
@@ -36,7 +43,7 @@ import {
   withApprovalNames,
 } from "./pm/send_for_approval.js";
 import { DEFAULT_PM_MODEL, answerQueued, pmModelFor, runnerLease } from "./pm/service.js";
-import { PmStore } from "./pm/store.js";
+import { type MessageDocument, PmStore } from "./pm/store.js";
 import {
   SuggestionError,
   applySuggestion,
@@ -242,8 +249,12 @@ export function createPmApi(ctx: PmApiContext) {
    * running queue answers after the Worker's current step; otherwise this
    * process does, without waiting for the reply.
    */
-  const ask = async (text: string, context: PmContext): Promise<PmMessage> => {
-    const message = await pmStore.appendUserMessage(text, context);
+  const ask = async (
+    text: string,
+    context: PmContext,
+    documents: MessageDocument[] = [],
+  ): Promise<PmMessage> => {
+    const message = await pmStore.appendUserMessage(text, context, "human", documents);
     const lease = runnerLease(ctx.repoPath);
     if (lease) {
       // The queue answers after the Worker's current step.
@@ -312,11 +323,18 @@ export function createPmApi(ctx: PmApiContext) {
     }
 
     if (url === "/api/pm/messages" && req.method === "POST") {
-      if (!mutationGuard(req, res)) return true;
-      const body = await ctx.readJsonBody(req);
-      const text = typeof body.text === "string" ? body.text.trim().slice(0, 8000) : "";
-      if (!text) {
-        ctx.json(res, 400, { error: "A message needs text" });
+      const cardStore = mutationGuard(req, res);
+      if (!cardStore) return true;
+      // PM-N10-1..4: kept whole up to the request cap; a long message or a
+      // pasted document is a project document; a refusal says the size.
+      let incoming: ReturnType<typeof parseMessage>;
+      let body: Record<string, unknown>;
+      try {
+        body = await readMessageBody(req, ctx.readJsonBody);
+        incoming = parseMessage(body);
+      } catch (err) {
+        if (!(err instanceof MessageRefused)) throw err;
+        ctx.json(res, err.status, { error: err.message, ...err.detail });
         return true;
       }
       const raw = (body.context ?? {}) as Record<string, unknown>;
@@ -324,8 +342,13 @@ export function createPmApi(ctx: PmApiContext) {
         ...(typeof raw.cardId === "string" ? { cardId: raw.cardId } : {}),
         ...(typeof raw.view === "string" ? { view: raw.view } : {}),
       };
-      const message = await ask(text, context);
-      ctx.json(res, 200, { message });
+      const { documents, notice } = await attachDocuments(
+        { repoPath: ctx.repoPath, cardStore, log: ctx.log },
+        documentsToAttach(incoming),
+        personOf(req),
+      );
+      const message = await ask(incoming.text, context, documents);
+      ctx.json(res, 200, { message, ...(notice ? { notice } : {}) });
       return true;
     }
 
@@ -622,8 +645,16 @@ export function createPmApi(ctx: PmApiContext) {
     if (postUpdate && req.method === "POST") {
       if (!mutationGuard(req, res)) return true;
       const project = postUpdate[1] as string;
-      const b = await ctx.readJsonBody(req);
-      const text = typeof b.text === "string" ? b.text.trim().slice(0, 8000) : "";
+      // PM-N10-1: a long update is posted whole; only the request cap refuses, in words.
+      let b: Record<string, unknown>;
+      try {
+        b = await readMessageBody(req, ctx.readJsonBody);
+      } catch (err) {
+        if (!(err instanceof MessageRefused)) throw err;
+        ctx.json(res, err.status, { error: err.message, ...err.detail });
+        return true;
+      }
+      const text = typeof b.text === "string" ? b.text.trim() : "";
       if (!text) {
         ctx.json(res, 400, { error: "An update needs its text" });
         return true;

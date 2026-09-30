@@ -187,3 +187,132 @@ export function nonDeveloperWalk(
     ],
   };
 }
+
+// --- Long messages and attached documents (planner-pm PM-N10) -----------------
+
+/**
+ * A message longer than this many characters is more than a comfortable
+ * message for Seshat's model: a paste this long is attached as a project
+ * document, and a message sent this long is kept whole with the same
+ * document made of it (the server's rule, `pm/documents.ts`). Nothing is cut.
+ */
+export const SESHAT_DOCUMENT_CHARS = 8000;
+
+/** The most one message may carry, words and documents together, as sent (the request cap). */
+export const SESHAT_MESSAGE_MAX_BYTES = 1024 * 1024;
+
+/** The most documents one message may carry. */
+export const SESHAT_MAX_DOCUMENTS = 10;
+
+/** A message as the composer sends it. */
+export interface OutgoingMessage {
+  text: string;
+  documents?: { name: string; text: string }[];
+  context?: Record<string, unknown>;
+}
+
+/** A document a message carries, as the thread gives it (no text). */
+export interface MessageDocumentLike {
+  id?: string;
+  name: string;
+  chars: number;
+  /** Where it is in the repository; absent when it is kept with the conversation only. */
+  path?: string;
+  /** The document is the message's own text, sent too long for one message. */
+  fromMessage?: boolean;
+  /** Why it has no path: no commit on the branch yet, or the commit failed. */
+  unfiled?: "no_commit" | "commit_failed";
+  /** Attached in the composer, not sent yet. */
+  pending?: boolean;
+}
+
+const thousands = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+/** A size in plain units: bytes, KB or MB (1,024-based), as a person reads it. */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} bytes`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  const mb = bytes / (1024 * 1024);
+  return `${Number.isInteger(mb) ? mb : mb.toFixed(1)} MB`;
+}
+
+/** A pasted text longer than a comfortable message, as a document to attach; else undefined. */
+export function pastedDocument(
+  text: string,
+  alreadyAttached: number,
+): { name: string; text: string } | undefined {
+  if (text.length <= SESHAT_DOCUMENT_CHARS) return undefined;
+  return { name: documentName(text, alreadyAttached), text };
+}
+
+/** The document's name: its first Markdown heading, else "Pasted text", numbered after the first. */
+export function documentName(text: string, alreadyAttached = 0): string {
+  const heading = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/m.exec(text.slice(0, 2000))?.[1];
+  const clean = heading
+    ?.replace(/[\\/:*?"<>|`]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+  if (clean) return `${clean}.md`;
+  return alreadyAttached > 0 ? `Pasted text ${alreadyAttached + 1}.md` : "Pasted text.md";
+}
+
+/** The UTF-8 bytes of the request body a message makes. */
+export function messageBodyBytes(body: OutgoingMessage): number {
+  return new TextEncoder().encode(JSON.stringify(body)).length;
+}
+
+/** The sentence refusing a message of `bytes` over the request cap. */
+export function messageTooLargeWords(bytes: number | undefined): string {
+  const size = bytes === undefined ? "over" : `${formatBytes(bytes)}, over`;
+  return `This message is ${size} the ${formatBytes(SESHAT_MESSAGE_MAX_BYTES)} one message to ${SESHAT_NAME} can carry. Nothing was sent. Attach the text in smaller documents, or commit it to the repository and name the file.`;
+}
+
+/**
+ * Why a message cannot be sent, said before anything is sent (the same rule
+ * the server applies): too many documents, or over the request cap.
+ */
+export function whyNotSendable(body: OutgoingMessage): string | undefined {
+  const n = body.documents?.length ?? 0;
+  if (n > SESHAT_MAX_DOCUMENTS) {
+    return `This message has ${n} documents; one message to ${SESHAT_NAME} can carry at most ${SESHAT_MAX_DOCUMENTS}. Nothing was sent.`;
+  }
+  const bytes = messageBodyBytes(body);
+  return bytes > SESHAT_MESSAGE_MAX_BYTES ? messageTooLargeWords(bytes) : undefined;
+}
+
+/** An attached document's chip: its name and size, and where it is kept. */
+export function documentChip(d: MessageDocumentLike): { label: string; title: string } {
+  return {
+    label: `${d.name} · ${thousands(d.chars)} characters`,
+    title: d.pending
+      ? "Sent with your message and added to the repository as a project document"
+      : d.path
+        ? `In the repository at ${d.path}`
+        : d.unfiled === "commit_failed"
+          ? "Kept with the conversation; adding it to the repository failed (the branch moved or was busy). Send it again to add it."
+          : "Kept with the conversation; the repository has no commit to add it to yet",
+  };
+}
+
+/** How long a long message's opening is in the thread. */
+const PREVIEW_CHARS = 600;
+
+/**
+ * A person's message in the thread: whole, or — when it was sent too long for
+ * one message and is its own attached document — its opening and a note
+ * naming the document that holds all of it.
+ */
+export function userMessageView(m: { text: string; documents?: MessageDocumentLike[] }): {
+  preview: string;
+  note: string;
+} {
+  const whole = m.documents?.find((d) => d.fromMessage);
+  if (!whole || m.text.length <= PREVIEW_CHARS) return { preview: m.text, note: "" };
+  const head = m.text.slice(0, PREVIEW_CHARS - 1);
+  const cut = head.lastIndexOf(" ");
+  return {
+    preview: `${cut > PREVIEW_CHARS / 2 ? head.slice(0, cut) : head}…`,
+    note: `The whole message, ${thousands(whole.chars)} characters, is attached as ${whole.name}.`,
+  };
+}

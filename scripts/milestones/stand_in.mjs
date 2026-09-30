@@ -170,9 +170,19 @@ export async function standInAdapter(modelUrl, root) {
  * Build cards with this build's `executeCard` (or that of the built
  * checkout at `root`) against the stand-in: each card is created Ready
  * (unless it exists) and run once; the result is its pass and the status it
- * ends in (Review once its checks pass).
+ * ends in (Review once its checks pass). `reviewFirst` is the queue's AI
+ * review hook (`executeCard`'s option of that name), for a runner that
+ * stands in for the Review model too.
  */
-export async function buildCards({ repo, modelUrl, cards, kernel: given, order, root }) {
+export async function buildCards({
+  repo,
+  modelUrl,
+  cards,
+  kernel: given,
+  order,
+  root,
+  reviewFirst,
+}) {
   const k = given ?? (await openKernel(repo, { root }));
   const { executeCard } = await from(root, "apps/harness/dist/execute.js");
   const adapter = await standInAdapter(modelUrl, root);
@@ -202,7 +212,13 @@ export async function buildCards({ repo, modelUrl, cards, kernel: given, order, 
     const queue = order ? order(cards) : cards;
     for await (const c of queue) {
       const card = await k.store.getCard(c.id);
-      const r = await executeCard(ctx, card, adapter);
+      const r = await executeCard(
+        ctx,
+        card,
+        adapter,
+        undefined,
+        reviewFirst ? { reviewFirst } : undefined,
+      );
       const after = await k.store.getCard(c.id);
       out.push({ id: c.id, passed: r.passed, status: after?.status });
     }

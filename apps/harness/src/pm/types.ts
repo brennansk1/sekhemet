@@ -103,6 +103,36 @@ export interface PmCite {
   /** A research source: a URL when there is one, and what it is. */
   url?: string;
   label?: string;
+  /** A document attached to the message answered (PM-N10-3): its id and, when committed, its path. */
+  documentId?: string;
+  path?: string;
+}
+
+/**
+ * A document a person's message carries (planner-pm NEW-planner-pm-10): the
+ * composer's attached document, or the message's own text when it was sent
+ * longer than a comfortable message. The text itself is never in the thread;
+ * it is in the message event's private part and, when the integration branch
+ * has a commit, in the repository at `path`, byte for byte.
+ */
+export interface PmDocumentRef {
+  id: string;
+  name: string;
+  /** Its length in characters (UTF-16 code units, as the browser counts them). */
+  chars: number;
+  /** Its size in UTF-8 bytes. */
+  bytes: number;
+  sha256: string;
+  /** Repository-relative, on the integration branch; absent when kept with the conversation only. */
+  path?: string;
+  /** The document is the message's own text (sent longer than a comfortable message). */
+  fromMessage?: boolean;
+  /**
+   * Why it has no path (PM-N10-2): the integration branch has no commit yet
+   * (`no_commit`), or the commit failed — the branch moved or its lock was
+   * held (`commit_failed`). The product says which; the error text stays out.
+   */
+  unfiled?: "no_commit" | "commit_failed";
 }
 
 export interface PmMessage {
@@ -113,6 +143,8 @@ export interface PmMessage {
   createdAt: string;
   state: PmMessageState;
   context?: PmContext;
+  /** The documents a person's message carries (PM-N10-2); references, never their text. */
+  documents?: PmDocumentRef[];
   proposals?: PmProposal[];
   cites?: PmCite[];
   /** Who wrote a user message; for a reply, who it answers (Team setup, PM-N9-8). */
@@ -164,6 +196,8 @@ export const PM_EVENTS = {
    */
   notifyClaimed: "pm/notify_claimed",
   summary: "pm/summary",
+  /** Seshat read an attached document in parts, its window not holding it whole (PM-N10-3). */
+  documentRead: "pm/document_read",
   /** A Stakeholder's plan sent to a named approver (teams §3, TEAM-20). */
   planSent: "plan/sent_for_approval",
   /** The approver approved it; the project exists from here (TEAM-20, TEAM-42). */

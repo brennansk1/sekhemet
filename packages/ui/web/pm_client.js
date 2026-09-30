@@ -2,6 +2,7 @@
 // One copy of the conversation in the store; the panel and #/pm both render it.
 import { announce, getJSON, postJSON } from "./dom.js";
 import { statusStep } from "./lib/pm.js";
+import { whyNotSendable } from "./lib/seshat.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
 
@@ -97,9 +98,19 @@ export function pendingMessage(messages = store.state.pm.messages) {
   );
 }
 
-export async function sendMessage(text, context) {
+/**
+ * Send a message, with the documents attached in the composer (PM-N10-2).
+ * What the server could not take is said before anything is sent (PM-N10-4).
+ */
+export async function sendMessage(text, context, documents = []) {
   const body = { text };
+  if (documents.length) body.documents = documents;
   if (context && (context.cardId || context.view)) body.context = context;
+  const refused = whyNotSendable(body);
+  if (refused) {
+    toast({ tone: "fail", text: `Couldn't send to ${PM_NAME}.`, detail: refused });
+    return false;
+  }
   const r = await postJSON("/api/pm/messages", body);
   if (r.status === 404) {
     setPm({ available: false });
@@ -117,6 +128,9 @@ export async function sendMessage(text, context) {
     return false;
   }
   upsert(r.data?.message);
+  // A checkout on the branch the documents were committed to is told how to catch up.
+  if (r.data?.notice)
+    toast({ text: "Your documents are in the repository.", detail: r.data.notice });
   // Before the first status frame arrives, the thread already shows the wait.
   if (store.state.pm.status.phase === "idle") {
     setPm({ phaseSeenAt: { ...store.state.pm.phaseSeenAt, queued: Date.now() } });

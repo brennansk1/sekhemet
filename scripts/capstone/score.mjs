@@ -62,6 +62,7 @@ import {
   sha256,
 } from "./grid.mjs";
 import { treeFiles } from "./reply.mjs";
+import { withVault } from "./vault.mjs";
 
 export const SHOWCASE = join(REPO_ROOT, "docs", "showcase", "capstone");
 const built = (rel) => import(pathToFileURL(join(REPO_ROOT, rel)).href);
@@ -434,7 +435,12 @@ export function accessibility(armId, runNo, showcase = SHOWCASE) {
 
 // --- time and tokens --------------------------------------------------------------------
 
-/** Wall-clock, hands-on minutes and tokens, from the run's log. */
+/**
+ * Wall-clock, hands-on minutes and tokens, from the run's log. When a
+ * `usage` event says some of the arm's models are not counted (`notCounted`:
+ * the Sekhemet arm's ledger holds the Coding model's tokens only), the count
+ * is kept but marked with that reason, and no page compares it across arms.
+ */
 export function effort(log) {
   const start = log.find((e) => e.kind === "start");
   const end = [...log].reverse().find((e) => e.kind === "end");
@@ -455,7 +461,14 @@ export function effort(log) {
     unparsedFiles: log
       .filter((e) => e.kind === "reply")
       .reduce((n, e) => n + (e.unparsedCount ?? 0), 0),
+    tokensNotCounted: tokensNotCounted(usage),
   };
+}
+
+/** Why a run's token count leaves some of its models out, or null when it counts them all. */
+export function tokensNotCounted(usage) {
+  const why = [...new Set(usage.map((u) => u.notCounted).filter(Boolean))];
+  return why.length ? why.join("; ") : null;
 }
 
 // --- one run ----------------------------------------------------------------------------
@@ -533,8 +546,16 @@ export const MUTATION_NOT_RUN = {
  * Score one finished run. `tree` defaults to the run's repository; `hidden`
  * to the sealed directory. With `publish`, `score.json` is also written to
  * the showcase. `findingsToo: false` skips the findings (tests).
+ *
+ * When the sealed material is in the vault (`vault.mjs`), the vault is
+ * mounted first (the keychain asks the person for its passphrase) and
+ * unmounted in a `finally` block, whether scoring succeeded or not.
  */
-export async function scoreRun({
+export function scoreRun(options) {
+  return withVault(() => scoreMounted(options), { env: options.env ?? process.env });
+}
+
+async function scoreMounted({
   armId,
   run: runNo,
   env = process.env,
@@ -809,6 +830,9 @@ const HARNESS_FILES = [
   /(^|\/)AGENTS\.md$/i,
   /(^|\/)\.cursor(\/|$)/,
   /(^|\/)\.aider/,
+  // A long message to Seshat is committed as a project document (PM-N10-2):
+  // the Sekhemet arm's tree holds the frozen prompt itself, which no other arm's does.
+  /^docs\/product\/inputs(\/|$)/,
 ];
 
 /** A path or a text with every identity word replaced. */
@@ -924,7 +948,7 @@ async function main(argv) {
   }
   if (command === "stats") {
     const phase = f.phase ?? "change-request";
-    const pooled = sealedResults(hiddenDir(), phase);
+    const pooled = await withVault(async () => sealedResults(hiddenDir(), phase));
     const stats = await gridStats(pooled);
     const text = `${JSON.stringify({ about: "The capstone grid's statistics (measurement.md rules 4, 10–12): counts and intervals only.", phase, ...stats, excludedRuns: pooled.excluded }, null, 2)}\n`;
     if (f.publish) {

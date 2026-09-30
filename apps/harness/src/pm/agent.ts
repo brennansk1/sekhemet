@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import {
+  ALLOCATOR_WINDOW_MARGIN_TOKENS as ALLOCATOR_MARGIN,
   type AllocationResult,
   type ContextSection,
   type SectionTokens,
   allocateContext,
+  charsForTokens,
   estimatePromptTokens,
   shrinkHead,
 } from "@sekhemet/context";
@@ -36,17 +38,22 @@ import {
   PROPOSE_SPLIT_CARD_DESCRIPTION,
   SESHAT_DATA,
   SESHAT_FACTS,
+  SESHAT_READER_SYSTEM,
   SESHAT_TAGS,
   START_PROJECT_DESCRIPTION,
   START_PROJECT_SENTENCE_DESCRIPTION,
+  documentAttrs,
+  documentsNotHeldWords,
+  partsWords,
   pmSystemPromptText,
   seshatPart,
+  seshatReaderPrompt,
   splitSuggestedSummary,
   startProjectSummary,
 } from "./pm_copy.js";
 import { SESHAT_SKILL_VERSION } from "./seshat_skill.js";
 import { type StandupFacts, boardOnlyFacts, standupLines } from "./standup.js";
-import type { Cycle, PmCite, PmMessage, PmProposal } from "./types.js";
+import type { Cycle, PmCite, PmDocumentRef, PmMessage, PmProposal } from "./types.js";
 
 /** What the PM can see when it answers. Built by the caller from the live board. */
 export interface PmSnapshot {
@@ -101,9 +108,26 @@ export interface PmSnapshot {
   failures?: FailureFacts[];
   /** The project's brief, file text (untrusted, PROMPT_STANDARD rule 16). */
   brief?: string;
+  /**
+   * The documents the queued messages carry (PM-N10-3): whole, or — when the
+   * window cannot hold them — the notes of their reading in parts.
+   */
+  documents?: SnapshotDocument[];
   /** The standup's facts for the asker, when the ledger gave them (PM-P6-3). */
   standup?: StandupFacts;
   today: string;
+}
+
+/** An attached document as Seshat's answer reads it (PM-N10-3). */
+export interface SnapshotDocument extends PmDocumentRef {
+  messageId: string;
+  /** The whole text; undefined when a person erased it. */
+  text?: string;
+  /**
+   * Its reading in parts, when the window could not hold it whole; `condensed`
+   * counts the rounds of notes on the notes needed for them to fit.
+   */
+  read?: { parts: number; notes: string; condensed?: number };
 }
 
 export type ProposalDraft = Omit<PmProposal, "id" | "state">;
@@ -209,7 +233,9 @@ export function conversationDigest(
   const recent = summary ? history.filter((m) => m.seq > summary.upToSeq) : history;
   for (const m of recent.slice(-10)) {
     const who = m.role === "user" ? SESHAT_DATA.person : SESHAT_DATA.you;
-    lines.push(`${who}: ${m.text.replace(/\s+/g, " ").slice(0, 600)}`);
+    // PM-N10-3: an earlier message's documents are named, not repeated.
+    const attached = (m.documents ?? []).map((d) => SESHAT_DATA.attachedEarlier(d)).join("");
+    lines.push(`${who}: ${m.text.replace(/\s+/g, " ").slice(0, 600)}${attached}`);
   }
   const text = lines.join("\n");
   return text.length > maxChars ? text.slice(text.length - maxChars) : text;
@@ -691,10 +717,17 @@ export function seshatSections(
 ): ContextSection[] {
   const T = SESHAT_TAGS;
   const questions = queued
-    .map(
-      (m) =>
-        `${SESHAT_DATA.person}${m.context?.cardId ? SESHAT_DATA.lookingAt(m.context.cardId) : ""}: ${m.text}`,
-    )
+    .map((m) => {
+      // PM-N10-3: a message kept whole as its own document is named here and
+      // read in the document part, never twice; other documents are named after it.
+      const own = m.documents?.find((d) => d.fromMessage);
+      const words = own ? SESHAT_DATA.sentAsDocument(own) : m.text;
+      const attached = (m.documents ?? [])
+        .filter((d) => !d.fromMessage)
+        .map((d) => SESHAT_DATA.attached(d))
+        .join("");
+      return `${SESHAT_DATA.person}${m.context?.cardId ? SESHAT_DATA.lookingAt(m.context.cardId) : ""}: ${words}${attached}`;
+    })
     .join("\n");
   let order = 0;
   const section = (
@@ -819,6 +852,11 @@ export function seshatSections(
         : "",
       50,
     ),
+    // PM-N10-3: the attached documents, whole or as the notes of their reading
+    // in parts; never cut (no shrink), ranked above everything but the message.
+    section("documents", "goal", documentsPart(s.documents ?? []), 95, {
+      shrink: () => undefined,
+    }),
     section("newest", "goal", seshatPart(T.message, questions), 1000, { required: true }),
     section(
       "instruction",
@@ -863,6 +901,154 @@ export function fitSeshatPrompt(
     allocation,
     windowTokens,
   };
+}
+
+/** The attached documents' part of Seshat's prompt (PM-N10-3). */
+export function documentsPart(docs: readonly SnapshotDocument[]): string {
+  return docs
+    .map((d) => {
+      if (d.text === undefined) {
+        return seshatPart(SESHAT_TAGS.document, SESHAT_DATA.documentErased, documentAttrs(d));
+      }
+      if (d.read) {
+        return seshatPart(
+          SESHAT_TAGS.document,
+          `${SESHAT_DATA.readInParts(d.read.parts, d.path, d.read.condensed ?? 0)}\n\n${d.read.notes}`,
+          documentAttrs({ ...d, extra: ` read="${partsWords(d.read.parts)}"` }),
+        );
+      }
+      return seshatPart(SESHAT_TAGS.document, d.text, documentAttrs(d));
+    })
+    .join("\n\n");
+}
+
+/**
+ * Whether the queued messages' documents fit Seshat's prompt whole (PM-N10-3):
+ * the prompt `answer` would send, fitted to the window, keeps the documents'
+ * section. When it does not, the documents are read in parts first.
+ */
+export function documentsFitWhole(
+  model: Pick<LocalInferenceAdapter, "contextWindow">,
+  snapshot: PmSnapshot,
+  history: PmMessage[],
+  queued: PmMessage[],
+  summary: { upToSeq: number; text: string } | undefined,
+  withResearcher: boolean,
+): boolean {
+  if (!snapshot.documents?.length) return true;
+  const tools = withResearcher ? [...PM_TOOLS, ASK_RESEARCHER_TOOL] : PM_TOOLS;
+  const fitted = fitSeshatPrompt(
+    model,
+    pmSystemPrompt(snapshot),
+    tools,
+    seshatSections(snapshot, history, queued, summary),
+  );
+  return fitted.allocation.fits && fitted.allocation.sections.some((x) => x.id === "documents");
+}
+
+/** Each part's reading answer: the notes on it. */
+export const READER_NOTES_TOKENS = 900;
+
+/** At most this many rounds of notes on the notes before Seshat answers without them. */
+export const MAX_CONDENSE_ROUNDS = 3;
+
+/**
+ * Notes too long to sit beside the rest of Seshat's prompt (PM-N10-3) are
+ * read again in parts, as the document was: notes on the notes, every
+ * character of them read, round after round while they do not fit and each
+ * round makes them shorter, at most `MAX_CONDENSE_ROUNDS`. `fits` says
+ * whether a set of documents fits the prompt. Returns the documents as they
+ * stand at the end, each with its rounds counted.
+ */
+export async function condenseNotes(
+  model: LocalInferenceAdapter,
+  docs: SnapshotDocument[],
+  fits: (docs: SnapshotDocument[]) => boolean,
+  onPart?: (name: string, index: number, parts: number) => Promise<void> | void,
+): Promise<SnapshotDocument[]> {
+  let out = docs;
+  for (let round = 1; round <= MAX_CONDENSE_ROUNDS && !fits(out); round += 1) {
+    let shorter = false;
+    const next: SnapshotDocument[] = [];
+    for (const d of out) {
+      if (!d.read) {
+        next.push(d);
+        continue;
+      }
+      const again = await readDocumentInParts(
+        model,
+        { id: d.id, name: `${d.name} (notes)`, path: d.path, text: d.read.notes },
+        (i, n) => onPart?.(d.name, i, n),
+      );
+      if (again.notes.length < d.read.notes.length) {
+        shorter = true;
+        next.push({ ...d, read: { ...d.read, notes: again.notes, condensed: round } });
+      } else next.push(d);
+    }
+    if (!shorter) break;
+    out = next;
+  }
+  return out;
+}
+
+/**
+ * Split a text into consecutive parts of at most `maxChars` characters, at a
+ * paragraph or line break where one is near the end of a part. The parts
+ * joined are the text, character for character.
+ */
+export function splitDocument(text: string, maxChars: number): string[] {
+  const size = Math.max(1, Math.floor(maxChars));
+  const parts: string[] = [];
+  let at = 0;
+  while (at < text.length) {
+    let end = Math.min(text.length, at + size);
+    if (end < text.length) {
+      const window = text.slice(at, end);
+      const para = window.lastIndexOf("\n\n");
+      const line = window.lastIndexOf("\n");
+      const cut = para > size * 0.5 ? para + 2 : line > size * 0.5 ? line + 1 : -1;
+      if (cut > 0) end = at + cut;
+    }
+    parts.push(text.slice(at, end));
+    at = end;
+  }
+  return parts;
+}
+
+/**
+ * Read a document too long for Seshat's window in parts (PM-N10-3): each part
+ * sized so its request fits the window with the notes it asks for, every
+ * character read once, the notes of every part kept in order. `onPart` hears
+ * each part as it is read.
+ */
+export async function readDocumentInParts(
+  model: LocalInferenceAdapter,
+  doc: { id: string; name: string; path?: string | undefined; text: string },
+  onPart?: (index: number, parts: number) => Promise<void> | void,
+): Promise<{ parts: number; notes: string; windowTokens: number }> {
+  const windowTokens = model.contextWindow?.contextTokens ?? SESHAT_DEFAULT_WINDOW_TOKENS;
+  const wrapper = estimatePromptTokens(seshatReaderPrompt(doc, "x", 99, 99));
+  const room =
+    windowTokens -
+    READER_NOTES_TOKENS -
+    ALLOCATOR_MARGIN -
+    estimatePromptTokens(SESHAT_READER_SYSTEM) -
+    wrapper;
+  const parts = splitDocument(doc.text, Math.max(256, charsForTokens(room)));
+  const notes: string[] = [];
+  for (const [i, part] of parts.entries()) {
+    await onPart?.(i + 1, parts.length);
+    const res = await model.generate({
+      systemPrompt: SESHAT_READER_SYSTEM,
+      prompt: seshatReaderPrompt(doc, part, i + 1, parts.length),
+      toolArm: "arm_a_flat",
+      temperature: 0.1,
+      maxTokens: READER_NOTES_TOKENS,
+      role: "seshat",
+    });
+    notes.push(`Part ${i + 1} of ${parts.length}:\n${stripThinking(res.text).trim()}`);
+  }
+  return { parts: parts.length, notes: notes.join("\n\n"), windowTokens };
 }
 
 /**
@@ -1023,10 +1209,21 @@ export async function answer(
     seen.add(key);
     return true;
   });
+  // PM-N10-3: the reply cites each document it read — only when the prompt
+  // it was made from (the last request's) kept the documents; otherwise it
+  // cites none of them and says so (§2.8 item 18: nothing is cut silently).
+  const readable = (snapshot.documents ?? []).filter((d) => d.text !== undefined);
+  const documentsHeld = fitted.allocation.sections.some((x) => x.id === "documents");
+  if (readable.length && !documentsHeld) text = `${text}\n\n${documentsNotHeldWords(readable)}`;
+  const documentCites: PmCite[] = (documentsHeld ? readable : []).map((d) => ({
+    documentId: d.id,
+    label: `Attached document ${d.name}`,
+    ...(d.path ? { path: d.path } : {}),
+  }));
   return {
     text,
     proposals,
-    cites: [...citesFrom(text, snapshot.cards, snapshot), ...sources],
+    cites: [...citesFrom(text, snapshot.cards, snapshot), ...documentCites, ...sources],
     skillVersion: SESHAT_SKILL_VERSION,
     promptSections: fitted.allocation.sectionTokens,
     promptBudget: {

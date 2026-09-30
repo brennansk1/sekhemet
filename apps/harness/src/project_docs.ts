@@ -844,6 +844,89 @@ export async function exportProjectDocuments(
   return { ...result, sha, written: writes.map((d) => d.path), ...(notice ? { notice } : {}) };
 }
 
+// --- A person's own documents (planner-pm NEW-planner-pm-10) ----------------------------------
+
+/** Where a person's attached documents go, under the product folder. */
+export const INPUTS_FOLDER = "inputs";
+
+/** A file name from a document's name: lower case, words joined by hyphens, its extension kept. */
+function inputFileName(name: string): string {
+  const ext = /\.(md|markdown|txt)$/i.exec(name)?.[1]?.toLowerCase() ?? "md";
+  const stem = name
+    .replace(/\.(md|markdown|txt)$/i, "")
+    .normalize("NFKD")
+    .replace(/[^\w\s-]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/[\s_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60)
+    .replace(/-+$/, "");
+  return `${stem || "document"}.${ext}`;
+}
+
+/**
+ * Commit a person's documents onto the integration branch, byte for byte, by
+ * plumbing (PM-N10-2): `<product>/inputs/<day>-<name>` — numbered when that
+ * path is taken — never the person's checkout. They are the person's: no
+ * generated header, so an export never rewrites them (DS-N3-5), and the
+ * commit names the person who sent them. Returns each document's path, or
+ * why nothing was committed (no integration branch commit yet, or a branch
+ * that moved), in which case the documents stay with the conversation.
+ */
+export async function commitPersonDocuments(
+  ctx: DocsContext,
+  input: { documents: readonly { name: string; text: string }[]; principal: string; day?: string },
+): Promise<
+  | { sha: string; branch: string; paths: string[]; notice?: string }
+  | { skipped: string; noCommit?: true }
+> {
+  const branch = integrationBranchOf(ctx.repoPath);
+  const head = revParse(ctx.repoPath, `refs/heads/${branch}^{commit}`);
+  if (!head) return { skipped: `${branch} has no commit`, noCommit: true };
+  const tree = new Set(listBranchFiles(ctx.repoPath, head));
+  const layout = docsLayout(ctx.repoPath, [...tree]);
+  const day = input.day ?? today();
+  const paths: string[] = [];
+  for (const d of input.documents) {
+    const file = inputFileName(d.name);
+    const dot = file.lastIndexOf(".");
+    let path = `${layout.product}/${INPUTS_FOLDER}/${day}-${file}`;
+    for (let n = 2; tree.has(path) || paths.includes(path); n++) {
+      path = `${layout.product}/${INPUTS_FOLDER}/${day}-${file.slice(0, dot)}-${n}${file.slice(dot)}`;
+    }
+    paths.push(path);
+  }
+  const noNames = configuredDocs(ctx.repoPath).noNames;
+  const sender = await personLabel(ctx, input.principal, noNames);
+  try {
+    const sha = await new NodeGitSyncAdapter(ctx.repoPath).withAcceptLock(async () =>
+      commitFilesOnBranch(ctx.repoPath, {
+        branch,
+        expectedOld: head,
+        files: input.documents.map((d, i) => ({ path: paths[i] as string, text: d.text })),
+        subject: `docs(product): ${paths.length === 1 ? "a document" : `${paths.length} documents`} sent to Seshat`,
+        body: `Attached by ${sender} in the conversation with Seshat, as sent: ${paths.join(", ")}.`,
+        trailers: {
+          Card: "docs",
+          "Agent-Model": "none",
+          "Agent-Harness": "sekhemet",
+          "Agent-Role": "documenter",
+          "Accepted-by": sender,
+          "Ledger-Seq": String(ledgerSeq(ctx.cardStore)),
+          "Co-authored-by": "sekhemet <harness@sekhemet.local>",
+        },
+      }),
+    );
+    // The branch moved by plumbing: a checkout on it is told how to catch up (RG-S5-2).
+    const { checkoutNotice } = await import("./accept.js");
+    const notice = checkoutNotice(ctx.repoPath, branch, sha);
+    return { sha, branch, paths, ...(notice ? { notice } : {}) };
+  } catch (err) {
+    return { skipped: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** Every generated document's text as the ledger would write it now, without committing (`sekhemet release docs show`). */
 export async function renderedDocuments(
   ctx: DocsContext,

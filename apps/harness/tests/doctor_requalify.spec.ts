@@ -77,4 +77,32 @@ describe("doctor: models this build owes a re-verification", () => {
     new ModelRegistry(reg.path).observeContextVersion("w2");
     expect(modelVerificationCheck(reg, versions("w1"))).toMatchObject({ status: "pass" });
   });
+
+  it("F26: a Coding model whose earlier verification was invalidated by a prompt change is owed one", () => {
+    // Before F23 a prompt change marked each qualified combination invalidated
+    // in place; the newest record of the combination is then `invalidated`,
+    // and doctor said every model was verified while the Coding model had no
+    // verification under this build's prompts.
+    const { reg } = registry();
+    reg.recordCombinationQualification("nail-mtp", combo("w1"), pass);
+    reg.recordCombinationQualification("nail-mtp", combo("w1"), {
+      ...pass,
+      status: "invalidated",
+      reason: "context version changed (w1 -> w2)",
+    });
+    const check = modelVerificationCheck(reg, versions("w2"));
+    expect(check.status).toBe("warn");
+    expect(check.detail).toContain(
+      "Coding model nail-mtp (context version changed (w1 -> w2)): sekhemet qualify --models nail-mtp",
+    );
+    // Verified again under this build's prompts: nothing is owed.
+    reg.recordCombinationQualification("nail-mtp", combo("w2"), pass);
+    expect(modelVerificationCheck(reg, versions("w2"))).toMatchObject({ status: "pass" });
+  });
+
+  it("F26: a model that only ever failed is not owed a re-verification", () => {
+    const { reg } = registry();
+    reg.recordCombinationQualification("tiel", combo("w1"), { ...pass, status: "failed" });
+    expect(modelVerificationCheck(reg, versions("w2"))).toMatchObject({ status: "pass" });
+  });
 });

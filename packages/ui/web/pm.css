@@ -207,6 +207,44 @@
   background: var(--bg-overlay);
 }
 
+/* Attached documents (planner-pm PM-N10-2, -5): in the composer and on a sent message */
+.docs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0;
+}
+.msg.user .docs {
+  justify-content: flex-end;
+}
+.dchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 24px;
+  padding: 0 4px 0 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+}
+.dchip .t {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dchip .ic {
+  color: var(--text-secondary);
+  flex: none;
+}
+.msg.user .doc-note {
+  margin: 4px 0 0;
+  font-size: var(--text-xs);
+  text-align: right;
+}
+
 /* Card chips (@card) and cites */
 .cchip {
   display: inline-flex;

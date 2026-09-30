@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { MessageRefused, readMessageBody } from "../pm/documents.js";
 import type { Level } from "./access.js";
 import {
   AiTeammateError,
@@ -23,7 +24,7 @@ import {
 export interface AiRouteContext {
   deps: () => AiTeammatesDeps | undefined;
   json: (res: ServerResponse, status: number, body: unknown) => void;
-  readJsonBody: (req: IncomingMessage) => Promise<Record<string, unknown>>;
+  readJsonBody: (req: IncomingMessage, limit?: number) => Promise<Record<string, unknown>>;
   isTrustedMutation: (req: IncomingMessage) => boolean;
   principalOf: (req: IncomingMessage) => string;
   ceilingOf: (req: IncomingMessage) => Level | undefined;
@@ -108,8 +109,11 @@ export async function handleAiTeammateRoute(
   }
   try {
     if (comments) {
-      const body = await ctx.readJsonBody(req);
-      const text = typeof body.text === "string" ? body.text.slice(0, 8000) : "";
+      // PM-N10-1, -4: a comment may be a message to Seshat, so it is read under
+      // Seshat's request cap and kept whole; over the cap it is refused in the
+      // same words, before anything is recorded. Nothing is cut.
+      const body = await readMessageBody(req, ctx.readJsonBody);
+      const text = typeof body.text === "string" ? body.text : "";
       const ceiling = ctx.ceilingOf(req);
       ctx.json(
         res,
@@ -134,6 +138,10 @@ export async function handleAiTeammateRoute(
       }),
     );
   } catch (err) {
+    if (err instanceof MessageRefused) {
+      ctx.json(res, err.status, { error: err.message, ...err.detail });
+      return true;
+    }
     ctx.json(res, err instanceof AiTeammateError ? err.status : 409, {
       error: err instanceof Error ? err.message : String(err),
     });

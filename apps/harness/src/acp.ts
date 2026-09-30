@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline";
 import type { CardStore } from "@sekhemet/kernel";
 import type { ModelHold } from "@sekhemet/models";
+import { appendPersonMessage } from "./pm/documents.js";
 import { answerQueued } from "./pm/service.js";
 import type { PmStore } from "./pm/store.js";
 
@@ -110,9 +111,22 @@ export class AcpAgent {
         const s = this.sessions.get(String(p.sessionId));
         if (!s) return this.fail(msg.id, -32602, `Unknown session ${String(p.sessionId)}`);
         s.cancelled = false;
-        const text = promptText(p.prompt).trim().slice(0, 8000);
+        const text = promptText(p.prompt).trim();
         if (!text) return this.reply(msg.id, { stopReason: "end_turn" });
-        const asked = await this.deps.pmStore.appendUserMessage(text, { view: "editor" }, "human");
+        // PM-N10-1, -2: kept whole; a long prompt is a project document too.
+        const { message: asked } = await appendPersonMessage(
+          this.deps.pmStore,
+          {
+            repoPath: this.deps.repoPath,
+            cardStore: this.deps.cardStore,
+            log: this.deps.pmStore.log,
+          },
+          {
+            text,
+            context: { view: "editor" },
+            principal: this.deps.cardStore.localPrincipal(),
+          },
+        );
         this.update(s.id, {
           sessionUpdate: "plan",
           entries: [

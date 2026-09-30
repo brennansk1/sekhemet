@@ -26,3 +26,4 @@ export * from "./candidates.js";
 export * from "./takeover.js";
 export * from "./reconciliation.js";
 export * from "./project_documents.js";
+export * from "./config_dir.js";

@@ -198,6 +198,20 @@ export function confinedSandbox(restricted: boolean): ProcessSandbox {
 const WRAPPER_EXEC_FAILED =
   /^(?:sandbox-exec: execvp\(\) of '[^']*' failed|bwrap: execvp [^\n:]*): No such file or directory/m;
 
+/**
+ * srt's wrapper is bash's `exec <command>` (srt_engine.ts): its message when
+ * the program cannot be found names the command, so a program that itself
+ * runs a shell which cannot find another command is not mistaken for it
+ * (DEC-39 parity, found running the suite under srt).
+ */
+export function srtExecFailed(stderr: string, command: string): boolean {
+  const name = command.replace(/^\.\//, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `^/bin/bash: line \\d+: exec: (?:[^\\n]*/)?${name}: (?:not found|cannot execute: No such file or directory)$`,
+    "m",
+  ).test(stderr);
+}
+
 export class ProcessSandbox implements ExecutionSandbox {
   private readonly mode: ConfinementMode;
   private readonly bwrap: string | undefined;
@@ -543,7 +557,9 @@ export class ProcessSandbox implements ExecutionSandbox {
         );
         const exitCode = notFound ? 127 : (code ?? (timedOut ? 124 : 1));
         // The wrapper itself could not exec the program: it never started.
-        const notStarted = WRAPPER_EXEC_FAILED.test(stderr);
+        const notStarted =
+          WRAPPER_EXEC_FAILED.test(stderr) ||
+          (this.mode === "srt" && srtExecFailed(stderr, command));
 
         const suffix = (truncated: boolean): string =>
           truncated ? `\n... [output truncated at ${maxBuffer} bytes] ...` : "";

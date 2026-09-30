@@ -34,6 +34,7 @@ import { ledgerBundle } from "./accept.js";
 import { runDoctor } from "./doctor.js";
 import { LearningStore } from "./learning/store.js";
 import { capabilityReport } from "./pm/capability.js";
+import { appendPersonMessage } from "./pm/documents.js";
 import { PmStore } from "./pm/store.js";
 
 export interface McpContext {
@@ -291,11 +292,14 @@ const MCP_TOOLS: McpTool[] = [
       "Send a message to Seshat, the project manager. Its reply appears in the PM thread.",
     inputSchema: { type: "object", properties: { text: str, card_id: str }, required: ["text"] },
     handler: async (a, ctx) => {
-      const m = await new PmStore(ctx.log).appendUserMessage(
-        String(a.text).slice(0, 8000),
-        typeof a.card_id === "string" ? { cardId: a.card_id, view: "mcp" } : { view: "mcp" },
-        "mcp",
-      );
+      // PM-N10-1, -2: kept whole; a long message is a project document too.
+      const { message: m } = await appendPersonMessage(new PmStore(ctx.log), ctx, {
+        text: String(a.text).trim(),
+        context:
+          typeof a.card_id === "string" ? { cardId: a.card_id, view: "mcp" } : { view: "mcp" },
+        actor: "mcp",
+        principal: ctx.cardStore.localPrincipal(),
+      });
       return `Queued for Seshat as ${m.id}. Read the reply with sekhemet_pm_thread.`;
     },
   },

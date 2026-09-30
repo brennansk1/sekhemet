@@ -194,6 +194,11 @@ describe("the per-start mutation token (SEC-25, DB-S3c-1)", () => {
     const r = await accept({ Host: own() });
     expect(r.status).toBe(403);
     expect(JSON.parse(r.body)).toMatchObject({ error: "csrf" });
+    // W1 finding: Solo has no sign-in, so its refusal carries a Solo sentence
+    // for the page and for any client of the API (DEC-31).
+    const message = JSON.parse(r.body).message;
+    expect(message).toMatch(/reload the page/i);
+    expect(message).not.toMatch(/sign in|session|token|csrf/i);
     expect((await store.getCard("h1"))?.status).toBe("review");
   });
 
@@ -250,6 +255,8 @@ describe("the per-start mutation token (SEC-25, DB-S3c-1)", () => {
       });
       expect(r.status, method).toBe(403);
       expect(JSON.parse(r.body), method).toMatchObject({ error: "csrf", refused: "origin" });
+      expect(JSON.parse(r.body).message, method).toMatch(/another page/i);
+      expect(JSON.parse(r.body).message, method).not.toMatch(/sign in|session|token|csrf/i);
     }
   });
 

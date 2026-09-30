@@ -77,6 +77,38 @@ describe("the verdict", () => {
     expect(ev.tree).toMatch(/^[0-9a-f]{40}$/);
   });
 
+  it("writes evidence exactly as the gate's formatter would, so a runner's file never fails the gate", () => {
+    // W1 finding: JSON.stringify spreads short arrays one item a line, which
+    // biome joins, so every new evidence file failed `biome check .`.
+    const out = tmp("ms-fmt-");
+    const path = m.writeEvidence(
+      {
+        id: "B2.5",
+        title: "t",
+        checks: [
+          { name: "a", ok: true, detail: "d", counts: [38, 43, 42] },
+          { name: "b", ok: false, arms: ["ref", "strict"], none: [], nested: [[1, 2], [3]] },
+        ],
+        details: {
+          passed: Array.from({ length: 40 }, (_, i) => i),
+          empty: {},
+          flags: [true, null],
+        },
+      },
+      { dir: out, date: "2026-09-29" },
+    );
+    const written = readFileSync(path, "utf8");
+    const root = join(import.meta.dirname, "../../..");
+    const biome = join(root, "node_modules", ".bin", "biome");
+    const formatted = execFileSync(
+      biome,
+      ["format", `--stdin-file-path=${join("evidence", "milestones", "B2.5_2026-09-29.json")}`],
+      { cwd: root, input: written, encoding: "utf8" },
+    );
+    expect(written).toBe(formatted);
+    expect(JSON.parse(written).details.passed).toHaveLength(40);
+  });
+
   it("identifies the tree a runner ran on, so it can be tied to the commit that later holds it", () => {
     const repo = tmp("ms-tree-");
     const git = (...a: string[]) => execFileSync("git", a, { cwd: repo, encoding: "utf8" }).trim();

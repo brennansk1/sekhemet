@@ -61,6 +61,8 @@ export const ACCOUNT_COPY = {
   signInToContinue: "Sign in to continue.",
   csrf: "Your session could not be confirmed. Reload the page, or sign in again.",
   csrfSolo: "This page is out of date because Sekhemet restarted. Reload the page, then try again.",
+  csrfSoloOrigin:
+    "Sekhemet refused a change sent from another page. Make the change from the Sekhemet dashboard.",
   pending: "Pending until an Admin approves it.",
   unreachable: "The Sekhemet server can't be reached. Check that it is running, then try again.",
   thisComputer: "This computer",
@@ -216,8 +218,10 @@ export function refusalMessage(status: number, body: unknown, mode?: "solo" | "t
   const error = typeof b.error === "string" ? b.error : "";
   if (status === 0) return ACCOUNT_COPY.unreachable;
   // Solo has no sign-in: a refused write means the page predates a restart (SEC-25).
-  if (status === 403 && error === "csrf")
-    return mode === "solo" ? ACCOUNT_COPY.csrfSolo : ACCOUNT_COPY.csrf;
+  if (status === 403 && (error === "csrf" || b.code === "csrf")) {
+    if (mode !== "solo") return ACCOUNT_COPY.csrf;
+    return b.refused === "origin" ? ACCOUNT_COPY.csrfSoloOrigin : ACCOUNT_COPY.csrfSolo;
+  }
   if (status === 403 && b.pending === true) return ACCOUNT_COPY.pending;
   if (error) return error;
   if (status === 403 && typeof b.needs === "string") {
@@ -311,4 +315,17 @@ export function tokenExpiryOptions(
       label: days === 365 ? "1 year" : `${days} days`,
       selected: days === defaultDays,
     }));
+}
+
+/**
+ * A failed write's body as a page shows it (DEC-31, W1 finding): when the
+ * server refused a CSRF check and sent a sentence (Solo: `message`), the
+ * sentence is the error and the code moves to `code`, so a page that prints
+ * `error` never shows the bare `csrf`. Anything else is handed on as it came.
+ */
+export function refusedWriteBody<T>(status: number, data: T): T {
+  if (status !== 403 || !data || typeof data !== "object") return data;
+  const b = data as Record<string, unknown>;
+  if (b.error !== "csrf" || typeof b.message !== "string" || !b.message) return data;
+  return { ...b, error: b.message, code: "csrf" } as T;
 }

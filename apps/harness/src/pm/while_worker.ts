@@ -2,7 +2,7 @@ import type { CardRecord } from "@sekhemet/kernel";
 import { type LocalInferenceAdapter, plannerCopy } from "@sekhemet/models";
 import { guardCompletionClaim } from "@sekhemet/planner";
 import { type PmSnapshot, isStatusQuestion, ledgerStandup, stripThinking } from "./agent.js";
-import { SESHAT_FACTS, SESHAT_LEDGER_ANSWERS } from "./pm_copy.js";
+import { SESHAT_DATA, SESHAT_FACTS, SESHAT_LEDGER_ANSWERS } from "./pm_copy.js";
 import type { PmCite, PmMessage } from "./types.js";
 
 /**
@@ -174,7 +174,13 @@ export async function quickAnswer(
 ): Promise<string> {
   const res = await model.generate({
     systemPrompt: plannerCopy.quickAnswerSystem,
-    prompt: `Project: ${snapshot.project}\n\n${queued.map((m) => `Human: ${m.text}`).join("\n")}`,
+    // PM-N10-3: a long message kept as a document is named, not sent whole to the quick answerer.
+    prompt: `Project: ${snapshot.project}\n\n${queued
+      .map((m) => {
+        const own = m.documents?.find((d) => d.fromMessage);
+        return `Human: ${own ? SESHAT_DATA.sentAsDocumentUnread(own) : m.text}`;
+      })
+      .join("\n")}`,
     toolArm: "arm_a_flat",
     temperature: 0.2,
     maxTokens: 300,

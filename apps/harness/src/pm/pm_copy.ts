@@ -67,6 +67,8 @@ export const SESHAT_TAGS = {
   conversation: "conversation",
   lookups: "search_results",
   message: "message",
+  /** A document the person attached to a message (PM-N10-3). */
+  document: "document",
 } as const;
 
 /** One part of Seshat's task data, wrapped in its tag; empty when it has no body. */
@@ -76,6 +78,62 @@ export function seshatPart(
   attrs = "",
 ): string {
   return body.trim() ? `<${tag}${attrs}>\n${body}\n</${tag}>` : "";
+}
+
+/** "in 3 parts", or "on its own" for one. */
+export const partsWords = (parts: number): string =>
+  parts === 1 ? "on its own" : `in ${parts} parts`;
+
+/** What the words about an attached document need of it. */
+export interface AttachedRef {
+  name: string;
+  path?: string | undefined;
+  chars: number;
+}
+
+/** A document's tag attributes: quotes and angle brackets dropped from its name. */
+export function documentAttrs(d: {
+  id: string;
+  name: string;
+  path?: string | undefined;
+  extra?: string;
+}): string {
+  const clean = (v: string) => v.replace(/["<>]/g, "");
+  return ` name="${clean(d.name)}"${d.path ? ` path="${clean(d.path)}"` : ""} id="${d.id}"${d.extra ?? ""}`;
+}
+
+/**
+ * Reading one part of an attached document too long for Seshat's window
+ * (PM-N10-3): the reader's system text and its request. The notes it writes
+ * are what Seshat's answer carries for that part.
+ */
+export const SESHAT_READER_SYSTEM =
+  "You read one part of a document a person attached for Seshat, their project manager. Write notes on this part that keep every requirement, rule, number, name, date, constraint and open question in it, in the document's own words where they are exact. Plain lines; no commentary, and nothing that is not in this part.";
+
+export function seshatReaderPrompt(
+  d: { id: string; name: string; path?: string | undefined },
+  part: string,
+  index: number,
+  parts: number,
+): string {
+  return `${seshatPart(SESHAT_TAGS.document, part, documentAttrs({ ...d, extra: ` part="${index} of ${parts}"` }))}\n\nWrite your notes on part ${index} of ${parts} now.`;
+}
+
+/**
+ * Said in a reply made without an attached document, because not even the
+ * notes of its reading fit beside the rest of Seshat's prompt (PM-N10-3):
+ * the reply does not cite it, and says so (planner-pm §2.8 item 18).
+ */
+export function documentsNotHeldWords(
+  docs: readonly { name: string; path?: string | undefined }[],
+): string {
+  const names = docs.map((d) => `"${d.name}"`).join(", ");
+  const one = docs.length === 1;
+  const where = docs
+    .filter((d) => d.path)
+    .map((d) => d.path)
+    .join(", ");
+  return `I could not fit ${names} into what I can read at once, even as notes, so this answer is not based on ${one ? "it" : "them"}.${where ? ` The whole text is at ${where}.` : ""} A Planning model with a larger context window can read ${one ? "it" : "them"}.`;
 }
 
 /** The words Seshat's task data uses around the ledger's facts. */
@@ -88,6 +146,21 @@ export const SESHAT_DATA = {
   you: "You",
   lookingAt: (cardId: string) => ` [looking at \`${cardId}\`]`,
   agentRecord: (model: string, record: string) => `${model}: ${record}`,
+  /** A long message kept whole as its own attached document: the message line names it (PM-N10-3). */
+  sentAsDocument: (d: AttachedRef) =>
+    `(a long message, kept whole as the attached document "${d.name}"${d.path ? ` at ${d.path}` : ""}; it is in the document part below)`,
+  /** The same, to a quick answerer that is not given the document (rule 20f b). */
+  sentAsDocumentUnread: (d: AttachedRef) =>
+    `(a long message, kept whole as the document "${d.name}"${d.path ? ` at ${d.path}` : ""}; the full answer reads it)`,
+  /** A document attached to the message, named after the person's words. */
+  attached: (d: AttachedRef) =>
+    ` (attached the document "${d.name}"${d.path ? ` at ${d.path}` : ""}, ${d.chars} characters; it is in the document part below)`,
+  /** An earlier message's document, in the conversation. */
+  attachedEarlier: (d: AttachedRef) => ` (attached "${d.name}"${d.path ? ` at ${d.path}` : ""})`,
+  /** A document read in parts: what the notes are, and how often they were condensed to fit. */
+  readInParts: (parts: number, path: string | undefined, condensed = 0) =>
+    `This document did not fit your context window beside the rest of this prompt, so you read it ${partsWords(parts)} before this reply; below are your notes on ${parts === 1 ? "all of it" : "every part"}${condensed ? `, condensed ${condensed === 1 ? "once" : `${condensed} times`} (notes on your notes) to fit` : ""}.${path ? ` The whole text is at ${path}.` : ""}`,
+  documentErased: "A person erased this document; its text is gone.",
   /** The last line of the prompt: the next action (rule 6, step 7). */
   replyNow: "Reply to the person now.",
   replyAfterLookups: "Reply to the person now, using the search results above.",

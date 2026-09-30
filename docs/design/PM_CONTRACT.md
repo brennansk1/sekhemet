@@ -77,8 +77,24 @@ server does not answer to is refused with 421 before any endpoint runs.
 
 - `GET /api/pm/thread?since=<seq>` returns
   `{ messages: PmMessage[], status: PmStatus }`.
-- `POST /api/pm/messages` with `{ text, context?: { cardId?, view? } }`
-  returns `{ message: PmMessage }` (role `user`, state `queued`).
+- `POST /api/pm/messages` with `{ text, documents?: { name, text }[],
+  context?: { cardId?, view? } }` returns `{ message: PmMessage, notice? }`
+  (role `user`, state `queued`). The text is kept whole, whatever its length
+  (planner-pm NEW-planner-pm-10). Each document the composer attached, and
+  the text itself when it is longer than 8,000 characters
+  (`SESHAT_DOCUMENT_CHARS`), is a project document: committed, byte for
+  byte, on the integration branch at `<product>/inputs/<YYYY-MM-DD>-<name>`
+  (numbered when taken) in one commit naming the person, and referenced from
+  the message as `PmMessage.documents: { id, name, chars, bytes, sha256,
+  path?, fromMessage? }[]` — no `path` when the branch has no commit yet (the
+  document is then kept with the conversation only), `fromMessage` when it is
+  the message's own text. The thread never carries a document's text.
+  `notice` tells a checkout on the moved branch how to catch up (RG-S5-2).
+  A body over 1 MiB (`SESHAT_MESSAGE_MAX_BYTES`) is refused with **413**
+  `{ error, bytes?, limitBytes }` before anything is recorded, the error
+  naming its size; more than 10 documents, a document with no text, or
+  neither words nor documents, **400**. Seshat's reply cites each document
+  it read: `PmCite.documentId` with `label` and `path`.
 - `POST /api/pm/focus` (no body) says the dashboard is visible and focused
   for the person; the client sends it on focus and once a minute while
   focused. It records `pm/board_focus {principal}` at most once a minute a
@@ -115,9 +131,13 @@ interface PmMessage {
   state: "queued" | "thinking" | "done" | "error";
   context?: { cardId?: string; view?: string };
   principal?: string;           // who wrote a user message; for a reply, who it answers (Team setup)
+  documents?: { id: string; name: string; chars: number; bytes: number; sha256: string;
+                path?: string; fromMessage?: true;
+                unfiled?: "no_commit" | "commit_failed" }[];   // a user message's attached documents, never their text (planner-pm NEW-planner-pm-10); `unfiled`: why one has no path
   proposals?: PmProposal[];     // changes the PM wants to make
   cites?: { cardId?: string; runId?: string; evidenceId?: string; url?: string; label?: string;
-             goalId?: string; assumptionId?: string; findingId?: string }[];   // url + label: a research source, rendered in the Sources list (http/https only); goalId, assumptionId, findingId (an AI review's dossier entry) and evidenceId: what a reply answered from (planner-pm PM-P6-1, -2, -6)
+             goalId?: string; assumptionId?: string; findingId?: string;
+             documentId?: string; path?: string }[];   // url + label: a research source, rendered in the Sources list (http/https only); goalId, assumptionId, findingId (an AI review's dossier entry) and evidenceId: what a reply answered from (planner-pm PM-P6-1, -2, -6); documentId (+ path): an attached document the reply read (PM-N10-3), rendered beside the issues, never as a source
   skillVersion?: string;        // a reply's: the senior-PM skill it was written under, on every reply (PM-P6-4)
   model?: string;               // a reply's author: the Planning model's id, "ledger" (a standup from the ledger) or "notifier" (a notice shown in the panel, PM-P6-10), which the panel renders as the product's notice, not in Seshat's voice (PM-N9-6)
 }
@@ -481,8 +501,8 @@ one action (planner-pm PM-N9-2, teams TEAM-41).
   { status, done, next, risks, asks }, text } }`: Seshat's weekly update,
   with no health word. It writes nothing.
 - `POST /api/projects/:id/update` with `{ text }` posts the update a person
-  edited: `project/update_posted { project }`, the text private, the person
-  as principal. In the Team setup only the project's lead or an Admin
+  edited, whole: `project/update_posted { project }`, the text private, the
+  person as principal; a body over 1 MiB is **413**, as for a message. In the Team setup only the project's lead or an Admin
   (`project.update`, checked centrally in `team/access.ts` before the route's
   own inline check ever runs; 403 otherwise); 400 without text.
 
@@ -508,14 +528,19 @@ at once, before any model loads (teams TEAM-15); the words are
 - `POST /api/cards/:id/comments` with `{ text }` (every level: `comment`)
   records `issue/commented { id, cardId, ai?, seshatMessage?, people?, held? }`,
   the text private, the person as principal, and returns `{ comment, ai,
-  request?, invite? }`. `@Name` mentions a person (the name without its
+  request?, invite?, notice? }`. The body is read under Seshat's request cap
+  and the text kept whole (planner-pm PM-N10-1, -4): over 1 MiB it is
+  refused with 413 and `{ error, bytes?, limitBytes }` in the composer's
+  words, before anything is recorded. `@Name` mentions a person (the name without its
   spaces, as the mention picker inserts it): `people` are those who can see
   the issue's project, `held` those who cannot (a pending or removed
   member); a held mention reaches no one — nor does the comment — until the
   author answers, and `invite { commentId, people, project? }` asks them
   (teams item 23, TEAM-22).
   `@Seshat` puts the text in Seshat's queue with the issue as context (as
-  `POST /api/pm/messages` does), answered at the person's level — a Viewer,
+  `POST /api/pm/messages` does: over 8,000 characters it is also committed
+  as a project document, and `notice` tells a checkout on the moved branch
+  how to catch up, PM-N10-2), answered at the person's level — a Viewer,
   on the workspace or the issue's project, gets an answer and no proposal or
   suggestion (TEAM-40). `@Agent` from a person who may start the Agent there
   (`agent.start`) delegates the issue to the Agent on their behalf (its

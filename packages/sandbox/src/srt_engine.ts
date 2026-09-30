@@ -2,7 +2,13 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
-import { homeToolchainPaths, ledgerReadDenies, realPath, secretReadDenies } from "./seatbelt.js";
+import {
+  homeToolchainPaths,
+  ledgerReadDenies,
+  realPath,
+  secretReadDenies,
+  unixSocketRules,
+} from "./seatbelt.js";
 import { sessionSecretDenies } from "./secret_paths.js";
 
 // SEC-23's path lists live beside the native profile, which denies them too.
@@ -248,10 +254,41 @@ export function srtWrap(
       options.cwd,
       { commandId },
     );
-    const [shell, flag, wrapped] = argv as [string, string, string];
+    const [shell, flag, srtWrapped] = argv as [string, string, string];
+    const wrapped =
+      options.allowNetwork && platform() === "darwin"
+        ? withUnixSocketRules(srtWrapped, [
+            ...options.allowedPaths,
+            ...(options.scratchDir ? [options.scratchDir] : []),
+          ])
+        : srtWrapped;
     // `exec` again at the outer level: the spawned pid is the command itself.
     return { file: shell, argv: [flag, `exec ${wrapped}`] };
   });
+}
+
+/** srt's open-network line in its macOS profile (SRT_VERSION), where the socket rules go. */
+const SRT_OPEN_NETWORK = "\n(allow network*)\n";
+
+/**
+ * srt's macOS profile with the network open says `(allow network*)` and no
+ * more, so a command could connect to the ssh-agent or any other Unix socket
+ * by its path (W1 finding; srt's own Unix-socket rules apply only when it
+ * restricts the network). The native engine's rules (`unixSocketRules`) are
+ * placed right after that line; the profile is a single-quoted shell word in
+ * srt's command, so each quote in them is written `'\''`. When the line is not
+ * there exactly once the command is refused rather than run without them.
+ */
+export function withUnixSocketRules(wrapped: string, roots: string[]): string {
+  const at = wrapped.indexOf(SRT_OPEN_NETWORK);
+  if (at < 0 || wrapped.indexOf(SRT_OPEN_NETWORK, at + 1) >= 0) {
+    throw new Error(
+      `srt ${SRT_VERSION}'s profile did not have its open-network line exactly once, so the Unix-socket rules could not be added`,
+    );
+  }
+  const rules = unixSocketRules(roots).replace(/'/g, "'\\''");
+  const end = at + SRT_OPEN_NETWORK.length;
+  return `${wrapped.slice(0, end)}${rules}\n${wrapped.slice(end)}`;
 }
 
 /** Linux only: remove the mount points bubblewrap left for absent deny paths. */

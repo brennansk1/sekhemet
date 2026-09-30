@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { EventLog, EventRecord } from "@sekhemet/kernel";
+import { ERASED_MARKER, type EventLog, type EventRecord } from "@sekhemet/kernel";
 import { SESHAT_SKILL_VERSION } from "./seshat_skill.js";
 import {
   type Cycle,
   PM_EVENTS,
   type PmCite,
   type PmContext,
+  type PmDocumentRef,
   type PmMessage,
   type PmPlanApproval,
   type PmProposal,
@@ -20,6 +21,33 @@ interface MessagePayload {
   text?: string;
   context?: PmContext;
   createdAt: string;
+  /** PM-N10-2: the documents it carries, without their names (private) or text. */
+  documents?: Omit<PmDocumentRef, "name">[];
+}
+
+/** A document to record with a message: its reference and, unless it is the message's own text, its text. */
+export interface MessageDocument {
+  ref: PmDocumentRef;
+  /** Absent for the message's own text (`ref.fromMessage`). */
+  text?: string;
+}
+
+/** An attached document with its text, as Seshat reads it (PM-N10-3). */
+export interface AttachedDocumentText extends PmDocumentRef {
+  messageId: string;
+  /** Undefined when a person erased it (the gap is named, never filled). */
+  text?: string;
+}
+
+type DocumentTexts = Record<string, { name: string; text?: string }>;
+
+/** A message event's documents, their names from the private part (or the erasure marker). */
+function documentsOf(e: EventRecord): PmDocumentRef[] | undefined {
+  const refs = (e.payload as MessagePayload).documents;
+  if (!refs?.length) return undefined;
+  const texts = e.private?.documentTexts;
+  const named = texts && typeof texts === "object" ? (texts as DocumentTexts) : {};
+  return refs.map((r) => ({ ...r, name: named[r.id]?.name ?? ERASED_MARKER }));
 }
 
 interface ReplyPayload {
@@ -93,19 +121,30 @@ export class PmStore {
     text: string,
     context?: PmContext,
     actor = "human",
+    documents: MessageDocument[] = [],
   ): Promise<PmMessage> {
     // The text is free text (an `@Seshat` comment's body among them): the
     // event's erasable private part, never the hashed payload (teams §3).
+    // So are an attached document's name and text (PM-N10-2).
     const payload: MessagePayload = {
       id: `pmm_${randomUUID().slice(0, 12)}`,
       createdAt: new Date().toISOString(),
       ...(context && (context.cardId || context.view) ? { context } : {}),
+      ...(documents.length
+        ? { documents: documents.map(({ ref: { name: _name, ...rest } }) => rest) }
+        : {}),
     };
+    const documentTexts: DocumentTexts = Object.fromEntries(
+      documents.map((d) => [
+        d.ref.id,
+        { name: d.ref.name, ...(d.text !== undefined ? { text: d.text } : {}) },
+      ]),
+    );
     const event = await this.log.append({
       actor,
       type: PM_EVENTS.message,
       payload,
-      private: { text },
+      private: { text, ...(documents.length ? { documentTexts } : {}) },
       ...(context?.cardId ? { cardId: context.cardId } : {}),
     });
     return {
@@ -116,7 +155,66 @@ export class PmStore {
       createdAt: payload.createdAt,
       state: "queued",
       ...(payload.context ? { context: payload.context } : {}),
+      ...(documents.length ? { documents: documents.map((d) => d.ref) } : {}),
     };
+  }
+
+  /**
+   * The documents these messages carry, with their text (PM-N10-3): the
+   * message's own text for a document made of it. Oldest message first.
+   */
+  public async attachedDocuments(messageIds: readonly string[]): Promise<AttachedDocumentText[]> {
+    const wanted = new Set(messageIds);
+    const out: AttachedDocumentText[] = [];
+    for (const e of await this.events([PM_EVENTS.message])) {
+      const p = e.payload as MessagePayload;
+      if (!wanted.has(p.id)) continue;
+      const texts = e.private?.documentTexts;
+      const named = texts && typeof texts === "object" ? (texts as DocumentTexts) : {};
+      for (const ref of documentsOf(e) ?? []) {
+        const raw = ref.fromMessage ? messageText(e) : named[ref.id]?.text;
+        const text = raw === undefined || raw === ERASED_MARKER ? undefined : raw;
+        out.push({ ...ref, messageId: p.id, ...(text !== undefined ? { text } : {}) });
+      }
+    }
+    return out;
+  }
+
+  /** The notes of Seshat's last reading of a document in parts, if it read one (PM-N10-3). */
+  public async documentNotes(
+    documentId: string,
+  ): Promise<{ parts: number; notes: string; condensed?: number } | undefined> {
+    const read = (await this.events([PM_EVENTS.documentRead]))
+      .filter((e) => (e.payload as { document?: string }).document === documentId)
+      .at(-1);
+    const notes = read?.private?.notes;
+    if (!read || typeof notes !== "string" || notes === ERASED_MARKER) return undefined;
+    const p = read.payload as { parts: number; condensed?: number };
+    return { parts: p.parts, notes, ...(p.condensed ? { condensed: p.condensed } : {}) };
+  }
+
+  /** Record that Seshat read a document in parts, with its notes (private). */
+  public async recordDocumentRead(input: {
+    messageId: string;
+    documentId: string;
+    parts: number;
+    windowTokens: number;
+    notes: string;
+    /** Rounds of notes on the notes needed for them to fit (PM-N10-3). */
+    condensed?: number;
+  }): Promise<void> {
+    await this.log.append({
+      actor: "planner",
+      type: PM_EVENTS.documentRead,
+      payload: {
+        message: input.messageId,
+        document: input.documentId,
+        parts: input.parts,
+        windowTokens: input.windowTokens,
+        ...(input.condensed ? { condensed: input.condensed } : {}),
+      },
+      private: { notes: input.notes },
+    });
   }
 
   public async appendReply(input: {
@@ -276,6 +374,7 @@ export class PmStore {
           : status.phase === "thinking"
             ? "thinking"
             : "queued";
+        const documents = documentsOf(e);
         out.push({
           id: p.id,
           seq: e.seq,
@@ -284,6 +383,7 @@ export class PmStore {
           createdAt: p.createdAt,
           state,
           ...(p.context ? { context: p.context } : {}),
+          ...(documents ? { documents } : {}),
           ...(e.principal ? { principal: e.principal } : {}),
         });
       } else if (e.type === PM_EVENTS.reply) {

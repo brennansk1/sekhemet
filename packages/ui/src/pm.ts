@@ -1480,12 +1480,20 @@ export interface SourceCite {
  */
 export function sourceCites(
   cites:
-    | { url?: string; label?: string; cardId?: string; runId?: string; evidenceId?: string }[]
+    | {
+        url?: string;
+        label?: string;
+        cardId?: string;
+        runId?: string;
+        evidenceId?: string;
+        documentId?: string;
+      }[]
     | undefined,
 ): { label: string; href?: string; host?: string }[] {
   const out: { label: string; href?: string; host?: string }[] = [];
   for (const c of cites ?? []) {
-    if (c.cardId || c.runId || c.evidenceId) continue;
+    // An attached document is cited beside the issues (PM-N10), not as research.
+    if (c.cardId || c.runId || c.evidenceId || c.documentId) continue;
     if (!c.url && !c.label) continue;
     let href: string | undefined;
     let host: string | undefined;

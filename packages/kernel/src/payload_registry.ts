@@ -300,7 +300,38 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     id: s(ID),
     createdAt: s(TEXT),
     context: s(v.strictObject({ cardId: v.optional(ID), view: v.optional(TEXT) }), true),
+    // planner-pm PM-N10-2: the documents the message carries — sizes, hashes
+    // and repository paths here; each one's name and text in the private part.
+    documents: s(
+      v.array(
+        v.strictObject({
+          id: ID,
+          chars: v.pipe(v.number(), v.integer(), v.minValue(1)),
+          bytes: v.pipe(v.number(), v.integer(), v.minValue(1)),
+          sha256: SHA256,
+          path: v.optional(ID),
+          fromMessage: v.optional(v.literal(true)),
+          unfiled: v.optional(v.picklist(["no_commit", "commit_failed"])),
+        }),
+      ),
+      true,
+    ),
     text: priv("free_text", TEXT),
+    // Keyed by document id: its name, and its text unless it is the message's own.
+    documentTexts: priv(
+      "free_text",
+      v.record(ID, v.strictObject({ name: TEXT, text: v.optional(TEXT) })),
+    ),
+  },
+  // PM-N10-3: an attached document read in parts, its notes private.
+  "pm/document_read": {
+    message: s(ID),
+    document: s(ID),
+    parts: s(v.pipe(v.number(), v.integer(), v.minValue(1))),
+    windowTokens: s(v.number()),
+    // Rounds of notes on the notes needed for them to fit beside the prompt.
+    condensed: s(v.pipe(v.number(), v.integer(), v.minValue(1)), true),
+    notes: priv("free_text", TEXT),
   },
   // context CX-N3-7: the fit of Seshat's prompt; numbers and section ids only.
   "pm/prompt_fitted": {

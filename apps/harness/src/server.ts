@@ -26,6 +26,7 @@ import {
 import type { LocalInferenceAdapter, ModelRole } from "@sekhemet/models";
 import { DecisionStore } from "@sekhemet/planner";
 import {
+  ACCOUNT_COPY,
   type RosterRoleLike,
   UI_LIB_DIR,
   UI_LIB_MODULES,
@@ -89,6 +90,7 @@ import { startNotifier } from "./notify.js";
 import { handlePlanApprovalRoute } from "./plan_approval.js";
 import { startGoalTicker } from "./planner_live.js";
 import { audienceFromAccess } from "./pm/audience.js";
+import { attachDocuments, documentsToAttach } from "./pm/documents.js";
 import { dailyStandup } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { createPmApi } from "./pm_api.js";
@@ -224,18 +226,27 @@ const parsedBodies = new WeakMap<IncomingMessage, Record<string, unknown>>();
 
 export { generateDashboardHtml };
 
-/** Read a small JSON request body. Triage payloads are tiny; anything large is refused. */
+/**
+ * Read a JSON request body of at most `limit` bytes. Triage payloads are
+ * tiny; a route that takes more passes its own limit (Seshat's messages, PM-N10-4).
+ * The bytes are decoded once, whole, so a character split across two network
+ * chunks arrives intact.
+ */
 async function readJsonBody(
   req: IncomingMessage,
   limit = 16_384,
 ): Promise<Record<string, unknown>> {
   const cached = parsedBodies.get(req);
   if (cached) return cached;
-  let raw = "";
+  const chunks: Buffer[] = [];
+  let bytes = 0;
   for await (const chunk of req) {
-    raw += chunk;
-    if (raw.length > limit) throw new Error("request body too large");
+    const buf = typeof chunk === "string" ? Buffer.from(chunk) : (chunk as Buffer);
+    bytes += buf.length;
+    if (bytes > limit) throw new Error("request body too large");
+    chunks.push(buf);
   }
+  const raw = Buffer.concat(chunks).toString("utf8");
   const parsed = raw.trim() ? (JSON.parse(raw) as unknown) : {};
   const body = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
   parsedBodies.set(req, body);
@@ -1132,7 +1143,17 @@ export function startDashboardServer(
           access,
           audience: audienceFromAccess(() => access, options.db),
           projectOf: (card) => projectOfCard(card),
-          askSeshat: async (text, cardId) => (await pmApi.ask(text, { cardId })).id,
+          // PM-N10-1, -2: an issue comment's @Seshat is a door to Seshat like the
+          // composer: kept whole, and a long one committed as a project document.
+          askSeshat: async (text, cardId, principal) => {
+            const { documents, notice } = await attachDocuments(
+              { repoPath, cardStore: options.cardStore as CardStore, log },
+              documentsToAttach({ text, documents: [] }),
+              principal,
+            );
+            const message = await pmApi.ask(text, { cardId }, documents);
+            return { id: message.id, ...(notice ? { notice } : {}) };
+          },
           standing,
           people: workspacePeople,
           localPrincipal: () => log.localPrincipal(),
@@ -1299,11 +1320,16 @@ export function startDashboardServer(
       url !== "/webhooks/github"
     ) {
       if (!tokenMatches(req.headers["x-sekhemet-csrf"], mutationToken)) {
-        json(res, 403, { error: "csrf", refused: "token" });
+        // Solo has no sign-in: the sentence says what to do (DEC-31, W1 finding).
+        json(res, 403, { error: "csrf", refused: "token", message: ACCOUNT_COPY.csrfSolo });
         return;
       }
       if (!sameOrigin(req.headers.origin, req.headers.host)) {
-        json(res, 403, { error: "csrf", refused: "origin" });
+        json(res, 403, {
+          error: "csrf",
+          refused: "origin",
+          message: ACCOUNT_COPY.csrfSoloOrigin,
+        });
         return;
       }
     }

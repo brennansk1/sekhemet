@@ -630,6 +630,20 @@ describe("an agentic run's isolation", () => {
     );
   });
 
+  it("is refused while a copy left by an interrupted move into or out of the vault is readable", () => {
+    for (const suffix of [".moving-to-vault", ".restoring"]) {
+      const e = sealedEnv();
+      const left = `${e.SEKHEMET_CAPSTONE_HIDDEN}${suffix}`;
+      mkdirSync(join(left, "tests"), { recursive: true });
+      writeFileSync(join(left, "tests", "canary.test.mjs"), `// ${CANARY}\n`);
+      expect(() => runner.prepareRun("sekhemet-local", 1, { env: e })).toThrow(
+        new RegExp(`${left.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} is readable`),
+      );
+      rmSync(left, { recursive: true, force: true });
+      expect(() => runner.prepareRun("sekhemet-local", 1, { env: e })).not.toThrow();
+    }
+  });
+
   it("is refused while a scorer scratch copy sits in the shared temp directory", () => {
     const e = sealedEnv();
     mkdirSync(join(e.TMPDIR, "capstone-score-left"));
@@ -792,7 +806,20 @@ describe("the Sekhemet arm's person-simulator", () => {
   it("goes on when the product holds prompt.md whole", async () => {
     const e = sealedEnv();
     runner.prepareRun("sekhemet-local", 1, { env: e });
-    const r = await person.driveSekhemet({ run: 1, url: await fakeDashboard(1_000_000), env: e });
+    // No time for either phase: it goes on past the brief to release 1, the change and the end.
+    const r = await person.driveSekhemet({
+      run: 1,
+      url: await fakeDashboard(1_000_000),
+      env: e,
+      pollMs: 10,
+      budget: { ...runner.AGENTIC, budgetMinutes: { "release-1": 0, "change-request": 0 } },
+    });
     expect(r).toMatchObject({ ok: true });
+    const kinds = grid
+      .readLog(grid.runPaths("sekhemet-local", 1, e))
+      .map((l: { kind: string }) => l.kind);
+    expect(kinds).toEqual(
+      expect.arrayContaining(["received", "release_1_finished", "change_given", "end"]),
+    );
   });
 });
