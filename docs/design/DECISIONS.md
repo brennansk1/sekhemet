@@ -424,7 +424,7 @@ The harness itself stays TypeScript: a Rust or Python component is allowed only 
 
 | Substitution | Instead of | Why | Reopen if |
 | --- | --- | --- | --- |
-| bubblewrap on Linux | Landlock + seccomp | Works on every kernel we target; the isolation level is recorded per card. Landlock and seccomp become hardening | A bubblewrap escape relevant to our threat model |
+| bubblewrap on Linux | Landlock + seccomp | Works on every kernel we target; the isolation level is recorded per card. *R9 (2026-09-30):* Ubuntu 24.04 and later refuse its user namespaces unless an AppArmor profile allows them for bwrap (`kernel.apparmor_restrict_unprivileged_userns`); the sandbox detects this, fails closed and names the fix (security item 8b, SEC-17c), and the install guide carries the step. Landlock and seccomp become hardening | A bubblewrap escape relevant to our threat model |
 | Plain git worktrees | Copy-on-write clones | No correctness difference; portability beats setup speed | Worktree setup dominates card time |
 | A keyword heuristic for context pruning | SWE-Pruner, a learned line pruner | Deterministic, free, no resident model; the learned pruner's value here is unmeasured, and published work found a learned scorer no better than random at equal budget | The pruner beats structure-preserving random line dropping on the frozen suite |
 | A source installer | Packaged offline installers | Air-gap setup is rare; packaging per platform is recurring work | Air-gapped teams become a target |
@@ -511,6 +511,33 @@ Not a chat assistant (the conversation plans and reports; code is written on car
 - The repository is private and nothing had been distributed under Apache-2.0, so the change binds no one.
 - **Why:** the owner keeps the commercial right to offer Sekhemet, for example a hosted Team edition, while the code stays usable and readable, and opens fully after two years.
 - **Reopen if:** only the owner.
+
+### DEC-49 — on Linux, a nested `.git` is refused before git runs, not at creation
+**Under bubblewrap (native or srt), a command can create a `.git` below the worktree's root. The preflight refuses it before any Sekhemet git runs there (security item 21, `git_preflight.ts` `nested_git`), and the card fails. Seatbelt keeps refusing the creation itself on macOS.** *Lead, 2026-09-30, under DEC-47; found in R9 (the Lima VM, Ubuntu 24.04).*
+- bubblewrap has no rule by name: it binds and masks paths that exist. Landlock cannot express name patterns either.
+- The options considered:
+  - a seccomp user-notification supervisor refusing `.git` in create, rename and link calls. It needs a native helper, and checks by path race with the calls they check.
+  - a FUSE layer filtering the name. Heavy, and a new dependency.
+- The file matters only when git reads it. Sekhemet's git always preflights first. Whatever runs inside the sandbox is confined, whatever that config says.
+- **Changes:**
+  - SEC-1 on Linux is "the card fails with `nested_git` before git runs", tested by running the preflight after the attempt.
+  - `.GIT` and `.Git` are not `.git` to git on a case-sensitive file system.
+- **Reopen if:** a harness path runs git in a worktree without the preflight, or a supervisor becomes cheap (srt adds one).
+
+### DEC-50 — Linux gets the proxy route and a card's named ports through relays, in C2
+**On Linux, a card's egress proxy and its named ports (`localPorts`, a dev server's port) are reached through socat relays across the sandbox's network namespace, as srt already does for its proxy. They are built in the C2 fix sprint.** *Lead, 2026-09-30, under DEC-47; found in R9.*
+- **Today on Linux:** bubblewrap ignores `egressProxyPort` and `localPorts`, and srt reaches its proxy but not a card's own ports. It fails closed: a card with the network off has none, and a dev server started with a named port cannot be reached. Four Linux tests stay failing until then:
+  - `containment.spec.ts`, the proxy and named-port probe, under both engines;
+  - `confined.spec.ts`, "the network is off unless a port is named";
+  - `egress.spec.ts`, curl under the native engine.
+- **Relays are chosen over the alternatives:**
+  - a network namespace per card kept by a holder process, which changes how every card process starts;
+  - pasta or slirp4netns, a new dependency;
+  - Landlock ABI 4 port rules, which need kernel 6.7 and a native helper, filter by port only, leave abstract sockets open, and are a hardening layer only under DEC-21.
+
+  socat is already required for srt on Linux.
+- **Reopen if:** srt's relays cover named ports upstream, making srt the Linux default under DEC-39.
+
 
 ## Founder decisions on record
 

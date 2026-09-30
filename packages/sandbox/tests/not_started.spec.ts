@@ -44,6 +44,16 @@ describe.each(ENGINES)("a program that never started (%s engine)", (engine) => {
     expect(r.notStarted).toBeUndefined();
   });
 
+  // R9 review: a program that ran and exited 0 keeps its 0, whatever it
+  // printed, and is never marked notStarted — even when its stderr is bash's
+  // missing-program line for the very command run.
+  it("keeps a 0 exit and is not marked when a successful program prints the missing-program line", async () => {
+    const script = `console.error('/bin/bash: line 1: ' + process.execPath + ': No such file or directory')`;
+    const r = await run(engine, process.execPath, ["-e", script]);
+    expect(r.exitCode).toBe(0);
+    expect(r.notStarted).toBeUndefined();
+  });
+
   it("is not marked when a program ran a shell that could not find a command", async () => {
     const r = await run(engine, "/bin/bash", ["-c", "exec definitely-not-a-binary-xyz"]);
     expect(r.exitCode).toBe(127);

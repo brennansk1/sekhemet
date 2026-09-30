@@ -153,7 +153,8 @@ describe("SEC-15: the host sockets a mount can hide", () => {
  * srt no Unix socket can be made at all, so an unlisted path and an abstract
  * socket are refused too; under the native engine those two remain (item 15).
  */
-const CONNECT = `const s=require('net').connect(process.argv[1]);
+// argv cannot carry a NUL, so an abstract name travels as "@name" (ss's notation).
+const CONNECT = `const p=process.argv[1];const s=require('net').connect(p.startsWith('@')?'\\0'+p.slice(1):p);
 s.on('connect',()=>{console.log('CONNECTED');s.destroy();process.exit(0)});
 s.on('error',e=>{console.log('REFUSED '+e.code);process.exit(7)});`;
 
@@ -212,7 +213,7 @@ for (const { engine, runs } of ENGINES) {
         async () => {
           const name = `\0sek-abstract-${process.pid}`;
           await listen(name);
-          const result = await connect(name, allowNetwork);
+          const result = await connect(`@${name.slice(1)}`, allowNetwork);
           expect(result.stdout).not.toContain("CONNECTED");
           expect(seen[name]).toBe(0);
         },

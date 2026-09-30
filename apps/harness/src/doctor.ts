@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
-import { freemem, platform, totalmem } from "node:os";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { freemem, homedir, platform, tmpdir, totalmem } from "node:os";
+import { join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { EventLog } from "@sekhemet/kernel";
 import {
@@ -136,26 +136,79 @@ function probeWorktrees(repoPath: string): DiagnosticCheck {
 async function probeConfinement(repoPath: string): Promise<DiagnosticCheck> {
   const sandbox = new ProcessSandbox();
   if (sandbox.confinement === "none") {
+    return judgeConfinement("none", undefined, undefined, sandbox.unavailableReason);
+  }
+  const options = {
+    allowedPaths: [repoPath],
+    allowNetwork: false,
+    timeoutMs: 10_000,
+    cwd: repoPath,
+  };
+  // A refusal counts only once a harmless command is shown to run (R9: a
+  // bubblewrap that cannot start fails every command, the probe included).
+  const control = await sandbox.execute(process.execPath, ["-e", "0"], options);
+  // The escape targets a directory the person can write outside the grant,
+  // so only the sandbox can refuse it (R9 review: `/` refuses any non-root
+  // user, confined or not). Not /tmp, which is private inside bubblewrap.
+  const home = homedir();
+  const inGrant = !relative(repoPath, home).startsWith("..");
+  const base = inGrant ? (platform() === "linux" ? "/var/tmp" : tmpdir()) : home;
+  let dir: string;
+  try {
+    dir = mkdtempSync(join(base, ".sekhemet-doctor-probe-"));
+  } catch (err) {
     return check(
       "Sandbox confinement",
       "warn",
-      `no OS confinement available on ${platform()} — commands run unconfined`,
+      `${sandbox.confinement} in force, escape probe not run: ${base} is not writable (${(err as Error).message})`,
     );
   }
+  const target = join(dir, "escaped");
+  try {
+    const attempt = await sandbox.execute(
+      process.execPath,
+      ["-e", `require('fs').writeFileSync(${JSON.stringify(target)},'x')`],
+      options,
+    );
+    return judgeConfinement(sandbox.confinement, control, {
+      exitCode: attempt.exitCode,
+      wrote: existsSync(target),
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
-  const escapePath = join("/", "sekhemet_doctor_escape_probe");
-  const result = await sandbox.execute(
-    process.execPath,
-    ["-e", `require('fs').writeFileSync(${JSON.stringify(escapePath)},'x')`],
-    { allowedPaths: [repoPath], allowNetwork: false, timeoutMs: 10_000, cwd: repoPath },
-  );
-
-  return result.exitCode === 0
+/**
+ * The confinement check's verdict. It names the mechanism actually in force,
+ * and passes only when a harmless command ran, the escape failed, and the
+ * file it tried to write is absent.
+ */
+export function judgeConfinement(
+  mode: string,
+  control: { exitCode: number; stderr: string } | undefined,
+  attempt: { exitCode: number; wrote: boolean } | undefined,
+  unavailable?: string,
+): DiagnosticCheck {
+  if (mode === "none" || !control || !attempt) {
+    return check(
+      "Sandbox confinement",
+      "warn",
+      unavailable
+        ? `no OS confinement in force on ${platform()}: ${unavailable}`
+        : `no OS confinement available on ${platform()} — commands run unconfined`,
+    );
+  }
+  if (control.exitCode !== 0) {
+    const said = control.stderr.trim().split("\n")[0] || `exit ${control.exitCode}`;
+    return check("Sandbox confinement", "fail", `${mode} cannot run a harmless command (${said})`);
+  }
+  return attempt.wrote || attempt.exitCode === 0
     ? check("Sandbox confinement", "fail", "escape probe WROTE OUTSIDE the worktree")
     : check(
         "Sandbox confinement",
         "pass",
-        `seatbelt active — escape probe refused (exit ${result.exitCode})`,
+        `${mode} active — escape probe refused (exit ${attempt.exitCode})`,
       );
 }
 

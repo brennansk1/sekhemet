@@ -1,7 +1,9 @@
 import { existsSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
+import { BWRAP_CANDIDATES, bubblewrapUnavailableReason } from "./bubblewrap.js";
 import {
   homeToolchainPaths,
   keychainRules,
@@ -49,6 +51,23 @@ function srtConvenienceWrites(home: string): string[] {
   ];
 }
 
+/**
+ * srt's own helpers (`vendor/`: the `apply-seccomp` program every Linux
+ * command starts through, the Java proxy agent), inside Sekhemet's
+ * installation. That is usually under the home, so `denyHomeReads` reads them
+ * back as it does the toolchains (R9: without them every command under srt on
+ * Linux exited 127 with the home emptied).
+ */
+function srtVendorDir(): string | undefined {
+  try {
+    const main = createRequire(import.meta.url).resolve("@anthropic-ai/sandbox-runtime");
+    const dir = join(dirname(dirname(main)), "vendor");
+    return existsSync(dir) ? realPath(dir) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Escape glob syntax in a literal path prefix. */
 function globQuote(p: string): string {
   return p.replace(/[*?[\]{}]/g, (c) => `[${c}]`);
@@ -74,7 +93,10 @@ export function srtFilesystem(
   // S3a: `denyHomeReads` makes the whole home unreadable, its toolchains and
   // the granted roots excepted, as the native profile does.
   const homeDeny = options.denyHomeReads ? [realPath(home)] : [];
-  const homeAllow = options.denyHomeReads ? homeToolchainPaths(home).map(realPath) : [];
+  const vendor = options.denyHomeReads ? srtVendorDir() : undefined;
+  const homeAllow = options.denyHomeReads
+    ? [...homeToolchainPaths(home).map(realPath), ...(vendor ? [vendor] : [])]
+    : [];
   return {
     denyRead: [
       ...homeDeny,
@@ -141,6 +163,29 @@ export function srtNetwork(options: SandboxOptions): SrtNetworkPosture {
   };
 }
 
+/**
+ * Where srt's Linux sandbox listens for HTTP proxy requests (SRT_VERSION's
+ * `buildSandboxCommand`): a socat inside its empty network namespace relays
+ * this port, through a Unix socket srt binds in, to `httpProxyPort` on the
+ * host, our EgressProxy. The proxy's host port itself is unreachable there.
+ */
+export const SRT_LINUX_PROXY_PORT = 3128;
+
+/**
+ * The proxy URL a command under srt is given when our EgressProxy is its only
+ * way out (S5), or undefined when there is none. On macOS the profile allows
+ * the proxy's loopback port; on Linux the command reaches it through srt's
+ * relay (R9: pointing it at the host port left every request unanswered).
+ */
+export function srtProxyUrl(
+  options: SandboxOptions,
+  os: NodeJS.Platform = platform(),
+): string | undefined {
+  if (options.allowNetwork || !options.egressProxyPort) return undefined;
+  const port = os === "linux" ? SRT_LINUX_PROXY_PORT : Math.floor(options.egressProxyPort);
+  return `http://127.0.0.1:${port}`;
+}
+
 /** Why srt cannot confine on this host, or undefined when it can. */
 let supportCache: { reason: string | undefined } | undefined;
 export function srtUnavailableReason(): string | undefined {
@@ -157,6 +202,11 @@ export function srtUnavailableReason(): string | undefined {
     } else {
       const deps = SandboxManager.checkDependencies();
       if (deps.errors.length > 0) reason = deps.errors.join(", ");
+      // srt runs bubblewrap on Linux: installed is not usable (SEC-17c).
+      const bwrap = BWRAP_CANDIDATES.find((p) => existsSync(p));
+      if (reason === undefined && platform() === "linux" && bwrap) {
+        reason = bubblewrapUnavailableReason(bwrap);
+      }
     }
   } catch (err) {
     reason = (err as Error).message;
@@ -220,10 +270,7 @@ export function srtWrap(
   // With our egress proxy, every request goes through it (and is recorded),
   // as under the native engine: srt's NO_PROXY would send loopback and
   // private addresses direct, where the profile refuses them unrecorded.
-  const proxy =
-    !options.allowNetwork && options.egressProxyPort
-      ? `http://127.0.0.1:${Math.floor(options.egressProxyPort)}`
-      : undefined;
+  const proxy = srtProxyUrl(options);
   const inner = [
     ...(options.scratchDir ? [`export TMPDIR=${shellQuote(options.scratchDir)};`] : []),
     ...(proxy

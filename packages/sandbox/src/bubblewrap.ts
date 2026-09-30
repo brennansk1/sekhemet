@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, sep } from "node:path";
@@ -13,6 +14,53 @@ import type { SandboxOptions } from "./types.js";
 
 /** Where bubblewrap lives on Ubuntu, Debian and Fedora. */
 export const BWRAP_CANDIDATES = ["/usr/bin/bwrap", "/usr/local/bin/bwrap"];
+
+/** Why bubblewrap at `bwrap` cannot start a sandbox here; cached per path. */
+const usableCache = new Map<string, string | undefined>();
+
+/**
+ * Installed is not usable (R9, Ubuntu 24.04): AppArmor's
+ * `apparmor_restrict_unprivileged_userns` lets bwrap exist but refuses its
+ * namespaces, so every command would fail with bwrap's own error. The check
+ * starts a trivial command with the namespaces a card's commands get, the
+ * network one included, and returns bwrap's error and the fix when it fails.
+ */
+export function bubblewrapUnavailableReason(bwrap: string): string | undefined {
+  if (usableCache.has(bwrap)) return usableCache.get(bwrap);
+  const probe = spawnSync(
+    bwrap,
+    [
+      "--die-with-parent",
+      "--new-session",
+      "--ro-bind",
+      "/",
+      "/",
+      "--dev",
+      "/dev",
+      "--proc",
+      "/proc",
+      "--unshare-pid",
+      "--unshare-ipc",
+      "--unshare-uts",
+      "--unshare-net",
+      "--",
+      "/bin/true",
+    ],
+    { encoding: "utf8", timeout: 10_000 },
+  );
+  let reason: string | undefined;
+  if (probe.error) {
+    reason = `${bwrap} cannot run (${probe.error.message})`;
+  } else if (probe.status !== 0) {
+    const said = (probe.stderr ?? "").trim().split("\n")[0] || `exit ${probe.status}`;
+    reason = `${bwrap} cannot start a sandbox (${said}). On Ubuntu 24.04 and later, AppArmor's kernel.apparmor_restrict_unprivileged_userns refuses its namespaces: add an AppArmor profile that allows userns for ${bwrap} (the README's Linux requirements give it), then run \`sekhemet doctor\` again`;
+  }
+  // A probe that timed out says nothing lasting about the host: ask again next time.
+  if ((probe.error as NodeJS.ErrnoException | undefined)?.code !== "ETIMEDOUT") {
+    usableCache.set(bwrap, reason);
+  }
+  return reason;
+}
 
 /** `inner` lies strictly below `outer`. */
 function isBelow(inner: string, outer: string): boolean {

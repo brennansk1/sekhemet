@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ProcessSandbox } from "@sekhemet/sandbox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NodeGitSyncAdapter } from "../src/git_adapter.js";
 import {
@@ -268,5 +269,44 @@ describe("the worktree preflight (item 21)", () => {
     writeFileSync(join(wt, "a.txt"), "two\n");
     expect(preflightWorktree(repo, wt)).toEqual([]);
     await expect(checkpoint("c8")).resolves.toMatch(/^[0-9a-f]{40}$/);
+  });
+});
+
+/**
+ * DEC-49 (R9): under bubblewrap a card can create `sub/.git`, which Seatbelt
+ * refuses. Either way none may survive unreported: the preflight names every
+ * one before the harness's git runs in the worktree.
+ */
+describe("a nested .git written from inside the sandbox (SEC-1, DEC-49)", () => {
+  const box = new ProcessSandbox({ engine: "native" });
+  it.runIf(box.confinement !== "none")("is refused, or named by the preflight", async () => {
+    const wt = await adapter.createWorktree("c10", "main", "Sandboxed");
+    mkdirSync(join(wt, "sub", "deep"), { recursive: true });
+    const targets = ["sub/.git", "sub/deep/.git/config"];
+    for (const target of targets) {
+      await box.execute(
+        process.execPath,
+        [
+          "-e",
+          "const f=require('fs'),p=require('path');const t=p.join(process.argv[1],process.argv[2]);f.mkdirSync(p.dirname(t),{recursive:true});f.writeFileSync(t,'[core]\\n\\tfsmonitor = touch /tmp/x\\n')",
+          wt,
+          target,
+        ],
+        { allowedPaths: [wt], allowNetwork: false, timeoutMs: 20_000, cwd: wt },
+      );
+    }
+    const named = preflightWorktree(repo, wt)
+      .filter((p) => p.kind === "nested_git")
+      .map((p) => p.detail);
+    for (const target of targets) {
+      const top = `${target.split("/.git")[0]}/.git`;
+      if (existsSync(join(wt, top))) {
+        expect(
+          named.some((d) => d.startsWith(top)),
+          top,
+        ).toBe(true);
+      }
+    }
+    if (box.confinement === "seatbelt") expect(existsSync(join(wt, "sub", ".git"))).toBe(false);
   });
 });

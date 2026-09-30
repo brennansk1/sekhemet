@@ -11,6 +11,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  * what is checked, not a real bwrap.
  */
 const spawned: { file: string; argv: string[]; options: Record<string, unknown> }[] = [];
+/** What the simulated bwrap answers the usability probe (SEC-17c). */
+const probe = { status: 0, stderr: "" };
 
 vi.mock("node:child_process", async (original) => ({
   ...(await original<typeof import("node:child_process")>()),
@@ -19,6 +21,11 @@ vi.mock("node:child_process", async (original) => ({
     const child = new EventEmitter() as EventEmitter & { pid: number };
     child.pid = 999_999;
     return child;
+  },
+  spawnSync: (file: string, argv: string[]) => {
+    if (file !== "/usr/bin/bwrap")
+      throw new Error(`unexpected spawnSync ${file} ${argv.join(" ")}`);
+    return { status: probe.status, stderr: probe.stderr, stdout: "" };
   },
 }));
 vi.mock("node:os", async (original) => ({
@@ -32,6 +39,8 @@ vi.mock("node:fs", async (original) => {
 
 afterEach(() => {
   spawned.length = 0;
+  probe.status = 0;
+  probe.stderr = "";
 });
 
 describe("spawnBackground under bubblewrap", () => {
@@ -67,6 +76,33 @@ describe("spawnBackground under bubblewrap", () => {
       expect(existsSync(scratch)).toBe(true);
       (child as unknown as EventEmitter).emit("exit", 0, null);
       expect(existsSync(scratch)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // R9 review: the executor's use of the probe, where bwrap is installed but
+  // cannot start (Ubuntu 24.04's AppArmor restriction). The probe is cached
+  // per path, so this simulated bwrap is a different path.
+  it("is not in force, and refuses naming bwrap's error, when bwrap cannot start", async () => {
+    vi.resetModules();
+    probe.status = 1;
+    probe.stderr = "bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted\n";
+    const { ProcessSandbox } = await import("../src/executor.js");
+    const sandbox = new ProcessSandbox({ engine: "native" });
+    expect(sandbox.confinement).toBe("none");
+    expect(sandbox.unavailableReason).toContain("Failed RTM_NEWADDR");
+    const root = mkdtempSync(join(tmpdir(), "bg-root-"));
+    try {
+      const r = await sandbox.execute("/bin/true", [], {
+        allowedPaths: [root],
+        allowNetwork: false,
+        timeoutMs: 5_000,
+        cwd: root,
+      });
+      expect(r.exitCode).toBe(126);
+      expect(r.stderr).toContain("Failed RTM_NEWADDR");
+      expect(spawned).toHaveLength(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

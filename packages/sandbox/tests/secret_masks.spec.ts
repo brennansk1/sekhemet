@@ -40,11 +40,15 @@ function mountsOf(argv: string[], path: string): { op: string; at: number }[] {
   return out;
 }
 
+/** Where the argv cases put HOME: on Linux, never under the private /tmp. */
+const MASK_BASE = platform() === "linux" && existsSync("/var/tmp") ? "/var/tmp" : tmpdir();
+
 describe("B-2: one secret table for both engines", () => {
   let home: string;
   let work: string;
   beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), "sek-mask-home-"));
+    // Outside the sandbox's private /tmp on Linux, where no mask is needed (item 15).
+    home = mkdtempSync(join(MASK_BASE, "sek-mask-home-"));
     work = mkdtempSync(join(tmpdir(), "sek-mask-work-"));
     vi.stubEnv("HOME", home);
     vi.stubEnv("SEKHEMET_CONFIG_DIR", "");
@@ -127,7 +131,7 @@ describe("B-2: one secret table for both engines", () => {
   });
 
   it("hides a secret directory under an empty tmpfs, through a symlink to its real place", () => {
-    const elsewhere = mkdtempSync(join(tmpdir(), "sek-mask-ssh-"));
+    const elsewhere = mkdtempSync(join(MASK_BASE, "sek-mask-ssh-"));
     try {
       writeFileSync(join(elsewhere, "id_ed25519"), "SECRET-CANARY");
       symlinkSync(elsewhere, join(home, ".ssh"));
@@ -171,7 +175,7 @@ describe("B-2: one secret table for both engines", () => {
   });
 
   it("masks the project ledger above a granted worktree", () => {
-    const project = mkdtempSync(join(tmpdir(), "sek-mask-project-"));
+    const project = mkdtempSync(join(MASK_BASE, "sek-mask-project-"));
     try {
       const tree = join(project, ".sekhemet", "worktrees", "card-1");
       mkdirSync(tree, { recursive: true });

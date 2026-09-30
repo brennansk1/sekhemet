@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 63 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 64 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,46 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 64 — 2026-09-30 (R9: the sandbox suite on Linux for the first time — bubblewrap on Ubuntu 24.04, the escape tests on every host, DEC-49 and DEC-50)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. R9-L1 was the lead's. R9-L2 was one implementer, diagnosing in the Lima VM. One independent review (request changes: 4 majors, 6 minors, all fixed), then a narrow re-review of the majors (approve; its two new minors fixed by the lead: doctor warns instead of throwing when the probe's directory cannot be made, and the error, spec and README name the same AppArmor profile).
+
+- **Finding 1 (security, a false pass): `doctor` passed a sandbox that could not start.**
+  - On Ubuntu 24.04, AppArmor's `kernel.apparmor_restrict_unprivileged_userns` refuses bubblewrap's user namespaces. bwrap was installed, so the sandbox reported `bubblewrap` in force. Every command then failed with bwrap's own error (fail-closed in effect, but unexplained).
+  - `doctor` counted that failure as "seatbelt active — escape probe refused", on Linux.
+  - Its escape also targeted `/`, which refuses any non-root user whether confined or not.
+- **The fix (security item 8b, SEC-17c):**
+  - An engine is in force only when it can start a sandbox. `bubblewrapUnavailableReason` runs `/bin/true` once under bwrap with the card's namespaces, cached per path, never after a timeout.
+  - If bwrap cannot start one, the level is `none` and every command is refused with bwrap's error and the AppArmor fix. srt, which runs bwrap on Linux, is unavailable for the same reason.
+  - `doctor` names the mechanism really in force. It passes only after a harmless command has run and an escape into a directory the person can write outside the grant has failed with the file absent.
+  - The README gains the Ubuntu profile step, and DEC-21 notes it.
+  - The first full gate caught a simulated-Linux test (`background_spawn.spec.ts`) that the probe broke. The probe is now simulated there too, and a new case covers the executor with a bwrap that cannot start: the level is `none`, a command is refused with 126 naming bwrap's error, and nothing is spawned.
+- **Finding 2: the escape tests had never run on Linux.** They were `runIf(darwin)` and are now gated on "this host confines" (SEC-43). With fixtures moved off the sandbox's private `/tmp`, every test now has a visibility control, so a refusal is the sandbox's and not a missing directory's.
+- **Real bugs found and fixed:**
+  - srt hid its own seccomp helper under `denyHomeReads`, so every command exited 127. `srtFilesystem` now reads srt's `vendor/` back.
+  - srt pointed `HTTP_PROXY` at a host port that is unreachable inside its namespace. On Linux, `srtProxyUrl` gives its relay, 127.0.0.1:3128.
+  - Srt's missing-program match missed bash 5.2's wording.
+  - Any run whose stderr said "No such file or directory" was rewritten to exit 127, even after exiting 0. A 0 is now kept, and srt's notStarted needs bash's 126 or 127.
+  - The abstract-socket test passed a NUL in argv.
+- **Decided (the lead, under DEC-47):**
+  - **DEC-49:** bubblewrap cannot refuse a nested `.git` by name. On Linux, the preflight names it as `nested_git` before any Sekhemet git runs, and the card fails (a new test writes it from inside the real sandbox). macOS keeps refusing the creation.
+  - **DEC-50:** Linux's egress-proxy route and a card's named ports go through socat relays, as srt does, built in C2. Until then Linux fails closed: no network, and an unreachable dev server port.
+- **Evidence, Ubuntu 24.04 in the Lima VM with the AppArmor profile:**
+  - `doctor` reports "bubblewrap active — escape probe refused". Before the profile, it warns with the reason, and a command is refused with exit 126 and the fix.
+  - `packages/sandbox/tests`: 208 passed, 4 failed and 44 skipped under each engine. The 4 are DEC-50's network tests, and the skips are the macOS-only ones (keychain, Seatbelt, macOS sockets).
+  - `git_preflight` and `doctor_probe`: 24/24.
+  - On macOS every changed file passes.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1588 files), vitest 682 files, 5,429 passed, 55 skipped.
+- **Where the cards stop:**
+  - R9's code is done; **B1 on Linux is not passing**: 4 network tests wait on DEC-50's relays (C2).
+  - The B1 runner still says Linux NOT RUN. R9-L3 makes it run the suite in the VM.
+  - B1's live-Worker injection run is stale, because the sandbox changed, and must be run again (Stream 1, a model load).
+  - Not yet run: the Secret Service against a real GNOME Keyring (the VM has no desktop session; C4).
+  - **Next:**
+    - R9-L3;
+    - ask the owner's 5-hour use, then C1;
+    - Stream 1: the injection re-run, and the Reviewer's R3b and R3c.
 
 ### Entry 63 — 2026-09-30 (Fix round 1: the keychain closed to the sandbox, every role's tokens on the ledger, W2b's small items; R-tune and the reuse admission decided; the schedule consolidated)
 

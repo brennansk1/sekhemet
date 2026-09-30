@@ -215,6 +215,18 @@ specification's *State today* table.
 
 macOS needs nothing extra for the sandbox: Seatbelt is built in.
 
+On Ubuntu 24.04 and later, AppArmor stops bubblewrap from creating the namespaces
+it needs until a profile allows it. `sekhemet doctor` says so, and every command
+is refused until the profile is in place. Add the profile with:
+
+```bash
+printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' 'profile bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' | sudo tee /etc/apparmor.d/bwrap
+```
+
+```bash
+sudo apparmor_parser -r /etc/apparmor.d/bwrap
+```
+
 ## Install and quickstart
 
 The npm package and the server image are **not published yet**. Today Sekhemet

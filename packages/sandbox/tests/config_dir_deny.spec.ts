@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,12 +12,15 @@ import { srtUnavailableReason } from "../src/srt_engine.js";
 
 const srtRuns = platform() === "darwin" || srtUnavailableReason() === undefined;
 const ENGINES: SandboxEngine[] = srtRuns ? ["native", "srt"] : ["native"];
+// Visible inside the sandbox: on Linux /tmp is private there, so a directory
+// under it would be unreadable whatever the deny list says (R9 review).
+const VISIBLE_BASE = platform() === "linux" && existsSync("/var/tmp") ? "/var/tmp" : tmpdir();
 
 describe("SEC-23: the user directory named by SEKHEMET_CONFIG_DIR", () => {
   let config: string;
   let work: string;
   beforeEach(() => {
-    config = mkdtempSync(join(tmpdir(), "sek-config-dir-"));
+    config = mkdtempSync(join(VISIBLE_BASE, "sek-config-dir-"));
     work = mkdtempSync(join(tmpdir(), "sek-config-work-"));
     mkdirSync(join(config, "repos"), { recursive: true });
     writeFileSync(join(config, "repos", "tokens.json"), "SECRET-CANARY");
@@ -41,18 +44,23 @@ describe("SEC-23: the user directory named by SEKHEMET_CONFIG_DIR", () => {
     expect(secretReadDenies("/home/p")).toContain(resolve("relative-user-dir"));
   });
 
-  it.runIf(platform() === "darwin").each(ENGINES)(
+  it.runIf(new ProcessSandbox({ engine: "native" }).confinement !== "none").each(ENGINES)(
     "a card cannot read it (%s engine)",
     async (engine) => {
-      const sandbox = new ProcessSandbox({ engine });
       const target = join(config, "repos", "tokens.json");
-      const result = await sandbox.execute(
-        process.execPath,
-        ["-e", `console.log(require('fs').readFileSync(${JSON.stringify(target)}, 'utf8'))`],
-        { allowedPaths: [work], allowNetwork: false, timeoutMs: 20_000, cwd: work },
-      );
+      const read = () =>
+        new ProcessSandbox({ engine }).execute(
+          process.execPath,
+          ["-e", `console.log(require('fs').readFileSync(${JSON.stringify(target)}, 'utf8'))`],
+          { allowedPaths: [work], allowNetwork: false, timeoutMs: 20_000, cwd: work },
+        );
+      const result = await read();
       expect(result.exitCode).not.toBe(0);
       expect(result.stdout).not.toContain("CANARY");
+      // Control: the same read with the directory not named is not refused,
+      // so the refusal above is the deny's.
+      vi.stubEnv("SEKHEMET_CONFIG_DIR", "");
+      expect((await read()).stdout).toContain("SECRET-CANARY");
     },
   );
 });

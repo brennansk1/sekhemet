@@ -3,7 +3,7 @@ import { closeSync, existsSync, mkdtempSync, openSync, rmSync, writeFileSync } f
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { BWRAP_CANDIDATES, bubblewrapArgv } from "./bubblewrap.js";
+import { BWRAP_CANDIDATES, bubblewrapArgv, bubblewrapUnavailableReason } from "./bubblewrap.js";
 import { signalGroup, trackGroup, untrackGroup } from "./process_registry.js";
 import { generateSeatbeltProfile } from "./seatbelt.js";
 import { hostSeccompArch, seccompProgram } from "./seccomp.js";
@@ -200,14 +200,15 @@ const WRAPPER_EXEC_FAILED =
 
 /**
  * srt's wrapper is bash's `exec <command>` (srt_engine.ts): its message when
- * the program cannot be found names the command, so a program that itself
+ * the program cannot be found names the command — with `exec: ` from macOS's
+ * bash 3.2, without it for an absolute path from Linux's bash 5.2 (R9) — so a program that itself
  * runs a shell which cannot find another command is not mistaken for it
  * (DEC-39 parity, found running the suite under srt).
  */
 export function srtExecFailed(stderr: string, command: string): boolean {
   const name = command.replace(/^\.\//, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(
-    `^/bin/bash: line \\d+: exec: (?:[^\\n]*/)?${name}: (?:not found|cannot execute: No such file or directory)$`,
+    `^/bin/bash: line \\d+: (?:exec: )?(?:[^\\n]*/)?${name}: (?:not found|(?:cannot execute: )?No such file or directory)$`,
     "m",
   ).test(stderr);
 }
@@ -221,6 +222,8 @@ export class ProcessSandbox implements ExecutionSandbox {
   private readonly srtUnavailable: string | undefined;
   /** What the native engine would use here (background processes under srt). */
   private readonly nativeMode: ConfinementMode;
+  /** Why an installed bubblewrap cannot start a sandbox here (SEC-17c). */
+  private readonly bwrapUnavailable: string | undefined;
 
   constructor(private readonly config: ProcessSandboxOptions = {}) {
     this.engine = config.engine ?? selectedEngine();
@@ -230,11 +233,15 @@ export class ProcessSandbox implements ExecutionSandbox {
     this.bwrap = BWRAP_CANDIDATES.find((p) => existsSync(p));
     this.srtUnavailable =
       this.engine === "srt" && !config.disableConfinement ? srtUnavailableReason() : undefined;
+    this.bwrapUnavailable =
+      platform() === "linux" && this.bwrap && !config.disableConfinement
+        ? bubblewrapUnavailableReason(this.bwrap)
+        : undefined;
     this.nativeMode = config.disableConfinement
       ? "none"
       : platform() === "darwin" && existsSync(SANDBOX_EXEC)
         ? "seatbelt"
-        : platform() === "linux" && this.bwrap
+        : platform() === "linux" && this.bwrap && this.bwrapUnavailable === undefined
           ? "bubblewrap"
           : "none";
     this.mode =
@@ -254,6 +261,12 @@ export class ProcessSandbox implements ExecutionSandbox {
     if (this.config.requireConfinement !== undefined) return this.config.requireConfinement;
     if (this.config.disableConfinement) return false;
     return process.env.SEKHEMET_ALLOW_UNCONFINED !== "1";
+  }
+
+  /** Why no confinement is in force when an engine was installed but cannot run. */
+  public get unavailableReason(): string | undefined {
+    if (this.mode !== "none") return undefined;
+    return this.engine === "srt" ? this.srtUnavailable : this.bwrapUnavailable;
   }
 
   /** The confinement mechanism in effect. Surfaced by `sekhemet doctor`. */
@@ -351,7 +364,9 @@ export class ProcessSandbox implements ExecutionSandbox {
     const stderr =
       this.engine === "srt" && !this.config.disableConfinement
         ? `Refusing to execute: the srt sandbox engine cannot confine on this host (${detail ?? this.srtUnavailable ?? "unknown"}), and the sandbox fails closed. ${srtFix()}, set SEKHEMET_SANDBOX_ENGINE=native, or set SEKHEMET_ALLOW_UNCONFINED=1 to run unconfined deliberately.`
-        : "Refusing to execute: no OS-level confinement (Seatbelt or bubblewrap) is available on this host, and the sandbox fails closed. Install bubblewrap, or set SEKHEMET_ALLOW_UNCONFINED=1 to run unconfined deliberately.";
+        : this.bwrapUnavailable !== undefined
+          ? `Refusing to execute: ${this.bwrapUnavailable}. The sandbox fails closed; set SEKHEMET_ALLOW_UNCONFINED=1 to run unconfined deliberately.`
+          : "Refusing to execute: no OS-level confinement (Seatbelt or bubblewrap) is available on this host, and the sandbox fails closed. Install bubblewrap, or set SEKHEMET_ALLOW_UNCONFINED=1 to run unconfined deliberately.";
     return {
       exitCode: 126,
       stdout: "",
@@ -552,14 +567,16 @@ export class ProcessSandbox implements ExecutionSandbox {
         // Under sandbox-exec a missing binary surfaces as the wrapper's own
         // status, so callers would see an arbitrary code instead of the
         // conventional "command not found". Normalise it.
-        const notFound = /command not found|No such file or directory|execvp\(\) failed/i.test(
-          stderr,
-        );
+        // A program that exited 0 keeps its 0 whatever it printed (R9 review).
+        const failed = code !== 0;
+        const notFound =
+          failed && /command not found|No such file or directory|execvp\(\) failed/i.test(stderr);
         const exitCode = notFound ? 127 : (code ?? (timedOut ? 124 : 1));
         // The wrapper itself could not exec the program: it never started.
+        // bash's exec fails with 126 or 127, never another code.
         const notStarted =
-          WRAPPER_EXEC_FAILED.test(stderr) ||
-          (this.mode === "srt" && srtExecFailed(stderr, command));
+          (failed && WRAPPER_EXEC_FAILED.test(stderr)) ||
+          (this.mode === "srt" && (code === 126 || code === 127) && srtExecFailed(stderr, command));
 
         const suffix = (truncated: boolean): string =>
           truncated ? `\n... [output truncated at ${maxBuffer} bytes] ...` : "";

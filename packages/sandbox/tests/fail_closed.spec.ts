@@ -4,7 +4,7 @@ import { join, relative } from "node:path";
 import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProcessSandbox, confinedSandbox } from "../src/index.js";
-import { srtReset } from "../src/srt_engine.js";
+import { srtReset, srtUnavailableReason } from "../src/srt_engine.js";
 
 /** S3b: every Worker command and gate fails closed (SEC-20, SEC-21). */
 const ROOT = join(import.meta.dirname, "..", "..", "..");
@@ -74,7 +74,8 @@ describe("fail closed (S3b)", () => {
     expect(new ProcessSandbox({ engine: "native" }).engine).toBe("native");
   });
 
-  it.runIf(platform() === "darwin")(
+  // Needs a host where srt can run, so that only the mocked initialise fails.
+  it.runIf(srtUnavailableReason() === undefined)(
     "refuses with 126 and names the fix when srt cannot initialise (SEC-20)",
     async () => {
       const init = vi

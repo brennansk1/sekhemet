@@ -3,6 +3,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -14,7 +16,7 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dumpDom } from "../src/browser.js";
 import { confinedPlacement, runConfined, spawnConfined } from "../src/confined.js";
-import { ProcessSandbox, type SandboxEngine } from "../src/executor.js";
+import { ProcessSandbox, type SandboxEngine, sampleTreeMemory } from "../src/executor.js";
 import { srtUnavailableReason } from "../src/srt_engine.js";
 
 /**
@@ -23,13 +25,45 @@ import { srtUnavailableReason } from "../src/srt_engine.js";
  * test asserts the marker is absent.
  */
 const darwin = platform() === "darwin";
+// R9: every confining host runs these (SEC-43), not only macOS.
+const confines = new ProcessSandbox({ engine: "native" }).confinement !== "none";
+/**
+ * Where the canary directories live: on Linux outside the sandbox's private
+ * /tmp (item 14), so the sandbox sees them read-only and a write is refused
+ * there rather than landing in a directory it cannot see at all.
+ */
+const VISIBLE_BASE = platform() === "linux" && existsSync("/var/tmp") ? "/var/tmp" : tmpdir();
+/** A write to a visible path outside the grant: Seatbelt denies it, bubblewrap's read-only root refuses it. */
+const WRITE_REFUSED = darwin ? "EPERM" : "EROFS";
+
+/**
+ * The host pid of each pid a confined process printed. Under bubblewrap the
+ * command runs in its own pid namespace (item 14), so the pids it sees are
+ * that namespace's; `NSpid` in /proc names both. Elsewhere they are the same.
+ */
+function hostPids(printed: number[], tree: number[]): (number | undefined)[] {
+  if (platform() !== "linux") return printed;
+  const nsPid = new Map<number, number>();
+  for (const p of tree) {
+    try {
+      const line = readFileSync(`/proc/${p}/status`, "utf8")
+        .split("\n")
+        .find((l) => l.startsWith("NSpid:"));
+      const ids = (line ?? "").split(/\s+/).slice(1).map(Number);
+      if (ids.length > 1) nsPid.set(ids[ids.length - 1] as number, p);
+    } catch {
+      // Gone already.
+    }
+  }
+  return printed.map((p) => nsPid.get(p));
+}
 
 describe("runConfined (S3a)", () => {
   let root: string;
   let outside: string;
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "confined-root-"));
-    outside = mkdtempSync(join(tmpdir(), "confined-out-"));
+    outside = mkdtempSync(join(VISIBLE_BASE, "confined-out-"));
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -39,7 +73,7 @@ describe("runConfined (S3a)", () => {
   const writeTo = (target: string) =>
     `try { require('fs').writeFileSync(${JSON.stringify(target)}, 'x'); console.log('wrote') } catch (e) { console.log(e.code) }`;
 
-  it.runIf(darwin)("writes inside the root, and a marker outside it stays absent", async () => {
+  it.runIf(confines)("writes inside the root, and a marker outside it stays absent", async () => {
     const marker = join(outside, "marker");
     const r = await runConfined(
       process.execPath,
@@ -47,11 +81,12 @@ describe("runConfined (S3a)", () => {
       { root, timeoutMs: 20_000 },
     );
     expect(existsSync(join(root, "in.txt"))).toBe(true);
-    expect(r.stdout).toContain("EPERM");
+    // The directory is visible to the sandbox (VISIBLE_BASE), so this is a refusal, not a miss.
+    expect(r.stdout).toContain(WRITE_REFUSED);
     expect(existsSync(marker)).toBe(false);
   });
 
-  it.runIf(darwin)(
+  it.runIf(confines)(
     "SEC-6b: a cwd outside the recorded root is clamped to it and never widens the sandbox",
     async () => {
       const marker = join(outside, "marker");
@@ -101,7 +136,7 @@ describe("runConfined (S3a)", () => {
     }
   });
 
-  it.runIf(darwin)("the network is off unless a port is named", async () => {
+  it.runIf(confines)("the network is off unless a port is named", async () => {
     let connections = 0;
     const server: Server = createServer((s) => {
       connections++;
@@ -145,7 +180,7 @@ describe("runConfined (S3a)", () => {
     expect(existsSync(marker)).toBe(false);
   });
 
-  it.runIf(darwin)("a background process is held to its time limit", async () => {
+  it.runIf(confines)("a background process is held to its time limit", async () => {
     const child = await spawnConfined(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], {
       root,
       timeoutMs: 300,
@@ -156,11 +191,12 @@ describe("runConfined (S3a)", () => {
     expect(Date.now() - started).toBeLessThan(10_000);
   });
 
-  it.runIf(darwin)(
+  it.runIf(confines)(
     "SEC-17: the browse tool's browser runs confined (a fake Chrome that writes outside)",
     async () => {
       const marker = join(outside, "marker");
-      const fake = join(root, "fake-chrome.sh");
+      // Outside the private /tmp on Linux, so the confined browser can run it.
+      const fake = join(outside, "fake-chrome.sh");
       writeFileSync(
         fake,
         `#!/bin/sh\necho escaped > ${JSON.stringify(marker)} 2>/dev/null\necho '<html><body>fake</body></html>'\n`,
@@ -170,16 +206,19 @@ describe("runConfined (S3a)", () => {
       const dom = await dumpDom("http://127.0.0.1:9/");
       expect(dom).toContain("fake");
       expect(existsSync(marker)).toBe(false);
+      // Nothing else landed beside it: the script and nothing more.
+      expect(readdirSync(outside)).toEqual(["fake-chrome.sh"]);
     },
   );
 
   const engines: SandboxEngine[] =
     darwin || srtUnavailableReason() === undefined ? ["native", "srt"] : ["native"];
   for (const engine of engines) {
-    it.runIf(darwin)(
+    it.runIf(confines)(
       `denyHomeReads (${engine}): a key under HOME is unreadable by absolute path, toolchains still run`,
       async () => {
-        const home = mkdtempSync(join(tmpdir(), "confined-home-"));
+        // Outside the private /tmp on Linux, or the control could not see it either.
+        const home = mkdtempSync(join(VISIBLE_BASE, "confined-home-"));
         try {
           const key = join(home, "notes", "canary-key.txt");
           mkdirSync(dirname(key));
@@ -202,16 +241,39 @@ describe("runConfined (S3a)", () => {
           });
           expect(denied.exitCode).toBe(0);
           expect(denied.stdout).not.toContain("home-canary-key");
-          expect(denied.stdout).toMatch(/EPERM|EACCES/);
+          // Seatbelt refuses the read; bubblewrap shows the home as an empty
+          // tmpfs, so the key is simply not there (item 14a). The control above
+          // proves the same path is readable without the deny.
+          expect(denied.stdout).toMatch(darwin ? /EPERM|EACCES/ : /ENOENT/);
         } finally {
           rmSync(home, { recursive: true, force: true });
         }
       },
       30_000,
     );
+
+    // R9: under srt on Linux, srt's own seccomp helper (`apply-seccomp`) lives
+    // in Sekhemet's installation, which is usually under the home, so emptying
+    // the real home stopped every command (exit 127) — the browse tool's
+    // browser among them.
+    it.runIf(confines)(
+      `denyHomeReads (${engine}) with the real home: a command still runs`,
+      async () => {
+        const r = await runConfined(process.execPath, ["-e", "console.log('ran')"], {
+          root,
+          timeoutMs: 20_000,
+          sandbox: new ProcessSandbox({ engine }),
+          denyHomeReads: true,
+        });
+        expect(r.stderr).toBe("");
+        expect(r.exitCode).toBe(0);
+        expect(r.stdout.trim()).toBe("ran");
+      },
+      30_000,
+    );
   }
 
-  it.runIf(darwin)(
+  it.runIf(confines)(
     "stop() ends the whole tree, a descendant in its own process group included",
     async () => {
       const script = `const { spawn } = require("child_process");
@@ -221,11 +283,15 @@ console.log(a.pid + " " + b.pid);
 setInterval(() => {}, 1000);`;
       const child = await spawnConfined(process.execPath, ["-e", script], { root, timeoutMs: 0 });
       expect(child).not.toBeNull();
-      const pids: number[] = await new Promise((resolve) =>
+      const printed: number[] = await new Promise((resolve) =>
         child?.stdout.once("data", (d: Buffer) =>
           resolve(d.toString().trim().split(" ").map(Number)),
         ),
       );
+      const tree = child?.pid === undefined ? [] : (await sampleTreeMemory(child.pid)).pids;
+      const mapped = hostPids(printed, tree);
+      expect(mapped.every((p) => p !== undefined)).toBe(true);
+      const pids = mapped as number[];
       const alive = (pid: number) => {
         try {
           process.kill(pid, 0);

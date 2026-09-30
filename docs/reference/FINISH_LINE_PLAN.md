@@ -659,7 +659,7 @@ The quality floor is unchanged: tests first, the spec in the same commit, one in
 | New | Combines | Shape | Tokens (est.) |
 | --- | --- | --- | --- |
 | C1 Audit sprint | W4, W16's audits, W5 | Parallel read-only agents, plus W4's documentation edits; one ranked findings register | ~4.5M |
-| C2 Fix sprint | W16's fixes, W6, C1's findings | Builders, review, fix | ~5M |
+| C2 Fix sprint | W16's fixes, W6, C1's findings, R9's Linux network relays (DEC-50) and the fix-round leftovers (reuse admission to PROMPT_STANDARD 35.4, srt TLS trust, Chromium under the keychain rules) | Builders, review, fix | ~5M |
 | C3 Models | W11, W18 | Builders | ~4.5M |
 | C4 Reliability | W8, W7 (CI deferred), W9 | Builders | ~5M |
 | C5 Docs and journeys | W3, W10 | Builders; browser tests on model-free days | ~5M |

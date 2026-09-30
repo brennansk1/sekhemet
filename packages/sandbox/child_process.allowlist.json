@@ -67,6 +67,7 @@
     "packages/models/src/llama_server.ts": "The local model server (llama-server) the harness manages, and llama-bench from the same llama.cpp build for a person's confirmed Measure speed (DB-NM14-3), run with the model alone in memory.",
     "packages/models/src/memory.ts": "sysctl: the host's memory and swap.",
     "packages/planner/src/brownfield.ts": "Planning on existing code (PM-N6-2/3): the harness's own read-only git (`ls-tree`, `show HEAD:<file>`) in the hardened git environment (`gitEnvFor`) to list the base's files and read a base test; it runs none of the repository's programs.",
+    "packages/sandbox/src/bubblewrap.ts": "Runs /bin/true once under bubblewrap with a fixed argv to learn whether it can start a sandbox here (SEC-17c); never worktree code.",
     "packages/sandbox/src/executor.ts": "The sandbox itself: sandbox-exec, bubblewrap or srt around every confined process, and ps for its memory cap.",
     "packages/sandbox/src/process_registry.ts": "ps -o lstart: a process's start time, so a recorded pid is never taken for a recycled one (runtime RUN-1, RUN-12).",
     "packages/sandbox/src/trusted.ts": "runTrusted(): the harness's trusted processes.",
