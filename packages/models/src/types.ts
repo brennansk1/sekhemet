@@ -113,6 +113,19 @@ export interface InferenceRequest {
   session?: { owner: string; kind: "thread" | "live_card"; sources?: string[] };
   /** Whose prompt this is (worker, planner, seshat, reviewer, researcher): named in a refusal (CX-N3-3). */
   role?: string;
+  /**
+   * What the request is for, in a lower-case code name (`answer`,
+   * `read_document`, `summarize`, `replan`): the `purpose` of its usage
+   * record on the ledger (`model/usage`, measurement rule 4a). Undefined: the
+   * role's own work (`code`, `plan`, `answer`, `review`, `research`).
+   */
+  task?: string;
+  /**
+   * The caller records this request's usage on the ledger itself, as a
+   * card's step (`card/step`): the one path to a model does not record it a
+   * second time as `model/usage` (measurement rule 4a).
+   */
+  recordedAsCardStep?: boolean;
 }
 
 export interface TokenUsage {

@@ -26,6 +26,7 @@ import {
   type CardStore,
   type CardTier,
   type EventLog,
+  isCardStatus,
   nearestCardEstimate,
 } from "@sekhemet/kernel";
 import { defaultRegistryPath } from "@sekhemet/models";
@@ -70,6 +71,9 @@ interface McpTool {
 }
 
 const str = { type: "string" } as const;
+
+/** Where an MCP client may move a card (EXT-6, EXT-7); Done is a person's acceptance. */
+const MOVE_CARD_TO = ["ready", "backlog", "parked"] as const;
 
 /** The card-id pattern the dashboard's routes use; an id is checked before any path (EXT-16). */
 const CARD_ID = /^[A-Za-z0-9_.-]+$/;
@@ -214,22 +218,41 @@ const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         card_id: str,
-        to: { type: "string", enum: ["ready", "backlog", "parked"] },
+        to: { type: "string", enum: [...MOVE_CARD_TO] },
         reason: str,
       },
       required: ["card_id", "to"],
     },
     handler: async (a, ctx) => {
+      // EXT-6, EXT-7: the schema's enum binds no client, so the server checks
+      // `to` itself, before the board is asked or anything is recorded. Done
+      // is a person's acceptance, never a tool's (kernel rules 24, 28). The
+      // refusal, and nothing else, is recorded: an attempt at Done leaves a trace.
+      const to = MOVE_CARD_TO.find((s) => s === a.to);
+      if (!to) {
+        const known =
+          typeof a.card_id === "string" ? await ctx.cardStore.getCard(a.card_id) : undefined;
+        await ctx.log.append({
+          actor: "mcp",
+          type: "mcp/refused",
+          ...(known ? { cardId: known.id } : {}),
+          payload: { tool: "sekhemet_move_card", to: isCardStatus(a.to) ? a.to : "other" },
+        });
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `sekhemet_move_card moves a card to ready, backlog or parked, not ${JSON.stringify(a.to ?? null)}. Accepting a card into Done is a person's decision, made on the board.`,
+        );
+      }
       const card = await ctx.cardStore.getCard(String(a.card_id));
       if (!card) throw new Error(`No card ${String(a.card_id)}`);
       await ctx.boardService.transitionCard({
         cardId: card.id,
         fromStatus: card.status,
-        toStatus: a.to as never,
+        toStatus: to,
         actor: "mcp",
         reason: typeof a.reason === "string" ? a.reason : "moved via MCP",
       });
-      return `Moved ${card.id} to ${String(a.to)}`;
+      return `Moved ${card.id} to ${to}`;
     },
   },
   {
@@ -383,6 +406,8 @@ export function createMcpServer(ctx: McpContext): Server {
         ],
       };
     } catch (err) {
+      // A request the tool refuses as malformed is a JSON-RPC error (EXT-7).
+      if (err instanceof McpError) throw err;
       // Tool errors are results with isError, so the calling agent can react.
       return {
         isError: true,

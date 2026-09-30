@@ -62,6 +62,9 @@ export async function planRepair(
     purpose: "planning",
     reasoning: thinking.reasoning,
     reasoningBudgetTokens: thinking.reasoningBudgetTokens,
+    // Measurement rule 4a: its usage, recorded as the Planning model's re-plan.
+    role: "planner",
+    task: "replan",
   });
 
   return response.text.trim();

@@ -88,6 +88,7 @@ export async function extractInfo(
   if (!model || !info.trim()) return body.slice(0, 12_000);
   try {
     const r = await model.generate({
+      role: "researcher",
       prompt: EXTRACT_INFO_PROMPT(info, body),
       toolArm: "arm_a_flat",
       reasoning: "off",

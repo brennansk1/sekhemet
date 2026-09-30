@@ -67,4 +67,34 @@ describe("a card's attempt is a live session on its slot", () => {
     await leased.executeTurn();
     expect(seen.map((r) => [r.slot, r.session?.owner])).toEqual([[1, "card_two"]]);
   });
+
+  // Measurement rule 4a: a step's usage is on the ledger as `card/step`, so
+  // the one path to a model does not record it again as `model/usage`.
+  it("marks every Worker step's request as recorded by its card step", async () => {
+    const seen: InferenceRequest[] = [];
+    const adapter: LocalInferenceAdapter = {
+      modelId: "rec",
+      supportedArms: ["arm_a_flat"],
+      contextWindow: { contextTokens: 32768, maxTokens: 2048 },
+      generate: async (req) => {
+        seen.push(req);
+        return {
+          text: "",
+          toolCalls: [{ id: "c1", name: "read_file", arguments: { path: "src/a.ts" } }],
+          usage: { promptTokens: 1, completionTokens: 1, durationMs: 1 },
+        };
+      },
+    };
+    const s = new CardExecutionSessionImpl({
+      cardId: "card_steps",
+      stepBudget: 5,
+      worktreePath: root,
+      modelAdapter: adapter,
+      gateRunner: { runGates: async () => ({ passed: false, durationMs: 1, failures: [] }) },
+      scopeFiles: ["src/a.ts"],
+    });
+    await s.executeTurn();
+    await s.executeTurn();
+    expect(seen.map((r) => r.recordedAsCardStep)).toEqual([true, true]);
+  });
 });

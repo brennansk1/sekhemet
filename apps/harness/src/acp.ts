@@ -35,6 +35,8 @@ export interface AcpDeps {
   pmModel: string;
   acquire: () => Promise<ModelHold>;
   researcher?: Parameters<typeof answerQueued>[0]["researcher"];
+  /** The harness's board: `/ready` and the other moves go through it (kernel K-S4-3). */
+  board: Parameters<typeof answerQueued>[0]["board"];
   send: (msg: unknown) => void;
 }
 
@@ -144,6 +146,7 @@ export class AcpAgent {
             pmStore: this.deps.pmStore,
             pmModel: this.deps.pmModel,
             acquire: this.deps.acquire,
+            board: this.deps.board,
             ...(this.deps.researcher ? { researcher: this.deps.researcher } : {}),
           });
         } catch (err) {

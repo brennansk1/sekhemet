@@ -179,6 +179,9 @@ export async function sketchWithModel(
     reasoning: thinking.reasoning,
     reasoningBudgetTokens: thinking.reasoningBudgetTokens,
     maxTokens: 700,
+    // The Planning model's, whichever queue its weights serve first (measurement rule 4a).
+    role: "planner",
+    task: "edit_sketch",
   };
   // WL-N8-1: more than ten tools are offered as a one-line index and
   // `tool_search`; a loaded schema is appended as a message.

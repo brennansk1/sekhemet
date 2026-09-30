@@ -71,6 +71,9 @@ export async function runSubtask(options: SubtaskOptions): Promise<SubtaskResult
       temperature: 0,
       reasoning: "off",
       maxTokens: 600,
+      // A card's sub-question, the Coding model's; not part of the card's own step record.
+      role: "worker",
+      task: "subtask",
       ...(options.tools?.length && options.executeTool ? { tools: options.tools } : {}),
     });
     childTokens += res.usage.promptTokens + res.usage.completionTokens;

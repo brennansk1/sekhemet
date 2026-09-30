@@ -1,4 +1,4 @@
-import { type BoardService, BoardServiceImpl } from "@sekhemet/board";
+import type { BoardService } from "@sekhemet/board";
 import type { CardRecord, CardStore } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import type { ResearchAnswer } from "../research/researcher.js";
@@ -55,10 +55,17 @@ export function parseSlash(text: string): SlashCommand | undefined {
   return m ? { name: (m[1] ?? "").toLowerCase(), args: (m[2] ?? "").trim() } : undefined;
 }
 
+/** The board a command's move goes through: the harness's own (kernel K-S4-3). */
+export type SlashBoard = Pick<BoardService, "transitionCard">;
+
 export interface SlashDeps {
   cardStore: CardStore;
-  /** The board every move goes through (kernel K-S4-3); the harness passes its own. */
-  board?: Pick<BoardService, "transitionCard">;
+  /**
+   * The harness's board, which every move goes through (kernel K-S4-3): its
+   * Review limit, evidence reader and entry conditions, never one a command
+   * builds for itself (fix round F3).
+   */
+  board: SlashBoard;
   pmStore: PmStore;
   repoPath: string;
   researcher?: ((q: string, o?: { deep?: boolean }) => Promise<ResearchAnswer>) | undefined;
@@ -123,7 +130,7 @@ export async function runSlash(cmd: SlashCommand, deps: SlashDeps): Promise<Slas
             repoPath: deps.repoPath,
             cardStore: deps.cardStore,
             log: deps.pmStore.log,
-            ...(deps.board ? { boardService: deps.board } : {}),
+            boardService: deps.board,
             actor: "human",
             ...(deps.asker ? { principal: deps.asker } : {}),
           },
@@ -189,8 +196,7 @@ export async function runSlash(cmd: SlashCommand, deps: SlashDeps): Promise<Slas
       const reason = cmd.args.split(/\s+/).slice(1).join(" ") || `/${cmd.name} from the chat`;
       const card = await deps.cardStore.getCard(id);
       if (!card) return { reply: `No issue ${id}.` };
-      const board = deps.board ?? new BoardServiceImpl(deps.cardStore, { entryConditions: true });
-      await board.transitionCard({
+      await deps.board.transitionCard({
         cardId: id,
         fromStatus: card.status,
         toStatus: cmd.name === "park" ? "parked" : cmd.name === "ready" ? "ready" : "backlog",

@@ -793,6 +793,7 @@ export async function research(
         });
       }
       const res = await model.generate({
+        role: "researcher",
         systemPrompt: system,
         prompt: "",
         messages,
@@ -834,6 +835,7 @@ export async function research(
   for (let round = 0; round < maxRounds; round++) {
     const last = round === maxRounds - 1;
     const res = await model.generate({
+      role: "researcher",
       systemPrompt: system,
       prompt: `${head}\n\n${maskOldEvidence(rounds, budget).join("\n\n")}${
         evidence.length ? `\n\nSOURCES\n${sourceList(evidence)}` : ""
@@ -915,6 +917,7 @@ export async function investigate(
   const system = GENERIC_SYSTEM;
   const maxItems = opts.maxItems ?? 5;
   const plan = await model.generate({
+    role: "researcher",
     systemPrompt: system,
     prompt: `${ROLE_BRIEF}\n\nQUESTION\n${question}\n\nBreak this into at most ${maxItems} sub-questions that together settle it. Each must be answerable from documentation, code or papers. Reply with a JSON array of strings only.`,
     toolArm: "arm_a_flat",
@@ -952,6 +955,7 @@ export async function investigate(
       proposeQueries: async (outstanding, findings) => {
         if (findings.length === 0) return outstanding;
         const res = await model.generate({
+          role: "researcher",
           systemPrompt: system,
           prompt: `QUESTION\n${question}\n\nThese parts are not yet covered by any source:\n${outstanding.map((o) => `- ${o}`).join("\n")}\n\nAlready tried:\n${findings.map((f) => `- ${f.query}`).join("\n")}\n\nWrite one better-targeted research question for each part (different wording, the specific library, API or paper). Reply with a JSON array of strings only.`,
           toolArm: "arm_a_flat",
@@ -995,6 +999,7 @@ export async function investigate(
     });
   }
   const merged = await model.generate({
+    role: "researcher",
     systemPrompt: system,
     prompt: `${ROLE_BRIEF}\n\nQUESTION\n${question}\n\n${parts.join("\n\n")}\n\nSOURCES\n${sourceList(evidence)}\n\nNOT COVERED: ${coverage.outstanding.join("; ") || "none"}\n\nMerge the findings into one answer. Keep their citations. Name anything not covered as not settled.`,
     toolArm: "arm_a_flat",

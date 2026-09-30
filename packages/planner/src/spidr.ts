@@ -1144,6 +1144,9 @@ function sliceRequest(
     toolArm: adapter.supportedArms[0] ?? "arm_a_flat",
     // §2.1.3: temperature 0, so one spec gives one plan.
     temperature: 0,
+    // The Planning model's, whichever queue its weights serve first (measurement rule 4a).
+    role: "planner",
+    task: "slice",
   };
 }
 

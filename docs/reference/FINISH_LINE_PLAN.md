@@ -648,6 +648,36 @@ Until one passes RG-P8-13, the Review role ships unfilled (DEC-47).
   - the Team image carries them.
 - **Not shipped:** Windows is not supported in v1, and the Lima VM is test infrastructure only.
 
+**Consolidated 2026-09-30 (the lead, under DEC-47; the owner asked for a faster timeline within the 5-hour window):** the remaining workflows become seven. Workflows so far used 1.4–2.9M tokens, about 20–35% of a window, while wall-clock time (builders one at a time, the full suite run twice) was the bottleneck. Three changes:
+
+1. **Read-only work runs in parallel.** Audits and reviews edit no code.
+2. **Related workflows merge,** at about 4.5–5.5M tokens each, inside one window with margin.
+3. **The sweep runs only the browser checks and the changed files' tests.** The full gate still runs once, on the exact tree, before every commit.
+
+The quality floor is unchanged: tests first, the spec in the same commit, one independent review, the full gate.
+
+| New | Combines | Shape | Tokens (est.) |
+| --- | --- | --- | --- |
+| C1 Audit sprint | W4, W16's audits, W5 | Parallel read-only agents, plus W4's documentation edits; one ranked findings register | ~4.5M |
+| C2 Fix sprint | W16's fixes, W6, C1's findings | Builders, review, fix | ~5M |
+| C3 Models | W11, W18 | Builders | ~4.5M |
+| C4 Reliability | W8, W7 (CI deferred), W9 | Builders | ~5M |
+| C5 Docs and journeys | W3, W10 | Builders; browser tests on model-free days | ~5M |
+| C6 Vibe-gap checks | W17, R3b's Reviewer prompt | Builders | ~4M |
+| C7 Release candidate | W12, W13 (parallel, read-only), W15 | Parallel review, then the cut | ~3.5M |
+
+**The workflow template (from C1 on):**
+- one setup step builds shared fixtures, such as a seeded demo workspace, once;
+- read-only audits run in parallel;
+- browser work runs as headless Playwright scripts, at most two at a time;
+- builders run one at a time, on disjoint files;
+- review is split per group and runs in parallel, with one fixer and a low-effort re-check of blockers only;
+- the sweep runs only the browser checks and the changed files' tests;
+- a final gate step builds the snapshot and runs the full gate the moment the fixer ends;
+- digests to the lead are kept short.
+
+Expected: about 5–7 days instead of 2–3 weeks. Stream 1 continues beside the builds: the planner set-up, the admissions, R9 (Lima) and the capstone runs, mostly at night. The owner's K2 checks (the hidden suite; Seshat's conversations) gate the capstone runs, so doing them early moves the capstone forward.
+
 ### E.3 Stream 2: the workflows (Claude Opus 5.5)
 
 Every workflow follows the same pattern:

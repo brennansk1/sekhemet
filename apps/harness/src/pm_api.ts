@@ -21,6 +21,7 @@ import { readSettings } from "./integrations.js";
 import { learnFromProposalChoices } from "./learning/reflect.js";
 import { LearningStore } from "./learning/store.js";
 import { sharedModelAccess } from "./model_access.js";
+import { meterModelUsage, modelUse, recordUsageOn } from "./model_usage.js";
 import { ProposalError, applyProposal } from "./pm/apply.js";
 import { type Audience, nameFor, soloAudience } from "./pm/audience.js";
 import { capabilityReport } from "./pm/capability.js";
@@ -185,7 +186,12 @@ export function createPmApi(ctx: PmApiContext) {
     // MD-N9-4: through the process's one scheduler, loaded when first asked.
     const acquire = ctx.pmAdapter
       ? (() => {
-          const a = (ctx.pmAdapter as () => LocalInferenceAdapter)();
+          // Measurement rule 4a: a given model's requests are on the ledger
+          // as the one path to a model records them (`ModelAccess`).
+          const a = meterModelUsage((ctx.pmAdapter as () => LocalInferenceAdapter)(), {
+            record: recordUsageOn(ctx.log),
+            served: () => ["planner"],
+          });
           return async () => ({ role: "chat", adapter: a, release: () => {} });
         })()
       : pmModelFor(pmModel, modelRegistry(), ctx.log);
@@ -221,6 +227,8 @@ export function createPmApi(ctx: PmApiContext) {
           pmStore,
           pmModel,
           acquire,
+          // The server's own board, which every move goes through (K-S4-3).
+          board: ctx.boardService,
           // Smart Swap (models rule 20f): the full answer's predicted wait, said in words.
           ...(ctx.pmAdapter ? {} : { predictWait: () => seshatWait(sharedModelAccess(), "chat") }),
           ...(quick ? { quick } : {}),
@@ -1050,7 +1058,11 @@ export function createPmApi(ctx: PmApiContext) {
     // --- Flow metrics -------------------------------------------------------
     if (url === "/api/metrics/flow" && req.method === "GET") {
       const days = Math.min(365, Math.max(1, Number(query.get("days") ?? 30) || 30));
-      ctx.json(res, 200, await flowMetrics(ctx.log, days));
+      // Measurement rule 4a: every role's token use over the same window.
+      ctx.json(res, 200, {
+        ...(await flowMetrics(ctx.log, days)),
+        modelUse: await modelUse(ctx.log, days),
+      });
       return true;
     }
 

@@ -718,6 +718,19 @@ export class EventLog {
   }
 
   /**
+   * The first event recorded at or after `iso` (an ISO time), by the
+   * `created_at` index; undefined when none is. A reader of a time window
+   * starts there instead of at the chain's beginning (Insights' model use).
+   * Times follow the host's clock, so a reader still filters by time.
+   */
+  public async firstSeqSince(iso: string): Promise<number | undefined> {
+    const row = this.db
+      .prepare("SELECT MIN(seq) AS seq FROM events WHERE created_at >= ?")
+      .get(iso) as { seq: number | null } | undefined;
+    return row?.seq ?? undefined;
+  }
+
+  /**
    * Every event belonging to one card, in order.
    *
    * This is the query the typed `card_id` column exists for: before it, card

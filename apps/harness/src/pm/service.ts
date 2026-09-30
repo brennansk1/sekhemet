@@ -38,7 +38,7 @@ import {
 } from "./knowledge.js";
 import { flowMetrics, monteCarloForecast } from "./metrics.js";
 import { draftProjectGroup } from "./pipeline.js";
-import { parseSlash, resolveCard, runSlash } from "./slash.js";
+import { type SlashBoard, parseSlash, resolveCard, runSlash } from "./slash.js";
 import { recordStandupGiven, standupCardIds, standupFacts } from "./standup.js";
 import type { PmStore } from "./store.js";
 import { postSuggestions, suggestedText } from "./suggest.js";
@@ -277,6 +277,8 @@ export interface AnswerDeps {
   audience?: Audience;
   /** The Planner role's model for /plan (PM-P1-2); the heuristic plans without it. */
   planner?: () => Promise<ModelHold>;
+  /** The harness's board: a slash command's move goes through it (kernel K-S4-3). */
+  board: SlashBoard;
 }
 
 /**
@@ -607,6 +609,7 @@ async function answerFor(
     }
     const outcome = await runSlash(cmd, {
       cardStore: deps.cardStore,
+      board: deps.board,
       pmStore: deps.pmStore,
       repoPath: deps.repoPath,
       researcher: deps.researcher,

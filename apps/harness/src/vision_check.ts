@@ -57,6 +57,9 @@ export function inferenceVisionAdapter(
         toolArm: adapter.supportedArms[0] ?? "arm_a_flat",
         temperature: options.temperature,
         maxTokens: 16 * questions.length + 64,
+        // Measurement rule 4a: the Review model's vision check.
+        role: "reviewer",
+        task: "vision_check",
       });
       return parseChecklistAnswers(res.text, questions.length);
     },

@@ -35,6 +35,7 @@ import {
 } from "@sekhemet/models";
 import { type Zone3Card, workerPromptBudget, zone3Fit } from "@sekhemet/planner";
 import { defaultWorkerName } from "./config_apply.js";
+import { meterModelUsage, recordUsageOn } from "./model_usage.js";
 
 /**
  * The harness's one path to a model (models rule 20a, MD-N9-4).
@@ -403,6 +404,21 @@ export class ModelAccess {
             const index = this.ledger?.erasureIndex?.();
             if (!index) throw new Error("no ledger to read erasures from");
             return index;
+          });
+          // Measurement rule 4a: every request outside a card's step is a
+          // `model/usage` on this ledger, by its role; a measurement run is
+          // not the project's work, and records none. The ledger is the first
+          // one attached (`recordSwapsOn`): right for today's process, which
+          // serves one repository. A process whose shared ModelAccess served
+          // two repositories would put the second's usage on the first's
+          // ledger, and must then carry the ledger on the request instead.
+          meterModelUsage(adapter, {
+            record: (payload) => {
+              if (this.ledger && !this.measuring) recordUsageOn(this.ledger)(payload);
+            },
+            served: () =>
+              [...this.specs.values()].filter((s) => weightsKey(s.name) === key).map((s) => s.role),
+            ...(this.options.log ? { warn: this.options.log } : {}),
           });
           return this.options.wrap
             ? this.options.wrap(

@@ -16,6 +16,7 @@ import {
   formatHours,
   formatShortDate,
   horizonSentence,
+  modelUseView,
   movingAverage,
   stackCfd,
   tuningSummary,
@@ -430,6 +431,25 @@ function tuningHtml() {
   return `<section class="capab tune"><header class="cap-h"><h2>Stopping policy</h2><span class="sec">From replaying recorded runs${esc(when)}</span></header><div class="chart"><p class="tune-head">${esc(sum.headline)}</p>${sum.same ? "" : `<p class="sec">${esc(`Saves ${sum.savedText} on these issues and keeps ${sum.firstTryKept} first-try passes. Nothing changes until you run with the new cap.`)}</p>`}${table}${cmd}<p class="tune-caveat">${icon("alert", 12, "ic s12")}<span>Replay only stops a recorded run earlier than it really stopped. It never credits a pass the agent didn't make, so it can't overstate what a tighter cap keeps. It can't tell you whether a looser cap would have rescued a failure.</span></p>${grid}</div></section>`;
 }
 
+/* ---------- Model use (GET /api/metrics/flow `modelUse`) ---------- */
+
+// Measurement rule 4a: every model's tokens over the period, the Coding
+// model's steps and Seshat's and the other models' requests alike.
+function modelUseHtml() {
+  if (!ui.data) return "";
+  const v = modelUseView(ui.data.modelUse, ui.days);
+  const head = `<header class="cap-h"><h2>Model use</h2><span class="sec">Tokens by model, this period</span></header>`;
+  if (v.empty)
+    return `<section class="capab use">${head}<p class="sec">${esc(v.empty)}</p></section>`;
+  const rows = v.lines
+    .map(
+      (l) =>
+        `<tr><th scope="row">${esc(l.label)}</th><td class="tnum">${esc(l.requests)}</td><td class="tnum">${esc(l.tokensIn)}</td><td class="tnum">${esc(l.reused)}</td><td class="tnum">${esc(l.tokensOut)}</td><td class="tnum">${esc(l.thinking)}</td><td class="tnum">${esc(l.share)}</td></tr>`,
+    )
+    .join("");
+  return `<section class="capab use">${head}<div class="chart"><div class="tbl-wrap"><table class="tbl"><caption class="sec">${esc(v.caption)}</caption><thead><tr><th scope="col">Model</th><th scope="col">Requests</th><th scope="col">Tokens in</th><th scope="col">Reused from the cache</th><th scope="col">Tokens out</th><th scope="col">Of which thinking</th><th scope="col">Share</th></tr></thead><tbody>${rows}</tbody></table></div></div></section>`;
+}
+
 /* ---------- View ---------- */
 
 function numbers(stats, throughput, wip) {
@@ -485,7 +505,7 @@ function render() {
   const inner = Math.min(1400, ui.root.clientWidth) - 48;
   ui.perRow = inner >= 1100 ? 2 : 1;
   W = Math.max(320, Math.floor((inner - 16 * (ui.perRow - 1)) / ui.perRow) - 34);
-  const cap = capabilityHtml() + tuningHtml();
+  const cap = modelUseHtml() + capabilityHtml() + tuningHtml();
   const paint = (flow) => {
     ui.root.innerHTML = `<div class="ins">${flow}${cap}</div>`;
   };

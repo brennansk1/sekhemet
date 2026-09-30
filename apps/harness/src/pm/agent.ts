@@ -1045,6 +1045,8 @@ export async function readDocumentInParts(
       temperature: 0.1,
       maxTokens: READER_NOTES_TOKENS,
       role: "seshat",
+      // Measurement rule 4a: the read-in-parts pass, counted apart from the answer.
+      task: "read_document",
     });
     notes.push(`Part ${i + 1} of ${parts.length}:\n${stripThinking(res.text).trim()}`);
   }
@@ -1260,6 +1262,8 @@ export async function summarizeConversation(
     toolArm: "arm_a_flat",
     temperature: 0.1,
     maxTokens: 400,
+    role: "seshat",
+    task: "summarize",
   });
   return stripThinking(res.text).slice(0, 1500);
 }

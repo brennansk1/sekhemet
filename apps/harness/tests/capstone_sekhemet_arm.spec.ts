@@ -390,12 +390,22 @@ describe("the Sekhemet arm, driven end to end against a stand-in model", () => {
     expect(git(s.repo, "rev-parse", "HEAD")).toBe(git(s.repo, "rev-parse", "main"));
     expect(git(s.repo, "status", "--porcelain", "--untracked-files=no")).toBe("");
 
-    // Every decision simulated, zero hands-on minutes; the Coding model's tokens from the ledger.
+    // Every decision simulated, zero hands-on minutes; every role's tokens
+    // from the ledger (measurement rule 4a), so none is left out.
     for (const p of log.filter((l) => l.kind === "person"))
       expect(p).toMatchObject({ simulated: true, minutes: 0 });
-    const tokens = log.filter((l) => l.kind === "usage") as (Ev & { inputTokens: number })[];
+    const tokens = log.filter((l) => l.kind === "usage") as (Ev & {
+      inputTokens: number;
+      byRole: Record<string, { inputTokens: number; requests: number }>;
+    })[];
     expect(tokens.map((t) => t.phase)).toEqual(["release-1", "change-request"]);
     expect(tokens[0]?.inputTokens).toBeGreaterThan(0);
+    for (const t of tokens) expect(t.notCounted).toBeUndefined();
+    // The Coding model's steps and Seshat's answers, each charged to its role.
+    expect(tokens[0]?.byRole.worker?.inputTokens).toBeGreaterThan(0);
+    expect(tokens[0]?.byRole.seshat?.requests).toBeGreaterThan(0);
+    expect(tokens[1]?.byRole.seshat?.requests).toBeGreaterThan(0);
+    expect(score.effort(log)).toMatchObject({ tokensNotCounted: null });
 
     // The budgets recorded, and the run counts.
     const record = JSON.parse(readFileSync(grid.runPaths("sekhemet-local", 1, e).record, "utf8"));
@@ -644,5 +654,75 @@ describe("the Sekhemet arm's person at a terminal", () => {
     expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("two\n");
     expect(g("status", "--porcelain")).toBe("");
     expect(arm.catchUp(ctx, "again")).toBeNull();
+  });
+});
+
+describe("the Sekhemet arm's tokens, from the product's ledger", () => {
+  it("counts every role since a point: card steps as the Coding model's, model/usage by role", () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "arm-tokens-")));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(join(dir, ".sekhemet"));
+    const db = new DatabaseSync(join(dir, ".sekhemet", "events.db"));
+    initSchema(db);
+    const log = new EventLog(db);
+    const step = (i: number, o: number, cached?: number) =>
+      log.appendNow({
+        actor: "worker",
+        type: "card/step",
+        payload: {
+          id: "c1",
+          turn: 0,
+          calls: [],
+          usage: {
+            promptTokens: i,
+            completionTokens: o,
+            durationMs: 1,
+            ...(cached !== undefined ? { cachedPromptTokens: cached } : {}),
+          },
+        },
+      });
+    const use = (role: string, i: number, o: number, cached?: number) =>
+      log.appendNow({
+        actor: "harness",
+        type: "model/usage",
+        payload: {
+          role,
+          purpose: "answer",
+          model: "m",
+          promptTokens: i,
+          ...(cached !== undefined ? { cachedPromptTokens: cached } : {}),
+          completionTokens: o,
+          thinkingTokens: 0,
+          answerTokens: o,
+          durationMs: 1,
+        },
+      });
+    step(5, 5);
+    use("seshat", 5, 5);
+    const since = arm.ledgerSeq(dir);
+    step(900, 120, 600);
+    step(100, 30);
+    use("seshat", 2000, 300, 1500);
+    use("planner", 700, 90);
+    use("reviewer", 400, 20);
+    db.close();
+    expect(arm.ledgerTokens(dir, since)).toEqual({
+      inputTokens: 4100,
+      outputTokens: 560,
+      cacheReadTokens: 2100,
+      byRole: {
+        worker: { inputTokens: 1000, outputTokens: 150, cacheReadTokens: 600, requests: 2 },
+        seshat: { inputTokens: 2000, outputTokens: 300, cacheReadTokens: 1500, requests: 1 },
+        planner: { inputTokens: 700, outputTokens: 90, cacheReadTokens: 0, requests: 1 },
+        reviewer: { inputTokens: 400, outputTokens: 20, cacheReadTokens: 0, requests: 1 },
+      },
+    });
+    // No ledger yet: nothing counted.
+    expect(arm.ledgerTokens(join(dir, "none"), 0)).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      byRole: {},
+    });
   });
 });

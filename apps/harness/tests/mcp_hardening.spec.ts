@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { initLocalKernel } from "../src/index.js";
 import { recordLedgerRun } from "../src/ledger_evidence.js";
 import { type McpContext, handleMcpLine, handleMcpRequest } from "../src/mcp.js";
 import { McpConnection } from "../src/mcp_client.js";
@@ -118,6 +119,148 @@ describe("EXT-17: the evidence bundle and the model registry, read-only", () => 
       "sekhemet_get_evidence",
       "sekhemet_model_registry",
     ]);
+  });
+});
+
+/**
+ * EXT-6, EXT-7 (S4, fix round F3): the server checks `to` itself. The tool's
+ * schema offers ready, backlog and parked, but a client need not honour a
+ * schema; a card in Review is one legal edge from Done (kernel rule 28 stops
+ * only the `override:`), so the server refuses anything else before the board
+ * is asked, in words, as a JSON-RPC invalid-params error. The ledger records
+ * the refusal and nothing else (fix round F3 review: an attempted bypass to
+ * Done leaves an audit trace): one `mcp/refused` naming the tool, the column
+ * asked for (a board column, else `other`) and the card when it exists —
+ * never the client's reason text.
+ */
+describe("EXT-6, EXT-7: move_card goes only to ready, backlog or parked", () => {
+  // The ledger's one-time record of its installing person (kernel rule 19)
+  // comes with its first attributed event; it is not the tool's.
+  const events = () =>
+    (
+      ctx.db.prepare("SELECT COUNT(*) AS n FROM events WHERE type != 'person/created'").get() as {
+        n: number;
+      }
+    ).n;
+  const lastRefusal = async () => (await ctx.log.getEventsByTypes(["mcp/refused"])).at(-1);
+  const move = async (args: Record<string, unknown>) =>
+    handleMcpRequest(
+      {
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: { name: "sekhemet_move_card", arguments: args },
+      },
+      ctx,
+    );
+
+  beforeEach(async () => {
+    ctx.db = db;
+    await ctx.cardStore.createCard({
+      id: "c_rev",
+      tier: "task",
+      title: "Rev",
+      status: "in_progress",
+    });
+    // Into Review by the transition law, as a card that passed its gates gets there.
+    for (const [fromStatus, toStatus] of [
+      ["in_progress", "verify"],
+      ["verify", "review"],
+    ] as const) {
+      await ctx.boardService.transitionCard({
+        cardId: "c_rev",
+        fromStatus,
+        toStatus,
+        actor: "harness",
+        reason: "gates passed",
+      });
+    }
+  });
+
+  it("refuses Done, with or without an override reason, leaves the card as it was and records only the refusal", async () => {
+    for (const reason of [undefined, "override: the model says it is finished"]) {
+      const before = events();
+      const r = await move({ card_id: "c_rev", to: "done", ...(reason ? { reason } : {}) });
+      expect(r?.error?.code).toBe(-32602);
+      expect(r?.error?.message).toMatch(/ready, backlog or parked/);
+      expect(r?.error?.message).toMatch(/accept/i);
+      expect((await ctx.cardStore.getCard("c_rev"))?.status).toBe("review");
+      expect(events()).toBe(before + 1);
+      const refusal = await lastRefusal();
+      expect(refusal).toMatchObject({
+        actor: "mcp",
+        cardId: "c_rev",
+        payload: { tool: "sekhemet_move_card", to: "done" },
+      });
+      expect(JSON.stringify(refusal)).not.toContain("finished");
+    }
+  });
+
+  it("answers invalid params for any other destination, a non-string or none", async () => {
+    for (const [to, recorded] of [
+      ["in_progress", "in_progress"],
+      ["verify", "verify"],
+      ["rejected", "rejected"],
+      ["planning", "planning"],
+      ["READY", "other"],
+      [3, "other"],
+      [null, "other"],
+    ] as const) {
+      const before = events();
+      const r = await move({ card_id: "c_rev", to });
+      expect(r?.error?.code, String(to)).toBe(-32602);
+      expect(r?.error?.message).toMatch(/ready, backlog or parked/);
+      expect((await ctx.cardStore.getCard("c_rev"))?.status).toBe("review");
+      expect(events()).toBe(before + 1);
+      expect((await lastRefusal())?.payload).toEqual({ tool: "sekhemet_move_card", to: recorded });
+    }
+    expect((await move({ card_id: "c_rev" }))?.error?.code).toBe(-32602);
+    // A card that does not exist is not named on the refusal.
+    expect((await move({ card_id: "c_none", to: "done" }))?.error?.code).toBe(-32602);
+    expect((await lastRefusal())?.cardId).toBeUndefined();
+  });
+
+  it("behind it, the board `sekhemet mcp` is given refuses the MCP actor Done too (rules 24 and 28)", async () => {
+    // The kernel `sekhemet mcp` opens (`initLocalKernel`) and hands the server, not a stand-in.
+    const own = join(root, "own");
+    mkdirSync(own);
+    vi.stubEnv("SEKHEMET_CONFIG_DIR", join(root, "config"));
+    const k = initLocalKernel(own);
+    try {
+      // Put in Review by the store's recorded override: this board's entry
+      // conditions want a real attempt and evidence to get there, and the
+      // refusal under test is Done's.
+      await k.cardStore.createCard({ id: "c_rev", tier: "task", title: "Rev" });
+      await k.cardStore.updateCardStatus("c_rev", "review", "set up", "harness", {
+        override: true,
+      });
+      const count = () =>
+        (k.db.prepare("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n;
+      const before = count();
+      for (const reason of ["moved via MCP", "override: finished"]) {
+        await expect(
+          k.boardService.transitionCard({
+            cardId: "c_rev",
+            fromStatus: "review",
+            toStatus: "done",
+            actor: "mcp",
+            reason,
+          }),
+        ).rejects.toThrow(/Only a person/);
+      }
+      expect((await k.cardStore.getCard("c_rev"))?.status).toBe("review");
+      expect(count()).toBe(before);
+    } finally {
+      k.db.close();
+    }
+  });
+
+  it("still moves a card to each allowed column", async () => {
+    const r = await move({ card_id: "c_rev", to: "ready", reason: "needs another pass" });
+    expect(r?.error).toBeUndefined();
+    expect((await ctx.cardStore.getCard("c_rev"))?.status).toBe("ready");
+    await move({ card_id: "c_rev", to: "backlog" });
+    expect((await ctx.cardStore.getCard("c_rev"))?.status).toBe("backlog");
   });
 });
 

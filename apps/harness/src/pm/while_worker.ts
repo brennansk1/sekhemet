@@ -184,6 +184,8 @@ export async function quickAnswer(
     toolArm: "arm_a_flat",
     temperature: 0.2,
     maxTokens: 300,
+    role: "seshat",
+    task: "quick_answer",
   });
   // PM-P13-6: a quick answer's claim of "complete" counts for no more than a full one's.
   const text = guardCompletionClaim(stripThinking(res.text).trim(), snapshot.storyMap).text;

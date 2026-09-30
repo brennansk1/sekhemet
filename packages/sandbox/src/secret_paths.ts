@@ -52,6 +52,9 @@ export const HOME_SECRET_PATHS: readonly { path: string; why: string }[] = [
   { path: join(".local", "share", "kwalletd"), why: "KWallet" },
   { path: ".password-store", why: "pass" },
   { path: join(".config", "op"), why: "1Password CLI" },
+  // Key agents' sockets in the home: each signs with keys `.ssh` hides (SEC-15).
+  { path: ".1password", why: "1Password's SSH agent socket" },
+  { path: ".bitwarden-ssh-agent.sock", why: "Bitwarden's SSH agent socket" },
   // Browser profiles: cookies, saved passwords, session tokens.
   { path: ".mozilla", why: "Firefox profiles" },
   { path: join(".config", "google-chrome"), why: "Chrome profiles" },
@@ -116,15 +119,48 @@ export const SESSION_SECRET_PATHS: readonly { path: string; why: string }[] = [
   },
   { path: "/run/docker.sock", why: "the Docker daemon, which is root on the host" },
   { path: "/var/run/docker.sock", why: "the Docker daemon (the older path)" },
+  // Fix round F3: the other sockets a Linux host serves outside /run/user and
+  // /tmp that answer a process of the person's (SEC-15).
+  {
+    path: "/run/dbus",
+    why: "the system bus: logind, udisks and PackageKit power the machine off, mount disks and install packages for the active session without a password",
+  },
+  { path: "/run/podman", why: "rootful Podman's API, which is root on the host" },
+  { path: "/run/containerd", why: "containerd's API, which is root on the host" },
+  { path: "/run/libvirt", why: "libvirt's daemons: the libvirt group is root on the host" },
+  {
+    path: "/var/snap/lxd/common/lxd/unix.socket",
+    why: "LXD (snap): the lxd group is root on the host",
+  },
+  { path: "/var/lib/lxd/unix.socket", why: "LXD: the lxd group is root on the host" },
+  { path: "/var/lib/incus/unix.socket", why: "Incus: its group is root on the host" },
+  { path: "/run/pcscd", why: "the smart-card daemon: keys on smart cards and security keys" },
+  {
+    path: "/run/screen",
+    why: "GNU screen's sessions: a connection types into the person's terminal",
+  },
 ];
 
 /**
  * The absolute session paths to hide: the table, plus where this session's
  * environment says its runtime directory, ssh-agent socket and GnuPG home
- * are, when they lie elsewhere. A relative value is ignored.
+ * are, when they lie elsewhere, and its terminal multiplexers' sockets:
+ * tmux's (the path before the first comma of `$TMUX`, and `tmux-<uid>` in
+ * `$TMUX_TMPDIR`) and screen's (`$SCREENDIR`), through either of which a
+ * connection types into the person's own terminal. A relative value is
+ * ignored.
  */
 export function sessionSecretDenies(env: NodeJS.ProcessEnv = process.env): string[] {
-  const named = [env.XDG_RUNTIME_DIR, env.SSH_AUTH_SOCK, env.GNUPGHOME]
+  const uid = process.getuid?.();
+  const tmuxDir = env.TMUX_TMPDIR?.trim();
+  const named = [
+    env.XDG_RUNTIME_DIR,
+    env.SSH_AUTH_SOCK,
+    env.GNUPGHOME,
+    env.TMUX?.split(",")[0],
+    tmuxDir && uid !== undefined ? join(tmuxDir, `tmux-${uid}`) : undefined,
+    env.SCREENDIR,
+  ]
     .map((v) => v?.trim())
     .filter((v): v is string => !!v && isAbsolute(v));
   return [...new Set([...SESSION_SECRET_PATHS.map((e) => e.path), ...named])];
@@ -142,3 +178,108 @@ export function sessionSecretDenies(env: NodeJS.ProcessEnv = process.env): strin
 export const SOCKET_CONNECT_ALLOW: readonly { path: string; why: string }[] = [
   { path: "/var/run/mDNSResponder", why: "the system's name resolver: every DNS lookup on macOS" },
 ];
+
+/**
+ * The macOS services that hold or hand out keychain secrets (W2b finding,
+ * SEC-23b). Seatbelt denies `mach-lookup` of each, under both engines: the
+ * native profile otherwise allows every lookup, and srt's allowlist names
+ * `com.apple.SecurityServer` and `com.apple.securityd.xpc` itself. Without
+ * them a sandboxed `security find-generic-password -w` printed any item whose
+ * access list trusts `/usr/bin/security` — which every item Sekhemet stores
+ * does — from any keychain file it could read, and a keychain file may lie
+ * anywhere under any name. Also here, since nothing a build runs needs them
+ * (fix round F1 review): iCloud Keychain's sharing messenger and escrow
+ * backup, and the Touch ID and password prompts of LocalAuthentication and
+ * CoreAuthentication, which gate items with an access control and would let a
+ * card put a system password dialog in front of the person. Certificate trust
+ * (`com.apple.trustd*`) is not here: TLS needs it, and it holds no secret. A
+ * `prefix` entry covers every service whose name starts with it.
+ */
+export const KEYCHAIN_MACH_SERVICES: readonly { name: string; prefix?: true; why: string }[] = [
+  {
+    name: "com.apple.SecurityServer",
+    why: "securityd: every file keychain, the login keychain among them",
+  },
+  {
+    name: "com.apple.securityd.",
+    prefix: true,
+    why: "secd and the System keychain's daemon: the data-protection and iCloud keychains, the System keychain",
+  },
+  { name: "com.apple.security.agent", why: "the password dialogs a keychain request raises" },
+  { name: "com.apple.security.agent.login", why: "the login window's password agent" },
+  { name: "com.apple.security.authhost", why: "the authorization host" },
+  {
+    name: "com.apple.security.authtrampoline",
+    why: "running a tool as root after a password (AuthorizationExecuteWithPrivileges)",
+  },
+  {
+    name: "com.apple.security.KeychainStasher",
+    why: "keeps the login keychain's password across a restart",
+  },
+  { name: "com.apple.security.octagon", why: "iCloud Keychain's trust circle" },
+  { name: "com.apple.security.kcsharing", why: "shared keychain groups" },
+  { name: "com.apple.security.escrow-update", why: "iCloud Keychain escrow" },
+  { name: "com.apple.security.cloudkeychainproxy3", why: "iCloud Keychain sync" },
+  { name: "com.apple.keychainsharingmessagingd", why: "messages for shared keychain groups" },
+  {
+    name: "com.apple.SecureBackupDaemon",
+    prefix: true,
+    why: "iCloud Keychain's escrow backup",
+  },
+  {
+    name: "com.apple.LocalAuthentication.",
+    prefix: true,
+    why: "Touch ID and password prompts, and the application passwords that gate keychain items",
+  },
+  {
+    name: "com.apple.CoreAuthentication.",
+    prefix: true,
+    why: "the daemon and agent behind LocalAuthentication's prompts",
+  },
+  {
+    name: "com.apple.ctkd.",
+    prefix: true,
+    why: "CryptoTokenKit: keys on smart cards and in the Secure Enclave",
+  },
+];
+
+/**
+ * Keychain files outside the home (SEC-23b): the System keychain and a
+ * network home's. The user's own are `~/Library/Keychains` in
+ * `HOME_SECRET_PATHS`. macOS only; Linux has none of these.
+ */
+export const SYSTEM_KEYCHAIN_PATHS: readonly { path: string; why: string }[] = [
+  { path: "/Library/Keychains", why: "the System keychain" },
+  { path: "/Network/Library/Keychains", why: "keychains of a network home" },
+];
+
+/**
+ * A keychain file wherever it lies (SEC-23b): a person or a tool (fastlane, a
+ * CI script) may make one anywhere, and its database, read out, can be
+ * attacked offline for its password. Its content is refused by the name's
+ * ending, in any case (APFS is case-insensitive), and so is the save file
+ * securityd writes beside it (`<name>.keychain-db.sb-<hex>-<random>`,
+ * `KEYCHAIN_SAVE_SUFFIX`). A file with such a name may not be written either,
+ * so one inside a granted root cannot be renamed, swapped or hard-linked away
+ * from its name and then read (fix round F1). A keychain file made under any
+ * other name is matched only when `SEKHEMET_KEYCHAIN_FILE` names it
+ * (`keychainFileDenies`).
+ */
+export const KEYCHAIN_FILE_SUFFIXES: readonly string[] = [".keychain", ".keychain-db"];
+
+/** The start of the suffix securityd gives a keychain's save file, before it renames it over the keychain. */
+export const KEYCHAIN_SAVE_SUFFIX = ".sb-";
+
+/**
+ * The keychain a person or a CI names by `SEKHEMET_KEYCHAIN_FILE` for
+ * Sekhemet's own items (SEC-23b): denied by its path, whatever its name, so a
+ * keychain named like no keychain still holds Sekhemet's items out of reach.
+ * Resolved as `keychain.ts` hands it to `security` from the harness's
+ * directory. Any other keychain file under a name no pattern matches, outside
+ * the home, is readable: Seatbelt judges a file by its path, never its
+ * content (security item 11a's residual).
+ */
+export function keychainFileDenies(env: NodeJS.ProcessEnv = process.env): string[] {
+  const file = env.SEKHEMET_KEYCHAIN_FILE?.trim();
+  return file ? [resolve(file)] : [];
+}

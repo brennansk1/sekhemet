@@ -13,6 +13,14 @@ import { findUnreachable, reachabilityGate } from "../src/reachability_gate.js";
 const REPO = resolve(import.meta.dirname, "..", "..", "..");
 /** The built-in gates' default timeout: the reachability gate must finish well inside it. */
 const GATE_TIMEOUT_MS = 120_000;
+/**
+ * Each test's own limit, sized to its work: a whole-repository scan per
+ * gate timeout. Vitest's default of 5 s is not a bound this check makes —
+ * the first test scans twice, about 1.7 s each on an idle machine, and ran
+ * past 5 s under a model run's load (W2b's sweep). The bound the check does
+ * make, one scan inside a gate's timeout, is asserted in the test itself.
+ */
+const perScan = (scans: number) => ({ timeout: scans * GATE_TIMEOUT_MS });
 
 interface Recorded {
   file: string;
@@ -21,30 +29,37 @@ interface Recorded {
 }
 
 describe("the reachability gate over this repository (GT-T2-4)", () => {
-  it("judges every export in time, with file, name and remedy, and spares the indirectly reachable", () => {
-    const started = Date.now();
-    const failures = reachabilityGate(REPO, "main", {}, "every");
-    expect(Date.now() - started).toBeLessThan(GATE_TIMEOUT_MS);
+  it(
+    "judges every export in time, with file, name and remedy, and spares the indirectly reachable",
+    perScan(2),
+    () => {
+      const started = Date.now();
+      const failures = reachabilityGate(REPO, "main", {}, "every");
+      expect(Date.now() - started).toBeLessThan(GATE_TIMEOUT_MS);
 
-    for (const f of failures) {
-      expect(f.location?.file).toMatch(/\.[cm]?tsx?$/);
-      expect(f.errorExcerpt).toMatch(/: export \S+ is used by nothing/);
-      expect(f.suggestedAction).toMatch(/wire it into/);
-    }
+      for (const f of failures) {
+        expect(f.location?.file).toMatch(/\.[cm]?tsx?$/);
+        expect(f.errorExcerpt).toMatch(/: export \S+ is used by nothing/);
+        expect(f.suggestedAction).toMatch(/wire it into/);
+      }
 
-    const recorded = (
-      JSON.parse(
-        readFileSync(join(import.meta.dirname, "__golden__", "reachable_indirectly.json"), "utf8"),
-      ) as { exports: Recorded[] }
-    ).exports;
-    expect(recorded.length).toBeGreaterThan(0);
-    const reported = new Set(
-      findUnreachable(REPO, "main", {}, "every").map((d) => `${d.file}#${d.name}`),
-    );
-    expect(recorded.filter((r) => reported.has(`${r.file}#${r.name}`))).toEqual([]);
-  });
+      const recorded = (
+        JSON.parse(
+          readFileSync(
+            join(import.meta.dirname, "__golden__", "reachable_indirectly.json"),
+            "utf8",
+          ),
+        ) as { exports: Recorded[] }
+      ).exports;
+      expect(recorded.length).toBeGreaterThan(0);
+      const reported = new Set(
+        findUnreachable(REPO, "main", {}, "every").map((d) => `${d.file}#${d.name}`),
+      );
+      expect(recorded.filter((r) => reported.has(`${r.file}#${r.name}`))).toEqual([]);
+    },
+  );
 
-  it("still reports an export only a file's own tests use", () => {
+  it("still reports an export only a file's own tests use", perScan(1), () => {
     // The control: the harness's own CLI modules export helpers for their
     // tests; with every export judged, some of those are reported, so the
     // list above is spared for a reason, not because nothing is reported.

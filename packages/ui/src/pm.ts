@@ -8,6 +8,8 @@
  * everything that turns model text into markup escapes first.
  */
 
+import { formatTokens, plural } from "./vocabulary.js";
+
 // ---------------------------------------------------------------------------
 // Priority (contract §2: Linear's 0..4 scale) and points
 // ---------------------------------------------------------------------------
@@ -1531,4 +1533,81 @@ export function threadNotice(m: {
   text: string;
 }): string | undefined {
   return m.role === "pm" && m.model === PANEL_NOTICE_MODEL ? `Notice · ${m.text}` : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Model use (Insights, measurement rule 4a)
+// ---------------------------------------------------------------------------
+
+/** One role's token use over a period, as `/api/metrics/flow` serves it (`modelUse`). */
+export interface ModelUseRowLike {
+  role: string;
+  requests: number;
+  promptTokens: number;
+  cachedPromptTokens: number;
+  completionTokens: number;
+  thinkingTokens: number;
+  answerTokens: number;
+  purposes: Record<string, number>;
+}
+
+export interface ModelUseLike {
+  rows: ModelUseRowLike[];
+  total: Omit<ModelUseRowLike, "role" | "purposes">;
+}
+
+export interface ModelUseLine {
+  role: string;
+  label: string;
+  requests: string;
+  tokensIn: string;
+  reused: string;
+  tokensOut: string;
+  thinking: string;
+  /** The role's share of every token, in and out. */
+  share: string;
+}
+
+/** The models by their product names (DEC-31); Seshat by her own. */
+export const MODEL_USE_LABELS: Record<string, string> = {
+  worker: "Coding model",
+  seshat: "Seshat",
+  planner: "Planning model",
+  reviewer: "Review model",
+  researcher: "Research model",
+};
+
+/**
+ * Insights' model use: every role's tokens over the period, each in the
+ * product's words, and one sentence for the whole (a card's steps are the
+ * Coding model's; the rest are Seshat's and the other models' requests).
+ */
+export function modelUseView(
+  use: ModelUseLike | undefined,
+  days: number,
+): { lines: ModelUseLine[]; caption: string; empty?: string } {
+  if (!use) {
+    return {
+      lines: [],
+      caption: "",
+      empty: "This server doesn't count the models' tokens yet. Update Sekhemet and restart it.",
+    };
+  }
+  const period = `the last ${plural(days, "day")}`;
+  if (use.total.requests === 0)
+    return { lines: [], caption: "", empty: `No model ran in ${period}.` };
+  const all = use.total.promptTokens + use.total.completionTokens;
+  const lines = use.rows.map((r) => ({
+    role: r.role,
+    label: MODEL_USE_LABELS[r.role] ?? r.role,
+    requests: plural(r.requests, "request"),
+    tokensIn: formatTokens(r.promptTokens),
+    reused: formatTokens(r.cachedPromptTokens),
+    tokensOut: formatTokens(r.completionTokens),
+    thinking: formatTokens(r.thinkingTokens),
+    share: all > 0 ? `${Math.round(((r.promptTokens + r.completionTokens) / all) * 100)}%` : "0%",
+  }));
+  const t = use.total;
+  const caption = `Every model's tokens in ${period}: ${formatTokens(t.promptTokens)} in, of which ${formatTokens(t.cachedPromptTokens)} were reused from the cache, and ${formatTokens(t.completionTokens)} out, over ${plural(t.requests, "request")}. The Coding model's are its steps on issues; the others' are Seshat's answers and the other models' work.`;
+  return { lines, caption };
 }

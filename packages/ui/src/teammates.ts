@@ -259,4 +259,36 @@ export const COMMENT_COPY = {
   mention: "Mention",
   /** What the harness did with an AI teammate's mention, said at once (TEAM-15). */
   reached: (line: AiStateLine) => `${line.name}: ${line.sentence}`,
+  /** A long comment to Seshat became a project document on the integration branch (PM-N10-2). */
+  documented: "Your comment is in the repository as a project document.",
 } as const;
+
+/** One toast, as the dashboard's `toast()` takes it. */
+export interface CommentToast {
+  text: string;
+  detail?: string;
+  tone: "info";
+  /** Kept until closed: it carries a command to run. */
+  sticky?: true;
+}
+
+/**
+ * What the issue page says once a comment is posted (TEAM-15; PM-N10-2,
+ * RG-S5-2): that it was posted, with what each AI teammate it mentions did;
+ * then, when the comment was committed as a project document and a checkout
+ * is on the branch that moved, how that checkout catches up — kept on screen,
+ * since it is a command to run.
+ */
+export function commentPostedToasts(
+  res: { ai?: readonly AiStateFacts[]; notice?: string } | undefined,
+): CommentToast[] {
+  const said = (res?.ai ?? []).map((a) => COMMENT_COPY.reached(aiStateLine(a)));
+  const posted: CommentToast = {
+    text: COMMENT_COPY.posted,
+    ...(said.length ? { detail: said.join("\n") } : {}),
+    tone: "info",
+  };
+  return res?.notice
+    ? [posted, { text: COMMENT_COPY.documented, detail: res.notice, tone: "info", sticky: true }]
+    : [posted];
+}

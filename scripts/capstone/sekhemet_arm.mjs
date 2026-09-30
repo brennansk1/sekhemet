@@ -43,9 +43,10 @@
  * moves the branch, so the tree scored is what was accepted.
  *
  * Every simulated decision is logged with its basis and counted as zero
- * hands-on minutes. The Coding model's tokens are read from the product's
- * ledger (`card/step` usage); the other roles' are not recorded there, so
- * each `usage` event says so and the scorer compares no tokens across arms.
+ * hands-on minutes. Every role's tokens are read from the product's ledger
+ * (measurement rule 4a): the Coding model's from its card steps
+ * (`card/step`), Seshat's and the Planning, Review and Research models' from
+ * `model/usage`, each phase's `usage` event naming every role's share.
  */
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, realpathSync } from "node:fs";
@@ -687,20 +688,45 @@ export function ledgerSeq(repo) {
   }
 }
 
-/** The Coding model's tokens since `sinceSeq`, as the ledger charges them (`card/step` usage). */
-export function workerTokens(repo, sinceSeq) {
+/**
+ * Every role's tokens since `sinceSeq`, as the product's ledger records them
+ * (measurement rule 4a): a card's steps as the Coding model's (`card/step`),
+ * every other request by its role (`model/usage`). `inputTokens` counts every
+ * prompt token, those the server reused from its cache included;
+ * `cacheReadTokens` is that cached share, where the server said.
+ */
+export function ledgerTokens(repo, sinceSeq) {
   const file = join(repo, ".sekhemet", "events.db");
-  if (!existsSync(file)) return { inputTokens: 0, outputTokens: 0 };
+  const out = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, byRole: {} };
+  if (!existsSync(file)) return out;
   const db = new DatabaseSync(file, { readOnly: true });
   try {
-    const row = db
+    const rows = db
       .prepare(
-        `SELECT SUM(COALESCE(json_extract(payload, '$.usage.promptTokens'), 0)) AS i,
-                SUM(COALESCE(json_extract(payload, '$.usage.completionTokens'), 0)) AS o
-           FROM events WHERE type = 'card/step' AND seq > ?`,
+        `SELECT CASE WHEN type = 'card/step' THEN 'worker' ELSE json_extract(payload, '$.role') END AS role,
+                COUNT(*) AS n,
+                SUM(COALESCE(json_extract(payload, CASE WHEN type = 'card/step' THEN '$.usage.promptTokens' ELSE '$.promptTokens' END), 0)) AS i,
+                SUM(COALESCE(json_extract(payload, CASE WHEN type = 'card/step' THEN '$.usage.completionTokens' ELSE '$.completionTokens' END), 0)) AS o,
+                SUM(COALESCE(json_extract(payload, CASE WHEN type = 'card/step' THEN '$.usage.cachedPromptTokens' ELSE '$.cachedPromptTokens' END), 0)) AS c
+           FROM events
+          WHERE type IN ('card/step', 'model/usage') AND seq > ?
+            AND (type = 'model/usage' OR json_extract(payload, '$.usage') IS NOT NULL)
+          GROUP BY role
+          ORDER BY MIN(seq)`,
       )
-      .get(sinceSeq);
-    return { inputTokens: row.i ?? 0, outputTokens: row.o ?? 0 };
+      .all(sinceSeq);
+    for (const r of rows) {
+      out.byRole[r.role] = {
+        inputTokens: r.i ?? 0,
+        outputTokens: r.o ?? 0,
+        cacheReadTokens: r.c ?? 0,
+        requests: r.n,
+      };
+      out.inputTokens += r.i ?? 0;
+      out.outputTokens += r.o ?? 0;
+      out.cacheReadTokens += r.c ?? 0;
+    }
+    return out;
   } finally {
     db.close();
   }
@@ -710,11 +736,9 @@ export function logUsage(ctx, phase, sinceSeq) {
   logEvent(ctx.paths, {
     kind: "usage",
     phase,
-    ...workerTokens(ctx.repo, sinceSeq),
-    cacheReadTokens: 0,
-    source: "the product's ledger: card/step usage, the Coding model's requests",
-    notCounted:
-      "Seshat's, the Planning model's and the Review model's tokens: the product's ledger does not record them",
+    ...ledgerTokens(ctx.repo, sinceSeq),
+    source:
+      "the product's ledger: card/step (the Coding model's steps) and model/usage (Seshat's and the Planning, Review and Research models' requests); input tokens include those served from the cache",
   });
 }
 

@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import {
   homeToolchainPaths,
+  keychainRules,
   ledgerReadDenies,
   realPath,
   secretReadDenies,
@@ -255,13 +256,15 @@ export function srtWrap(
       { commandId },
     );
     const [shell, flag, srtWrapped] = argv as [string, string, string];
-    const wrapped =
+    const withSockets =
       options.allowNetwork && platform() === "darwin"
         ? withUnixSocketRules(srtWrapped, [
             ...options.allowedPaths,
             ...(options.scratchDir ? [options.scratchDir] : []),
           ])
         : srtWrapped;
+    // SEC-23b: srt's allowlist names the keychain's services itself.
+    const wrapped = platform() === "darwin" ? withKeychainRules(withSockets) : withSockets;
     // `exec` again at the outer level: the spawned pid is the command itself.
     return { file: shell, argv: [flag, `exec ${wrapped}`] };
   });
@@ -289,6 +292,44 @@ export function withUnixSocketRules(wrapped: string, roots: string[]): string {
   const rules = unixSocketRules(roots).replace(/'/g, "'\\''");
   const end = at + SRT_OPEN_NETWORK.length;
   return `${wrapped.slice(0, end)}${rules}\n${wrapped.slice(end)}`;
+}
+
+/** Where srt's command hands its profile to Seatbelt (SRT_VERSION): a single-quoted shell word follows. */
+const SRT_PROFILE_START = "/usr/bin/sandbox-exec -p '";
+
+/**
+ * srt's macOS profile allows `mach-lookup` of `com.apple.SecurityServer` and
+ * `com.apple.securityd.xpc`, the keychain's own services, with no setting to
+ * remove them, so a sandboxed `security find-generic-password -w` read
+ * Sekhemet's items (W2b finding, SEC-23b). The native engine's keychain rules
+ * (`keychainRules`) are placed last in the profile, where they win over every
+ * allow before them. The profile is a single-quoted shell word; a quote
+ * inside it is written `'"'"'` by srt (and `'\''` by `withUnixSocketRules`),
+ * so the word ends at the first quote that begins neither. When srt's command
+ * has no such profile the command is refused rather than run without them.
+ */
+export function withKeychainRules(wrapped: string): string {
+  const start = wrapped.indexOf(SRT_PROFILE_START);
+  if (start < 0) {
+    throw new Error(
+      `srt ${SRT_VERSION}'s command did not hand Seatbelt a profile, so the keychain rules could not be added`,
+    );
+  }
+  let at = start + SRT_PROFILE_START.length;
+  for (;;) {
+    const q = wrapped.indexOf("'", at);
+    if (q < 0) {
+      throw new Error(
+        `srt ${SRT_VERSION}'s profile did not end, so the keychain rules could not be added`,
+      );
+    }
+    if (wrapped.startsWith(`'"'"'`, q)) at = q + 5;
+    else if (wrapped.startsWith(`'\\''`, q)) at = q + 4;
+    else {
+      const rules = keychainRules().replace(/'/g, `'"'"'`);
+      return `${wrapped.slice(0, q)}\n${rules}\n${wrapped.slice(q)}`;
+    }
+  }
 }
 
 /** Linux only: remove the mount points bubblewrap left for absent deny paths. */

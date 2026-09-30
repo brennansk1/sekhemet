@@ -182,3 +182,44 @@ describe("teams item 19: the Agent's state on a board card's tile", () => {
     expect(tileAiState([{ who: "seshat", state: "working" }])).toBeUndefined();
   });
 });
+
+/**
+ * Planner-pm PM-N10-2 (RG-S5-2), fix round F3: a long comment to Seshat is
+ * committed as a project document on the integration branch, and when a
+ * checkout is on that branch the comment route returns how it catches up.
+ * The issue page says so, as the composer does, and keeps the notice on
+ * screen until it is closed: it carries a command to run.
+ */
+describe("PM-N10-2: what posting a comment says", () => {
+  it("names the AI teammates it reached, then the checkout notice, kept until closed", async () => {
+    const { commentPostedToasts, COMMENT_COPY } = await import("../src/teammates.js");
+    const notice =
+      "Your checkout /w/app is on main, which moved to 0123456789; to bring its files up to date (unsaved edits kept): `git -C /w/app read-tree -m -u abc main`";
+    const toasts = commentPostedToasts({
+      ai: [{ who: "seshat", state: "queued", standing: "1st in queue" }],
+      notice,
+    });
+    expect(toasts).toHaveLength(2);
+    expect(toasts[0]).toMatchObject({ text: COMMENT_COPY.posted, tone: "info" });
+    expect(toasts[0]?.detail).toMatch(/^Seshat: /);
+    expect(toasts[1]).toEqual({
+      text: COMMENT_COPY.documented,
+      detail: notice,
+      tone: "info",
+      sticky: true,
+    });
+  });
+
+  it("says only that the comment was posted when nothing else happened", async () => {
+    const { commentPostedToasts, COMMENT_COPY } = await import("../src/teammates.js");
+    expect(commentPostedToasts({})).toEqual([{ text: COMMENT_COPY.posted, tone: "info" }]);
+    expect(commentPostedToasts(undefined)).toEqual([{ text: COMMENT_COPY.posted, tone: "info" }]);
+  });
+
+  it("is what the issue page shows after a comment", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const page = readFileSync(join(import.meta.dirname, "..", "web", "activity.js"), "utf8");
+    expect(page).toMatch(/for \(const t of commentPostedToasts\(res\.data\)\) toast\(t\);/);
+  });
+});

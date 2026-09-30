@@ -54,6 +54,9 @@ export async function sampleExpected(
       ].join("\n\n"),
       toolArm: adapter.supportedArms[0] ?? "arm_a_flat",
       temperature: 0,
+      // The Planning model's, whichever queue its weights serve first (measurement rule 4a).
+      role: "planner",
+      task: "oracle_sample",
     });
     const parsed = extractJsonObject(res.text) as { expected?: unknown } | undefined;
     if (!parsed || !("expected" in parsed)) return undefined;

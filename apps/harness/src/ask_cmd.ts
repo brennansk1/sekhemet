@@ -25,6 +25,8 @@ export interface AskDeps {
   pmModel: string;
   acquire: () => Promise<ModelHold>;
   researcher?: Parameters<typeof answerQueued>[0]["researcher"];
+  /** The harness's board: `/ready` and the other moves go through it (kernel K-S4-3). */
+  board: Parameters<typeof answerQueued>[0]["board"];
   say?: (line: string) => void;
   /** How long to wait for a running queue's answer; default 30 minutes. */
   waitMs?: number;
@@ -90,6 +92,7 @@ export async function runAsk(question: string, deps: AskDeps): Promise<0 | 1 | 2
       pmStore: deps.pmStore,
       pmModel: deps.pmModel,
       acquire: deps.acquire,
+      board: deps.board,
       ...(deps.researcher ? { researcher: deps.researcher } : {}),
     });
   } catch (err) {

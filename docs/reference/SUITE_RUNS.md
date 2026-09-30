@@ -6,6 +6,23 @@ The number to watch is not the pass count alone. It is **why the failures failed
 
 ---
 
+## R-tune — nail-mtp, reference against thinking-surgical, on `e53e408`, 2026-09-29/30
+
+The shipped Coding model (DEC-47), with the reference switches against thinking = surgical. Same 30 cards, two rounds each, run in ABBA order (ref, surgical, surgical, ref) so that a drift across the day favours neither arm. Suite 1.0.0 `d70f689d`. The cost measure was named before the run: median tokens per card.
+
+| Arm | Round 1 | Round 2 |
+| --- | --- | --- |
+| ref (thinking off) | 22 | 21 |
+| thinking-surgical | 21 | 22 |
+
+- **Paired over the 55 card-rounds measured in both arms:** ref 43, surgical 43. Two discordant pairs, one each way (`card_onyx_4_vault` in r1, `card_canvas_7_palette` in r2).
+- **Cost:** median tokens per card, ref 27,069 against surgical 31,241 (+15%).
+- **Verdict (PROMPT_STANDARD rule 35.4): not adopted.** There is no difference the suite can resolve, and the change is neither simpler nor cheaper. **nail-mtp ships with thinking off.** The B2.5 baseline's 5-of-60 lead for surgical on Cyber-Tiel does not carry over to nail-mtp.
+- **For comparison:** nail-mtp's reference runs (22 and 21 of 30) are above Cyber-Tiel's B2.5 reference runs (20 and 18). The two are different builds, so this is a comparison with the baseline, not an A/B.
+- The runs took 3.6–4.5 h each, sharing the machine with the workflows' tests.
+
+---
+
 ## Baseline RunProfile (frozen 2026-09-29)
 
 B2.5's baseline, complete: six arms × two rounds on one build, all 30 cards measured in every run. B4 work is compared with it by the paired rule. One trial at non-zero temperature is not a finding.

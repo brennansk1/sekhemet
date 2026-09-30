@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 62 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 63 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,55 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 63 — 2026-09-30 (Fix round 1: the keychain closed to the sandbox, every role's tokens on the ledger, W2b's small items; R-tune and the reuse admission decided; the schedule consolidated)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. One fix-round workflow (three fixers on disjoint files, one review, a fixer), then one lead fix. Stream 1 ran R-tune, the reuse admission and the planner's qualification alongside.
+
+- **F1, the keychain (security, W2b's finding):**
+  - Under both engines, network on or off, `security find-generic-password -w` inside the sandbox could print a canary item. That exposed the Slack webhook, the push token and the SMTP password.
+  - Seatbelt and srt now deny the SecurityServer and keychain mach services, and reads of the keychain files. The review added iCloud Keychain's sharing messenger and the file `SEKHEMET_KEYCHAIN_FILE` names.
+  - `keychain_containment.spec.ts` has 24 tests: a planted canary is unreadable under each engine, network on and off.
+  - **Residual, named in security item 11a and SEC-23b:**
+    - each item's access list still trusts `/usr/bin/security`, so any process of the person's outside the sandbox can read it (a signed helper would close it; a DEC is owed);
+    - a keychain file outside the home under an unmatched name can be copied out.
+- **F2, every role's tokens on the ledger:**
+  - A `model/usage` event (role, model, tokens in and out, the card when there is one) is recorded for Seshat, the Researcher, the reader and the other roles that call a model outside a card's steps.
+  - Card steps are not counted twice.
+  - Insights and the teammates page show each role's use.
+  - The review fixed a window read that stopped at `getEventsByTypes`' 10,000-event default and started at the ledger's beginning.
+  - This makes the capstone's token comparison fair again (W2b had excluded it).
+- **Lead fix after F2:** one closed list of model roles. `one_role_type.spec` failed because F2 put a role list in the kernel.
+  - The kernel now checks only a role code's shape.
+  - The closed list is `MODEL_ROLES` in `@sekhemet/models`, with `seshat` added in `model_usage.ts` (MD-N4-1).
+- **F3, W2b's small items:**
+  - `runSlash` uses the caller's board;
+  - an issue comment committed as a project document says how a checkout on the moved branch catches up;
+  - an MCP `move_card` to Done is refused in two layers, recording only an `mcp/refused` event (EXT-6);
+  - on Linux, the socket tables gain the system bus, the container and VM daemons, the smart-card daemon, the multiplexers' sockets and the password-manager agents. Their Linux runtime is R9's (next entry).
+- **Stream 1, decided:**
+  - **R-tune:** on the frozen 55-card comparison, nail-mtp `ref` and `thinking-surgical` both passed 43, so the thinking policy stays **off** for this Worker (surgical buys nothing here and costs time).
+  - **Reuse admission:** the capability queries from the model found 28% of needs against keywords' 22%, with 2 needs unmeasured. That is not admitted. Finding: the code's admission rule is looser than PROMPT_STANDARD 35.4. Aligning it is in the next fix round.
+  - **Planner:** `qwen3.8-27b-gsq-rco` qualified at 95.3%. Roles on this host: Worker `nail-mtp`, Planner `qwen3.8-27b-gsq-rco`. No Reviewer passes the 30% recall bar yet; R3b and R3c come next.
+- **Linux test host:**
+  - The Lima VM `sekhemet-linux` (Ubuntu 24.04, 4 CPUs, 4 GB, on the USB drive), which is test infrastructure only.
+  - Node 26 (SHA-verified), pnpm 10.30.3, bubblewrap 0.9.0, socat, ripgrep.
+- **Schedule:** FINISH_LINE_PLAN consolidated into seven sprints, C1–C7:
+  - C1 audits;
+  - C2 fixes;
+  - C3 models;
+  - C4 reliability;
+  - C5 docs and journeys;
+  - C6 vibe-gap checks;
+  - C7 release candidate.
+
+  One polished workflow template: fixtures built once, read-only audits in parallel, headless Playwright two at a time, a review per group, and the sweep limited to changed files.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean, vitest 681 files, 5,411 passed, 55 skipped.
+- **Where the cards stop:** fix round 1 is done.
+  - **Next:**
+    - R9, the Linux containment run in the VM;
+    - C1, the audit sprint;
+    - Stream 1: the Reviewer's R3b and R3c.
 
 ### Entry 62 — 2026-09-29 (W2b: long messages to Seshat, the Sekhemet arm, Web-Bench, the vault, W1's follow-ups)
 

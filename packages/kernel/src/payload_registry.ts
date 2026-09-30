@@ -124,6 +124,12 @@ const PROBABILITY = v.pipe(v.number(), v.minValue(0), v.maxValue(1));
 const RESEARCH_PIPELINE = v.picklist(["native", "tool-loop"]);
 const BYTES = v.pipe(v.number(), v.integer(), v.minValue(0));
 const QUEUES = v.array(ID);
+/**
+ * Whose request a `model/usage` is (measurement rule 4a). The closed list is
+ * the models package's (MD-N4-1, one role type); the kernel, below it in the
+ * dependency order, checks only that it is a role code.
+ */
+const USAGE_ROLE = v.pipe(v.string(), v.regex(/^[a-z][a-z0-9_]*$/, "a role code"));
 const SWAP_BASE = { model: s(ID), roles: s(QUEUES) };
 const ENGINE = v.picklist(["llama.cpp", "ollama", "mlx"]);
 /** A git commit: SHA-1, abbreviated or full, or a SHA-256 repository's 64 hex. */
@@ -271,6 +277,20 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
   // models MD-N14-2: the first reply after a recorded load; its true first
   // token when it streamed, else only the reply's time (live-test F14).
   "model/first_token": { ...SWAP_BASE, firstTokenMs: s(MS, true), replyMs: s(MS, true) },
+  // measurement rule 4a (fix round F2): one model request's usage outside a
+  // card's step (a step's own is on `card/step`): whose request it was, what
+  // it was for, the model and the counts. Never the prompt or the reply.
+  "model/usage": {
+    role: s(USAGE_ROLE),
+    purpose: s(SLUG),
+    model: s(ID),
+    promptTokens: s(COUNT),
+    cachedPromptTokens: s(COUNT, true),
+    completionTokens: s(COUNT),
+    thinkingTokens: s(COUNT),
+    answerTokens: s(COUNT),
+    durationMs: s(MS),
+  },
   // models MD-N14-5: a load past its bound, with its likely causes and fixes.
   "model/slow_load": {
     ...SWAP_BASE,
@@ -915,6 +935,14 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     ),
     // DEC-31, dashboard DB-N7-2: Preferences → Estimation, the project's.
     estimation: s(v.picklist(["off", "points"]), true),
+  },
+  // extensibility EXT-6, EXT-7 (fix round F3 review): an MCP client's move
+  // the server refused, by actor `mcp`: the tool and the column asked for (a
+  // board column, else `other`); the card when it exists. Never the client's
+  // reason text.
+  "mcp/refused": {
+    tool: s(v.picklist(["sekhemet_move_card"])),
+    to: s(v.picklist([...(CARD_STATUSES as readonly string[]), "other"])),
   },
   // teams TEAM-4, integrations INT-22: a refused request, by the person's principal.
   "access/refused": {

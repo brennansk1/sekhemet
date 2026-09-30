@@ -437,9 +437,11 @@ export function accessibility(armId, runNo, showcase = SHOWCASE) {
 
 /**
  * Wall-clock, hands-on minutes and tokens, from the run's log. When a
- * `usage` event says some of the arm's models are not counted (`notCounted`:
- * the Sekhemet arm's ledger holds the Coding model's tokens only), the count
- * is kept but marked with that reason, and no page compares it across arms.
+ * `usage` event says some of the arm's models are not counted (`notCounted`),
+ * the count is kept but marked with that reason, and no page compares it
+ * across arms. The Sekhemet arm's usage counts every role from the product's
+ * ledger (measurement rule 4a) and names each role's share (`byRole`), which
+ * is totalled over the run as `tokensByRole`.
  */
 export function effort(log) {
   const start = log.find((e) => e.kind === "start");
@@ -462,7 +464,23 @@ export function effort(log) {
       .filter((e) => e.kind === "reply")
       .reduce((n, e) => n + (e.unparsedCount ?? 0), 0),
     tokensNotCounted: tokensNotCounted(usage),
+    tokensByRole: tokensByRole(usage),
   };
+}
+
+/** Each role's tokens over a run's `usage` events that name them, or null when none does. */
+export function tokensByRole(usage) {
+  const named = usage.filter((u) => u.byRole && typeof u.byRole === "object");
+  if (!named.length) return null;
+  const out = {};
+  for (const u of named) {
+    for (const [role, t] of Object.entries(u.byRole)) {
+      out[role] ??= { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, requests: 0 };
+      const r = out[role];
+      for (const k of Object.keys(r)) r[k] += typeof t?.[k] === "number" ? t[k] : 0;
+    }
+  }
+  return out;
 }
 
 /** Why a run's token count leaves some of its models out, or null when it counts them all. */

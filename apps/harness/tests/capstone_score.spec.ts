@@ -308,6 +308,48 @@ describe("the scorer's parts", () => {
       costUsd: 0.75,
       unparsedFiles: 2,
       tokensNotCounted: null,
+      tokensByRole: null,
+    });
+  });
+
+  // Measurement rule 4a: the Sekhemet arm's usage names every role's tokens
+  // from the product's ledger; the scorer totals them by role over the run.
+  it("totals every role's tokens over a run's phases", () => {
+    const role = (i: number, o: number, c = 0, requests = 1) => ({
+      inputTokens: i,
+      outputTokens: o,
+      cacheReadTokens: c,
+      requests,
+    });
+    const log = [
+      { at: "2026-10-01T10:00:00.000Z", kind: "start" },
+      {
+        at: "2026-10-01T10:07:00.000Z",
+        kind: "usage",
+        phase: "release-1",
+        inputTokens: 1900,
+        outputTokens: 330,
+        byRole: { worker: role(900, 130, 500, 2), seshat: role(1000, 200, 0, 3) },
+      },
+      {
+        at: "2026-10-01T10:08:00.000Z",
+        kind: "usage",
+        phase: "change-request",
+        inputTokens: 700,
+        outputTokens: 90,
+        byRole: { seshat: role(400, 50), reviewer: role(300, 40, 100) },
+      },
+      { at: "2026-10-01T11:30:00.000Z", kind: "end" },
+    ];
+    expect(score.effort(log)).toMatchObject({
+      inputTokens: 2600,
+      outputTokens: 420,
+      tokensNotCounted: null,
+      tokensByRole: {
+        worker: role(900, 130, 500, 2),
+        seshat: role(1400, 250, 0, 4),
+        reviewer: role(300, 40, 100),
+      },
     });
   });
 

@@ -83,6 +83,9 @@ export async function capabilityQueries(
       temperature: 0,
       maxTokens: 200,
       purpose: "planning",
+      // The Planning model's, whichever queue its weights serve first (measurement rule 4a).
+      role: "planner",
+      task: "reuse_queries",
     });
     const queries = queriesFromReply(res.text);
     return queries.length ? { queries, origin: "planning-model" } : keywords();

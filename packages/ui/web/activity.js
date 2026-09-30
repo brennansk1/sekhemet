@@ -7,7 +7,7 @@ import { aiBadge, esc, getJSON, icon, postJSON } from "./dom.js";
 import { refreshDecisions } from "./inbox.js";
 import { INBOX_COPY, mentionInviteLine } from "./lib/inbox.js";
 import { ISSUE_COPY, activityItems, agentPanel } from "./lib/issue.js";
-import { COMMENT_COPY, aiStateLine, teammatePicker } from "./lib/teammates.js";
+import { COMMENT_COPY, commentPostedToasts, teammatePicker } from "./lib/teammates.js";
 import { openPicker } from "./picker.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
@@ -257,13 +257,9 @@ export function renderActivity(host, ctx) {
       return;
     }
     area.value = "";
-    // TEAM-15: what the harness did with an AI teammate's mention, at once.
-    const said = (res.data?.ai ?? []).map((a) => COMMENT_COPY.reached(aiStateLine(a)));
-    toast({
-      text: COMMENT_COPY.posted,
-      ...(said.length ? { detail: said.join("\n") } : {}),
-      tone: "info",
-    });
+    // TEAM-15: what the harness did with an AI teammate's mention, at once;
+    // PM-N10-2: a long comment's document moved a checkout's branch, and how it catches up.
+    for (const t of commentPostedToasts(res.data)) toast(t);
     ctx.reloadDetail?.();
     await loadMessages();
   };

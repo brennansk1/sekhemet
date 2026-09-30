@@ -429,6 +429,10 @@ describe("PM-N10: long messages to Seshat", () => {
     const text = `@Seshat here is the brief the bakery sent.\n\n${TWENTY_K}`;
     const sent = await post(`/api/cards/${card.id}/comments`, { text });
     expect(sent.status).toBe(200);
+    // The checkout is on main, which the document's commit moved: the route
+    // says how it catches up, and the issue page shows it (commentPostedToasts).
+    const { notice } = (await sent.json()) as { notice?: string };
+    expect(notice).toMatch(/is on main, which moved to .*read-tree -m -u \S+ main/);
     const asked = (await thread()).filter((m) => m.role === "user").at(-1) as Msg;
     // Every character reaches Seshat, and the long comment is committed like any long message.
     expect(asked.text).toBe(text.trim());

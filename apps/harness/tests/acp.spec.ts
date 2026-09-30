@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import type { InferenceRequest, LocalInferenceAdapter } from "@sekhemet/models";
 import { describe, expect, it } from "vitest";
@@ -29,6 +30,7 @@ function setup() {
     pmStore,
     pmModel: "pm",
     acquire: async () => ({ role: "chat", adapter: model, release: () => {} }),
+    board: new BoardServiceImpl(cardStore, { entryConditions: true }),
     send: (m) => sent.push(m as Record<string, unknown>),
   });
   return { agent, sent, cardStore };

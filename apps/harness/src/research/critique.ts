@@ -134,6 +134,7 @@ export async function critiquePass(
     .join("\n");
   for (let i = 0; i < opts.candidates; i++) {
     const res = await model.generate({
+      role: "researcher",
       systemPrompt: researchCopy.critiqueSystem,
       prompt: researchCopy.critique({
         question,

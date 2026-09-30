@@ -1201,6 +1201,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       pmStore: new PmStore(log),
       pmModel: DEFAULT_PM_MODEL,
       acquire: pmModelFor(DEFAULT_PM_MODEL, modelRegistry(), log),
+      board: boardService,
     });
     return;
   }
@@ -1271,6 +1272,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       pmStore: new PmStore(log),
       pmModel: DEFAULT_PM_MODEL,
       acquire: pmModelFor(DEFAULT_PM_MODEL, modelRegistry(), log),
+      board: boardService,
       ...(acpResearcher
         ? {
             researcher: (q: string, o?: { deep?: boolean }) =>
@@ -2596,6 +2598,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
           toolArm: "arm_a_flat",
           temperature: 0.2,
           maxTokens: 300,
+          role: "seshat",
+          task: "worker_question",
         });
         // Synchronous: `prior` was resident beside the manager, so this loads nothing.
         if (prior) await router.use(prior);
@@ -2670,6 +2674,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         pmStore,
         pmModel,
         acquire: () => router.submitHold(seshatQueue),
+        board: boardService,
         // Smart Swap (models rule 20f): the full answer's predicted wait, and
         // whether it would break the Worker's floor mid-card (C5).
         predictWait: () => seshatWait(router, seshatQueue, { homeBacklog: step !== undefined }),

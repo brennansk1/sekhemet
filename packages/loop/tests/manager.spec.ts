@@ -129,4 +129,11 @@ describe("@sekhemet/loop manager repair planning", () => {
     await planRepair(adapter, { card, stopReason: "no_progress", failures: [], files: [] });
     expect(seen[0]?.prompt).not.toMatch(/research/i);
   });
+
+  // Measurement rule 4a: the re-plan's usage is recorded under its own purpose.
+  it("names the request a re-plan, the Planning model's", async () => {
+    const { adapter, seen } = recordingManager("1. Fix the brace.");
+    await planRepair(adapter, { card, stopReason: "budget_exhausted", failures: [], files: [] });
+    expect(seen[0]).toMatchObject({ role: "planner", task: "replan" });
+  });
 });

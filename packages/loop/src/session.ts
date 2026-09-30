@@ -1789,6 +1789,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       // when the Worker's weights leave and re-prefilled on return until the
       // slot-restore equivalence check passes (MD-N14-36).
       session: { owner: this.cardId, kind: "live_card" },
+      // Measurement rule 4a: this step's usage is on the ledger as its
+      // `card/step`, never again as `model/usage`.
+      recordedAsCardStep: true,
       // RUN-35: the card's slot lease is its server slot.
       ...(this.options.serverSlot !== undefined ? { slot: this.options.serverSlot } : {}),
       // M2: tokens stream to the dashboard's step view as they are decoded.

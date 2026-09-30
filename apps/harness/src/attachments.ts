@@ -161,6 +161,8 @@ export async function describeAttachments(
       toolArm: "arm_b_json",
       temperature: 0,
       maxTokens: 900,
+      // Measurement rule 4a: counted as the vision model describing an image.
+      task: "describe_image",
     });
     const d = parse(res.text);
     await store.recordDossierEntry({

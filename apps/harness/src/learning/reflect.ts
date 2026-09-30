@@ -264,6 +264,9 @@ export async function reflectWithManager(
     toolArm: "arm_b_json",
     temperature: 0.2,
     maxTokens: 900,
+    // Seshat's work, whichever queue its weights serve first (measurement rule 4a).
+    role: "seshat",
+    task: "reflect",
   });
   let parsed: { rules?: { case?: number; text?: string; reach?: string }[] } = {};
   try {
@@ -330,6 +333,8 @@ export async function consolidateWithManager(
       toolArm: "arm_b_json",
       temperature: 0.1,
       maxTokens: 900,
+      role: "seshat",
+      task: "consolidate_rules",
     });
     let decisions: { pair?: number; op?: string; merged?: string }[] = [];
     try {
@@ -392,6 +397,8 @@ export async function consolidateWithManager(
       toolArm: "arm_b_json",
       temperature: 0.1,
       maxTokens: 200,
+      role: "seshat",
+      task: "consolidate_preferences",
     });
     try {
       const json = /\{[\s\S]*\}/.exec(res.text.replace(/<think>[\s\S]*?<\/think>/g, ""))?.[0];

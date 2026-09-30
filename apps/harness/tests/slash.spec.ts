@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import type { InferenceRequest, LocalInferenceAdapter } from "@sekhemet/models";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -14,6 +15,7 @@ describe("slash commands in Seshat's chat (H16)", () => {
   let cards: CardStore;
   let pm: PmStore;
   let log: EventLog;
+  let board: BoardServiceImpl;
   let loads: number;
   let prompts: string[];
   const repo = mkdtempSync(join(tmpdir(), "slash-"));
@@ -35,6 +37,7 @@ describe("slash commands in Seshat's chat (H16)", () => {
       cardStore: cards,
       pmStore: pm,
       pmModel: "pm",
+      board,
       acquire: async () => {
         loads++;
         return { role: "chat", adapter: model, release: () => {} };
@@ -48,6 +51,7 @@ describe("slash commands in Seshat's chat (H16)", () => {
     initSchema(db);
     log = new EventLog(db);
     cards = new CardStore(db, log);
+    board = new BoardServiceImpl(cards, { entryConditions: true });
     pm = new PmStore(log);
     loads = 0;
     prompts = [];
@@ -156,12 +160,12 @@ describe("slash commands in Seshat's chat (H16)", () => {
     it("/forecast and /capability count only the asker's visible cards", async () => {
       const all = await runSlash(
         { name: "forecast", args: "" },
-        { cardStore: cards, pmStore: pm, repoPath: repo },
+        { cardStore: cards, board, pmStore: pm, repoPath: repo },
       );
       expect(all).toMatchObject({ reply: expect.stringMatching(/^2 open/) });
       const scoped = await runSlash(
         { name: "forecast", args: "" },
-        { cardStore: cards, pmStore: pm, repoPath: repo, audience, asker: ASKER },
+        { cardStore: cards, board, pmStore: pm, repoPath: repo, audience, asker: ASKER },
       );
       expect(scoped).toMatchObject({ reply: expect.stringMatching(/^1 open/) });
     });
@@ -169,13 +173,13 @@ describe("slash commands in Seshat's chat (H16)", () => {
     it("/ready, /park and /backlog cannot resolve a card the asker cannot see", async () => {
       const hidden = await runSlash(
         { name: "ready", args: "secret_widget" },
-        { cardStore: cards, pmStore: pm, repoPath: repo, audience, asker: ASKER },
+        { cardStore: cards, board, pmStore: pm, repoPath: repo, audience, asker: ASKER },
       );
       expect(hidden).toEqual({ reply: 'No issue matches "secret_widget".' });
       expect((await cards.getCard("card_secret_widget"))?.status).toBe("backlog");
       const visible = await runSlash(
         { name: "ready", args: "hasher" },
-        { cardStore: cards, pmStore: pm, repoPath: repo, audience, asker: ASKER },
+        { cardStore: cards, board, pmStore: pm, repoPath: repo, audience, asker: ASKER },
       );
       expect(visible).toEqual({ reply: "Moved card_chron_hasher to Ready." });
     });

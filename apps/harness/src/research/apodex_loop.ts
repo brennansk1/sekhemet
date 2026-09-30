@@ -665,6 +665,7 @@ export async function apodexLoop(
       });
     }
     const res = await model.generate({
+      role: "researcher",
       systemPrompt: opts.system,
       prompt: "",
       messages,
@@ -920,6 +921,7 @@ export async function apodexTeam(
           "Turn budget reached. Write the complete final answer now as plain text, with [N] citations and the References section.",
       });
     const res = await model.generate({
+      role: "researcher",
       systemPrompt: system,
       prompt: "",
       messages,

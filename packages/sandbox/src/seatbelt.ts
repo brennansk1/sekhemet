@@ -1,7 +1,16 @@
 import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { homedir, platform } from "node:os";
-import { dirname, join } from "node:path";
-import { SOCKET_CONNECT_ALLOW, secretReadDenies, sessionSecretDenies } from "./secret_paths.js";
+import { basename, dirname, join } from "node:path";
+import {
+  KEYCHAIN_FILE_SUFFIXES,
+  KEYCHAIN_MACH_SERVICES,
+  KEYCHAIN_SAVE_SUFFIX,
+  SOCKET_CONNECT_ALLOW,
+  SYSTEM_KEYCHAIN_PATHS,
+  keychainFileDenies,
+  secretReadDenies,
+  sessionSecretDenies,
+} from "./secret_paths.js";
 import type { SandboxOptions } from "./types.js";
 
 /**
@@ -174,6 +183,72 @@ export function unixSocketRules(
   ].join("\n");
 }
 
+/** A Seatbelt regex matching `text` in any case (APFS is case-insensitive). */
+function anyCaseRegex(text: string): string {
+  return [...text]
+    .map((c) =>
+      /[a-z]/i.test(c)
+        ? `[${c.toUpperCase()}${c.toLowerCase()}]`
+        : c === "."
+          ? "[.]"
+          : regexQuote(c),
+    )
+    .join("");
+}
+
+/**
+ * The operations a keychain name is denied. Seatbelt ranks a rule that names
+ * an operation above one that names it by wildcard, whatever their order: srt
+ * allows `file-write-unlink file-write-create` in its roots by name, which a
+ * later `(deny file-write* …)` alone did not override (a rename and a create
+ * went through under srt; fix round F1, measured). So both are named.
+ */
+const KEYCHAIN_DENIED_OPS = [
+  "file-read-data",
+  "file-write*",
+  "file-write-create file-write-unlink",
+];
+
+/**
+ * The keychain rules (W2b finding, SEC-23b): no lookup of the services that
+ * hold or hand out keychain secrets, and no read of a keychain file — the
+ * System keychain's directory, any file named like one wherever it lies with
+ * securityd's save file beside it, and the keychain `SEKHEMET_KEYCHAIN_FILE`
+ * names. A keychain name may not be written either (created, renamed, swapped
+ * or unlinked), so a keychain inside a granted root cannot be moved to a name
+ * the rules miss and then read (fix round F1). One text for both engines,
+ * placed last in each profile so no earlier allow (a granted root, the broad
+ * `(allow mach-lookup)`, srt's allowlist) can reopen them: of rules that
+ * name the same operation, the later wins (`KEYCHAIN_DENIED_OPS`).
+ * The user's own keychains are denied already by the home table
+ * (`~/Library/Keychains`).
+ */
+
+export function keychainRules(env: NodeJS.ProcessEnv = process.env): string {
+  const save = `(${anyCaseRegex(KEYCHAIN_SAVE_SUFFIX)}[^/]*)?$`;
+  // A file not yet made is named by its directory's real path, as Seatbelt sees it.
+  const own = keychainFileDenies(env).map((p) =>
+    existsSync(p) ? realPath(p) : join(realPath(dirname(p)), basename(p)),
+  );
+  return [
+    ";; SEC-23b: no keychain service, no keychain file (W2b).",
+    ...KEYCHAIN_MACH_SERVICES.map(
+      (s) =>
+        `(deny mach-lookup (${s.prefix ? "global-name-prefix" : "global-name"} "${quote(s.name)}"))`,
+    ),
+    ...SYSTEM_KEYCHAIN_PATHS.map((e) => `(deny file-read-data (subpath "${quote(e.path)}"))`),
+    ...KEYCHAIN_FILE_SUFFIXES.flatMap((suffix) =>
+      KEYCHAIN_DENIED_OPS.map((op) => `(deny ${op} (regex #"${anyCaseRegex(suffix)}${save}"))`),
+    ),
+    ...own.flatMap((p) =>
+      KEYCHAIN_DENIED_OPS.flatMap((op) => [
+        `(deny ${op} (literal "${quote(p)}"))`,
+        `(deny ${op} (regex #"^${regexQuote(p)}${anyCaseRegex(KEYCHAIN_SAVE_SUFFIX)}[^/]*$"))`,
+      ]),
+    ),
+  ].join("\n");
+}
+
 /**
  * Generate a macOS Seatbelt profile confining a subprocess to `allowedPaths`.
  *
@@ -285,5 +360,8 @@ ${protectRules}
 
 ;; Network egress.
 ${networkRule}
-${portRules ? `\n;; L23: the card's own loopback ports.\n${portRules}\n` : ""}${options.browser ? BROWSER_RULES : ""}`;
+${portRules ? `\n;; L23: the card's own loopback ports.\n${portRules}\n` : ""}${options.browser ? BROWSER_RULES : ""}
+
+${keychainRules()}
+`;
 }
