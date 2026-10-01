@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 65 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 66 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,56 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 66 — 2026-10-01 (C1: the audit sprint. Spec truth, completeness, UI/UX, design completeness, AI slop and release readiness, in one findings register and one design-gap register)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. One workflow (27 agents, 5.88M tokens, none failed):
+- a shared fixture (a seeded timesheets project, Solo and a five-person Team, with no model loaded);
+- three spec-truth writers;
+- six static audits, two of them AI-slop audits;
+- seven browser audits, two at a time;
+- five design-completeness lenses: parity with other coding harnesses, the team process, robustness, release readiness, journeys;
+- two synthesis agents, an independent review, a fixer and the gate.
+
+- **`docs/reference/FINDINGS_C1.md`:** 245 findings.
+  - By severity: 5 at severity 4, 91 at 3, 128 at 2, 21 at 1.
+  - By first fix route: 154 to C2, 12 to C3, 16 to C4, 17 to C5.
+  - It contains a 46-row rename table, a 20-item K3 list with side-by-side mockup screenshots (`docs/reference/findings_c1/`, 2.1 MB), and what passed:
+    - colours only from tokens;
+    - all 135 client URLs exist on the server;
+    - 52 CLI smoke runs, none crashed;
+    - 158 of 159 disabled controls name the level they need;
+    - no filler copy and no empty catch blocks.
+- **The severity-4 findings:**
+  - BRD-01: on a phone the board shows only On hold;
+  - CLI-01: the CLI cannot accept an issue that has AI review findings;
+  - INS-01: the Team image cannot run as written;
+  - REL-01: backups live inside the repository;
+  - TST-01: 404 of 537 built criteria have only unit tests.
+- **`docs/reference/DESIGN_GAPS_C1.md`:** 54 gaps.
+  - (a) 9 already planned;
+  - (b) 25 within scope, drafted as spec changes with 85 EARS criteria;
+  - (c) 15 needing the owner's yes;
+  - (d) release blockers.
+
+  Its answer to "is this ready for strangers": not yet. A stranger cannot get it running, work is not safe from ordinary accidents (`git clean`, sleep, a full disk), the team cadence is incomplete, and publication is not ready.
+- **Spec truth:** every §4 row re-marked against the code, in 16 specs and SPINE. teams.md is narrowed to one project per server in v1.
+- **Review:** 1 blocker and 7 majors, all fixed.
+  - The blocker: the registers were not indexed, so `docs.spec.ts` failed.
+  - Two raises the code did not support were withdrawn (kernel's INVEST Small row, and `start_project` by conversation against SPINE).
+  - teams.md was narrowed.
+  - The fixture's own TS-keys finding (BRD-03) was noted as a fixture artifact.
+  - The R-03 rename's conflict with DEC-31, and b12's Accept fallback, are decided in DEC-52 and DEC-53.
+- **Alongside, outside the repository** (private reports for the owner):
+  - the zero-spend branding and go-to-market report;
+  - the ecosystem report on working with the tools teams use. Four of its v1 defects were verified by the lead: other agents' config not flagged in Review, the Jira CSV's `Epic Link` and all-Story types, and Ollama `:cloud` tags not refused.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1589 files), vitest 682 files, 5,435 passed, 54 skipped.
+- **Where the cards stop:**
+  - C1 is done.
+  - The owner delegated every pending decision (2026-10-01); DEC-51 to DEC-56 record them.
+  - D1, the design update applying (b) and the decisions to the specs, is running.
+  - FINISH_LINE_PLAN gains "The path to 1.0, revised after C1": D1, then C2a to C2d, C3, C4, C5, C6 and C7, with the milestones' remaining needs.
+  - **Next:** D1's commit, then C2a.
 
 ### Entry 65 — 2026-09-30 (R9-L3: B1's runner runs Linux itself and reads SEC-43 across the platforms; B1 is FAIL, for three named reasons)
 

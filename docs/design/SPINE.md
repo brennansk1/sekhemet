@@ -108,14 +108,14 @@ The claims table is the positioning's honesty check: nothing in the README or th
 
 | Claim | State | Carried by |
 | --- | --- | --- |
-| Runs on your machine or your team's server | Machine (Solo): built. Team setup — accounts, access levels, working together: not built (v1 scope) | [runtime](specs/runtime.md), [teams](specs/teams.md) |
+| Runs on your machine or your team's server | Machine (Solo): built. Team setup: partial — accounts and sign-in (passwords, passkeys, OIDC), four access levels, the per-project Accept rule and fair turns on the model are built, and the B4.10 milestone passed on a real server with five people (2026-09-28); working together (Inbox, review threads, presence, the audit view) is partial and the B4.11 milestone has not run; a Team server needs a TLS-terminating proxy, having no TLS of its own | [runtime](specs/runtime.md), [teams](specs/teams.md) |
 | Takes a project through the whole process | Built end to end, with gaps in the Worker's method and planning quality | [planner-pm](specs/planner-pm.md), [worker-loop](specs/worker-loop.md) |
-| Fits existing project-management practice | Partial: exports only; the board does not yet use the card anatomy teams know | [dashboard](specs/dashboard.md), [integrations](specs/integrations.md) |
-| Teaches the practice to beginners | Not built | [dashboard](specs/dashboard.md) |
-| Non-developers talk to the PM | Partial: status by conversation; starting a project is not built | [planner-pm](specs/planner-pm.md), [design-stage](specs/design-stage.md) |
-| Choose each role's model | Built | [models](specs/models.md) |
-| A benchmark to test your choice | Built: the frozen suite and bake-off; the planning measure is not | [measurement](specs/measurement.md) |
-| Worker code stays in its sandbox | Partial: git metadata and the dependency link closed; egress, the gates' own processes and fail-closed confinement are open | [security](specs/security.md) |
+| Fits existing project-management practice | Partial: GitHub issues, pull requests and the Projects board sync both ways (built, B4.9); Jira and Linear by export and import only (v1 by design); the board's professional columns are built, while the tile anatomy and the issue page are partial | [dashboard](specs/dashboard.md), [integrations](specs/integrations.md) |
+| Teaches the practice to beginners | Partial: the Learn layer (*Tips*) has a lesson for every column, pipeline stage, check family and Insights number; the first-run role question and its default route are partial (B4.7) | [dashboard](specs/dashboard.md) |
+| Non-developers talk to the PM | Partial: status by conversation is built; starting a project — the page's *Start a new project* (B4.7) and Seshat's `start_project` — is partial, and the B4.4 milestone (a non-developer starts a project by conversation) has not run | [planner-pm](specs/planner-pm.md), [design-stage](specs/design-stage.md) |
+| Choose each role's model | Built for choosing; partial for a new user: weights are not yet fetched and hash-verified for every role, and only the Worker must qualify before it runs | [models](specs/models.md) |
+| A benchmark to test your choice | Partial: the frozen suite is built; the bake-off under the real harness and the planning measure are partial (the planning measure waits on confirmed golden briefs; the B2.5 milestone has not run) | [measurement](specs/measurement.md) |
+| Worker code stays in its sandbox | Partial: fail-closed confinement, one confined path for the Worker and the gates, one egress policy, git hardening and the secret masks are built, and the containment suite passes on macOS under both engines; the B1 milestone fails (2026-09-30) for three named reasons: on Linux a card has no route to the egress proxy or its own ports (DEC-50, four tests, built in C2), the native engine's abstract-socket residual, and a live-Worker injection pass that is stale since the sandbox changed | [security](specs/security.md) |
 | Cloud models | After v1 | [DEC-03](DECISIONS.md#dec-03) |
 
 **Never claim** parity with frontier models on ambiguous work, guaranteed correct code, a benchmark number that was not measured on the recorded suite, or a compliance certification that does not exist.
@@ -142,7 +142,7 @@ One row per spec, from its front matter; `docs.spec.ts` fails the build when the
 | [integrations](specs/integrations.md) | `partial` | P9, S3c + 4 new |
 | [extensibility](specs/extensibility.md) | `partial` | S9, S4 + 5 new |
 | [runtime](specs/runtime.md) | `partial` | T5, P9, S3c + 10 new |
-| [teams](specs/teams.md) | `not-built` | 11 new |
+| [teams](specs/teams.md) | `partial` | 11 new |
 <!-- status-table:end -->
 
 ## Voice
