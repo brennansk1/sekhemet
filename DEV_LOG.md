@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 66 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 67 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,67 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 67 — 2026-10-01 (D1: the design update after C1. Every pending decision taken (DEC-51 to DEC-56), 47 changes written into the specs, and the path to 1.0 revised)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. The owner delegated every pending decision ("you have my permission to make all my pending decisions", 2026-10-01). The lead wrote DEC-51 to DEC-56 and the plan revision. One workflow (7 agents, 1.62M tokens) applied the design: four spec writers on disjoint files, an independent review, a fixer and the gate. Then the lead added the coverage rows, and one narrow independent check of the plan, the DECs and the coverage.
+
+- **The decisions:**
+  - **DEC-51, the K3 list:**
+    - the severity-4 findings confirmed;
+    - daily backups outside the repository by default;
+    - the dashboard-v3 mockups win where they are more complete: the Issue properties rail, Members, Configuration's cards, the brand mark, the Inbox in two panes from 1100 px;
+    - primary buttons in dark ink;
+    - the sprint lifecycle, intake and triage, full-text search (FTS5 in `node:sqlite`, no library), and Reopen and Revert are v1.
+  - **DEC-52, the professional words:** *Assignee* for the person and *Delegate* for the AI teammate, as Linear uses them; *Request changes*, *Activity log*, *Put on hold*, *Acceptance criteria*, *Files in scope*. CLI aliases are kept, and NAMING is amended.
+  - **DEC-53, DESIGN_GAPS (c):**
+    - **v1:** a browser notification, an opt-in update check, push to the remote after Accept, *Get the inference engine*, maintenance releases, start at login, `--json`;
+    - **v1.x, with the limitation stated:** many projects per server, test services, nested AGENTS.md, signed commits;
+    - **no:** an automatic Accept fallback, which would weaken spine rule 4.
+  - **DEC-54, publication:**
+    - a release-only workflow for provenance (not CI) and the pre-publication pass;
+    - DEV_LOG stays public, and the email is not rewritten;
+    - outside code waits for a contributor agreement, whose text needs legal advice;
+    - the launch rules come from the zero-spend report.
+  - **DEC-55, the ecosystem report:**
+    - four verified v1 defects, fixed in C2c;
+    - the external-agent hand-off in v1.x, on local endpoints, recorded with a named gap;
+    - a v1.x integration order;
+    - a list of what never to integrate.
+  - **DEC-56:** design before build.
+  - **K2** (confirming the capstone's hidden values) stays with the owner: it is a person's check, not a decision.
+- **The specs:** 47 new change ids in 13 specs:
+  - dashboard 15, models 6, runtime 5, surface 4;
+  - extensibility and planner-pm 3 each;
+  - integrations, review-git, security and teams 2 each;
+  - design-stage, kernel and worker-loop 1 each.
+
+  Each has its behaviour item, EARS criteria, a *not built* State row naming its C-workflow and FINDINGS ids, and its contract rows. NAMING.md is amended (DEC-52), and SPINE's claims table states the v1 limitations. The new ids are in COVERAGE.md under "Added by the design update after C1".
+- **Review:** 0 blockers and 5 majors, all fixed:
+  - the sprint lifecycle had no definition in planner-pm;
+  - Network activity had no page in the dashboard;
+  - the `disk_low` stop was missing from worker-loop's table;
+  - the erasure register was in two places;
+  - the operating-system notification deferral was misdescribed.
+
+  The writers' own calls are recorded in each spec's §8 and §9 (for example *Accept into Backlog* for triage, and *Audit log* kept for the Admin page).
+- **The gate first failed**, on `docs.spec.ts`: the 47 ids had no COVERAGE rows. The lead added them (titles from the specs' headings, workflows from their State rows) and corrected the relative links.
+- **FINISH_LINE_PLAN, "The path to 1.0, revised after C1":** D1, then C2a (the core surfaces), C2b (the team process), C2c (CLI, trust and Linux), C2d (entry-point tests), C3 (models), C4 (reliability), C5 (install, docs and journeys), C6 (vibe-gap checks), C7 (the release candidate). It gives Stream 1's order, what each milestone still needs, about 42M tokens (five to six windows), and §G 17 to 19.
+- **Narrow check** (an independent agent on the plan, the DECs and the coverage): 0 blockers and 7 majors, all fixed by the lead.
+  - **Routing:** the plan now follows the specs' State rows. b25 goes to C2a; b10 to C4; b18 and c10 to C5; b11 to C5 only.
+  - **A routing rule:** a finding named in one workflow is that workflow's.
+  - **The orphans got owners:** TST-02 to TST-04 and SPEC-01 to C2d; SPEC-02 to C4; NAM-02 to C2c and NAM-03 to C2a, each split behind tests as it is touched; b17's view to C2c.
+  - **The pre-publication pass moved to C5,** before the 0.9.0 pre-release. No beta users are recruited, so DEC-47 stands.
+  - **DEC-31's table is amended** for DEC-52.
+  - **The external-agent hand-off is redesigned** so that spine rule 2 holds as written: the agent reaches the local model only through Sekhemet's logging proxy, so every prompt is recorded, where the earlier wording allowed a "recorded gap".
+  - NEW-extensibility-8 is v1.x, together with Seshat's MCP tools.
+  - Minors: the rename table has 55 rows, and PRC-06 is now named in C2b.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1589 files), vitest 682 files, 5,435 passed, 54 skipped.
+- **Where the cards stop:**
+  - D1 is done; the specs say what C2 to C7 build.
+  - **Next:**
+    - **C2a** (ask the owner's 5-hour use first);
+    - **Stream 1:** the injection re-run (B1), then R-srt.
 
 ### Entry 66 — 2026-10-01 (C1: the audit sprint. Spec truth, completeness, UI/UX, design completeness, AI slop and release readiness, in one findings register and one design-gap register)
 

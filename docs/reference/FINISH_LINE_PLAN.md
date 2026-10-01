@@ -637,6 +637,69 @@ Two runs follow:
 
 Until one passes RG-P8-13, the Review role ships unfilled (DEC-47).
 
+## The path to 1.0, revised after C1 (2026-10-01, DEC-56)
+
+**Why this revision.** C1 audited the product against the quality bar and against what a professional team expects. It found 245 findings, 5 of them release-blocking, and 54 design gaps (`FINDINGS_C1.md`, `DESIGN_GAPS_C1.md`). Two research reports were also written: the zero-spend branding and go-to-market report, and the ecosystem report on working alongside other tools. Every pending decision is taken (DEC-51 to DEC-55, under the owner's delegation of 2026-10-01). This section replaces the consolidated C2–C7 table further down; the rest of the plan (§A quality bar, §C test strategy, §F release engineering, §G exit criteria) still holds, with the additions at the end of this section.
+
+**Order of work: design first, then build, then prove, then release.**
+
+| Step | What | Inputs | Leaves when | Tokens (est.) |
+| --- | --- | --- | --- | --- |
+| **D1** Design update (running) | DESIGN_GAPS (b): 25 drafted changes, 85 criteria, applied to their specs. The DEC-51 to DEC-55 decisions written into the specs: mockup deviations, the professional words, the (c) items, integration rules. The v1 limitations stated in the SPINE claims table | C1's registers; DEC-51 to DEC-55 | Every change has its id, EARS criteria and a "not built" row naming its C-workflow; review clean; gate green | ~2M |
+| **C2a** The core surfaces | **The UI release blocker and the K3 majors:** BRD-01 (the board on a phone and at 1440 px), REV-01 and REV-02, ISS-01 to ISS-03, STA-01 to STA-03, ERR-01 and ERR-03, SHL-01 to SHL-04, SEC-01 (Viewers' 403 toasts). **DEC-51's mockup work:** the Issue properties rail, the Inbox in two panes, Members' Invites and Access, Configuration's cards, primary buttons in dark ink, the brand mark. **DESIGN_GAPS:** b19, b20, b21, b22, b24 and b25 (the Start page with a live draft). **NAM-03:** the dashboard server's 2,559-line closure split behind tests as its routes are touched (strangler). **The one-pass rename (DEC-52):** the rename table (55 rows, nine of them amended by DEC-52); card → issue, cycle → sprint, no ids or API paths in product text. The remaining BRD, ISS, REV, STA, SHL, ERR, A11Y and VIS findings | FINDINGS_C1 by area; the mockups | K3 items 1, 6–11 and 13–17 closed (item 12 is C2b's); the crawl finds no dead control; axe clean; every changed view has an entry-point test | ~5M |
+| **C2b** The team process | **DESIGN_GAPS:** b6 (the sprint lifecycle: start, complete, carry-over), b4 (Stakeholder intake and triage), b14 (full-text search on FTS5), b13 (the retrospective), b15 (lessons for the practice a person performs), b12 (a member leaving; DEC-53 says no Accept fallback). Reopen and Revert in the dashboard. **DEC-53:** c4 (a browser notification when work waits), c6 (push to the remote after Accept), c8 (maintenance releases). K3 item 12 (PM-01, PM-02: Seshat's raw error, status without a model). PRC-06's *New project* copy on a server that has its project (DEC-53 c3). The remaining PRC, TEAM and PM findings | PRC findings; planner-pm, teams and dashboard specs after D1 | The four audience tasks still pass; every new criterion has an entry-point test | ~5M |
+| **C2c** CLI, trust and Linux | **CLI-01** (the CLI cannot accept an issue with AI review findings; severity 4). DEC-53 c11 (`--json`). The CLI findings. **DEC-55's v1 items:** other agents' config flagged in Review, Ollama `:cloud` refused, the Jira CSV fixed, the MCP gate-run tool described as a pre-check, Check Run annotations in batches of 50, editor snippets. **DEC-50:** Linux relays for the proxy route and named ports. **The fix-round leftovers:** reuse admission to PROMPT_STANDARD 35.4, srt TLS trust, Chromium under the keychain rules. **b17's view:** Network activity in the dashboard and `sekhemet egress` (NEW-dashboard-24, security). **NAM-02:** the CLI's 2,917-line `main` split into a command registry behind tests as commands are touched (T4, strangler). The remaining SEC and CLI findings | The ecosystem report's §5 v1 list; c2_extra_findings | B1's four Linux network tests pass in the VM | ~5M |
+| **C2d** Entry-point tests | **TST-01** (severity 4): 404 of 537 built criteria have only unit tests. Test writers work in parallel by spec, on test files only, each criterion reached through HTTP, the CLI, the UI or the queue. A criterion that cannot pass is a finding for C2a to C2c, not a weaker test. Also: TST-02 (browser entry points and fault injection; DB-1 to DB-12 cited by tests), TST-03 (the unhappy-path matrix, every cell a test or a reasoned n/a), TST-04 (the reachability gate sees dynamic imports), SPEC-01 (one status per criterion across all State rows, every criterion cited by a row and a test) | The C1 entry-point report (`c1/entry-points.json`) | The entry-point report shows no unit-only built criterion (§G 14) | ~5M |
+| **C3** Models | W11 and W18. **DESIGN_GAPS:** b1 (the Team server's engines, one per role), b5 (the first hour: the engine found, both floors stated), b23 (downloads that resume). **DEC-53 c7:** *Get the inference engine* (pinned, hash-verified, on a click). The CFG findings. The Reviewer's admission: R3b and R3c from Stream 1 | Stream 1's admission runs | Every role admitted, or shipped unfilled and saying so (§G 4) | ~4.5M |
+| **C4** Reliability | W8 and W9. **DESIGN_GAPS:** b2 (backups outside the repository, daily by default: REL-01, severity 4), b3 (the machine stays awake while it works), b7 (a full disk is a named stop), b16 (the power-loss window, stated and tested), b10 (two projects on one machine). SPEC-02 (the ledger export writes projections and blobs, or runtime item 37 says it does not). The REL findings | REL findings; runtime and kernel specs after D1 | The fault-injection and soak tests pass; the §A budgets hold | ~5M |
+| **C5** Install, docs and journeys | W3 and W10. **INS-01** (the Team image cannot run as written; severity 4). **DESIGN_GAPS:** b8 (upgrade and uninstall), b11 (doctor's checks, each with its next step), b9 (a Team install with no identity provider), b17 (what leaves the machine, listed and shown; its dashboard view is C2c's), b18 (a health route for the Team server). **DEC-53:** c5 (the update check and *What's new*) and c10 (start at login). **DEC-54 before the beta:** c2's pre-publication pass (gitleaks over the history, `.claude/launch.json` untracked, machine operations out of CLAUDE.md, the drive paths parameterised), and CONTRIBUTING, CODE_OF_CONDUCT, SUPPORT, issue and PR templates. **The marketing report's README redesign:** hero, a five-command quickstart, honest limits, the licence in plain words, *source-available* never *open source*. The user guide, troubleshooting and the INS findings | The marketing report §6; the C1 rename table for docs | A timed clean-machine walk to a first accepted issue on macOS and Ubuntu (§G 8) | ~5M |
+| **C6** Vibe-gap checks | W17 and R3b's Reviewer prompt (unchanged) | C.10 | C-10 to C-18 pass; R16 recorded | ~4M |
+| **C7** Release candidate | W12, W13 and W15. **DEC-54 c1:** the release-only workflow (npm provenance, SBOM, SHA256SUMS, image). The pre-publication pass re-checked on the release commit (§G 18). **The marketing report's claims audit:** every README and post sentence tied to a file | §F; §G | §G holds on one RC | ~3.5M |
+
+**Routing rule.** A finding or change named in one workflow belongs to that workflow. "The remaining … findings" means the ones no workflow names. The specs' State rows and COVERAGE.md name the same workflow as this table.
+
+**Stream 1 (local models, beside the builds; the owner's K2 checks gate the capstone):**
+1. **Now:** the injection fixtures re-run on the current tree (B1's stale check), the Worker loaded with DEC-42's checks first.
+2. **R-srt:** the containment suite under srt on macOS and in the VM, then a frozen-suite run. If it passes, srt becomes the default (DEC-39), which closes item 15's residual for B1.
+3. R3b and R3c (Reviewer admission), Seshat's prompt A/B, and the planning measure (it needs the golden-brief labels).
+4. The capstone runs and Web-Bench after K2 and C2a. Demo assets are recorded during the Sekhemet arm (marketing report §6.4).
+5. R15 on each RC.
+
+**K2 stays with the owner.** Confirming the hidden suite's expected values and Seshat's conversations is a person's check that the capstone's disclosure depends on ("confirmed by a person"), not a decision. The delegation does not cover it.
+
+**The milestones, with what each still needs:**
+
+| Milestone | Today | Turns PASS when |
+| --- | --- | --- |
+| B1 containment, macOS and Linux | FAIL | C2c's relays pass in the VM; the item 15 residual is closed (srt as the default after R-srt, or the native seccomp refusal); the injection fixtures re-run |
+| B2.5 baseline | NOT RUN (planning measure) | The planning measure is recorded (golden-brief labels) |
+| B3 safe accept, crash and upgrade | PASS | Re-run on the RC |
+| B4.4 starting a project by conversation | NOT RUN | A live-model run after C2a and C3 |
+| B4.10 a team on one server | PASS | Re-run on the RC |
+| B4.11 a team of five, conversation to release | NOT RUN | A live run after C2b, C3 and C5 |
+
+**Time.** About 2M tokens for D1, then about 42M for the nine C-workflows, which is five to six 5-hour windows at the calibrated rate (1% ≈ 83k tokens), with Stream 1 at night. The policy steps then decide the dates:
+- two weeks of dogfooding with no open P0 or P1 before 1.0 (§G 12);
+- the public pre-release 0.9.0 after C5, whose pre-publication pass comes first. Anyone may install it; no outside beta users are recruited, because DEC-47's deferral stands and §G 12 is unchanged;
+- Show HN only at 1.0.0 (DEC-54).
+
+**After 1.0 (v1.x), in order:**
+1. The external-agent hand-off with Sekhemet's checks deciding (DEC-55): Aider and Goose on a local endpoint behind Sekhemet's logging proxy, so every prompt is recorded. Seshat's read-only MCP tools, each pinned by its description (NEW-extensibility-8).
+2. Slack replies to Seshat.
+3. `sekhemet gates --ci` (JUnit and SARIF).
+4. Linear, then Jira, pull-only sync, then the Linear agent app on a Team server.
+5. Platform checks for vibe-coded prototypes (Supabase RLS, Firebase rules).
+6. Sentry as a proposed Bug.
+
+Then DEC-53's v1.x items: many projects per server (c3), test services for gates (c9, after DEC-50), nested AGENTS.md after its A/B (c12) and signed commits (c13).
+
+**Additions to §G (exit criteria):**
+- **17:** every release blocker in DESIGN_GAPS (d) is closed, and no severity-4 finding is open.
+- **18:** DEC-54's pre-publication pass is done on the release commit.
+- **19:** the README and every launch post pass the claims audit, and none says *open source*.
+
+---
+
 **Added 2026-09-29, the sandbox engine (DEC-39's steps 2–4, which this plan had not scheduled):** the shipped confinement engine is meant to be Anthropic's `sandbox-runtime` (srt), which drives Seatbelt on macOS and bubblewrap with seccomp on Linux, and is the engine Claude Code uses. Today `native` (our own) is the default.
 - **R-srt:**
   - the containment suite under `SEKHEMET_SANDBOX_ENGINE=srt` on macOS (a model-free run), then in the Lima VM (with R9);
@@ -648,7 +711,7 @@ Until one passes RG-P8-13, the Review role ships unfilled (DEC-47).
   - the Team image carries them.
 - **Not shipped:** Windows is not supported in v1, and the Lima VM is test infrastructure only.
 
-**Consolidated 2026-09-30 (the lead, under DEC-47; the owner asked for a faster timeline within the 5-hour window):** the remaining workflows become seven. Workflows so far used 1.4–2.9M tokens, about 20–35% of a window, while wall-clock time (builders one at a time, the full suite run twice) was the bottleneck. Three changes:
+**Consolidated 2026-09-30 (superseded for C2–C7 by the revision above, 2026-10-01; the lead, under DEC-47; the owner asked for a faster timeline within the 5-hour window):** the remaining workflows become seven. Workflows so far used 1.4–2.9M tokens, about 20–35% of a window, while wall-clock time (builders one at a time, the full suite run twice) was the bottleneck. Three changes:
 
 1. **Read-only work runs in parallel.** Audits and reviews edit no code.
 2. **Related workflows merge,** at about 4.5–5.5M tokens each, inside one window with margin.

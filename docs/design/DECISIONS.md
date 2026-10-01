@@ -113,7 +113,7 @@ v1 includes: binding to a non-loopback address safely; an identity for each pers
 | `change` feature / fix / refactor, upgrade, characterize / `kind` spike | Story / Bug / Task / Spike (the standard issue types); *Epic* for an epic |
 | gates, gate passed/failed | checks: "All checks passed", "2 checks failed" (GitHub's word) |
 | evidence bundle | the issue's *Checks* and *Activity* tabs |
-| Worker | *Agent* (as an assignee); *Coding model* (as a model role) |
+| Worker | *Agent* (as a delegate, DEC-52); *Coding model* (as a model role) |
 | Planner, Reviewer, Researcher (roles) | *Planning model*, *Review model*, *Research model*; *AI review* for the Reviewer's findings |
 | slice, walking skeleton, must-have proven | release, requirements done ("Release 1 · 5 of 11 requirements done"); *walking skeleton* only in Tips |
 | Kano class must-be / performance / attractive; must-have, nice-to-have (`~`) | Must have / Should have / Could have (MoSCoW); *Later* for what is out of the release |
@@ -168,7 +168,7 @@ What professional boards do not show is left off the card face: the agent's step
 
 ### DEC-36 — the AI is a teammate that proposes; people decide
 **Seshat and the Agent work with people without directing them.** *Owner direction, 2026-09-25 (quoted): "collaborating with the PM but not making it feel like an AI is bossing you around". The rules below are the lead's design under that direction, presented to the owner with the mockups for review, and confirmed by the owner on 2026-09-25 ([DEC-38](#dec-38--the-owner-approves-the-teams-recommendations)).*
-- Every issue has a human owner; the Agent is only ever its delegate (integrations item 6).
+- Every issue has a human assignee (DEC-52; *owner* until 2026-10-01); the Agent is only ever its delegate (integrations item 6).
 - Seshat and the Agent are labelled AI identities with an "AI" badge. They are not members, hold no access level and take no seat. People reach them the way they reach a colleague: delegate an issue to the Agent, or @mention `@Agent` or `@Seshat` in a comment.
 - The harness acknowledges them within seconds, without waiting for a model, and shows one state on the card, the issue and the inbox: *queued*, *working*, *needs you*, *paused*, *done* or *failed*. Stop takes effect at the next step boundary, and nothing resumes until a person re-engages it (DEC-34).
 - The Agent acts with the permissions of the person who started it, never more, and every action records that person.
@@ -537,6 +537,106 @@ Not a chat assistant (the conversation plans and reports; code is written on car
 
   socat is already required for srt on Linux.
 - **Reopen if:** srt's relays cover named ports upstream, making srt the Linux default under DEC-39.
+
+
+### DEC-51 — C1's K3 list, decided
+**The lead decides the twenty K3 items in `docs/reference/FINDINGS_C1.md` under the owner's delegation of 2026-10-01 ("you have my permission to make all my pending decisions").** *Lead, 2026-10-01.*
+- **Severities confirmed as the audit rated them:** BRD-01, CLI-01, INS-01, REL-01 and TST-01 are severity 4; SEC-01, REV-01 and REV-02, ISS-01 to ISS-03, ERR-01 and ERR-03, PM-01 and PM-02, SHL-01 to SHL-04, STA-01 to STA-03, and BRD-02 and BRD-04 are as registered. All go to C2 unless the register routes them elsewhere.
+- **REL-01:** automatic daily backups outside the repository, on by default, with a `[backup]` setting (DESIGN_GAPS b2).
+- **Mockup deviations (item 17):** the approved `dashboard-v3` mockups win where they are more complete than the spec:
+  - the Issue page's properties rail;
+  - Members' Invites and Access parts;
+  - the Start page with a live draft (b25);
+  - the Status grid at wide widths (b24);
+  - Configuration's cards;
+  - the brand mark as drawn in `Logo.dc.html`.
+- **Inbox:** two panes at 1100 px and wider, as Linear's inbox does; one list on a phone. The dashboard spec is amended.
+- **Primary buttons:** dark ink, not gold. Gold stays the brand accent, and the warning amber gets its own hue, so "primary" and "needs attention" no longer look alike (domain17).
+- **v1 scope (item 19), all v1 and built in C2:**
+  - the sprint lifecycle (b6);
+  - Stakeholder intake and triage (b4);
+  - full-text search (b14; SQLite FTS5 in the built-in `node:sqlite`, no library);
+  - Reopen and Revert in the dashboard.
+
+  One project per server stays the v1 rule (DEC-53 c3).
+- **Release items (item 20):** DEC-54.
+- **Reopen if:** the owner.
+
+### DEC-52 — the professional words, NAMING amended
+**Where C1's rename table proposed amending NAMING, the industry's words win.** *Lead, 2026-10-01, under the owner's delegation.* NAMING.md and DEC-31's table are amended in the same change; the code keeps its internal names, and CLI aliases keep old commands working.
+- **The responsible person is the *Assignee*,** as Jira, Linear and GitHub name the field. An AI teammate working an issue is its *Delegate*, Linear's word for the same split; this replaces DEC-31's use of "assignee" for the agent.
+- **Send back → *Request changes*** (GitHub's review verdict); `send-back` stays as a CLI alias.
+- **Ledger, event log and audit trail, on screen → *Activity log*.** Code and docs about internals keep `ledger`.
+- **Park and Unpark → *Put on hold* and *Take off hold*.** The stored state stays `parked`; the column is already *On hold*.
+- **Suspect → *Needs re-checking*; "Passing, strength unmet" → *Tests too weak*; Done when → *Acceptance criteria*; May edit → *Files in scope*.**
+- **Error text uses the board's column names** (In review, To do, Done), not stored state ids.
+- Every rename row that needed no amendment (card → issue, cycle → sprint, harness → Sekhemet, no spec ids or API paths in product text, Appetite → Size limit) is C2's single pass.
+- **Reopen if:** the owner.
+
+### DEC-53 — DESIGN_GAPS (c), decided
+**The fifteen "needs the owner's yes" items in `docs/reference/DESIGN_GAPS_C1.md` are decided by the lead under the owner's delegation of 2026-10-01.** *Lead, 2026-10-01.* The smallest proposal in each row is what is built; its spec change is drafted alongside the (b) changes.
+- **Yes, in v1:**
+  - **c4** a browser notification when work waits in Review (permission asked once);
+  - **c5** an opt-in update check that asks first, plus SECURITY.md's supported versions and a *What's new* note from the bundled CHANGELOG;
+  - **c6** *Push to remote after Accept and on release*, an opt-in project setting, recorded;
+  - **c7** *Get the inference engine*: a pinned llama.cpp release for the platform, hash-verified, downloaded on a person's click as model weights are;
+  - **c8** maintenance releases (an open *Next release* collecting accepted issues outside any slice);
+  - **c10** `sekhemet daemon start --at-login`;
+  - **c11** `--json` on `run`, `status`, `doctor` and `accept`;
+  - **c14** the six parity items stay Later. This DEC records them as out of scope: shared saved views, shell completion, a recurring dependency check, a GitLab merge request on Accept, a timeline, and *Open in editor*.
+- **Yes, as release items:** c1 and c2, in DEC-54.
+- **v1.x, with the limitation stated now:**
+  - **c3** many projects per server (v1: one project per server, as teams.md now says; New project says how to start another server);
+  - **c9** test services for gates. The claims table says a gate needing a database or another service is *unavailable* in v1; this waits on DEC-50's relays;
+  - **c12** nested AGENTS.md and *Rules used*. It is model-facing, so it ships only after its A/B under PROMPT_STANDARD;
+  - **c13** signed commits. INSTALL says branches that require signing are not supported in v1.
+- **No:** **c15**, an automatic Accept fallback when a member leaves. It would let a person the Accept rule never named accept work, which weakens spine rule 4. Accept stays refused, and the lead and Admins are told, until a person edits the rule (b12).
+- **Reopen if:** the owner.
+
+### DEC-54 — publication and contribution
+**The public release follows the professional route: a release-only workflow for provenance, a pre-publication pass, and no outside code until a contributor agreement exists.** *Lead, 2026-10-01, under the owner's delegation.*
+- **c1, provenance:** one GitHub Actions workflow, triggered only by a version tag. It builds, packs, runs `npm publish --provenance`, writes the CycloneDX SBOM and SHA256SUMS, and pushes the image. It is not CI: `pnpm gate` still runs locally and in Lima before the tag (DEC-47 keeps CI deferred).
+- **c2, the pre-publication pass (W15):**
+  - gitleaks over the whole history;
+  - untrack `.claude/launch.json`;
+  - move this machine's operations out of CLAUDE.md into a local file;
+  - parameterise the `/Volumes/My Passport` paths.
+- **What stays public:** DEV_LOG and the internal reviews stay public, as evidence that the product was built in the open; the pre-publication pass removes machine paths. The author email is not rewritten (the owner, 2026-10-01).
+- **Contributions:**
+  - Issues and Discussions are open from the public pre-release 0.9.0. No outside beta users are recruited; DEC-47's deferral stands.
+  - Code contributions open only with a contributor licence agreement that lets the licensor keep FSL's commercial rights. The owner takes legal advice on its text before the first outside pull request.
+  - CONTRIBUTING, CODE_OF_CONDUCT (Contributor Covenant), SUPPORT, and the issue and PR templates ship with 0.9.0, after the pre-publication pass (both in C5).
+- **Launch:** follows the zero-spend report's gates (docs, not code). No public launch before the capstone results and a clean install; Show HN at 1.0.0; the words *source-available* and *Fair Source*, never *open source*. The tagline is "Checks decide. People accept." The pronunciation is *SEK-eh-met*.
+- **Reopen if:** the owner, or legal advice.
+
+### DEC-55 — working alongside other tools (the ecosystem report)
+**The ecosystem report's questions, decided by the lead under the owner's delegation of 2026-10-01.** *Lead, 2026-10-01.*
+- **In v1, fixed in C2** (verified defects):
+  - Review flags a change to other agents' configuration as code that runs later: `.claude/`, `.cursor/`, `.mcp.json`, `.codex/`, `.windsurf/`, `.continue/`, `.github/copilot-instructions.md`, `AGENTS.md`, `CLAUDE.md`, `mise.toml`;
+  - Ollama `:cloud` and `-cloud` model tags are refused (DEC-03);
+  - the Jira CSV export uses `Issue Id` and `Parent`, and maps issue types to Story, Bug, Task and Spike;
+  - the MCP gate-run tool says it is a pre-check, not evidence;
+  - Check Run annotations go in batches of 50;
+  - documented editor snippets for VS Code, Cursor and Zed.
+- **External agents building a card (the gatekeeper play), v1.x:**
+  - Allowed only against a local model endpoint, reached through a logging proxy Sekhemet starts for the attempt. Every request and response is recorded on the ledger as the Worker's are, so spine rule 2 holds as written, with no new exception (the narrow check of D1 rejected a recorded-gap reading). An agent that cannot use the proxy is not supported.
+  - Aider and Goose come first, then Claude Code and Codex pointed at the local endpoint.
+  - An external agent on a cloud model waits for the post-v1 per-role cloud option (DEC-03).
+- **v1.x order:**
+  1. Slack replies to Seshat (Bolt, approved);
+  2. `sekhemet gates --ci`, with JUnit and SARIF output;
+  3. pull-only Linear, then Jira, sync (approved SDKs);
+  4. the Linear agent app, on a Team server with `public_url` only;
+  5. platform checks for prototypes taken over (Supabase RLS, Firebase rules), through the single take-over path;
+  6. Sentry as a proposed Bug card.
+- **Read-only MCP servers for Seshat** need the tool-description pin (hash, re-approval on change) before use, as skills do.
+- **Listings:** the ACP and MCP registries and the editor docs, after 1.0.
+- **Never:** a silent cloud fallback; cloud agents as builders; tunnels by default; AI review services as blocking gates; a tracker moving a card (the report's §6).
+- **Reopen if:** the owner.
+
+### DEC-56 — the release order after C1
+**The path to 1.0 is design first, then the C-sprints rewritten in `FINISH_LINE_PLAN.md`.** *Lead, 2026-10-01.* C1's registers (245 findings, 54 gaps), DEC-51 to DEC-55, the zero-spend report and the ecosystem report are one revision, not three lists. The design update (D1) applies DESIGN_GAPS' 25 drafted changes and the (c) decisions to the specs before any C2 code, so C2 builds against specs that already say what to build.
+- **Reopen if:** the owner.
 
 
 ## Founder decisions on record

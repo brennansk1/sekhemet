@@ -45,7 +45,7 @@ tests:
   - apps/harness/tests/cli_exit.spec.ts
   - apps/harness/tests/terminal_board.spec.ts
   - apps/harness/tests/user_dir.spec.ts
-changes: [P10, S10, T4, T10, NEW-surface-1, NEW-surface-2, NEW-surface-3, NEW-surface-4, NEW-surface-5, NEW-surface-6, NEW-models-3]   # NEW-models-3: the reserve and release commands only (item 20a)
+changes: [P10, S10, T4, T10, NEW-surface-1, NEW-surface-2, NEW-surface-3, NEW-surface-4, NEW-surface-5, NEW-surface-6, NEW-surface-7, NEW-surface-8, NEW-surface-9, NEW-surface-10, NEW-models-3]   # NEW-models-3: the reserve and release commands only (item 20a)
 ---
 
 # Surface: the command line, the first run, configuration, and onboarding a repository
@@ -58,7 +58,7 @@ The surface is what a person meets before the board: one command that sets Sekhe
 
 ### What a person must know on day one
 
-1. Six concepts, and no more: **card** (the unit of work and of review), **accept / send back** (the human decision is the product), **gates** (what "passed" means — seen from day one, derived rather than written), **evidence** (the diff and gate results review reads), **the models** (one line naming the models in use and whether their weights are present), and **the repository** (the working directory).
+1. Six concepts, and no more: **card** (the unit of work and of review), **accept / request changes** (the human decision is the product; *Request changes* is the industry's word for what was *send back*, [DEC-52](../DECISIONS.md#dec-52--the-professional-words-naming-amended), and `send-back` stays a command-line alias), **gates** (what "passed" means — seen from day one, derived rather than written), **evidence** (the diff and gate results review reads), **the models** (one line naming the models in use and whether their weights are present), and **the repository** (the working directory).
 2. Every other command, flag, config key, view and word carries exactly one verdict, stated where it is specified:
    - **Day one** — one of the six.
    - **Default** — the mechanism stays, the decision goes; if the harness can compute a better answer than the person can supply, it does not ask.
@@ -120,14 +120,14 @@ Ready. Opening Configuration to find your models or download these.
 | `sekhemet "<spec>"` | Plan the work and run it — one verb, not `plan` then `queue` |
 | `sekhemet run [card]` | With a card: run it or resume it. Without: run the queue |
 | `sekhemet review` | The oldest card in Review: its gates, its diff size, and the commands that decide it |
-| `sekhemet accept <card>` | Accept. Siblings: `send-back <card> "<reason>"`, `park` / `unpark <card>`, and the reversal verbs [review-git](review-git.md) defines |
+| `sekhemet accept <card>` | Accept. Siblings: `request-changes <card> "<reason>"` (alias `send-back`, DEC-52; [review-git](review-git.md) NEW-review-git-6), `park` / `unpark <card>`, and the reversal verbs [review-git](review-git.md) defines |
 | `sekhemet ask "<question>"` | Ask Seshat from the terminal — for non-developers and people on SSH; the reply prints here (NEW-surface-6). Replaces `board`, which the bare `sekhemet` already opens; `board --terminal` moves under `dev` (O23, approved under DEC-42) |
-| `sekhemet doctor` | Check the install: toolchain, model weights, confinement, configuration |
+| `sekhemet doctor` | Check the install: toolchain, model weights, confinement, configuration, the ledger, disk, backups and locks; end with one verdict and, for each check that is not a pass, its next step (item 20b) |
 | `sekhemet dev <command>` | Everything for developing the harness itself |
 
 14. **Rules for adding.** A new user-facing command displaces one, or it goes under `dev` or into the dashboard's command palette. A flag that silently rewrites other flags (`--profile`) is a default that has not been chosen, not a command (DEC-25 R13): a run's settings are one resolved `RunProfile` — defaults, config layers, then flags — recorded whole in every evidence bundle, and a named settings file (`--settings <file>`) is allowed because it too is recorded, with its hash ([measurement](measurement.md) M9). **Every destructive action the board offers is on the command line with its undo.**
 15. **A spec is a sentence.** A single word that is not a command is refused with a suggestion within edit distance 2 (`reveiw` → `review`), because planning a typo writes cards to the board. A research question is not a command: it is asked in conversation, and the Researcher answers through the decision queue.
-16. **The board's decisions are the command line's decisions.** `send-back` requires a reason, which becomes the next attempt's instruction and a playbook candidate; `park` prints its undo; all of them share one implementation with the dashboard's buttons — including who may accept: a solo developer accepts their own cards, and on a project where two or more people hold the Accept permission, `accept` refuses the person who built the card or recorded its latest delegation to the Worker — whoever owns the card now — and names who may accept (owner decision O11, [DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue); [review-git](review-git.md) §2.4.1 owns the rule).
+16. **The board's decisions are the command line's decisions.** `request-changes` (and its alias `send-back`, DEC-52) requires a reason, which becomes the next attempt's instruction and a playbook candidate; `park` prints its undo; all of them share one implementation with the dashboard's buttons — including who may accept: a solo developer accepts their own cards, and on a project where two or more people hold the Accept permission, `accept` refuses the person who built the card or recorded its latest delegation to the Worker — whoever owns the card now — and names who may accept (owner decision O11, [DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue); [review-git](review-git.md) §2.4.1 owns the rule).
 16a. **`ask` is Seshat's conversation, not a second one.** `sekhemet ask "<question>"` sends the question through the PM's queued-answer path ([PM_CONTRACT.md](../PM_CONTRACT.md)) into the same thread the dashboard and ACP show, waits for the reply and prints it; while the Worker runs, Seshat answers between its steps ([runtime](runtime.md) item 4), and the command says it is waiting. Proposals the reply creates are listed with where to apply them; `ask` applies nothing.
 17. **One registry** of commands — name, visibility (front or dev), flags, handler, help — feeds the parser, the dispatcher and both help screens, so a command cannot have a handler the parser never reaches (T4). Flags are parsed once, by `node:util` `parseArgs`, with unknown flags refused.
 18. **Exit codes.** 0 success; 1 failure, including any uncaught error; 2 usage error (unknown command, missing argument, missing confirmation). `sekhemet run <card>` exits 0 when the card reached Review or Done and 1 when it stopped without passing, so scripts and CI can use it headless.
@@ -135,6 +135,18 @@ Ready. Opening Configuration to find your models or download these.
 19. `--version` / `-v` prints the version and does nothing else; `--help` / `-h` prints the front-door help.
 20. `board --terminal` uses the board's vocabulary: column names and card states from [NAMING.md](../NAMING.md), WIP limits shown only where one is set, no internal identifiers.
 20a. **Reserving the machine from the terminal.** `sekhemet dev reserve` reserves the machine now — the CLI twin of the dashboard's *Reserve now* ([dashboard](dashboard.md) §2.11) — and `sekhemet dev release` ends the reservation; both share one implementation with the dashboard's control. While reserved, no backlog card starts unattended unless it is urgent and the overnight benchmark neither starts nor continues ([models](models.md) rules 20 and 20b, MD-N3-1, MD-N3-4; [runtime](runtime.md) item 17). `reserve` prints what it held or stopped (a running overnight benchmark stops as MD-N3-5 says) and its undo, `sekhemet dev release`; `release` prints when unattended work may next start (the overnight window, or *now* when it is open). Each is recorded on the ledger with the person's principal. Reserving an already reserved machine, or releasing a free one, changes nothing, says so and exits 0. A reservation ends by a release from either surface, or at its `--until <time>` when one was given (`machine/reserved {principal, until?}`, [runtime](runtime.md) item 17); `reserved_hours` is not changed by either command.
+
+20b. **`doctor` ends with a verdict, and every check names its next step** (NEW-surface-8; [FINDINGS_C1](../../reference/FINDINGS_C1.md) CLI-02). `doctor` runs one catalogue of checks and ends with one verdict: *Ready to run an issue*, or *Not ready* naming the first missing step. It exits 1 while not ready, so a script or an installer can stop on it. Each check that is not a pass prints its next step on its own line as `Do: …`: a command to run or a page to open. Besides today's toolchain, weights, confinement and configuration checks, the catalogue holds:
+   - the ledger's hash chain verifies, and its schema version is one this release reads;
+   - free disk on the volumes that hold the repository and the user directory ([runtime](runtime.md) NEW-runtime-13);
+   - the age of the newest backup ([runtime](runtime.md) NEW-runtime-11);
+   - a stale runner or accept lock, whose holder process is gone;
+   - crashed attempts waiting for the start-up sweep ([runtime](runtime.md) RUN-9);
+   - the inference engine, found and new enough ([models](models.md) NEW-models-16);
+   - each role's model, verified on this machine.
+
+   A check fails only what it concerns: the toolchain check reads the project's package manager (item 5.3), so an npm project does not fail on a missing pnpm, and a folder with no `.sekhemet/` yet is not warned about skills. The user guide's troubleshooting page is generated from this catalogue, one entry per check. Today's closing line *All critical checks passed*, printed with no model and no engine (CLI-02), is removed.
+20c. **`--json` for scripts** (NEW-surface-10; [DEC-53](../DECISIONS.md#dec-53--design_gaps-c-decided) c11; [FINDINGS_C1](../../reference/FINDINGS_C1.md) CLI-09). `run`, `status`, `accept` and `doctor` take `--json`. With it, the command prints exactly one JSON object on stdout and nothing else there: the result the prose reports, from one result type the four commands share. Progress goes to stderr; a command that would ask a question asks nothing and exits 2, as it does without a terminal; the exit code is the one item 18 gives. Each command's object has a published JSON Schema, and a test fails when the output and the schema disagree. An error that reaches the top of the process is still item 18a's one line on stderr, and stdout then holds `{"ok": false, "error": "<that line>"}`. `status` is the board for a script: each column's issues with their state, what the queue runs next, and what waits on a person. It is not a front-door command (rule 14): it is listed under `sekhemet dev --help` and runs as `sekhemet status`, as every unlisted command does (item 13).
 
 ### Configuration
 
@@ -202,6 +214,17 @@ power_budget_kwh_day = 0                 # 0 = unlimited
 
 31. **One install path per audience** ([DESIGN_RESEARCH_TEAM_SERVER.md](../../research/DESIGN_RESEARCH_TEAM_SERVER.md)). A person installs Sekhemet from **one npm package** and meets one first run (items 5–8). A team server is deployed from **one container image** whose documentation names the identity proxy ([integrations](integrations.md) item 24) and the inference engine as a separate container. Both artefacts are approved (owner decision O9, decided 2026-09-24, [DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue)). The source installer of [DEC-21](../DECISIONS.md#dec-21--accepted-substitutions) stays as the route for the air-gap kit and for developing the harness; a single executable is Later (§7).
 32. **Upgrades keep a person's data.** An upgrade migrates `config.toml` in the same step as the ledger migration ([runtime](runtime.md) item 38): renamed keys are rewritten after a backup, and `doctor` reports what changed.
+33. **Upgrade and uninstall** (NEW-surface-7; [DESIGN_GAPS_C1](../../reference/DESIGN_GAPS_C1.md) b8; [FINDINGS_C1](../../reference/FINDINGS_C1.md) INS-03). An install writes outside its package: the user directory (item 22), the Crawl4AI environment, the link `install.sh` makes, each repository's `.sekhemet/` and card worktrees, keychain items ([security](security.md) item 35), and a SearXNG container when research started one.
+   - `sekhemet uninstall --dry-run` lists every one of them with its size: each repository the user directory records, keychain items by name and never by value, containers by name. It changes nothing.
+   - `sekhemet uninstall --yes` removes them, but keeps each project's ledger and every backup unless `--include-ledgers` is given: a ledger is the project's record and cannot be rebuilt. It ends by printing the package manager's own line that removes the package (`npm uninstall -g sekhemet`).
+   - `uninstall` is not a front-door command (rule 14): it is listed under `sekhemet dev --help` and runs as `sekhemet uninstall`.
+   - The user guide's *Upgrade and uninstall* page gives the upgrade line, the rollback (restoring the pre-migration backup of [runtime](runtime.md) item 38) and the uninstall lines, and the docs test checks each against the command registry.
+34. **Learning that a release exists** (NEW-surface-9; [DEC-53](../DECISIONS.md#dec-53--design_gaps-c-decided) c5; [FINDINGS_C1](../../reference/FINDINGS_C1.md) INS-02). Sekhemet never checks for a release on its own: not at start-up, not on a schedule, not from any command but this one.
+   - `sekhemet doctor --check-updates` names the one host it will ask, the npm registry (`registry.npmjs.org`, where the package of item 31 is published), and sends nothing until the person confirms (`--yes` answers for a script).
+   - The request goes through the one network policy (item 24) and carries no identifier of the install or the person. Under `mode = "offline"`, or when the host is not allowed, it makes no request and prints the setting that would allow it.
+   - It prints the installed version, the latest published one, and the address of the latest one's release notes.
+   - After an upgrade, the first command run at a terminal prints once a *What's new* note for each version since the one last shown, read from the `CHANGELOG.md` bundled in the package: Security entries first, at most 20 lines, then the file's path. It makes no network request. Under `--json` or without a terminal it prints nothing. The version last shown is kept in the user directory.
+   - `SECURITY.md` states which versions receive security fixes and the private route for reporting a vulnerability.
 
 ## 3. Contract
 
@@ -220,6 +243,10 @@ power_budget_kwh_day = 0                 # 0 = unlimited
 | `sendBack`, `park`, `unpark`, `nextForReview` | `apps/harness/src/triage.ts` |
 | `detectGateTemplate`, gate templates | `packages/gates/src/templates.ts` |
 | `Attachment`, `VisionDescription`, `visionPrePass`, `MAX_IMAGE_BYTES` | `apps/harness/src/attachments.ts` |
+| `doctor`'s check catalogue (each check's verdict and its `Do:` line), the closing verdict, `--check-updates` (planned: NEW-surface-8, -9) | `apps/harness/src/doctor.ts` |
+| `sekhemet uninstall [--dry-run \| --yes] [--include-ledgers]` and the inventory of what an install wrote (planned: NEW-surface-7) | a new module in `apps/harness/src/` (C5) |
+| One result type for `--json` on `run`, `status`, `accept` and `doctor`, and a JSON Schema per command (planned: NEW-surface-10) | `apps/harness/src/` (C2c) |
+| *What's new*: `CHANGELOG.md` bundled in the package, and the version last shown, kept in the user directory (planned: NEW-surface-9) | `scripts/pack_npm.mjs`; `apps/harness/src/user_dir.ts` |
 
 ## 4. State today
 
@@ -257,6 +284,10 @@ power_budget_kwh_day = 0                 # 0 = unlimited
 | Multimodal input | built | `attachments.ts`; `attachments.spec.ts:44-115` | — |
 | `doctor`: install, weights, confinement | built | `doctor.ts`; `doctor_weights.spec.ts`, `doctor_probe.spec.ts` | — |
 | Docs checks | partial | `docs.spec.ts`: root allowlist, index coverage, relative links; each spec's front matter valid with every `code` and `tests` path present; every change id in COVERAGE carried by a spec; **SUR-24 built**: *shows every spec's status in the SPINE status table, exactly as its front matter says*; an absolute `file://` link fails (SUR-23 in part). Not yet: SUR-20 (README command table against `FRONT_DOOR`), SUR-21 (config schema against `config.ts`, see the row above), SUR-22 (the environment inventory), SUR-23's model names against the registry (re-checked C1) | T10 |
+| Upgrade and uninstall: `uninstall --dry-run` and `--yes`, the *Upgrade and uninstall* page | not built | No uninstall command; a search for `uninstall` finds only FINISH_LINE_PLAN.md ([FINDINGS_C1](../../reference/FINDINGS_C1.md) INS-03; `scripts/install.sh:24-26`, `init.ts:111-113, 166`). Owner: C5 | NEW-surface-7 |
+| `doctor`'s verdict and next steps; ledger, disk, backup, lock, sweep, engine and role checks | not built | In an empty repository `doctor` prints *All critical checks passed* with no model and no engine and exits 0, runs a raw git command outside a repository, fails hard on a missing pnpm, and has no ledger, disk, backup or lock check (`doctor.ts:46, 96-110, 300, 309-342`; FINDINGS_C1 CLI-02). Owner: C5 (FINISH_LINE_PLAN; DESIGN_GAPS b11 had routed it to C4), the engine and role rows with C3 | NEW-surface-8 |
+| Update check and *What's new*; SECURITY.md's supported versions | not built | No update check, no supported-versions policy, no *What's new* (FINDINGS_C1 INS-02). Owner: C5; SECURITY.md with C7 | NEW-surface-9 |
+| `--json` on `run`, `status`, `accept` and `doctor` | not built | `--json` is read only by `qualify --check` (`front_door.ts:179`), and there is no `status` command (FINDINGS_C1 CLI-09). Owner: C2c | NEW-surface-10 |
 
 ## 5. Changes for v1
 
@@ -346,9 +377,36 @@ power_budget_kwh_day = 0                 # 0 = unlimited
 *Justification: the terminal board shows internal state IDs and a banner that teach nothing (review of domain 1, the beginner's first ten minutes).*
 - **SUR-27** WHEN `board --terminal` prints THE SYSTEM SHALL use the column and state names from NAMING.md and show a WIP limit only where one is set.
 
+### NEW-surface-7 — upgrade and uninstall
+*Justification: C.9 items 6 and 8 expect an upgrade page and an uninstall path, and no spec described either. An install writes to the user directory, the Crawl4AI environment, the install link, each repository's `.sekhemet/` and worktrees, keychain items and possibly a SearXNG container ([DESIGN_GAPS_C1](../../reference/DESIGN_GAPS_C1.md) b8; FINDINGS_C1 INS-03). Owner: C5.*
+- **SUR-58** WHEN `sekhemet uninstall --dry-run` runs THE SYSTEM SHALL list every path, keychain item and container this install created, with sizes, including each repository recorded in the user directory, SHALL print no secret, and SHALL change nothing.
+- **SUR-59** WHEN `sekhemet uninstall --yes` runs THE SYSTEM SHALL remove them, but SHALL keep each project's ledger and every backup unless `--include-ledgers` is given.
+- **SUR-60** (docs) The user guide's *Upgrade and uninstall* page SHALL give the upgrade, rollback (from the pre-migration backup) and uninstall lines, and `docs.spec` SHALL fail when one of them names a command or flag the command registry does not have.
+
+### NEW-surface-8 — `doctor`'s checks, each with its next step
+*Justification: `doctor` says "All critical checks passed" with no model, and no spec listed its checks or gave each a next step; plan §F generates the troubleshooting page from those checks ([DESIGN_GAPS_C1](../../reference/DESIGN_GAPS_C1.md) b11; FINDINGS_C1 CLI-02). Owner: C5 (FINISH_LINE_PLAN), with the engine and role checks in C3.*
+- **SUR-61** WHEN `doctor` runs THE SYSTEM SHALL end with one verdict, *Ready to run an issue* or *Not ready* naming the first missing step, and SHALL exit 1 while not ready.
+- **SUR-62** WHEN a check is not a pass THE SYSTEM SHALL print its next step on its own line as "Do: …".
+- **SUR-63** WHEN `doctor` runs THE SYSTEM SHALL check that the ledger chain verifies, the schema version, free disk ([runtime](runtime.md) NEW-runtime-13), the age of the newest backup ([runtime](runtime.md) NEW-runtime-11), stale runner or accept locks, crashed attempts awaiting the sweep, the engine ([models](models.md) NEW-models-16), and each role's verified model.
+- **SUR-64** WHEN the project's package manager is not pnpm THE SYSTEM SHALL NOT fail on pnpm; WHEN the folder has no `.sekhemet/` yet THE SYSTEM SHALL NOT warn about skills.
+- **SUR-65** (docs) The troubleshooting page SHALL be generated from `doctor`'s check catalogue, and `docs.spec` SHALL fail when a check has no entry on it.
+
+### NEW-surface-9 — learning that a release or a security fix exists
+*Justification: the plan promises that "a fix reaches them as a versioned release", but an offline product never hears of one ([DEC-53](../DECISIONS.md#dec-53--design_gaps-c-decided) c5, yes in v1; [DESIGN_GAPS_C1](../../reference/DESIGN_GAPS_C1.md) c5; FINDINGS_C1 INS-02). Owner: C5; SECURITY.md with C7.*
+- **SUR-66** WHEN `sekhemet doctor --check-updates` runs THE SYSTEM SHALL name the one host it will ask and send nothing until the person confirms or `--yes` is given, SHALL then read the latest published version through the network policy of item 24 with no identifier of the install or the person, and SHALL print the installed version, the latest and the address of its release notes.
+- **SUR-67** WHEN `[network] mode` does not allow the registry's host THE SYSTEM SHALL make no request and print the setting that would allow it; and no other command SHALL make an update request, at start-up or on a schedule.
+- **SUR-68** WHEN the first command at a terminal after an upgrade runs THE SYSTEM SHALL print, once, a *What's new* note for each version since the one last shown, read from the bundled `CHANGELOG.md` with Security entries first and at most 20 lines, and SHALL make no network request; WHEN it runs under `--json` or without a terminal THE SYSTEM SHALL print no note.
+- **SUR-69** (docs) `SECURITY.md` SHALL state the versions that receive security fixes and the private route for reporting a vulnerability, and `docs.spec` SHALL fail when it names no supported version.
+
+### NEW-surface-10 — `--json` for scripts
+*Justification: CI jobs and scripts need results, not prose; scripting against English breaks on every copy change ([DEC-53](../DECISIONS.md#dec-53--design_gaps-c-decided) c11, yes in v1; [DESIGN_GAPS_C1](../../reference/DESIGN_GAPS_C1.md) c11; FINDINGS_C1 CLI-09). Owner: C2c.*
+- **SUR-70** WHEN `run`, `status`, `accept` or `doctor` runs with `--json` THE SYSTEM SHALL print exactly one JSON object on stdout, built from the one result type, and nothing else on stdout, and SHALL exit with the code it would give without the flag.
+- **SUR-71** WHEN a command run with `--json` would ask the person a question THE SYSTEM SHALL ask nothing, print the object with the reason, and exit 2.
+- **SUR-72** WHEN a command's `--json` output and its published JSON Schema disagree THE SYSTEM SHALL fail the schema test, which runs the built binary for each of the four commands.
+
 ## 6. v1 acceptance
 
-SUR-1 to SUR-27 and SUR-34 to SUR-55, SUR-48a and SUR-48c included (SUR-51 and SUR-52 by O23, approved under DEC-42; SUR-47 is DEFINITION_OF_DONE §6.7 and is run last, on the reference machine), plus these built behaviours kept under test:
+SUR-1 to SUR-27 and SUR-34 to SUR-72, SUR-48a and SUR-48c included (SUR-51 and SUR-52 by O23, approved under DEC-42; SUR-47 is DEFINITION_OF_DONE §6.7 and is run last, on the reference machine), plus these built behaviours kept under test:
 - **SUR-28** WHEN a single word within edit distance 2 of a front-door command is given THE SYSTEM SHALL suggest that command, write nothing and exit 2.
 - **SUR-29** WHEN `send-back` is given no reason THE SYSTEM SHALL refuse and exit 2.
 - **SUR-30** WHEN `park` succeeds THE SYSTEM SHALL print its undo command.
@@ -362,6 +420,7 @@ SUR-1 to SUR-27 and SUR-34 to SUR-55, SUR-48a and SUR-48c included (SUR-51 and S
 - **`@clack/prompts`** for the confirmation, **`execa`** for end-to-end CLI tests, **Vale** and **markdownlint** for the docs — proposals needing the owner's yes.
 - **Onboarding extras** from the old design: automatic convention extraction combining deterministic linter/CI parsing with AST pattern discovery (`crag`, `codebase-md`, licences unverified), and multi-language symbol support through tree-sitter (DEC-20).
 - **Probe-and-refine tuning of repository guidance** (synthetic bug-fix probes per repository) — the only evidence on a 35B-A3B model is positive, but it needs the synthesised-task inlet ([measurement](measurement.md)) first; **uv workspaces** for Python — with the Python adapter ([DESIGN_RESEARCH_TESTS_BROWNFIELD.md](../../research/DESIGN_RESEARCH_TESTS_BROWNFIELD.md) §5).
+- **Shell completion** (FINDINGS_C1 CLI-10): out of v1's scope, Later by [DEC-53](../DECISIONS.md#dec-53--design_gaps-c-decided) (its c14 list). It would read the one command registry (T4).
 - **A single-executable build** (Node's `--build-sea`) — still marked "active development" in Node's documentation; a proposal once it is stable.
 
 ## 8. Open questions
@@ -383,4 +442,5 @@ SUR-1 to SUR-27 and SUR-34 to SUR-55, SUR-48a and SUR-48c included (SUR-51 and S
 - **Why "moved means unlisted":** the first plan broke calls to moved commands; building it found the callers were the frozen-suite runner, the harness's tests and the author's habits, and breaking them bought the user nothing — the user's surface is the help.
 - **Why `sekhemet dev audit` is retired** (a deliberate change, nothing deferred): its checks live in `doctor`'s playbook check and `qualify`; the reason is in [measurement](measurement.md) §9 (rule 24).
 - **Why onboarding offers the qualification instead of running it** (rule 11): the old design ran the qualification suite during onboarding. Qualifying loads each model on this host — a qualification is per engine, build, host and settings ([models](models.md) rule 27a) — and on the 24 GB reference host a model load is itself a memory event the watchdog guards ([models](models.md) rule 19). The owner put model work — scanning, qualifying, benchmarking — on the Configuration page, run when a person asks ([DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) O2; *Qualify to assign*, [dashboard](dashboard.md) §2.16). So onboarding offers the qualification and never loads a model silently.
+- C1's design gaps and decisions ([DESIGN_GAPS_C1](../../reference/DESIGN_GAPS_C1.md) b8, b11; [DEC-53](../DECISIONS.md#dec-53--design_gaps-c-decided) c5, c11, c14; [DEC-52](../DECISIONS.md#dec-52--the-professional-words-naming-amended)): upgrade and uninstall → item 33, NEW-surface-7 (INS-03); `doctor`'s verdict and catalogue → item 20b, NEW-surface-8 (CLI-02); the opt-in update check and *What's new* → item 34, NEW-surface-9 (INS-02); `--json` → item 20c, NEW-surface-10 (CLI-09); *Request changes*, with `send-back` as its alias → items 1, 13, 16. **Placed by rule 14, not by the drafts' wording:** DESIGN_GAPS b8 and DEC-53 c11 name `sekhemet uninstall` and a `status` command, neither of which is on the front door; both are registered outside it, listed under `dev --help` and run without `dev` (item 13), because rule 14 stands and neither the register nor the DEC changed it. The update check goes through item 24's one policy rather than a consent of its own: no file or key besides `[network]` grants network access.
 - **Why no environment layer for settings:** variables that silently outrank a file the person edited are a second configuration system.

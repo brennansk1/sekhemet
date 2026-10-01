@@ -318,3 +318,57 @@ Thinking off, build `468f67f`, Cyber-Tiel IQ3_XXS with MTP, chronicle and onyx: 
 - **`468f67f`** — the stall fingerprint, the data contract's placement and surgical thinking after a failed re-check: each would have invalidated the thinking A/B.
 - **The Phase A commit** — S1 and most of S2 (above): Worker code could otherwise run outside the sandbox on the owner's machine during the remaining A/B arms.
 - **Corrections to the record** — Phase 0's "GO at 100%" (11/11 establishes ≥76% at 95% confidence, not ≥90%), and the claims table's "Runs on your server — Built" (it is partial).
+
+### Added by the design update after C1 (D1, 2026-10-01, DEC-56)
+
+The changes D1 wrote into the specs from [DESIGN_GAPS_C1](DESIGN_GAPS_C1.md) and DEC-51 to DEC-55. Each is *not started*; its workflow is the one in [FINISH_LINE_PLAN](FINISH_LINE_PLAN.md) "The path to 1.0, revised after C1".
+
+| ID | Change | Spec | Workflow | State |
+| --- | --- | --- | --- | --- |
+| NEW-dashboard-10 | Intake: Stakeholders file and Members triage | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-11 | The sprint lifecycle | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-12 | Full-text search | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-13 | Lessons for the practice a person performs | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-14 | The Definition of done and readiness, readable | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-15 | New issue by type, with a Bug's reproduction | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-16 | Undo for field and bulk edits | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-17 | Accepting an issue without reading a diff | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-18 | Status as a grid at wide widths | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-19 | The approved mockups where they are more complete ([DEC-51](../design/DECISIONS.md#dec-51--c1s-k3-list-decided)) | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-20 | Primary buttons in dark ink; gold as the brand accent ([DEC-51](../design/DECISIONS.md#dec-51--c1s-k3-list-decided)) | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-21 | Won't do, Reopen and Revert in the dashboard ([DEC-51](../design/DECISIONS.md#dec-51--c1s-k3-list-decided)) | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-22 | A notification when work waits ([DEC-53](../design/DECISIONS.md#dec-53--design_gaps-c-decided) c4) | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-23 | The professional words on screen ([DEC-52](../design/DECISIONS.md#dec-52--the-professional-words-naming-amended)) | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-24 | Network activity in Project configuration ([security](../design/specs/security.md) NEW-security-11) | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-design-stage-7 | Starting a project as a page with a live draft | [design-stage](../design/specs/design-stage.md) | C2 | not started (D1, DEC-56) |
+| NEW-extensibility-6 | the MCP gate run is a pre-check, not evidence ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [extensibility](../design/specs/extensibility.md) | C2 | not started (D1, DEC-56) |
+| NEW-extensibility-7 | editor snippets for VS Code, Cursor and Zed ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [extensibility](../design/specs/extensibility.md) | C2, C5 | not started (D1, DEC-56) |
+| NEW-extensibility-8 | Seshat's MCP tools pinned by their description (DEC-55) | [extensibility](../design/specs/extensibility.md) | v1.x (with Seshat\'s MCP tools, DEC-55) | not started (D1, DEC-56) |
+| NEW-integrations-5 | the Jira export in Jira Cloud's columns ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [integrations](../design/specs/integrations.md) | C2 | not started (D1, DEC-56) |
+| NEW-integrations-6 | Check Run annotations in batches of 50 ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [integrations](../design/specs/integrations.md) | C2 | not started (D1, DEC-56) |
+| NEW-kernel-11 | the power-loss window, stated and tested | [kernel](../design/specs/kernel.md) | C4 | not started (D1, DEC-56) |
+| NEW-models-15 | the Team server's engines, one per role | [models](../design/specs/models.md) | C3, C5 | not started (D1, DEC-56) |
+| NEW-models-16 | the first hour, with the engine found and both floors stated | [models](../design/specs/models.md) | C3, C5 | not started (D1, DEC-56) |
+| NEW-models-17 | two projects on one machine | [models](../design/specs/models.md) | C4 | not started (D1, DEC-56) |
+| NEW-models-18 | downloads that resume and fit | [models](../design/specs/models.md) | C3 | not started (D1, DEC-56) |
+| NEW-models-19 | Get the inference engine | [models](../design/specs/models.md) | C3 | not started (D1, DEC-56) |
+| NEW-models-20 | Ollama's cloud models refused | [models](../design/specs/models.md) | C2 | not started (D1, DEC-56) |
+| NEW-planner-pm-11 | The retrospective, as a report for people | [planner-pm](../design/specs/planner-pm.md) | C2b | not started (D1, DEC-56) |
+| NEW-planner-pm-12 | Maintenance releases, an open *Next release* | [planner-pm](../design/specs/planner-pm.md) | C2b | not started (D1, DEC-56) |
+| NEW-planner-pm-13 | The sprint lifecycle (planner side) | [planner-pm](../design/specs/planner-pm.md) | C2 | not started (D1, DEC-56) |
+| NEW-review-git-6 | *Request changes*, the industry's word for send back | [review-git](../design/specs/review-git.md) | C2a | not started (D1, DEC-56) |
+| NEW-review-git-7 | Push to remote after Accept and on release | [review-git](../design/specs/review-git.md) | C2b | not started (D1, DEC-56) |
+| NEW-runtime-11 | backups that survive the repository | [runtime](../design/specs/runtime.md) | C4, C5 | not started (D1, DEC-56) |
+| NEW-runtime-12 | the machine stays awake while it works | [runtime](../design/specs/runtime.md) | C4 | not started (D1, DEC-56) |
+| NEW-runtime-13 | a full disk is a named stop | [runtime](../design/specs/runtime.md) | C4 | not started (D1, DEC-56) |
+| NEW-runtime-14 | a health route for the Team server | [runtime](../design/specs/runtime.md) | C5 | not started (D1, DEC-56) |
+| NEW-runtime-15 | start the dashboard at login | [runtime](../design/specs/runtime.md) | C5 | not started (D1, DEC-56) |
+| NEW-security-11 | what leaves the machine, listed and shown | [security](../design/specs/security.md) | C2, C5 | not started (D1, DEC-56) |
+| NEW-security-12 | other coding agents' configuration flagged as running later ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [security](../design/specs/security.md) | C2 | not started (D1, DEC-56) |
+| NEW-surface-7 | upgrade and uninstall | [surface](../design/specs/surface.md) | C5 | not started (D1, DEC-56) |
+| NEW-surface-8 | `doctor`'s checks, each with its next step | [surface](../design/specs/surface.md) | C5 | not started (D1, DEC-56) |
+| NEW-surface-9 | learning that a release or a security fix exists | [surface](../design/specs/surface.md) | C5, C7 | not started (D1, DEC-56) |
+| NEW-surface-10 | `--json` for scripts | [surface](../design/specs/surface.md) | C2c | not started (D1, DEC-56) |
+| NEW-teams-12 | A Team install with no identity provider | [teams](../design/specs/teams.md) | C5 | not started (D1, DEC-56) |
+| NEW-teams-13 | When a member leaves | [teams](../design/specs/teams.md) | C2b | not started (D1, DEC-56) |
+| NEW-worker-loop-11 | `disk_low`, the full-disk stop ([runtime.md](../design/specs/runtime.md) NEW-runtime-13) | [worker-loop](../design/specs/worker-loop.md) | C4 | not started (D1, DEC-56) |
