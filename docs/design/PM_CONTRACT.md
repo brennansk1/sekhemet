@@ -25,6 +25,8 @@ updated in the same commit.
 | Profile statements (§6) | used by Seshat as soon as they are derived; editable and dismissible | Pending the owner ([OPEN_QUESTIONS](../reference/OPEN_QUESTIONS.md#owner-decisions) O24). Default until decided: the code's behaviour. If the owner requires approval first: a `ProfileEntry` status `proposed`, and `POST /api/learning/profile/:id/approve` | — (decided by the owner) |
 | Decision `deliveredAt` (`GET /api/decisions`) | absent: a decision record says when it was answered, not when the answer reached the card that asked | `deliveredAt?: string` (ISO time) on an answered decision, from the kernel's `decision/delivered` ([planner-pm](specs/planner-pm.md) PM-P2-7); the record is built (B4.4), the delivery call sites are not yet | P2 |
 | Take over a project (§3, *Take over a project*) | none: the take-over ran only from `sekhemet dev take-over`, and stopped at the inventory | `POST /api/takeover`, `GET /api/takeover`, `POST /api/takeover/approve`, `POST /api/takeover/reconciliation/apply` and `/dismiss` — built (B4.4) | NEW-design-stage-6, NEW-integrations-4 |
+| Who approves or creates a new project (§3, *Send for approval*) | `project.create` and `plan.approve`: a Member or an Admin; any Member may apply a new project's plan and be its approver | `project.create`: an Admin, or a person who leads a project in the workspace ([DEC-57](DECISIONS.md#dec-57--a-server-is-a-workspace-with-many-projects); [teams](specs/teams.md) items 6 and 21). A Stakeholder, or a Member who leads no project, sends the plan for approval to one of them, and only one of them may be named approver or approve | NEW-teams-14 |
+| Workspaces and New project (§3) | `POST /api/takeover` adopts the server's own folder; no list of workspaces | `POST /api/takeover { path }` adopts the repository at `path`; the `start_project` group carries `folder`; `GET`, `POST`, `DELETE /api/workspaces` ([runtime](specs/runtime.md) item 23c) | NEW-teams-14, NEW-runtime-17 |
 | Card `key` (§2, `GET /api/board`) | absent; cards carry only `card_<uuid8>` ids | `key: string` (`CHR-12`), the project's prefix and a per-project number, never reused ([kernel](specs/kernel.md) rule 5) | P3 |
 | Card `kind`, `change`, `split` (§2, `GET /api/board`) | `kind` re-derived from labels, title and keywords | three stored fields: `kind` (seven values), `change` (`feature`, `fix`, `characterize`, `refactor`, `upgrade`), `split` on a split child (`spike`, `path`, `interface`, `data`, `rules`) ([DEC-26](DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run); labels in [NAMING](NAMING.md#card-kind-change-and-split)) | NEW-kernel-9 |
 | The `awaitingMerge` hold (`GET /api/board`) | none; a card moves to Done when its pull request opens | `hold?: { kind: "awaitingMerge", pr, since }` on a card in `review`, not counted toward ReviewWIP ([kernel](specs/kernel.md) rule 24) | NEW-kernel-3 |
@@ -238,7 +240,8 @@ interface PmProposal {
 - A proposal with `forOwner`, applied by anyone else, is a 403 naming the
   owner.
 - **Send for approval** (teams TEAM-20, TEAM-42; design-stage §2.9 item 7).
-  In the Team setup a Stakeholder's `start_project` group is sent, not
+  In the Team setup a Stakeholder's `start_project` group — and, at the
+  target of §0, that of a Member who leads no project — is sent, not
   created: `POST /api/pm/proposals/:id/send-for-approval { approver,
   choices? }` (`project.converse`) records `plan/sent_for_approval
   { proposalId, approver, choices? }` with the sender as principal and
@@ -246,8 +249,10 @@ interface PmProposal {
   in Solo (**409**), for any proposal but a new project's group (**400**),
   one no longer open or already sent (**409**), by anyone but the person
   whose conversation it is, or when it is no one's conversation — a reply
-  recorded without `to` (**403**), an approver who is not a Member or an
-  Admin, or the sender themselves (**400**), `choices` of another shape
+  recorded without `to` (**403**), an approver who may not create a
+  project — an Admin, or a person who leads a project in the workspace
+  (target, §0; *a Member or an Admin* today) — or the sender themselves
+  (**400**), `choices` of another shape
   (**400**). From then the proposal carries
   `approval: { state: "sent" | "approved", approver, requestedBy, choices?,
   approvedBy?, approverName?, requestedByName? }`, and `GET /api/pm/thread`
@@ -256,7 +261,8 @@ interface PmProposal {
   everyone (**409**, naming the approver, who presses Approve) and
   `POST …/discard` to anyone but the approver or the sender (**403**).
   `POST /api/pm/proposals/:id/approve { choices? }` (`plan.approve` and
-  `project.create`: a Member or an Admin, no `brief.accept`) is the named
+  `project.create`: an Admin or a project lead at the target of §0, a
+  Member or an Admin today; no `brief.accept`) is the named
   approver's alone (anyone else **403**; not sent or already approved
   **409**): it applies the group as `apply` does, with the approver's
   `choices` or else the ones sent, makes the approver the owner of every

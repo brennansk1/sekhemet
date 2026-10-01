@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 67 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 68 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,38 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 68 — 2026-10-01 (D2: a server is a workspace with many projects, DEC-57)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. The owner asked how one person works across several projects and accounts, and chose "whatever teams of devs in an org would prefer". One spec writer applied the design, then one narrow independent check.
+
+- **DEC-57** supersedes DEC-53 c3 and C1/D1's "one project per server". In v1 a server is a workspace holding any number of projects, as a Linear workspace, a Jira site or a GitHub org does.
+  - **Inside a workspace:** one sign-in; levels with per-project overrides; a project switcher; My issues, the Inbox and search across every project a person can see.
+  - **New project** creates a folder with `git init`, or takes over an existing repository (DEC-43). It is open to Admins and to anyone who leads a project; other Members use Send for approval.
+  - **Across workspaces:** a workspace switcher lists this machine's other Sekhemet servers. Each has its own sign-in, and nothing is shared between them.
+- **The ledger:** one ledger per workspace, left where it is (kernel rule 38a, NEW-kernel-12), so there is no migration.
+  - The kernel already keeps many projects in one ledger (`projects` keyed by root path, `project_id` on cards, `activeProjectCap`).
+  - Per-project ledgers were rejected: they would split a person's Inbox, audit and erasure across chains with no common order.
+  - Each card's worktree and configuration resolve from its own project's root. Backups are kept per workspace, outside every repository (NEW-runtime-18).
+- **The changes:**
+  - **C2a:** NEW-dashboard-25 (the switchers; closes SHL-01) and NEW-runtime-17 (the machine's list of workspaces).
+  - **C2b:** NEW-teams-14, NEW-runtime-16 (one server, many project roots, turns shared fairly), NEW-dashboard-26 (New project and the cross-project views), NEW-surface-11 (the CLI finds its workspace from any project folder), NEW-design-stage-8, NEW-security-13 (a card sees only its own project).
+  - **C4:** NEW-kernel-12, NEW-runtime-18 (backups per workspace), NEW-security-14 (the credential store per workspace).
+  - D1's narrowing is undone in teams, kernel, runtime, dashboard, design-stage, surface, security, models and SPINE's claims table, each citing DEC-57 in its §9.
+- **Narrow check:** 1 blocker and 2 majors, all fixed by the spec writer; the blocker's narrow re-check confirms it fixed (security.md 10a, SEC-N13-1/-2, runtime 2a and RUN-80 agree).
+  - **The blocker (containment):** denying a card the whole workspace `.sekhemet/` would have taken away its own worktree. Item 10a now denies only the ledger, blobs, evidence, logs, locks, other cards' worktrees and other projects' roots (SEC-N13-1/-2, RUN-80).
+  - **Finding the workspace without the machine's list:** a derived locator, `.sekhemet/workspace.json`, sits in each project root and is trusted only when the ledger registers that root. A first run is refused where a locator or a `Ledger-Head` trailer exists (SUR-78 to SUR-80).
+  - **`project.create`** is narrowed everywhere: PM_CONTRACT, design-stage, planner-pm, teams, NAMING.
+  - **Minors:**
+    - workspace-id derivation moves to C2a;
+    - nested project roots are refused (K-N12-6, TEAM-60);
+    - `sekhemet project move` (K-N12-7, SUR-81);
+    - `doctor` warns that a `git clean -xdf` in the workspace folder loses up to a day since the last backup (SUR-82);
+    - DEC-51's stale line is marked superseded, and the plan's C4 row names the workspace changes.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1589 files), vitest 682 files, 5,435 passed, 54 skipped.
+- **Where the cards stop:**
+  - D2 is done.
+  - **Next:** C2a, scheduled at 18:07 MDT when the owner's 5-hour window resets. It now builds the project and workspace switchers.
 
 ### Entry 67 — 2026-10-01 (D1: the design update after C1. Every pending decision taken (DEC-51 to DEC-56), 47 changes written into the specs, and the path to 1.0 revised)
 

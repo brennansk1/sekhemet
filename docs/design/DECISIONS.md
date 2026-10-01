@@ -558,7 +558,7 @@ Not a chat assistant (the conversation plans and reports; code is written on car
   - full-text search (b14; SQLite FTS5 in the built-in `node:sqlite`, no library);
   - Reopen and Revert in the dashboard.
 
-  One project per server stays the v1 rule (DEC-53 c3).
+  One project per server was the v1 rule (DEC-53 c3) until [DEC-57](#dec-57--a-server-is-a-workspace-with-many-projects) made a server a workspace with many projects.
 - **Release items (item 20):** DEC-54.
 - **Reopen if:** the owner.
 
@@ -586,7 +586,7 @@ Not a chat assistant (the conversation plans and reports; code is written on car
   - **c14** the six parity items stay Later. This DEC records them as out of scope: shared saved views, shell completion, a recurring dependency check, a GitLab merge request on Accept, a timeline, and *Open in editor*.
 - **Yes, as release items:** c1 and c2, in DEC-54.
 - **v1.x, with the limitation stated now:**
-  - **c3** many projects per server (v1: one project per server, as teams.md now says; New project says how to start another server);
+  - **c3** many projects per server: superseded by [DEC-57](#dec-57--a-server-is-a-workspace-with-many-projects), which makes it v1;
   - **c9** test services for gates. The claims table says a gate needing a database or another service is *unavailable* in v1; this waits on DEC-50's relays;
   - **c12** nested AGENTS.md and *Rules used*. It is model-facing, so it ships only after its A/B under PROMPT_STANDARD;
   - **c13** signed commits. INSTALL says branches that require signing are not supported in v1.
@@ -636,6 +636,20 @@ Not a chat assistant (the conversation plans and reports; code is written on car
 
 ### DEC-56 — the release order after C1
 **The path to 1.0 is design first, then the C-sprints rewritten in `FINISH_LINE_PLAN.md`.** *Lead, 2026-10-01.* C1's registers (245 findings, 54 gaps), DEC-51 to DEC-55, the zero-spend report and the ecosystem report are one revision, not three lists. The design update (D1) applies DESIGN_GAPS' 25 drafted changes and the (c) decisions to the specs before any C2 code, so C2 builds against specs that already say what to build.
+- **Reopen if:** the owner.
+
+
+### DEC-57 — a server is a workspace with many projects
+**In v1 a Sekhemet server is a workspace that hosts any number of projects, as a Linear workspace, a Jira site or a GitHub org does. A person moves between projects with a project switcher, and between workspaces (other servers) with a workspace switcher.** *Lead, 2026-10-01, on the owner's direction ("whatever teams of devs in an org would prefer"). It supersedes [DEC-53](#dec-53--design_gaps-c-decided) c3 and the "one project per server" narrowing of C1 and D1.*
+- **Within a workspace:**
+  - one sign-in, one set of people and levels, per-project overrides (DEC-35, DEC-42);
+  - My issues, the Inbox and search span every project the person can see;
+  - each project keeps its own repository, worktrees and board, and its cards run only in its own root.
+- **New project** creates a folder and runs `git init`, or adopts an existing repository through the take-over flow (DEC-43). A folder that already has a project is still refused.
+- **Model engines:** one set per server, shared fairly across its projects (the existing fair queue and active-project cap). The machine-wide model lease governs several servers on one machine.
+- **Workspaces:** the workspace switcher lists the servers this person has used on this machine. Each keeps its own sign-in, and nothing is shared between workspaces.
+- **Where the ledger lives:** in the specs (D2), chosen as the smallest change that keeps the event log the only durable channel.
+- **Built:** the switchers in C2a; multi-project hosting, New project and the cross-project views in C2b; any ledger migration in C4.
 - **Reopen if:** the owner.
 
 

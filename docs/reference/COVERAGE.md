@@ -372,3 +372,21 @@ The changes D1 wrote into the specs from [DESIGN_GAPS_C1](DESIGN_GAPS_C1.md) and
 | NEW-teams-12 | A Team install with no identity provider | [teams](../design/specs/teams.md) | C5 | not started (D1, DEC-56) |
 | NEW-teams-13 | When a member leaves | [teams](../design/specs/teams.md) | C2b | not started (D1, DEC-56) |
 | NEW-worker-loop-11 | `disk_low`, the full-disk stop ([runtime.md](../design/specs/runtime.md) NEW-runtime-13) | [worker-loop](../design/specs/worker-loop.md) | C4 | not started (D1, DEC-56) |
+
+### Added by the workspace design (D2, 2026-10-01, DEC-57)
+
+A server is a workspace with many projects. Each change is *not started*.
+
+| ID | Change | Spec | Workflow | State |
+| --- | --- | --- | --- | --- |
+| NEW-dashboard-25 | The project switcher and the workspace switcher (DEC-57) | [dashboard](../design/specs/dashboard.md) | C2a | not started (D2, DEC-57) |
+| NEW-dashboard-26 | Many projects on one server: New project and the cross-project views (DEC-57) | [dashboard](../design/specs/dashboard.md) | C2b | not started (D2, DEC-57) |
+| NEW-design-stage-8 | A new project in a workspace of many | [design-stage](../design/specs/design-stage.md) | C2b | not started (D2, DEC-57) |
+| NEW-kernel-12 | one ledger per workspace | [kernel](../design/specs/kernel.md) | C4 (K-N12-3: C2b) | not started (D2, DEC-57) |
+| NEW-runtime-16 | one server, many project roots | [runtime](../design/specs/runtime.md) | C2b | not started (D2, DEC-57) |
+| NEW-runtime-17 | the machine's list of workspaces | [runtime](../design/specs/runtime.md) | C2a | not started (D2, DEC-57) |
+| NEW-runtime-18 | backups per workspace | [runtime](../design/specs/runtime.md) | C4 | not started (D2, DEC-57) |
+| NEW-security-13 | a card sees only its own project (DEC-57) | [security](../design/specs/security.md) | C2b | not started (D2, DEC-57) |
+| NEW-security-14 | the credential store per workspace (DEC-57) | [security](../design/specs/security.md) | C4 | not started (D2, DEC-57) |
+| NEW-surface-11 | the command line in a workspace of many projects | [surface](../design/specs/surface.md) | C2b | not started (D2, DEC-57) |
+| NEW-teams-14 | A server is one workspace holding any number of projects, and other workspaces one switch away | [teams](../design/specs/teams.md) | C2b (TEAM-59: C2a) | not started (D2, DEC-57) |
