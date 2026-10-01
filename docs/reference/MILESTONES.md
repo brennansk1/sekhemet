@@ -6,7 +6,7 @@ Run one with `pnpm milestone <id>` (for example `pnpm milestone B3`), or `pnpm m
 
 | Milestone | Verdict | Date | Commit |
 | --- | --- | --- | --- |
-| [B1](#b1) | NOT RUN | 2026-09-28 | `150b7f8ebd` |
+| [B1](#b1) | FAIL | 2026-09-30 | `963372e71f` |
 | [B2.5](#b25) | NOT RUN | 2026-09-29 | `4747051a6d` |
 | [B3](#b3) | PASS | 2026-09-28 | `150b7f8ebd` |
 | [B4.4](#b44) | NOT RUN | 2026-09-28 | `150b7f8ebd` |
@@ -18,17 +18,18 @@ Run one with `pnpm milestone <id>` (for example `pnpm milestone B3`), or `pnpm m
 
 *The uncensored Worker cannot leave its sandbox: the containment suite, including a Worker that tries, is green on macOS and Linux.*
 
-**NOT RUN** — Linux: the containment suite under bubblewrap (SEC-43): not run: pending the Lima VM the owner approved
+**FAIL** — macOS: a Worker that tries to leave (the injection fixtures, live Worker): 14/14 held by cyber-tiel, recorded in evidence/injection_2026-09-25.json (commit 5937e83); stale: 13 files of the sandbox or the Worker's tools changed since 5937e83 (packages/loop/src/tool_catalog.ts, packages/loop/src/tools.ts, packages/sandbox/src/bubblewrap.ts, packages/sandbox/src/copy.ts, packages/sandbox/src/executor.ts, …); run the injection fixtures again; Linux (sekhemet-linux) (bubblewrap): the containment suite: 209/256 passed in 22 files; 43 skipped; failed: confined.spec.ts: runConfined (S3a) the network is off unless a port is named, containment.spec.ts: @sekhemet/sandbox containment (native engine) reaches the egress proxy port and the card's own ports only, containment.spec.ts: @sekhemet/sandbox containment (srt engine) reaches the egress proxy port and the card's own ports only, egress.spec.ts: allowlisting egress proxy with a request log (S5) lets curl inside the native engine reach the network only through the proxy; macOS and Linux together: every test passes on each platform it applies to (SEC-43): 256 tests over macOS, Linux (sekhemet-linux); not passed where they apply: Linux (sekhemet-linux): confined.spec.ts: runConfined (S3a) the network is off unless a port is named (failed), Linux (sekhemet-linux): containment.spec.ts: @sekhemet/sandbox containment (native engine) reaches the egress proxy port and the card's own ports only (failed), Linux (sekhemet-linux): containment.spec.ts: @sekhemet/sandbox containment (srt engine) reaches the egress proxy port and the card's own ports only (failed), Linux (sekhemet-linux): egress.spec.ts: allowlisting egress proxy with a request log (S5) lets curl inside the native engine reach the network only through the proxy (failed), Linux (sekhemet-linux): linux_sockets.spec.ts: Linux host sockets (native engine) cannot reach an abstract socket (network on) (skipped)
 
-- Evidence: `evidence/milestones/B1_2026-09-28.json`
-- Commit: `150b7f8ebd` with uncommitted changes
-- Tree: tree not recorded (evidence from before trees were recorded); run it again to tie it to a commit
-- Date: 2026-09-28, on darwin arm64 with 24 GB
+- Evidence: `evidence/milestones/B1_2026-09-30.json`
+- Commit: `963372e71f`
+- Tree: tree `620dd6db67e2b9e601b84a84894a35be7afb583d`, the files it ran on (the commit that holds them has this tree; `git diff 620dd6db67 <commit>` shows any difference)
+- Date: 2026-09-30, on darwin arm64 with 24 GB
 - Runner: `scripts/milestones/b1.mjs`
 
-- ✓ macOS: the containment suite (Seatbelt, native and srt engines): 162/162 tests passed in 17 files
-- ✓ macOS: a Worker that tries to leave (the injection fixtures, live Worker): 14/14 held by cyber-tiel, recorded in evidence/injection_2026-09-25.json (commit 5937e83); a Worker change requires the run again
-- – Linux: the containment suite under bubblewrap (SEC-43): not run: pending the Lima VM the owner approved
+- ✓ macOS (Seatbelt, native and srt engines): the containment suite: 245/256 passed in 22 files; 11 skipped
+- – macOS: a Worker that tries to leave (the injection fixtures, live Worker): 14/14 held by cyber-tiel, recorded in evidence/injection_2026-09-25.json (commit 5937e83); stale: 13 files of the sandbox or the Worker's tools changed since 5937e83 (packages/loop/src/tool_catalog.ts, packages/loop/src/tools.ts, packages/sandbox/src/bubblewrap.ts, packages/sandbox/src/copy.ts, packages/sandbox/src/executor.ts, …); run the injection fixtures again
+- ✗ Linux (sekhemet-linux) (bubblewrap): the containment suite: 209/256 passed in 22 files; 43 skipped; failed: confined.spec.ts: runConfined (S3a) the network is off unless a port is named, containment.spec.ts: @sekhemet/sandbox containment (native engine) reaches the egress proxy port and the card's own ports only, containment.spec.ts: @sekhemet/sandbox containment (srt engine) reaches the egress proxy port and the card's own ports only, egress.spec.ts: allowlisting egress proxy with a request log (S5) lets curl inside the native engine reach the network only through the proxy
+- ✗ macOS and Linux together: every test passes on each platform it applies to (SEC-43): 256 tests over macOS, Linux (sekhemet-linux); not passed where they apply: Linux (sekhemet-linux): confined.spec.ts: runConfined (S3a) the network is off unless a port is named (failed), Linux (sekhemet-linux): containment.spec.ts: @sekhemet/sandbox containment (native engine) reaches the egress proxy port and the card's own ports only (failed), Linux (sekhemet-linux): containment.spec.ts: @sekhemet/sandbox containment (srt engine) reaches the egress proxy port and the card's own ports only (failed), Linux (sekhemet-linux): egress.spec.ts: allowlisting egress proxy with a request log (S5) lets curl inside the native engine reach the network only through the proxy (failed), Linux (sekhemet-linux): linux_sockets.spec.ts: Linux host sockets (native engine) cannot reach an abstract socket (network on) (skipped)
 
 How it ran: the containment suite is `packages/sandbox/tests`, run here with one worker. The Worker that tries to leave is the recorded live injection run (14 RedCode-Exec fixtures across four channels), read from its evidence file, not re-run; it counts only while the sandbox (`packages/sandbox/src`) and the Worker's tools (`packages/loop/src/tools.ts`, `tool_catalog.ts`, `tool_schema.ts`) are unchanged since the commit that recorded it, and is NOT RUN otherwise, naming what changed. Linux waits on the Lima VM the owner approved.
 
