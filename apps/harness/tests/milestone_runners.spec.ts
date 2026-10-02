@@ -582,3 +582,74 @@ describe("B1: the containment suite across macOS and Linux (SEC-43)", () => {
     expect(platformCheck("Linux", undefined).ok).toBe(false);
   });
 });
+
+/**
+ * B3 failed on 2026-10-02 because C2a's rename changed `sekhemet log`'s
+ * words and the milestone's parser still read the old ones. The parser is
+ * tied here to the real CLI's output: a real ledger, a real Ledger-Head
+ * trailer, the real `log`.
+ */
+describe("the milestones read `sekhemet log` as the CLI prints it", () => {
+  // @ts-expect-error: plain ESM scripts, run by `pnpm milestone` and checked here.
+  const load = () => import("../../../scripts/milestones/ledger.mjs");
+  // @ts-expect-error: as above.
+  const core = () => import("../../../scripts/milestones/core.mjs");
+
+  it("finds a matching anchor, and calls a tampered one broken", async () => {
+    const { readLogVerdict } = await load();
+    const { runCli, isolatedEnv } = await core();
+    const base = mkdtempSync(join(tmpdir(), "log-verdict-"));
+    try {
+      const repo = join(base, "repo");
+      mkdirSync(repo);
+      const git = (...a: string[]) =>
+        execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@x", ...a], {
+          cwd: repo,
+          stdio: "ignore",
+        });
+      git("init", "-q", "-b", "main");
+      git("commit", "-q", "--allow-empty", "-m", "init");
+      const { initLocalKernel } = await import("../src/index.js");
+      const { db, cardStore } = initLocalKernel(repo);
+      await cardStore.createCard({
+        id: "card_anchor_1",
+        tier: "story",
+        title: "Anchor issue",
+        status: "ready",
+        scopeFiles: ["src/a.ts"],
+        acceptanceCriteria: ["src/a.ts exports a"],
+      });
+      const head = db.prepare("SELECT seq, hash FROM events ORDER BY seq DESC LIMIT 1").get() as {
+        seq: number;
+        hash: string;
+      };
+      db.close();
+      git(
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "accept",
+        "-m",
+        `Ledger-Head: ${head.seq}:${head.hash}`,
+      );
+      const env = isolatedEnv(base);
+      const ok = readLogVerdict(runCli(["log", "--repo", repo], { env }));
+      expect(ok.chainValid).toBe(true);
+      expect(ok.anchor).toBe("matches");
+      git(
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "later",
+        "-m",
+        `Ledger-Head: ${head.seq + 100}:${head.hash}`,
+      );
+      const cut = readLogVerdict(runCli(["log", "--repo", repo], { env }));
+      expect(cut.anchor).toBe("broken");
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+});

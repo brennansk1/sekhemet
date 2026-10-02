@@ -69,9 +69,11 @@ export function readLogVerdict(out) {
   return {
     chainValid: /SHA-256 Chain Verification: VALID/.test(out.stdout),
     projectionsIdentical: /Projections: rebuilt from \d+ events, byte-identical/.test(out.stdout),
-    anchor: /Ledger-Head anchor at seq \d+ matches/.test(out.stdout)
+    // The CLI's words since C2a's rename (DEC-52); milestone_runners.spec.ts
+    // ties this to the real `sekhemet log`.
+    anchor: /The Ledger-Head trailer at entry \d+ matches/.test(out.stdout)
       ? "matches"
-      : /TRUNCATED|REWRITTEN/.test(out.stdout)
+      : /Activity log (truncated|rewritten)/.test(out.stdout)
         ? "broken"
         : "none",
     exit: out.code,
