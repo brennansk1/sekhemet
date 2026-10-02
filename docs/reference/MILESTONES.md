@@ -8,9 +8,9 @@ Run one with `pnpm milestone <id>` (for example `pnpm milestone B3`), or `pnpm m
 | --- | --- | --- | --- |
 | [B1](#b1) | FAIL | 2026-09-30 | `963372e71f` |
 | [B2.5](#b25) | NOT RUN | 2026-09-29 | `4747051a6d` |
-| [B3](#b3) | PASS | 2026-09-28 | `150b7f8ebd` |
+| [B3](#b3) | PASS | 2026-10-02 | `73532310b1` |
 | [B4.4](#b44) | NOT RUN | 2026-09-28 | `150b7f8ebd` |
-| [B4.10](#b410) | PASS | 2026-09-28 | `150b7f8ebd` |
+| [B4.10](#b410) | PASS | 2026-10-02 | `73532310b1` |
 | [B4.11](#b411) | NOT RUN | 2026-09-28 | `150b7f8ebd` |
 | [C](#c) | NOT RUN | — | — |
 
@@ -59,21 +59,21 @@ How it ran: read only from `~/.sekhemet/baseline` (results and arms); the driver
 
 **PASS**
 
-- Evidence: `evidence/milestones/B3_2026-09-28.json`
-- Commit: `150b7f8ebd` with uncommitted changes
-- Tree: tree not recorded (evidence from before trees were recorded); run it again to tie it to a commit
-- Date: 2026-09-28, on darwin arm64 with 24 GB
+- Evidence: `evidence/milestones/B3_2026-10-02.json`
+- Commit: `73532310b1`
+- Tree: tree `b9c0bc6415151846751e9381ab7530535ad1bc3c`, the files it ran on (the commit that holds them has this tree; `git diff b9c0bc6415 <commit>` shows any difference)
+- Date: 2026-10-02, on darwin arm64 with 24 GB
 - Runner: `scripts/milestones/b3.mjs`
 
 - ✓ three issues built on a real repository and waiting in Review: card_b3_greet review, card_b3_farewell review, card_b3_count review
-- ✓ accept: squashed onto main with its trailers, the issue Done: main e7b4ddb0 -> b3e456c9; Accepted card_b3_greet — squashed onto main as b3e456c9a6, issue moved to Done. Your files were not touched.
+- ✓ accept: squashed onto main with its trailers, the issue Done: main 37d2c8ff -> a2c01216; Accepted card_b3_greet — squashed onto main as a2c012160a, issue moved to Done. Your files were not touched.
 - ✓ accept: the person's checkout (files, HEAD, index) untouched: byte for byte
-- ✓ undo: the accept reverted on main, the issue back in Ready: card_b3_greet's accept is reverted (090c6c795a on main); the issue is back in Ready.
+- ✓ undo: the accept reverted on main, the issue back in Ready: card_b3_greet's accept is reverted (07a805e36c on main); the issue is back in Ready.
 - ✓ send back: the issue back in Ready, and its next attempt told why: after send-back: ready; next attempt was told the reason and ended in review
 - ✓ the ledger: chain valid, projections identical, Ledger-Head anchor matches: second accept exit 0; log exit 0, chain valid, projections identical, anchor matches
-- ✓ crash: kill -9 mid-write on a WAL ledger, then the chain verifies on restart: 5/5 kills recovered (killed after 174, 105, 140, 199, 165 events; WAL present at 5 of them); a write lands after each restart: 5/5
+- ✓ crash: kill -9 mid-write on a WAL ledger, then the chain verifies on restart: 5/5 kills recovered (killed after 63, 155, 117, 83, 65 events; WAL present at 5 of them); a write lands after each restart: 5/5
 - ✓ upgrade: 5937e83's build made a ledger with its own CLI: 46 events of 15 types at schema version 0: 8 issues seeded, card_up_hello built by its Worker loop (review); park card_onyx_4_vault waiting on the vault design → 0, park card_onyx_7_cli after the scanner → 0, unpark card_onyx_4_vault → 0, review card_up_hello → 0, accept card_up_hello → 0, log → 0
-- ✓ upgrade: migrated by this build after a backup, to its schema version: schema 0 -> 21 (this build's 21); backup pre-migration-v0-to-v21-2026-09-29T02-53-25-263Z.db
+- ✓ upgrade: migrated by this build after a backup, to its schema version: schema 0 -> 21 (this build's 21); backup pre-migration-v0-to-v21-2026-10-02T11-50-38-522Z.db
 - ✓ upgrade: the hash chain intact and every event readable: 46/46 old events kept with their type and hash, 1 added on opening; chain valid; projections rebuilt identical; 0 unreadable payloads; the older build's accepted issue reads done
 - ✓ upgrade: this build writes to the upgraded ledger and it verifies: park exit 0; log exit 0
 
@@ -103,10 +103,10 @@ How it ran: the take-over half runs `apps/harness/tests/takeover_fixtures.spec.t
 
 **PASS**
 
-- Evidence: `evidence/milestones/B4.10_2026-09-28.json`
-- Commit: `150b7f8ebd` with uncommitted changes
-- Tree: tree not recorded (evidence from before trees were recorded); run it again to tie it to a commit
-- Date: 2026-09-28, on darwin arm64 with 24 GB
+- Evidence: `evidence/milestones/B4.10_2026-10-02.json`
+- Commit: `73532310b1`
+- Tree: tree `b9c0bc6415151846751e9381ab7530535ad1bc3c`, the files it ran on (the commit that holds them has this tree; `git diff b9c0bc6415 <commit>` shows any difference)
+- Date: 2026-10-02, on darwin arm64 with 24 GB
 - Runner: `scripts/milestones/b4_10.mjs`
 
 - ✓ five people at four levels sign in: Ada Admin admin, Lee Lead member, Mo Member member, Sam Stakeholder stakeholder, Vi Viewer viewer
