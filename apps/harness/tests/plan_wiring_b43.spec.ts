@@ -7,7 +7,7 @@ import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { acceptBrief } from "@sekhemet/planner";
 import { afterEach, describe, expect, it } from "vitest";
-import { type Kernel, planCommand } from "../src/wave2.js";
+import { type RepoContext, planCommand } from "../src/wave2.js";
 
 // B4.3 wiring of part 1A in `sekhemet plan`:
 // - PM-P13-2: once a person has accepted the project's brief, a story that
@@ -21,7 +21,7 @@ afterEach(() => {
   while (dirs.length) rmSync(dirs.pop() as string, { recursive: true, force: true });
 });
 
-function kernel(): Kernel {
+function kernel(): RepoContext {
   const repoPath = mkdtempSync(join(tmpdir(), "sek-plan-b43-"));
   dirs.push(repoPath);
   const w = (rel: string, text: string) => {

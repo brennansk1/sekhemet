@@ -36,7 +36,7 @@ export function terminalBoardLines(state: BoardState): string[] {
   const out: string[] = [];
   if (state.backpressureActive) {
     out.push(
-      "Review is full: finished cards wait in Verify until you accept, send back or park one.",
+      "In review is full: finished issues wait until you accept one, request changes, or put one on hold.",
       "",
     );
   }

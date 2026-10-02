@@ -1,22 +1,25 @@
 // Triage (FRONTEND_DESIGN §2.4.1, §2.5.6): Accept with a grace window, Send back
 // with a note, Park with a reason. Every mutation carries the CSRF header.
 import { errorCode, isAcceptanceTest, matchesAny } from "./diff_parse.js";
-import { MOD, copyText, esc, icon, kbd, postJSON } from "./dom.js";
+import { MOD, actionHeaders, announce, copyText, esc, icon, kbd, postJSON } from "./dom.js";
 import { ISSUE_COPY, lineCommentLabel, sendBackBody } from "./lib/issue.js";
-import { THREAD_COPY, acceptVerdict, dismissalNote } from "./lib/review_desk.js";
+import { THREAD_COPY, acceptChecklist, acceptVerdict, dismissalNote } from "./lib/review_desk.js";
 import { gateLabel } from "./lib/vocabulary.js";
 import { placeUnder, pushOverlay } from "./overlay.js";
 import { acknowledgedIds, deskBlocker } from "./review_desk.js";
 import { getSession } from "./session.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
+import { toastWithUndo } from "./undo.js";
 
 const GRACE_MS = 3000;
 let pending = null;
+/** The server's latest refusal of an Accept, shown in the checklist where Accept is (REV-02). */
+let refusal = null;
 
 export const READ_ONLY_TEXT = "Read-only.";
 export const READ_ONLY_DETAIL =
-  "This server was started without triage. Restart with sekhemet serve to accept or send back.";
+  "This server is read-only. Restart it with sekhemet serve to accept or request changes.";
 
 /**
  * Whether Accept is allowed, and the plain reason when it is not. `detail`
@@ -77,13 +80,61 @@ export function acceptPending(cardId) {
   return pending && (!cardId || pending.cardId === cardId);
 }
 
+/**
+ * The accept's request. `keepalive` lets it finish after the page goes away,
+ * so an Accept the toast announced is never dropped (FINDINGS REV-06).
+ */
+function sendAccept(cardId, body, keepalive = false) {
+  const path = `/api/cards/${encodeURIComponent(cardId)}/accept`;
+  if (!keepalive) return postJSON(path, body);
+  return fetch(path, {
+    method: "POST",
+    keepalive: true,
+    headers: actionHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  }).catch(() => undefined);
+}
+
+/**
+ * Leaving the page or the view inside the grace window sends the Accept now
+ * instead of dropping it (REV-06): a route change runs it at once, a closing
+ * page hands it to the browser with `keepalive`.
+ */
+function flushAccept(leaving) {
+  if (!pending) return;
+  if (leaving) {
+    clearTimeout(pending.timer);
+    const p = pending;
+    pending = null;
+    void sendAccept(p.cardId, p.body, true);
+    return;
+  }
+  clearTimeout(pending.timer);
+  void pending.run();
+}
+window.addEventListener("pagehide", () => flushAccept(true));
+window.addEventListener("hashchange", () => flushAccept(false));
+
+/** The latest refusal of an Accept of this card, for the checklist (REV-02); "" when none. */
+export function acceptRefusal(cardId) {
+  return refusal && refusal.cardId === cardId ? refusal.text : "";
+}
+
 export function accept(card, evidence, { onMerged, onChange, detail } = {}) {
   if (pending || blockedToast()) return;
   const st = acceptState(card, evidence, detail);
   if (!st.ok) {
-    toast({ text: "Couldn't accept.", detail: st.reason, tone: "fail" });
+    // REV-02: the reasons are listed where Accept is; point at them, no toast far away.
+    const list = document.getElementById("accept-why");
+    if (list) {
+      list.classList.remove("flash");
+      void list.offsetWidth;
+      list.classList.add("flash");
+      announce(`Couldn't accept. ${st.reason}`);
+    } else toast({ text: "Couldn't accept.", detail: st.reason, tone: "fail" });
     return;
   }
+  refusal = null;
   const title = card.display?.title ?? card.title;
   const t = toast({
     text: `Accepting “${title}”`,
@@ -92,34 +143,41 @@ export function accept(card, evidence, { onMerged, onChange, detail } = {}) {
     sticky: true,
     action: { label: "Undo", kbd: "Z", run: () => undoAccept() },
   });
+  // review-git §2.4.3: the findings this person acknowledged go with the accept.
+  const body = { acknowledgedFindings: acknowledgedIds(card, detail) };
+  const run = async () => {
+    const p = pending;
+    pending = null;
+    const res = await sendAccept(card.id, body);
+    if (res.ok) {
+      const sha = String(res.data?.sha ?? "");
+      // REV-04: the merge in one line — never the server's path or a git
+      // command; a Solo person learns their checkout is behind. The line
+      // naming Revert waits for Revert on the issue page (NEW-dashboard-21).
+      const behind = res.data?.notice && getSession().mode !== "team";
+      t.update({
+        text: `Merged to main as ${sha.slice(0, 7)}`,
+        detail: behind ? "Your checkout of main is now behind it." : undefined,
+        tone: "pass",
+        iconName: "merge",
+        action: sha ? { label: "Copy", run: () => copyText(sha) } : undefined,
+      });
+      refreshSoon();
+      onMerged?.(card);
+    } else {
+      const e = explainFailure("accept", res);
+      refusal = { cardId: card.id, text: [e.text, e.detail].filter(Boolean).join(" ") };
+      t.update({ ...e, tone: "fail", duration: 4000 });
+    }
+    p?.onChange?.();
+  };
   pending = {
     cardId: card.id,
     toast: t,
     onChange,
-    timer: setTimeout(async () => {
-      const p = pending;
-      pending = null;
-      // review-git §2.4.3: the findings this person acknowledged go with the accept.
-      const res = await postJSON(`/api/cards/${encodeURIComponent(card.id)}/accept`, {
-        acknowledgedFindings: acknowledgedIds(card, detail),
-      });
-      if (res.ok) {
-        const sha = String(res.data?.sha ?? "");
-        t.update({
-          text: `Merged to main as ${sha.slice(0, 7)}`,
-          ...(res.data?.notice ? { detail: String(res.data.notice) } : {}),
-          tone: "pass",
-          iconName: "merge",
-          action: sha ? { label: "Copy", run: () => copyText(sha) } : undefined,
-        });
-        refreshSoon();
-        onMerged?.(card);
-      } else {
-        const e = explainFailure("accept", res);
-        t.update({ ...e, tone: "fail", sticky: true });
-      }
-      p?.onChange?.();
-    }, GRACE_MS),
+    body,
+    run,
+    timer: setTimeout(run, GRACE_MS),
   };
   onChange?.();
 }
@@ -187,7 +245,7 @@ export function composerHtml(notes, { comments = [] } = {}) {
   const chips = notes
     .map((n) => `<button type="button" class="chip" data-chip title="${esc(n)}">${esc(n)}</button>`)
     .join("");
-  return `<form class="composer" data-composer aria-label="Send back"><label class="lbl" for="sb-note">What should the agent do differently?</label><textarea id="sb-note" name="note" placeholder="Your note is the first thing the agent reads on its next attempt." aria-describedby="sb-err"></textarea><div class="err" id="sb-err" role="alert" hidden>Add a note for the agent. It's what it reads next.</div>${chips ? `<div class="chips"><span class="sec" style="font-size:var(--text-xs)">Quick notes</span>${chips}</div>` : ""}${carriedHtml(comments)}<div class="row"><label class="cbx"><input type="checkbox" checked disabled> Suggest as a playbook rule <small>· your note becomes a candidate rule in Playbook</small></label><span class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("send-back")}Send back ${kbd(`${MOD}↵`)}</button></span></div></form>`;
+  return `<form class="composer" data-composer aria-label="Request changes"><label class="lbl" for="sb-note">What should the Agent do differently?</label><textarea id="sb-note" name="note" placeholder="Your note is the first thing the Agent reads on its next attempt." aria-describedby="sb-err"></textarea><div class="err" id="sb-err" role="alert" hidden>Add a note for the Agent. It's what it reads next.</div>${chips ? `<div class="chips"><span class="sec" style="font-size:var(--text-xs)">Quick notes</span>${chips}</div>` : ""}${carriedHtml(comments)}<div class="row"><label class="cbx"><input type="checkbox" checked disabled> Suggest as a playbook rule <small>· your note becomes a candidate rule in Playbook</small></label><span class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("send-back")}Request changes ${kbd(`${MOD}↵`)}</button></span></div></form>`;
 }
 
 /**
@@ -198,9 +256,12 @@ export function wireComposer(form, card, { onSent, onClose, comments }) {
   const area = form.querySelector("textarea");
   const err = form.querySelector(".err");
   let removeOverlay = () => {};
+  // REV-07: while the note is open its own Send back is the one shown.
+  document.body.classList.add("composing");
   const close = () => {
     removeOverlay();
     form.remove();
+    document.body.classList.remove("composing");
     onClose?.();
   };
   removeOverlay = pushOverlay({
@@ -250,11 +311,17 @@ export function wireComposer(form, card, { onSent, onClose, comments }) {
     if (res.ok) {
       removeOverlay();
       form.remove();
-      toast({ text: "Sent back to Ready with your note", iconName: "send-back", tone: "info" });
+      document.body.classList.remove("composing");
+      // The board's column (NAMING row 26): Ready is To do.
+      toast({
+        text: "Changes requested. The issue is back in To do with your note.",
+        iconName: "send-back",
+        tone: "info",
+      });
       refreshSoon();
       onSent?.(card);
     } else {
-      toast({ ...explainFailure("send back", res), tone: "fail" });
+      toast({ ...explainFailure("request changes", res), tone: "fail" });
     }
   });
   area.focus();
@@ -339,8 +406,8 @@ export function openPark(anchor, card, { onDone } = {}) {
   const pop = document.createElement("form");
   pop.className = "park-pop";
   pop.setAttribute("role", "dialog");
-  pop.setAttribute("aria-label", "Park");
-  pop.innerHTML = `<label for="park-reason">Why park it? <span class="sec" style="font-weight:400">Optional</span></label><input id="park-reason" autocomplete="off" placeholder="Sets the issue aside. Nothing runs until you unpark it."><div class="chips">${PRESETS.map((p) => `<button type="button" class="chip" data-preset>${esc(p)}</button>`).join("")}</div><div class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("park")}Park ${kbd("↵")}</button></div>`;
+  pop.setAttribute("aria-label", "Put on hold");
+  pop.innerHTML = `<label for="park-reason">Why put it on hold? <span class="sec" style="font-weight:400">Optional</span></label><input id="park-reason" autocomplete="off" placeholder="Sets the issue aside. Nothing runs until you take it off hold."><div class="chips">${PRESETS.map((p) => `<button type="button" class="chip" data-preset>${esc(p)}</button>`).join("")}</div><div class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("park")}Put on hold ${kbd("↵")}</button></div>`;
   document.getElementById("overlay-root").append(pop);
   placeUnder(pop, anchor);
   const input = pop.querySelector("input");
@@ -375,15 +442,25 @@ export function openPark(anchor, card, { onDone } = {}) {
     remove();
     pop.remove();
     if (res.ok) {
-      toast({
-        text: "Parked. Nothing runs until you unpark it.",
-        tone: "parked",
-        iconName: "park",
-      });
+      // §2.4.23: a hold offers Undo, which takes the issue back off hold.
+      toastWithUndo(
+        {
+          text: "On hold. Nothing runs until you take it off hold.",
+          tone: "parked",
+          iconName: "park",
+        },
+        async () => {
+          const back = await postJSON(`/api/cards/${encodeURIComponent(card.id)}/unpark`, {});
+          refreshSoon();
+          return back.ok
+            ? { text: "Taken off hold. It is back where it was." }
+            : { ...explainFailure("take it off hold", back), tone: "fail" };
+        },
+      );
       refreshSoon();
       onDone?.(card);
     } else {
-      toast({ ...explainFailure("park", res), tone: "fail" });
+      toast({ ...explainFailure("put it on hold", res), tone: "fail" });
       anchor?.focus?.();
     }
   });
@@ -392,14 +469,48 @@ export function openPark(anchor, card, { onDone } = {}) {
 
 /* ---------- The bar ---------- */
 
+const CHECK_ICON = {
+  conversation: "chat",
+  refused: "x",
+};
+
 /**
- * The triage toolbar. `opts.hint` adds the j/k hint; `opts.failing` swaps
- * Accept out for failing cards (Retry with planner arrives with POST /run).
+ * Accept's conditions as a full-width checklist (REV-02, GitHub's merge box):
+ * one line each, the server's refusal first, then the open conversations
+ * (REV-03). `links` maps a line's kind to where it is met (§8 question 7):
+ * `{ findings: "#/card/X/ai_review", files: "#/card/X/changes" }`. "" when
+ * nothing keeps Accept disabled and no conversation is open.
  */
-export function triageBarHtml(card, evidence, { hint = true, detail } = {}) {
+export function acceptChecklistHtml(card, evidence, detail, { links = {} } = {}) {
+  if (!card || card.status === "done" || card.status === "rejected") return "";
+  const s = store.state;
+  if (s.meta && s.meta.triage === false) return "";
+  const st = acceptState(card, evidence, detail);
+  if (!evidence && s.connection !== "offline") return "";
+  const items = acceptChecklist(st.ok ? "" : st.reason, detail?.desk, acceptRefusal(card.id));
+  if (!items.length) return "";
+  const rows = items
+    .map((i) => {
+      const href = links[i.kind];
+      const name = href
+        ? `<a href="${esc(href)}">${esc(i.text)}</a>`
+        : `<span>${esc(i.text)}</span>`;
+      return `<li class="${i.blocking ? "bl-block" : "bl-info"} bl-${esc(i.kind)}">${icon(CHECK_ICON[i.kind] ?? (i.blocking ? "alert" : "chat"), 14, "ic s14")}${name}</li>`;
+    })
+    .join("");
+  const label = items.some((i) => i.blocking) ? "Before you can accept" : "Open conversations";
+  return `<ul class="blockers plain" id="accept-why" aria-label="${esc(label)}">${rows}</ul>`;
+}
+
+/**
+ * The triage toolbar. `opts.hint` adds the j/k hint; `opts.checklist`
+ * (default on) puts Accept's conditions above the buttons; a page that
+ * places the checklist itself passes false.
+ */
+export function triageBarHtml(card, evidence, { hint = true, detail, checklist = true } = {}) {
   const s = store.state;
   if (s.meta && s.meta.triage === false) {
-    return `<div class="triage readonly" role="note">${icon("lock", 14, "ic s14")}<span><b>Read-only.</b> This server was started without triage. Restart with <span class="mono">sekhemet serve</span> to accept or send back.</span></div>`;
+    return `<div class="triage readonly" role="note">${icon("lock", 14, "ic s14")}<span><b>Read-only.</b> This server is read-only. Restart it with <span class="mono">sekhemet serve</span> to accept or request changes.</span></div>`;
   }
   // A merged or closed card has no verdict left to give.
   if (card?.status === "done" || card?.status === "rejected") {
@@ -418,17 +529,14 @@ export function triageBarHtml(card, evidence, { hint = true, detail } = {}) {
   const acceptBtn = !evidence
     ? ""
     : `<button class="btn primary" type="button" data-accept${st.ok && !merging ? "" : ` disabled aria-describedby="accept-why"`}>${icon("merge")}${merging ? "Merging…" : "Accept"} ${kbd("A")}</button>`;
-  const why =
-    !st.ok && (evidence || offline)
-      ? `<span class="why" id="accept-why">${esc(st.reason)}</span>`
-      : "";
+  const why = checklist ? acceptChecklistHtml(card, evidence, detail) : "";
   const back = evidence
-    ? `<button class="btn" type="button" data-back ${needs}${dis}>${icon("send-back")}Send back ${kbd("R")}</button>`
+    ? `<button class="btn" type="button" data-back ${needs}${dis}>${icon("send-back")}Request changes ${kbd("R")}</button>`
     : "";
   const park =
     card?.status === "parked"
       ? ""
-      : `<button class="btn ghost" type="button" data-park ${needs}${dis}>${icon("park")}Park ${kbd("P")}</button>`;
+      : `<button class="btn ghost" type="button" data-park ${needs}${dis}>${icon("park")}Put on hold ${kbd("P")}</button>`;
   // Teams item 25: in the Team setup, Comment — a review with no verdict — beside Accept and Send back.
   const comment =
     getSession().mode === "team" && evidence
@@ -442,5 +550,5 @@ export function triageBarHtml(card, evidence, { hint = true, detail } = {}) {
   const hints = hint
     ? `<span class="hint">${kbd("j")}${kbd("k")} next · ${kbd("?")} keys</span>`
     : "";
-  return `<div class="triage" role="toolbar" aria-label="Triage">${acceptBtn}${back}${comment}${park}${why}${dismissed}${hints}</div>`;
+  return `<div class="triage" role="toolbar" aria-label="Triage">${why}${acceptBtn}${back}${comment}${park}${dismissed}${hints}</div>`;
 }

@@ -13,7 +13,7 @@ import { dailyStandup } from "../src/pm/service.js";
 import { PmStore } from "../src/pm/store.js";
 import { parseHours } from "../src/scheduler.js";
 import {
-  type Kernel,
+  type RepoContext,
   batchBySwaps,
   gateRuleOnFixtures,
   overnightPlanLine,
@@ -25,7 +25,7 @@ const dirs: string[] = [];
 afterEach(() => {
   while (dirs.length) rmSync(dirs.pop() as string, { recursive: true, force: true });
 });
-function kernel(): Kernel {
+function kernel(): RepoContext {
   const repoPath = mkdtempSync(join(tmpdir(), "sek-w2more-"));
   dirs.push(repoPath);
   mkdirSync(join(repoPath, "src"));

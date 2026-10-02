@@ -36,6 +36,7 @@ import { initShell, setActiveNav, setNavViews } from "./shell.js";
 import { mountAuthPage } from "./signin.js";
 import * as statusView from "./status.js";
 import { store } from "./store.js";
+import { followIssueProject, loadProjects } from "./switcher.js";
 import { toast } from "./toast.js";
 
 const VIEWS = {
@@ -87,12 +88,16 @@ export function parseHash(hash = location.hash) {
  * profile label — and with no answer, Status for a person who has never
  * accepted an issue.
  */
-function defaultRoute() {
+function defaultRoute({ answered = false } = {}) {
   const s = store.state;
   const session = getSession();
   return defaultRouteFor({
-    noModel: Boolean(s.modelSetup?.none),
+    // An answer to the first-run question goes where it says (SHL-07), model or not;
+    // the No Coding model bar stays to say what is missing.
+    noModel: !answered && Boolean(s.modelSetup?.none),
     team: session.mode === "team",
+    // SHL-03: only who can set up models is sent to Configuration › Models.
+    level: session.level,
     profileLabel: session.label,
     role: readRole(storage()),
     reviewWaiting: s.cards.some((c) => c.status === "review"),
@@ -122,10 +127,19 @@ function remount() {
 
 function askFirstRun() {
   if (!firstRunDue(storage(), { noModel: Boolean(store.state.modelSetup?.none) })) return;
-  showFirstRun(() => {
-    remount();
-    if (landedOn && location.hash === landedOn) location.hash = defaultRoute();
-  });
+  showFirstRun(
+    () => {
+      remount();
+      // SHL-07: the answer goes where it says, from the page the dashboard opened on.
+      if (landedOn && parseHash().name === parseHash(landedOn).name)
+        location.hash = defaultRoute({ answered: true });
+    },
+    {
+      noModel: Boolean(store.state.modelSetup?.none),
+      // SHL-03: only who may change the server's configuration sets up models.
+      setsUpModels: getSession().mode !== "team" || getSession().level === "admin",
+    },
+  );
 }
 
 /**
@@ -146,8 +160,16 @@ async function refreshModelSetup() {
     const worker = (roles.data.roles ?? []).find((r) => r.role === "worker");
     const workerFits =
       Boolean(worker?.model) || found.some((m) => m.fits?.worker && m.fits.worker !== "no");
-    store.state.modelSetup = { none, noWorker: !none && !workerFits };
-    showNoWorkerBar(!none && !workerFits);
+    // SHL-04: the sidebar's model line reads this, Configuration's roles, and nothing else.
+    store.set({
+      modelSetup: {
+        none,
+        noWorker: !workerFits,
+        workerModel: worker?.model ? String(worker.model) : null,
+      },
+    });
+    // The bar shows whenever the Worker has no model that fits, none at all included.
+    showNoWorkerBar(!workerFits);
   } catch {
     // The page works without it; Configuration says the same.
   }
@@ -164,12 +186,39 @@ function showNoWorkerBar(show) {
   bar.id = "sk-noworker";
   bar.className = "cfg-bar";
   bar.setAttribute("role", "status");
+  const session = getSession();
+  // SHL-03: who cannot change the server's models is told who can, not sent to a read-only page.
   bar.innerHTML =
-    'No Coding model: issues cannot run until one fits this machine. <a href="#/configuration/models">Set up models</a>';
+    session.mode === "team" && session.level !== "admin"
+      ? "No Coding model yet: issues cannot run until an Admin sets one up in Configuration."
+      : 'No Coding model: issues cannot run until one fits this machine. <a href="#/configuration/models">Set up models</a>';
   document.getElementById("view")?.before(bar);
 }
 
+/**
+ * A11Y-01 (WCAG 2.4.1): *Skip to content* moves focus to the page's content and
+ * never changes the route — the router once read `#view` as an unknown route
+ * and opened Configuration. A `#view` reached another way (typed, or the link
+ * followed before this script ran) is put back to the page it was on.
+ */
+let lastRoute = "";
+function skipToContent() {
+  const view = document.getElementById("view");
+  view?.focus();
+}
+function initSkipLink() {
+  document.querySelector("a.skip")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    skipToContent();
+  });
+}
+
 function route() {
+  if (location.hash === "#view") {
+    history.replaceState(null, "", lastRoute || "#/");
+    skipToContent();
+    if (lastRoute) return;
+  }
   // An invite link opened on a signed-in page, or Sign in: the auth pages decide.
   const decision = authDecision(getSession(), location.hash);
   if (decision.kind === "page") {
@@ -185,16 +234,28 @@ function route() {
     return route();
   }
   store.state.route = parsed;
+  // The page before this one, for Esc on an issue (A11Y-02).
+  if (lastRoute && lastRoute !== location.hash && currentName !== parsed.name)
+    store.state.previousRoute = lastRoute;
+  lastRoute = location.hash;
   setActiveNav(navNameOf(parsed.name));
+  if ((parsed.name === "card" || parsed.name === "review") && parsed.params[0])
+    followIssueProject(parsed.params[0]).catch(() => {});
   const view = document.getElementById("view");
   if (currentName === parsed.name && current?.setParams) {
     current.setParams(parsed.params);
     return;
   }
   current?.unmount?.();
+  // A11Y-02: focus that was on the page just removed lands on the new page,
+  // never on <body>; the first page leaves focus where the browser put it.
+  const was = document.activeElement;
+  const lost = Boolean(currentName) && (!was || was === document.body || view.contains(was));
   view.textContent = "";
   currentName = parsed.name;
   current = VIEWS[parsed.name].mount(view, parsed);
+  const now = document.activeElement;
+  if (lost && (!now || now === document.body)) view.focus({ preventScroll: true });
 }
 
 export function currentView() {
@@ -237,7 +298,13 @@ function boardPath() {
 
 export async function refreshBoard() {
   const res = await getJSON(boardPath());
-  if (res.ok) applyBoard(res.data);
+  if (res.ok) {
+    if (store.state.boardError) store.set({ boardError: 0 });
+    applyBoard(res.data);
+  } else if (!store.state.cards.length) {
+    // ERR-03: a failed read is never an empty board.
+    store.set({ boardError: res.status || -1 });
+  }
   return res.ok;
 }
 
@@ -274,7 +341,13 @@ async function hydrate() {
   if (gates.ok) store.state.gates = gates.data;
   if (queue.ok) store.state.queue = queue.data;
   if (events.ok) store.state.verification = events.data.verification;
-  if (board.ok) applyBoard(board.data);
+  if (board.ok) {
+    store.state.boardError = 0;
+    applyBoard(board.data);
+  } else {
+    // ERR-03: the board's read failed; its view says so, with Retry, never "No issues yet".
+    store.state.boardError = board.status || -1;
+  }
   await refreshModelSetup();
   store.set({ loaded: true });
   refreshDecisions().catch(() => {});
@@ -504,6 +577,7 @@ function onAuth(e) {
 /* ---------- Boot ---------- */
 
 async function boot() {
+  initSkipLink();
   // An invite link as a path (`/invite/<id>`) is the same page as its route.
   const invite = /^\/invite\/([A-Za-z0-9_-]+)\/?$/.exec(location.pathname);
   if (invite) history.replaceState(null, "", `/#/invite/${invite[1]}`);
@@ -539,11 +613,18 @@ async function boot() {
     }
   }, 3000);
   try {
+    // DB-N25-2: the current project first, so every page opens on it (STA-02).
+    await loadProjects();
     await hydrate();
   } catch {
     store.set({ loaded: true, connection: "offline", offlineSince: Date.now() });
   }
   clearTimeout(note);
+  // A project chosen in the switcher: the board reads it, and the page shows it.
+  window.addEventListener("sekhemet:project", (e) => {
+    refreshBoard();
+    if (!e.detail?.stay) remount();
+  });
   window.addEventListener("hashchange", route);
   window.addEventListener("sekhemet:retry", retryConnection);
   window.addEventListener("sekhemet:refresh", () => {

@@ -68,8 +68,10 @@ describe("SUR-27: the terminal board speaks NAMING.md", () => {
     expect(held.some((l) => l.startsWith("On hold"))).toBe(true);
   });
 
-  it("says in plain words when Review is full", () => {
+  it("says in plain words when In review is full", () => {
     const text = terminalBoardLines(board([], true)).join("\n");
-    expect(text).toMatch(/Review is full/);
+    expect(text).toMatch(
+      /In review is full: finished issues wait until you accept one, request changes, or put one on hold\./,
+    );
   });
 });

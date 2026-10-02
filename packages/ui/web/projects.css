@@ -6,6 +6,10 @@
   max-width: 1200px;
   gap: 24px;
 }
+/* STA-04: the table never shrinks into an inner scroll box: the page scrolls. */
+.pj > * {
+  flex: none;
+}
 .pj-head {
   display: flex;
   align-items: flex-start;
@@ -154,4 +158,214 @@
     font-size: var(--text-xs);
     color: var(--text-secondary);
   }
+}
+
+/* The start page (design-stage §2.11, NEW-design-stage-7): the conversation
+   with Seshat on the left, the live draft on the right; below 768 px the
+   draft is a tab beside the conversation. One primary action: Review plan. */
+.start {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.start-tabs {
+  grid-column: 1 / -1;
+  padding: 0 16px;
+}
+.start-tabs[hidden],
+.start-convo[hidden],
+.start-draft[hidden] {
+  display: none;
+}
+.start-convo {
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.start-draft {
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.start-head h2 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.start-head p {
+  font-size: var(--text-xs);
+}
+.st-empty {
+  font-size: var(--text-sm);
+}
+.st-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: var(--text-sm);
+}
+.st-sec h3 {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+.st-sec ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.st-sec ul.st-reqs {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.st-req {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  padding: 6px 8px;
+  color: var(--text-secondary);
+}
+.st-req.kept {
+  color: var(--text-primary);
+  background: var(--bg-raised);
+}
+.st-req-t {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.st-from {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+}
+.st-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.st-state {
+  font-size: var(--text-xs);
+}
+.st-acts {
+  display: flex;
+  gap: 4px;
+}
+.st-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-top: 2px dashed var(--border-strong);
+  padding-top: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.st-line span {
+  margin-right: auto;
+}
+.st-plan {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.st-plan li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  padding: 8px 10px;
+}
+.start-foot {
+  position: sticky;
+  bottom: -16px;
+  margin: auto -20px -16px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: var(--text-sm);
+}
+.start-foot .btn {
+  align-self: flex-end;
+}
+
+@media (max-width: 767px) {
+  .start {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .start-draft {
+    border-left: 0;
+    padding: 12px 16px;
+  }
+  .start-foot {
+    margin: auto -16px -12px;
+    padding: 12px 16px;
+  }
+  .start-foot .btn {
+    align-self: stretch;
+    justify-content: center;
+  }
+}
+
+/* §2.11 item 7: the start page's one primary action is the draft's Review
+   plan; in the conversation beside it the same button is secondary. */
+.start-convo .btn.primary {
+  background: var(--bg-raised);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+.start-convo .btn.primary:hover {
+  background: var(--bg-overlay);
+}
+.start-convo .btn.primary kbd {
+  color: var(--text-secondary);
+  border-color: var(--border-subtle);
+}
+
+/* DS-N7-1: a folder that already holds a project, said before any drafting. */
+.start-blocked {
+  padding: 0 16px;
+}
+.start-blocked h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.start-blocked p {
+  margin: 0;
+}
+.start-blocked-acts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
 }

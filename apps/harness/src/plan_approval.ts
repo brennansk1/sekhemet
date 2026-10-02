@@ -29,6 +29,7 @@ import {
   walkStoryMap,
 } from "@sekhemet/planner";
 import { mergeNetworkConfigs } from "@sekhemet/sandbox";
+import { plural } from "@sekhemet/ui";
 import { networkConfigs } from "./config_apply.js";
 import { researchFetch } from "./research_consent.js";
 
@@ -41,14 +42,14 @@ import { researchFetch } from "./research_consent.js";
  * ledger: the Worker's measured record and the depth profile.
  */
 
-interface Kernel {
+interface RepoContext {
   repoPath: string;
   cardStore: CardStore;
   log: EventLog;
   boardService?: Pick<BoardService, "transitionCard">;
 }
 
-function ledgerOf(k: Kernel): PlannerLedger {
+function ledgerOf(k: RepoContext): PlannerLedger {
   return {
     store: k.cardStore,
     log: k.log,
@@ -70,7 +71,7 @@ export function projectDepthProfile(
 
 /** What every plan reads from the ledger (PM-N3-2, PM-N7): the Worker's record and the profile. */
 export async function planningInputs(
-  k: Kernel,
+  k: RepoContext,
   projectId?: string,
 ): Promise<{ capability: CapabilityModel; depthProfile: DepthProfile }> {
   return {
@@ -88,7 +89,7 @@ const O = DESIGN_COPY.offer;
  * quality-checklist row it adds.
  */
 export async function depthCommand(
-  k: Kernel,
+  k: RepoContext,
   args: string[],
   print: (line: string) => void,
 ): Promise<number> {
@@ -125,7 +126,7 @@ export async function depthCommand(
  * recorded: cards plan as the default until a person chooses.
  */
 export async function offerDepthProfile(
-  k: Kernel,
+  k: RepoContext,
   design: Pick<DesignStageResult, "depth">,
   options: {
     projectId?: string;
@@ -233,7 +234,7 @@ export function comparablesSearchFor(
  * a requirement until then (DS-P14-6).
  */
 export async function designCoverage(
-  k: Kernel,
+  k: RepoContext,
   design: DesignStageResult,
   options: {
     projectId?: string;
@@ -274,7 +275,7 @@ export async function designCoverage(
  * prints is `planApprovalView`, the same the dashboard shows.
  */
 export async function approveCommand(
-  k: Kernel,
+  k: RepoContext,
   args: string[],
   print: (line: string) => void,
 ): Promise<number> {
@@ -305,7 +306,7 @@ export async function approveCommand(
   const principal = k.cardStore.localPrincipal();
   const out = await approvePlan(ledger, id, principal, { profile, expectedSha256: view.sha256 });
   print(
-    `Approved ${out.approved.length} issue(s) under the ${profile} profile; ${out.released.length} left Planning.`,
+    `Approved ${plural(out.approved.length, "issue")} under the ${profile} profile; ${out.released.length} left Planning.`,
   );
   for (const h of out.held) print(`  ${h.id} stays in Planning: ${h.reason}`);
   return 0;
@@ -411,7 +412,7 @@ export async function handlePlanApprovalRoute(
  * each file its gates failed in into a child fix card citing the changelog.
  */
 export async function upgradeCommand(
-  k: Kernel,
+  k: RepoContext,
   args: string[],
   print: (line: string) => void,
 ): Promise<number> {
@@ -426,7 +427,7 @@ export async function upgradeCommand(
     print(
       created.length === 0
         ? `No new failing file under ${cardId}: no fix issue planned.`
-        : `Planned ${created.length} fix issue(s): ${created.join(", ")}. Approve them with: sekhemet approve ${cardId}`,
+        : `Planned ${plural(created.length, "fix issue")}: ${created.join(", ")}. Approve them with: sekhemet approve ${cardId}`,
     );
     return 0;
   }

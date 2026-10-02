@@ -17,7 +17,7 @@ import {
   readResearchRegister,
   validateResearchRegister,
 } from "../src/registers.js";
-import { runWave2Command } from "../src/wave2.js";
+import { runDevCommand } from "../src/wave2.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const dirs: string[] = [];
@@ -208,9 +208,9 @@ describe("X17/X18/X20: production paths", () => {
     const k = { repoPath: root, log, cardStore: new CardStore(db, log) };
     const lines: string[] = [];
     const io = { print: (l: string) => lines.push(l) };
-    expect(await runWave2Command("register", ["check"], k, io)).toBe(0);
+    expect(await runDevCommand("register", ["check"], k, io)).toBe(0);
     expect(
-      await runWave2Command(
+      await runDevCommand(
         "register",
         ["advance", "R6", "shortlisted", "--threshold", "Two more cards pass"],
         k,
@@ -220,9 +220,9 @@ describe("X17/X18/X20: production paths", () => {
     expect(readResearchRegister(root).find((e) => e.id === "R6")?.state).toBe("shortlisted");
     // left-pad is SSPL-1.0 (source-available) and unregistered: the audit names it.
     // (WTFPL, the fixture before B4.5, is Public Domain in ScanCode: permissive.)
-    expect(await runWave2Command("register", ["licenses"], k, io)).toBe(1);
+    expect(await runDevCommand("register", ["licenses"], k, io)).toBe(1);
     expect(lines.some((l) => /FAIL left-pad \(SSPL-1.0\)/.test(l))).toBe(true);
     const report = await runDoctor(root);
-    expect(report.checks.find((c) => c.name === "Registers")?.status).toBe("pass");
+    expect(report.checks.find((c) => c.name === "Project records")?.status).toBe("pass");
   }, 30_000);
 });

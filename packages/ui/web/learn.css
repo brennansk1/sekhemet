@@ -111,6 +111,18 @@
   font-size: var(--text-xs);
   color: var(--text-secondary);
 }
+/* SHL-03: the welcome and the model step, each a line of its own above the question. */
+.fr-welcome,
+.fr-step {
+  flex-basis: 100%;
+  font-size: var(--text-sm);
+}
+.fr-welcome .sec {
+  font-size: var(--text-sm);
+}
+.fr-step a {
+  color: var(--text-primary);
+}
 .fr-choices {
   display: flex;
   flex-wrap: wrap;

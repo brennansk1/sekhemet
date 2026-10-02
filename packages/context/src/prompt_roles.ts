@@ -71,7 +71,7 @@ export const LITERAL_FILE_ROLES: readonly (readonly [
   ["apps/harness/src/learning/review", ["reviewer"]],
   // An attached image described for planning, and a split proposed.
   ["apps/harness/src/attachments.ts", ["planner"]],
-  ["apps/harness/src/rest_extra.ts", ["planner"]],
+  ["apps/harness/src/run_routes.ts", ["planner"]],
   ["apps/harness/src/onboard.ts", ["planner"]],
   // The ACP method error goes to an external client, not a role's model.
   ["apps/harness/src/acp.ts", []],

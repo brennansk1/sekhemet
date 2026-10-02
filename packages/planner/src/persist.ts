@@ -34,8 +34,8 @@ import {
 } from "./capability_fit.js";
 import { DEFAULT_TIER_BUDGET, INVEST_MAX_STEPS } from "./constants.js";
 import { criterionIdsFor, exampleRows, lintCriterion } from "./criteria.js";
-import { buildDecisionRequest } from "./decision.js";
-import { DecisionStore, waitingReason } from "./decisions.js";
+import { buildDecisionRequest } from "./decision_request.js";
+import { DecisionStore, waitingReason } from "./decision_store.js";
 import { type PlannerTools, sketchWithModel } from "./edit_sketch.js";
 import { type CardEstimate, EstimationModel } from "./estimation.js";
 import { analyzeImpact } from "./impact.js";

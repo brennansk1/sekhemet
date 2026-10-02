@@ -37,7 +37,7 @@ import {
   workerContextVersion,
   workerOverrideFor,
 } from "../src/qualify.js";
-import { type Kernel, queuePrelude, runWave2Command } from "../src/wave2.js";
+import { type RepoContext, queuePrelude, runDevCommand } from "../src/wave2.js";
 
 // models.md rule 27a, MD-N8-1, MD-N8-4: a Worker is used for cards only once
 // its exact combination has qualified on this host. Nothing here loads a model.
@@ -232,7 +232,7 @@ describe("a Worker is refused until its exact combination has qualified (MD-N8-1
     const db = new DatabaseSync(":memory:");
     initSchema(db);
     const log = new EventLog(db);
-    const k: Kernel = { repoPath: tmp(), log, cardStore: new CardStore(db, log) };
+    const k: RepoContext = { repoPath: tmp(), log, cardStore: new CardStore(db, log) };
     await expect(
       queuePrelude(k, [], {
         print: () => undefined,
@@ -243,7 +243,7 @@ describe("a Worker is refused until its exact combination has qualified (MD-N8-1
 });
 
 describe("sekhemet qualify records the combination (MD-N8-1)", () => {
-  function kernel(): Kernel {
+  function kernel(): RepoContext {
     const repoPath = tmp();
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repoPath });
     const db = new DatabaseSync(":memory:");
@@ -261,17 +261,17 @@ describe("sekhemet qualify records the combination (MD-N8-1)", () => {
       model: (n: string) => new MockInferenceAdapter(n, [], { exhaustion: "default" as const }),
       combinationDeps: deps,
     };
-    expect(await runWave2Command("qualify", ["--check", "--models", "silent"], k, io)).toBe(1);
+    expect(await runDevCommand("qualify", ["--check", "--models", "silent"], k, io)).toBe(1);
     expect(out.at(-1)).toMatch(
       /Refusing silent as the Coding model: not verified on this machine .*never qualified/,
     );
-    expect(await runWave2Command("qualify", ["--models", "silent"], k, io)).toBe(1);
+    expect(await runDevCommand("qualify", ["--models", "silent"], k, io)).toBe(1);
     const reg = new ModelRegistry(process.env.SEKHEMET_MODEL_REGISTRY);
     const combo = qualificationCombination(io.model("silent"), deps);
     const look = reg.lookupQualification("silent", combo);
     expect(look.status).toBe("failed");
     expect(look.record?.suiteVersion).toBe(QUALIFICATION_SUITE_VERSION);
-    expect(await runWave2Command("qualify", ["--check", "--models", "silent"], k, io)).toBe(1);
+    expect(await runDevCommand("qualify", ["--check", "--models", "silent"], k, io)).toBe(1);
     expect(out.at(-1)).toMatch(/failed/);
   });
 
@@ -284,14 +284,12 @@ describe("sekhemet qualify records the combination (MD-N8-1)", () => {
       model: (n: string) => new MockInferenceAdapter(n, [], { exhaustion: "default" as const }),
       combinationDeps: { ...deps, contextVersion: (r: string) => `${r}-v1` },
     };
-    expect(await runWave2Command("qualify", ["--models", "silent", "--role", "boss"], k, io)).toBe(
-      1,
-    );
+    expect(await runDevCommand("qualify", ["--models", "silent", "--role", "boss"], k, io)).toBe(1);
     expect(out.at(-1)).toMatch(
       /Usage: sekhemet qualify .*--role <worker\|planner\|reviewer\|researcher>/,
     );
     expect(
-      await runWave2Command(
+      await runDevCommand(
         "qualify",
         ["--check", "--models", "silent", "--role", "reviewer"],
         k,
@@ -301,7 +299,7 @@ describe("sekhemet qualify records the combination (MD-N8-1)", () => {
     expect(out.at(-1)).toMatch(
       /silent is not verified on this machine for the Review model \(missing: .*\)\. Verify it with: sekhemet qualify --models silent --role reviewer/,
     );
-    await runWave2Command("qualify", ["--models", "silent", "--role", "reviewer"], k, io);
+    await runDevCommand("qualify", ["--models", "silent", "--role", "reviewer"], k, io);
     const reg = new ModelRegistry(process.env.SEKHEMET_MODEL_REGISTRY);
     const records = reg.get("silent")?.qualifications ?? [];
     expect(
@@ -350,7 +348,7 @@ describe("the engine build in the combination", () => {
 // failed one check (multi_step 50%) and a person records an override for the
 // exact combination that failed. The failure and the bar stay as they are.
 describe("sekhemet qualify --override (rule 27, MD-N4-4)", () => {
-  function kernel(): Kernel {
+  function kernel(): RepoContext {
     const repoPath = tmp();
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repoPath });
     const db = new DatabaseSync(":memory:");
@@ -380,19 +378,19 @@ describe("sekhemet qualify --override (rule 27, MD-N4-4)", () => {
 
   it("refuses to override what was not measured on this combination", async () => {
     const { k, out, io } = setup();
-    expect(await runWave2Command("qualify", override("person: Brennan Kelley"), k, io)).toBe(1);
+    expect(await runDevCommand("qualify", override("person: Brennan Kelley"), k, io)).toBe(1);
     expect(out.at(-1)).toMatch(/no failed qualification of silent for this combination/);
     expect(await k.log.getEventsByTypes(["models/override"])).toHaveLength(0);
   });
 
   it("refuses a labeller that is a model, or none", async () => {
     const { k, out, io } = setup();
-    await runWave2Command("qualify", ["--models", "silent"], k, io);
+    await runDevCommand("qualify", ["--models", "silent"], k, io);
     for (const by of ["claude-opus-5-5", "person: cyber-tiel", "silent"]) {
-      expect(await runWave2Command("qualify", override(by), k, io)).toBe(1);
+      expect(await runDevCommand("qualify", override(by), k, io)).toBe(1);
       expect(out.at(-1)).toMatch(/names a model, not a person/);
     }
-    expect(await runWave2Command("qualify", ["--override", "silent", "--reason", "x"], k, io)).toBe(
+    expect(await runDevCommand("qualify", ["--override", "silent", "--reason", "x"], k, io)).toBe(
       1,
     );
     expect(out.at(-1)).toMatch(/Usage: sekhemet qualify --override/);
@@ -401,8 +399,8 @@ describe("sekhemet qualify --override (rule 27, MD-N4-4)", () => {
 
   it("records the override for the exact failed combination; the check then accepts it and still shows the failure", async () => {
     const { k, out, io } = setup();
-    await runWave2Command("qualify", ["--models", "silent"], k, io);
-    expect(await runWave2Command("qualify", override("person: Brennan Kelley"), k, io)).toBe(0);
+    await runDevCommand("qualify", ["--models", "silent"], k, io);
+    expect(await runDevCommand("qualify", override("person: Brennan Kelley"), k, io)).toBe(0);
     const [event] = await k.log.getEventsByTypes(["models/override"]);
     const combination = qualificationCombination(io.model("silent"), deps);
     expect(event?.payload).toMatchObject({
@@ -421,7 +419,7 @@ describe("sekhemet qualify --override (rule 27, MD-N4-4)", () => {
     const o = workerOverrideFor(reg, a, combination);
     expect(o).toMatchObject({ by: "person: Brennan Kelley", failedChecks });
 
-    expect(await runWave2Command("qualify", ["--check", "--models", "silent"], k, io)).toBe(0);
+    expect(await runDevCommand("qualify", ["--check", "--models", "silent"], k, io)).toBe(0);
     const line = out.at(-1) as string;
     expect(line).toContain(
       `qualified by override: person: Brennan Kelley, ${o?.date.slice(0, 10)}: failed ${failedChecks.join(", ")}`,
@@ -437,8 +435,8 @@ describe("sekhemet qualify --override (rule 27, MD-N4-4)", () => {
 
   it("stores a bare name as a person, as asset labels are (review low 6)", async () => {
     const { k, io } = setup();
-    await runWave2Command("qualify", ["--models", "silent"], k, io);
-    expect(await runWave2Command("qualify", override("Brennan Kelley"), k, io)).toBe(0);
+    await runDevCommand("qualify", ["--models", "silent"], k, io);
+    expect(await runDevCommand("qualify", override("Brennan Kelley"), k, io)).toBe(0);
     const [event] = await k.log.getEventsByTypes(["models/override"]);
     expect((event?.payload as { by: string }).by).toBe("person: Brennan Kelley");
     const reg = new ModelRegistry(process.env.SEKHEMET_MODEL_REGISTRY);
@@ -451,7 +449,7 @@ describe("sekhemet qualify --override (rule 27, MD-N4-4)", () => {
   it("--check --json reports each model's state and override in one structured shape (review medium 3)", async () => {
     const { k, out, io } = setup();
     const json = async () => {
-      const code = await runWave2Command(
+      const code = await runDevCommand(
         "qualify",
         ["--check", "--json", "--models", "silent"],
         k,
@@ -469,8 +467,8 @@ describe("sekhemet qualify --override (rule 27, MD-N4-4)", () => {
         runnable: false,
       }),
     ]);
-    await runWave2Command("qualify", ["--models", "silent"], k, io);
-    await runWave2Command("qualify", override("person: Brennan Kelley"), k, io);
+    await runDevCommand("qualify", ["--models", "silent"], k, io);
+    await runDevCommand("qualify", override("person: Brennan Kelley"), k, io);
     r = await json();
     expect(r.code).toBe(0);
     const reg = new ModelRegistry(process.env.SEKHEMET_MODEL_REGISTRY);

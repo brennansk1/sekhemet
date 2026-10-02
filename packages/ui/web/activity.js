@@ -1,6 +1,6 @@
-// Activity tab (dashboard §2.6, DB-N8-1, DB-N8-3): the agent's plan, its
+// Activity tab (dashboard §2.6, DB-N8-1, DB-N8-3): the Agent's plan, its
 // progress and its questions and the people's messages, in time order — the
-// issue's conversation. A question's options are buttons; while the agent
+// issue's conversation. A question's options are buttons; while the Agent
 // runs, a message box reaches it at its next step (DB-N8-2). The timeline's
 // rules and words are `/app/lib/issue.js`; every ledger entry is one toggle away.
 import { aiBadge, esc, getJSON, icon, postJSON } from "./dom.js";

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { CardStore } from "@sekhemet/kernel";
 import { ModelRegistry } from "@sekhemet/models";
+import { plural } from "@sekhemet/ui";
 import { McpHub, loadMcpConfig } from "../mcp_client.js";
 import { ModelAccess, sharedModelAccess } from "../model_access.js";
 import { runnerLease } from "../runner_lease.js";
@@ -62,7 +63,7 @@ export async function runResearchCommand(
   if (argv.includes("--reuse-eval")) {
     // DS-P7-7: refused, with nothing sent, without the person's research consent.
     if (!log) {
-      console.log("No ledger here to record the measurement: run sekhemet init first.");
+      console.log("No Activity log here to record the measurement: run sekhemet init first.");
       return 1;
     }
     const offline = argv.includes("--offline") || process.env.SEKHEMET_OFFLINE === "1";
@@ -121,7 +122,7 @@ export async function runResearchCommand(
   if (mcp) {
     const n = mcp.toolDefinitions().length;
     console.log(
-      `MCP: ${n} tool(s) from ${Object.keys(mcpConfig).length} server(s)${mcp.errors.length ? `; failed: ${mcp.errors.join("; ")}` : ""}`,
+      `MCP: ${plural(n, "tool")} from ${plural(Object.keys(mcpConfig).length, "server")}${mcp.errors.length ? `; failed: ${mcp.errors.join("; ")}` : ""}`,
     );
   }
   const modelName = flag(argv, "--model") ?? process.env.SEKHEMET_RESEARCHER ?? "apodex";
@@ -209,12 +210,12 @@ async function reuseQueriesCommand(
   offline: boolean,
 ): Promise<number> {
   if (!name || name.startsWith("--")) {
-    console.log("--planner takes the name of a model in the model registry.");
+    console.log("--planner takes the name of a model in Sekhemet's model list.");
     return 1;
   }
   const registry = new ModelRegistry();
   if (!registry.get(name)) {
-    console.log(`${name} is not in the model registry; nothing was measured.`);
+    console.log(`${name} is not in Sekhemet's model list; nothing was measured.`);
     return 1;
   }
   // MD-N9-4: the Planner's model through its own scheduler, as `plan` loads it.

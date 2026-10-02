@@ -106,7 +106,7 @@ function render() {
   else if (v.length === 0)
     body = `<div class="ib-empty">${icon("ledger", 24, "ic s24")}<b>${esc(C.empty)}</b></div>`;
   else
-    body = `<div class="tbl-wrap"><table class="tbl pj-tbl au-tbl"><caption class="sr-only">${esc(C.title)}</caption><thead><tr><th scope="col">${esc(C.time)}</th><th scope="col">${esc(C.actor)}</th><th scope="col">${esc(C.action)}</th><th scope="col">${esc(C.target)}</th></tr></thead><tbody>${v
+    body = `<div class="tbl-wrap" tabindex="0"><table class="tbl pj-tbl au-tbl"><caption class="sr-only">${esc(C.title)}</caption><thead><tr><th scope="col">${esc(C.time)}</th><th scope="col">${esc(C.actor)}</th><th scope="col">${esc(C.action)}</th><th scope="col">${esc(C.target)}</th></tr></thead><tbody>${v
       .map(
         (e) =>
           `<tr><td data-col="time"><span class="pj-lbl">${esc(C.time)}</span><time class="tnum" datetime="${esc(e.at)}">${esc(when(e.at))}</time></td><td data-col="actor"><span class="pj-lbl">${esc(C.actor)}</span>${actorHtml(e.actor)}</td><td data-col="action"><span class="pj-lbl">${esc(C.action)}</span>${esc(e.action)}</td><td data-col="target"><span class="pj-lbl">${esc(C.target)}</span>${esc(e.target)}</td></tr>`,

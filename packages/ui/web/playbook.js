@@ -44,13 +44,13 @@ function legacyHtml() {
   if (!p) html = '<div class="sk" style="height:160px"></div>';
   else {
     const rules = p.rules.length
-      ? `<div class="tbl-wrap"><table class="tbl pb"><thead><tr><th>Instruction</th><th>Responds to</th><th>Taught by</th><th>Since</th><th>Applies to</th></tr></thead><tbody>${p.rules
+      ? `<div class="tbl-wrap" tabindex="0"><table class="tbl pb"><thead><tr><th>Instruction</th><th>Responds to</th><th>Taught by</th><th>Since</th><th>Applies to</th></tr></thead><tbody>${p.rules
           .map((r) => {
             const open = ui.open.has(r.id);
             return `<tr><td class="instr"><button type="button" class="clamp${open ? " open" : ""}" data-rule="${esc(r.id)}" aria-expanded="${open}">${esc(r.instruction)}</button><span class="mono sec">${esc(r.id)}</span></td><td>${r.triggerGate ? esc(gateLabel(r.triggerGate)) : '<span class="sec">Any check</span>'}</td><td>${r.originCard ? `<a href="#/card/${encodeURIComponent(r.originCard)}/thread">${esc(titleOf(r.originCard))}</a>` : '<span class="sec">—</span>'}</td><td class="tnum">${esc(day(r.effectiveDate))}</td><td class="mono">${esc(r.pattern)}</td></tr>`;
           })
           .join("")}</tbody></table></div>`
-      : '<p class="sec">No rules yet. Rules live in <span class="mono">.sekhemet/playbook.toml</span>; each one is given to the agent when its pattern matches the issue.</p>';
+      : '<p class="sec">No rules yet. Rules live in <span class="mono">.sekhemet/playbook.toml</span>; each one is given to the Agent when its pattern matches the issue.</p>';
     const cands = p.candidates.length
       ? `<ul class="cands">${p.candidates
           .map(
@@ -59,7 +59,7 @@ function legacyHtml() {
           )
           .join("")}</ul>`
       : '<p class="sec">No suggestions. Every note you write when sending an issue back shows up here.</p>';
-    html = `<section><h3 class="sh">Rules <span class="sec">${p.rules.length} · given to the agent when an issue's files match</span></h3>${rules}</section><section><h3 class="sh">Suggested rules <span class="sec">${p.candidates.length} from your send-back notes</span></h3>${cands}</section>`;
+    html = `<section><h3 class="sh">Rules <span class="sec">${p.rules.length} · given to the Agent when an issue's files match</span></h3>${rules}</section><section><h3 class="sh">Suggested rules <span class="sec">${p.candidates.length} from your notes when you requested changes</span></h3>${cands}</section>`;
   }
   return html;
 }

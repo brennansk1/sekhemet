@@ -115,7 +115,7 @@ export async function applyProposal(
       if (JSON.stringify(now) !== JSON.stringify(was)) {
         await ctx.pmStore.setProposalState(proposal.id, "stale");
         throw new ProposalError(
-          `${card.title} changed since the PM proposed this (${field} is now ${JSON.stringify(now)}). Ask the PM again.`,
+          `${card.title} changed since Seshat proposed this (${field} is now ${JSON.stringify(now)}). Ask Seshat again.`,
           409,
         );
       }
@@ -222,7 +222,7 @@ export async function applyProposal(
     case "unpark": {
       const to = proposal.patch?.status as CardStatus | undefined;
       if (!card || !to) throw new ProposalError("Nothing to move.", 400);
-      await move(card, to, `PM proposal: ${proposal.summary}`);
+      await move(card, to, `Seshat's proposal: ${proposal.summary}`);
       const moved = await ctx.cardStore.getCard(card.id);
       if (moved) touched.push(moved);
       break;

@@ -3,16 +3,146 @@
    §2.2.7). One table each, terse labels, one primary action. Tokens only.
    Below 768 px a table's rows stack, each cell with its label. */
 
+/* VIS-03: Members and Audit fill the main area, as the mockups do. */
 .mb,
 .au {
-  max-width: 1080px;
   gap: 16px;
+}
+.mb {
+  background: var(--bg-base);
 }
 .mb-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;
+}
+/* NEW-dashboard-19 (DEC-51): the mockup's tabs with the actions at their right,
+   the table and AI teammates, and the Access levels beside from 1100 px. */
+.mb-bar .tabs.ptabs {
+  flex: 1 1 auto;
+}
+.mb-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.mb-grid {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+}
+.mb-main,
+.mb-side {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.mb-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.mb-card.mb-table {
+  padding: 4px 16px;
+}
+.mb-card h2 {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+.mb-card h2 .sec {
+  font-size: var(--text-xs);
+  font-weight: 400;
+  margin-left: 8px;
+}
+.mb-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-control);
+  background: var(--bg-raised);
+  font-size: var(--text-xs);
+}
+.mb-ai {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+.mb-ai li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.mb-ai li:first-child {
+  border-top: 0;
+}
+.mb-ai li > span:last-child {
+  display: grid;
+  gap: 2px;
+}
+.mb-ai-who {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.mb-ai-mark {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--text-primary);
+  color: var(--on-ink);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.mb-levels,
+.mb-signin {
+  display: grid;
+  margin: 0;
+}
+.mb-levels > div,
+.mb-signin > div {
+  display: grid;
+  gap: 2px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.mb-levels > div:first-child,
+.mb-signin > div:first-child {
+  border-top: 0;
+}
+.mb-levels dt,
+.mb-signin dt {
+  font-weight: 500;
+}
+.mb-signin dd {
+  display: grid;
+  gap: 2px;
+}
+.mb-where {
+  font-size: var(--text-xs);
+}
+.mb-note {
+  font-size: var(--text-xs);
+}
+@media (min-width: 1100px) {
+  .mb-grid {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+  .mb-signin > div {
+    grid-template-columns: 160px minmax(0, 1fr);
+    gap: 12px;
+  }
 }
 .mb-form,
 .au-filters {

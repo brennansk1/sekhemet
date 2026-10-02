@@ -35,7 +35,70 @@ export const RETIRED: { re: RegExp; use: string }[] = [
     re: /(?<![-\w/#])(?<!\bboard(?:'s)? )cards?(?![-\w/])/i,
     use: "issue (card only for the tile on a board: board card)",
   },
+  // DEC-52 (NEW-dashboard-23) and the C1 rename table (FINDINGS_C1): the
+  // professional words where the product had coined its own. The code keeps
+  // `owner`, `ledger`, `parked`, `appetite`; CLI verbs stay as aliases.
+  {
+    re: /\bsen[dt](?:s|ing)?[ -]back\b|\bsend(?:s|ing)? (?:it|them|this issue|one) back\b/i,
+    use: "Request changes",
+  },
+  {
+    re: /(?<![-/.])\b(?:un)?park(?:s|ed|ing)?\b(?![-/])/i,
+    use: "Put on hold / On hold / Take off hold",
+  },
+  { re: /(?<![-\w/])ledger(?![-\w/])|\bevent log\b|\baudit trail\b/i, use: "Activity log" },
+  { re: /\bsuspect\b/i, use: "Needs re-checking" },
+  { re: /strength unmet/i, use: "Tests too weak" },
+  { re: /\bDone when\b(?! (?:it|its|the|all)\b)/, use: "Acceptance criteria" },
+  { re: /\bMay edit\b/, use: "Files in scope" },
+  { re: /\bappetite\b/i, use: "Size limit" },
+  { re: /\bNeed you\b/, use: "Needs you" },
+  { re: /\bthe harness\b|\bharness (?:error|overhead|loads)\b/i, use: "Sekhemet" },
+  { re: /\bPM\b/, use: "Seshat" },
+  { re: /notice budget/i, use: "notification limit" },
+  {
+    re: /\bfacts rail\b|\bstored states?\b|\babout enabler\b/i,
+    use: "Details / status / enablers",
+  },
+  { re: /accept-holder/i, use: "a person on the Accept rule" },
+  { re: /\bprincipals?\b/i, use: "person" },
+  { re: /[a-z]\((?:s|es)\)/, use: "plural()" },
+  { re: /\b[Tt]he agent\b/, use: "the Agent" },
+  {
+    re: /\bmodel registry\b|\bregistry (?:hash|model|entry|lookup)\b|\bthe registry\b|^Registry$|\bskills registry\b/i,
+    use: "Sekhemet's model list / Published hash",
+  },
+  { re: /bake-?offs?\b/i, use: "benchmark" },
+  { re: /Seshat's review\b/, use: "Seshat's notes" },
+  { re: /sub-researchers?|criterion lint|scope bound|size horizon/i, use: "a plain description" },
+  {
+    re: /inference socket|escape probe|M0 protocol|golden set/i,
+    use: "Model server / Sandbox / first-run benchmark / Research quality",
+  },
+  { re: /\b(?:TRUNCATED|REWRITTEN|WROTE OUTSIDE|VERIFIED|DRIFTED)\b/, use: "sentence case" },
 ];
+
+/**
+ * What a dashboard page must never print (FINDINGS_C1 R-12, R-13; §A Error
+ * messages): an API path with its verb, an HTTP status as the explanation, an
+ * environment switch, or a spec, decision or milestone id. Read from the raw
+ * literal, because `words` strips identifiers.
+ */
+export const RAW_RETIRED: { re: RegExp; use: string }[] = [
+  { re: /\b(?:GET|POST|PUT|PATCH|DELETE) \/api\//, use: "what failed, in plain words" },
+  { re: /\breturned \d{3}\b|\bHTTP \d{3}\b/, use: "what failed, in plain words" },
+  { re: /\bSEKHEMET_[A-Z_]+=/, use: "the setting's name in Configuration" },
+  {
+    re: /\b(?:DEC|SEC|SUR|TEAM|SPEC|EXT)-\d+\b|\b(?:MD|PM|DB|DS|RG|WL|KN|RT|SU)-N\d+|\bNEW-[a-z]+-\d+|\bB\d\.\d+\b/,
+    use: "the plain sentence alone",
+  },
+];
+
+/** The raw-text findings of one literal (`RAW_RETIRED`), interpolations left out. */
+export function rawRetiredIn(text: string): string[] {
+  const t = text.replace(/\$\{\}/g, " ");
+  return RAW_RETIRED.filter((r) => r.re.test(t)).map((r) => `${t.match(r.re)?.[0]} → ${r.use}`);
+}
 
 /**
  * The words a person reads in a literal: its text and the attributes a person

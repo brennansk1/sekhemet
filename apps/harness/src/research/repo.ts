@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { compareVersions } from "@sekhemet/sync";
+import { plural } from "@sekhemet/ui";
 import { ResearchCache } from "./polite.js";
 
 /**
@@ -206,7 +207,7 @@ export function releasesBetween(r: RepoRef, from: string, to: string, maxChars =
       .sort((a, b) => (newer(a.tag_name, b.tag_name) ? 1 : -1));
     if (!between.length)
       return `No releases between ${from} and ${to} in ${r.owner}/${r.repo} (${all.length} releases seen).`;
-    let out = `${r.owner}/${r.repo}: ${between.length} release(s) from ${from} to ${to}\n`;
+    let out = `${r.owner}/${r.repo}: ${plural(between.length, "release")} from ${from} to ${to}\n`;
     for (const rel of between) {
       const entry = `\n## ${rel.tag_name}${rel.name && rel.name !== rel.tag_name ? ` — ${rel.name}` : ""}\n${(rel.body ?? "(no notes)").trim()}\n`;
       if (out.length + entry.length > maxChars) return `${out}\n[truncated]`;

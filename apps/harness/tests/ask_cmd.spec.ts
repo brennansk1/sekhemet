@@ -6,7 +6,7 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { MockInferenceAdapter, type ModelHold } from "@sekhemet/models";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runAsk } from "../src/ask_cmd.js";
-import { FRONT_DOOR, routeFrontDoor } from "../src/front_door.js";
+import { PRIMARY_COMMANDS, routeFrontDoor } from "../src/cli_commands.js";
 import { PmStore } from "../src/pm/store.js";
 
 /**
@@ -130,7 +130,7 @@ describe("SUR-51: sekhemet ask", () => {
 
 describe("SUR-52: ask at the front door, board under dev", () => {
   it("lists ask among the eight front-door commands and not board; board still routes", () => {
-    const usages = FRONT_DOOR.map((c) => c.usage);
+    const usages = PRIMARY_COMMANDS.map((c) => c.usage);
     expect(usages).toHaveLength(8);
     expect(usages).toContain('sekhemet ask "<question>"');
     expect(usages.some((u) => u.startsWith("sekhemet board"))).toBe(false);

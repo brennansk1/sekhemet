@@ -221,7 +221,7 @@ describe("planCommand offers the depth profile and adds the design coverage (DS-
     });
     await main(["plan", RECIPES, "--repo", repo, "--planner", "none", "--offline"]);
     vi.restoreAllMocks();
-    expect(out.join("\n")).toMatch(/Proposed depth: production/);
+    expect(out.join("\n")).toMatch(/Proposed Type: production/);
     expect(out.join("\n")).toMatch(/not searched.*offline/i);
     expect(cardStore.depthProfiles.of().recorded).toBe(false);
   });
@@ -265,6 +265,6 @@ describe("sekhemet depth from the command line (DS-P14-1)", () => {
       projectId: project.id,
     });
     expect(cardStore.depthProfiles.of().recorded).toBe(false);
-    expect(out.join("\n")).toMatch(/Depth: internal tool, chosen\./);
+    expect(out.join("\n")).toMatch(/Type: internal tool, chosen\./);
   });
 });

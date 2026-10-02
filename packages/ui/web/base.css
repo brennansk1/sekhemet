@@ -44,6 +44,10 @@ button {
 a {
   color: inherit;
 }
+/* A link drawn as a button reads as a button: no underline (VIS-05). */
+a.btn {
+  text-decoration: none;
+}
 :focus {
   outline: none;
 }
@@ -55,7 +59,9 @@ h1,
 h2,
 h3,
 h4,
-p {
+p,
+dl,
+dd {
   margin: 0;
 }
 code,
@@ -144,17 +150,19 @@ kbd {
 .btn:hover {
   background: var(--bg-overlay);
 }
+/* The primary button in dark ink (DB-N20-1, DEC-51): gold is the brand accent,
+   so "primary action" and "needs attention" never look alike. */
 .btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--on-ink);
 }
 .btn.primary:hover {
-  filter: brightness(1.08);
+  background: color-mix(in srgb, var(--text-primary) 86%, var(--bg-base));
 }
 .btn.primary kbd {
-  color: var(--on-accent);
-  border-color: color-mix(in srgb, var(--on-accent) 35%, transparent);
+  color: var(--on-ink);
+  border-color: color-mix(in srgb, var(--on-ink) 35%, transparent);
 }
 .btn.ghost {
   border-color: transparent;
@@ -451,6 +459,15 @@ kbd {
   display: block;
   color: var(--text-secondary);
   font-size: var(--text-xs);
+}
+/* A11Y-03: a toast's actions and every icon-only Copy are 24 px targets. */
+.toast .act,
+button[data-copy]:not(.btn) {
+  min-width: 24px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .toast .act {
   font-size: var(--text-xs);

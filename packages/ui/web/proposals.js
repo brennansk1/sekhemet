@@ -91,6 +91,9 @@ function cycleRows(p) {
 
 function body(p, ctx) {
   if (p.kind === "create_cycle") return cycleRows(p);
+  // A new project's group is read in Review plan (and on the start page's
+  // draft), never as a field diff of its data.
+  if (hasReviewPlan(p)) return "";
   if (p.kind === "create_card" || p.kind === "split_card") {
     const note =
       p.kind === "split_card" && p.cardId
@@ -129,7 +132,7 @@ export function proposalHtml(p, ctx = diffContext()) {
           ? reviewPlanButtonHtml(isBusy)
           : `<button class="btn sm" type="button" data-apply data-needs="proposal.apply" ${isBusy ? "disabled" : ""}>${isBusy ? "Applying…" : `Apply ${kbd("y")}`}</button>`
       }</div>`;
-  return `<li class="prop open${stale ? " stale" : ""}" tabindex="-1" data-prop="${esc(p.id)}" role="group" aria-label="${esc(`${k.label}: ${p.summary}`)}"><div class="ph">${icon(k.icon, 14, "ic s14")}<span class="pk">${esc(k.label)}</span>${chip}</div><p class="sum">${esc(p.summary)}</p>${body(p, ctx)}${approvalNoteHtml(p.approval, getSession().principal)}${staleNote}${acts}</li>`;
+  return `<li class="prop open${stale ? " stale" : ""}" tabindex="-1" data-prop="${esc(p.id)}" aria-label="${esc(`${k.label}: ${p.summary}`)}"><div class="ph">${icon(k.icon, 14, "ic s14")}<span class="pk">${esc(k.label)}</span>${chip}</div><p class="sum">${esc(p.summary)}</p>${body(p, ctx)}${approvalNoteHtml(p.approval, getSession().principal)}${staleNote}${acts}</li>`;
 }
 
 /**
@@ -146,6 +149,20 @@ export function proposalGroupHtml(proposals, { title = "Proposed changes", group
     ? `<span class="sec tnum">${open.length} open</span><div class="gacts">${open.length > 1 ? `<button class="btn ghost sm" type="button" data-discard-all>Discard all</button>` : ""}${bulk ? `<button class="btn primary sm" type="button" data-apply-all data-needs="proposal.apply">${esc(applyAllLabel(withoutReviewPlan(proposals)))} ${kbd("⇧Y")}</button>` : ""}</div>`
     : `<span class="sec">All decided</span>`;
   return `<section class="pgroup" data-group="${esc(groupId)}" aria-label="${esc(title)}"><header><b>${esc(title)}</b>${head}</header><ul class="plist" role="list">${proposals.map((p) => proposalHtml(p, ctx)).join("")}</ul></section>`;
+}
+
+/**
+ * Review plan for a new project's proposal, as this person may act on it
+ * (TEAM-20: their level and principal choose Send for approval or Approve).
+ * The start page passes the choices made on its draft and *Keep talking*
+ * (design-stage §2.11 item 2). Resolves with the apply's or the send's result.
+ */
+export async function reviewPlanFor(p, extra = {}) {
+  const { level, principal: me } = getSession();
+  const result = await openReviewPlan(p, { setup: getSession().mode, level, me, ...extra });
+  if (result?.proposal) Object.assign(p, result.proposal);
+  store.set({});
+  return result;
 }
 
 /** The proposals Apply all may apply: every one but a new project's (DS-P2-6). */
@@ -189,12 +206,8 @@ export function bindProposals(root, { sources = threadSources, onChange = () => 
   // DS-P2-6: Review plan applies the proposal itself, with the person's choices.
   const review = async (p) => {
     if (busy.has(p.id)) return;
-    // TEAM-20: the person's level and principal choose Send for approval or Approve.
-    const { level, principal: me } = getSession();
-    const result = await openReviewPlan(p, { setup: getSession().mode, level, me });
-    if (result?.proposal) Object.assign(p, result.proposal);
+    await reviewPlanFor(p);
     onChange();
-    store.set({});
   };
   const groupOf = (el) => {
     const li = el.closest(".pgroup")?.querySelector("[data-prop]");

@@ -79,7 +79,8 @@ describe("slash commands in Seshat's chat (H16)", () => {
     expect(loads).toBe(0);
     const replies = (await pm.thread()).filter((m) => m.role === "pm").map((m) => m.text);
     expect(replies[0]).toMatch(/`\/research <question>`/);
-    expect(replies[1]).toMatch(/open issue\(s\)/);
+    // STA-01: Status's forecast words, with the open issues it counts.
+    expect(replies[1]).toMatch(/^\d+ open issues?\. Forecast: /);
     expect(replies[2]?.length).toBeGreaterThan(0);
   });
 
@@ -181,7 +182,7 @@ describe("slash commands in Seshat's chat (H16)", () => {
         { name: "ready", args: "hasher" },
         { cardStore: cards, board, pmStore: pm, repoPath: repo, audience, asker: ASKER },
       );
-      expect(visible).toEqual({ reply: "Moved card_chron_hasher to Ready." });
+      expect(visible).toEqual({ reply: "Moved card_chron_hasher to To do." });
     });
 
     it("TEAM-40, TEAM-6: /ready is checked at the named card's own project level, not the workspace one", async () => {

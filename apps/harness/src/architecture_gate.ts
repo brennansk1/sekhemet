@@ -111,7 +111,7 @@ function unenforcedNote(lines: readonly UnenforcedInvariant[]): string | undefin
     .map((l) => `"${l.line}"`)
     .join(
       "; ",
-    )}. Restate ${n === 1 ? "it" : "each"} as ${INVARIANT_FORMS.join(" or ")} for the architecture gate to check it.`;
+    )}. Restate ${n === 1 ? "it" : "each"} as ${INVARIANT_FORMS.join(" or ")} for the architecture check to verify it.`;
 }
 
 const stripExt = (p: string): string => p.replace(/\.[cm]?[jt]sx?$/, "");

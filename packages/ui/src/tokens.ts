@@ -34,7 +34,7 @@ export interface ColorTokens {
   stateBlocked: string;
 }
 
-/** Dark theme. Warm near-black ground with Egyptian Gold as the only CTA colour. */
+/** Dark theme. Warm near-black ground; Egyptian Gold is the brand accent, never a button (DEC-51). */
 export const BASALT: ColorTokens = {
   bgBase: "#14120F",
   bgSurface: "#1C1A16",
@@ -96,8 +96,10 @@ export const THEMES: Record<ThemeName, ColorTokens> = { basalt: BASALT, sand: SA
  * alpha and the tints are mixed from the state roles at runtime.
  */
 export interface DerivedTokens {
-  /** Text and glyphs on the primary (gold) button. */
+  /** Text and glyphs on a gold fill (the accent). No button uses one (DB-N20-1). */
   onAccent: string;
+  /** Text and glyphs on the primary button, filled with `--text-primary` (DB-N20-1, DEC-51). */
+  onInk: string;
   /** Glyphs on pass/fail/running fills (gate pips). */
   onState: string;
   /** Palette and modal backdrop. */
@@ -107,8 +109,20 @@ export interface DerivedTokens {
 }
 
 export const DERIVED: Record<ThemeName, DerivedTokens> = {
-  basalt: { onAccent: "#14120F", onState: "#14120F", scrim: "rgb(8 7 6 / 0.6)", tintPercent: 12 },
-  sand: { onAccent: "#FFFFFF", onState: "#FFFFFF", scrim: "rgb(28 26 22 / 0.35)", tintPercent: 10 },
+  basalt: {
+    onAccent: "#14120F",
+    onInk: "#14120F",
+    onState: "#14120F",
+    scrim: "rgb(8 7 6 / 0.6)",
+    tintPercent: 12,
+  },
+  sand: {
+    onAccent: "#FFFFFF",
+    onInk: "#FFFFFF",
+    onState: "#FFFFFF",
+    scrim: "rgb(28 26 22 / 0.35)",
+    tintPercent: 10,
+  },
 };
 
 /** Layout constants shared by every view. */
@@ -127,6 +141,7 @@ function derivedVars(theme: ThemeName, indent = "  "): string {
   );
   return [
     `${indent}--on-accent: ${d.onAccent};`,
+    `${indent}--on-ink: ${d.onInk};`,
     `${indent}--on-state: ${d.onState};`,
     `${indent}--scrim: ${d.scrim};`,
     ...tints,

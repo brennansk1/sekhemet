@@ -8,6 +8,7 @@
  * every word a person reads is here, so the page and the notices agree.
  */
 
+import { reviewItHref } from "./learn.js";
 import {
   type AiStateFacts,
   type AiStateLine,
@@ -15,7 +16,7 @@ import {
   aiStateLine,
   startRequestLine,
 } from "./teammates.js";
-import { columnLabel } from "./vocabulary.js";
+import { boardColumnLabel } from "./vocabulary.js";
 
 export type InboxReason =
   | "needs_you"
@@ -134,9 +135,9 @@ export function changeLine(c: InboxChange): string {
     case "mentioned":
       return `${Who} mentioned you.`;
     case "status":
-      return `${Who} moved it to ${columnLabel(c.status ?? "")}.`;
+      return `${Who} moved it to ${boardColumnLabel(c.status ?? "")}.`;
     case "owner":
-      return c.to ? `${Who} made ${c.to} the owner.` : `${Who} removed the owner.`;
+      return c.to ? `${Who} assigned it to ${c.to}.` : `${Who} removed the assignee.`;
     case "delegated":
       if (c.toAi === "agent") return `${Who} delegated it to the Agent.`;
       return c.to ? `${Who} delegated it to ${c.to}.` : `${Who} took it back from its delegate.`;
@@ -290,6 +291,102 @@ export function inboxGroups(
   })).filter((g) => g.items.length > 0);
 }
 
+// ---------------------------------------------------------------------------
+// The reading pane (dashboard §2.17.2, NEW-dashboard-19, DEC-51; TEAM-03)
+// ---------------------------------------------------------------------------
+
+/** Two panes at this window width and wider; one list below it (DB-N19-7, -9). */
+export const INBOX_SPLIT_PX = 1100;
+
+/** Every word of the reading pane. */
+export const INBOX_PANE_COPY = {
+  paneLabel: "Reading pane",
+  backToInbox: "Back to Inbox",
+  reply: "Reply",
+  replyLabel: "Reply on this issue",
+  replyPlaceholder: "Type @ to mention a person or the Agent",
+  replied: "Reply posted on the issue.",
+  couldNotReply: "Couldn't post the reply.",
+  openIssue: "Open issue",
+  reviewIt: "Review it",
+  noSelection: "Select an item to read it here.",
+  loading: "Loading the issue…",
+} as const;
+
+/**
+ * The issue as the pane reads it: `GET /api/cards/:id`'s card — the stored
+ * owner (DEC-52's Assignee) and delegate, and their names in `display`.
+ */
+export interface ReadingCard {
+  status: string;
+  owner?: string | null;
+  delegate?: { kind: string; id?: string } | null;
+  display?: { ownerName?: string; delegateName?: string };
+  release?: string;
+}
+
+/**
+ * "In review · assignee Priya Nair · delegate Agent · release 1": board column
+ * words (DEC-52). The assignee is always a person and the Agent only ever the
+ * delegate; a principal is never shown (SHL-02).
+ */
+export function readingFacts(card: ReadingCard): string {
+  const owner = card.owner ? card.display?.ownerName?.trim() || "an unnamed person" : "";
+  const d = card.delegate;
+  const delegate =
+    !d || d.kind === "none"
+      ? ""
+      : d.kind === "worker"
+        ? "Agent"
+        : card.display?.delegateName?.trim() || "a person";
+  return [
+    boardColumnLabel(card.status),
+    owner ? `assignee ${owner}` : "no assignee",
+    ...(delegate ? [`delegate ${delegate}`] : []),
+    ...(card.release ? [`release ${card.release}`] : []),
+  ].join(" · ");
+}
+
+/**
+ * Where the pane's *Open issue* / *Review it* goes: a review request opens the
+ * criteria view for a person who manages the work, else Review (DB-N17-1).
+ */
+export function paneOpenHref(
+  item: Pick<InboxItemFacts, "reason" | "kind" | "cardId" | "link">,
+  manages: boolean,
+): string {
+  if (item.reason === "review_requested" && item.kind !== "plan_approval" && item.cardId)
+    return reviewItHref(item.cardId, manages);
+  return item.link ?? "";
+}
+
+/** A comment on the issue as `GET /api/cards/:id/comments` sends it. */
+export interface PaneComment {
+  id: string;
+  by: string;
+  name: string;
+  text: string;
+  postedAt: string;
+}
+
+/**
+ * What caused the item, in context (DB-N19-7): for a comment, a mention or a
+ * review reply, the newest comment by the person whose change reached you.
+ */
+export function causeComment(
+  item: InboxItemFacts,
+  comments: readonly PaneComment[],
+): PaneComment | undefined {
+  const t = item.change?.type;
+  if (t !== "commented" && t !== "mentioned" && t !== "replied") return undefined;
+  const by = item.change?.byAi === "seshat" ? "Seshat" : item.change?.by;
+  for (let i = comments.length - 1; i >= 0; i--) {
+    const c = comments[i];
+    if (c && (!by || c.name === by)) return c;
+  }
+  return undefined;
+}
+
 export type SnoozeChoice = "later" | "tomorrow" | "next_week";
 
 /** Linear's snooze choices. */
@@ -333,13 +430,13 @@ export const MY_ISSUES_COPY = {
   title: "My issues",
   empty: "No issues are yours right now.",
   emptyHint:
-    "Issues you own, are delegated or are asked to review show here, across your projects.",
+    "Issues assigned or delegated to you, or waiting for your review, show here, across your projects.",
   noProject: "No project",
   columns: { issue: "Issue", status: "Status", why: "Reason" },
 } as const;
 
 const WHY: Record<MyIssueWhy, string> = {
-  owner: "Owner",
+  owner: "Assigned to you",
   delegated: "Delegated to you",
   review: "Review requested",
 };
@@ -368,7 +465,7 @@ export function myIssueGroups(issues: readonly MyIssueFacts[]): {
     g.issues.push({
       ...i,
       whyLabel: i.why.map((w) => WHY[w]).join(" · "),
-      statusLabel: columnLabel(i.status),
+      statusLabel: boardColumnLabel(i.status),
     });
     groups.set(id, g);
   }

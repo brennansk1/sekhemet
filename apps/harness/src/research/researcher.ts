@@ -1,9 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { allocationBudget, charsForTokens, estimatePromptTokens } from "@sekhemet/context";
 import { moduleApiSummary } from "@sekhemet/loop";
-import type { ChatTurn, LocalInferenceAdapter, ToolCall, ToolDefinition } from "@sekhemet/models";
+import {
+  type ChatTurn,
+  type LocalInferenceAdapter,
+  type ToolCall,
+  type ToolDefinition,
+  stripReasoning,
+} from "@sekhemet/models";
 import { type Fetcher, type LibrarySearch, formatHits, searchLibraries } from "../pm/libraries.js";
-import { researchAgentPrompt, stripThinking } from "./apodex.js";
+import { researchAgentPrompt } from "./apodex.js";
 import {
   APODEX_LOCAL_TOOLS,
   EvidenceLedger,
@@ -624,8 +630,6 @@ You are the Researcher on a local software team (a coding Worker, a project mana
 
 const isApodex = (m: LocalInferenceAdapter) => /apodex/i.test(m.modelId);
 
-const strip = stripThinking;
-
 /**
  * Citations that point at nothing read, by the one reference checker
  * (DS-N2-4): `[n]` against the numbered sources, each of which a tool
@@ -725,7 +729,7 @@ export async function research(
   const sampling = apodex ? {} : { temperature: 0.2 };
 
   const finish = (text: string): ResearchAnswer => {
-    const answer = strip(text) || "No answer.";
+    const answer = stripReasoning(text) || "No answer.";
     const unsettled = /^not settled/i.test(answer) || answer === "No answer.";
     const checked = checkAgainstRead(answer, evidence);
     return withClaims({
@@ -805,7 +809,7 @@ export async function research(
         purpose: "planning",
       });
       if (res.toolCalls.length === 0 || last) {
-        const text = strip(res.text);
+        const text = stripReasoning(res.text);
         // An answer that cites nothing although sources exist gets one chance
         // to attach them; a cited answer is what the team can check.
         if (!last && evidence.length > 0 && !/\[\d+\]/.test(text) && !/^not settled/i.test(text)) {
@@ -863,7 +867,7 @@ export async function research(
 }
 
 function parseList(text: string): string[] {
-  const t = strip(text);
+  const t = stripReasoning(text);
   const json = /\[[\s\S]*\]/.exec(t)?.[0];
   if (json) {
     try {
@@ -1006,7 +1010,7 @@ export async function investigate(
     maxTokens: 1000,
     purpose: "planning",
   });
-  const answer = strip(merged.text) || parts.join("\n\n");
+  const answer = stripReasoning(merged.text) || parts.join("\n\n");
   const checked = checkAgainstRead(answer, evidence);
   const draft = withClaims({
     answer,
@@ -1079,7 +1083,7 @@ function toAnswer(
   ledger: EvidenceLedger,
   extra: Partial<ResearchAnswer> = {},
 ): ResearchAnswer {
-  const answer = strip(text) || "No answer.";
+  const answer = stripReasoning(text) || "No answer.";
   const v = verifyReferences(answer, ledger);
   const unsettled = /^not settled/i.test(answer) || answer === "No answer.";
   const readRefs = v.references.filter((r) => r.read).length;

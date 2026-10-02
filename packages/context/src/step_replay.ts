@@ -6,8 +6,8 @@ import { BlobStore, type CardRecord, type ContextPack, ledgerErasures } from "@s
 import {
   type InferenceRequest,
   type InferenceResponse,
-  type ToolArm,
   type ToolCall,
+  type ToolCallFormat,
   type ToolDefinition,
   parseToolCallsFromText,
 } from "@sekhemet/models";
@@ -169,7 +169,7 @@ export function canonicalStates(worker: {
   tools: ToolInterfaceSpec[];
   /** The native tool definitions, when the Worker's adapter sends them. */
   definitions?: ToolDefinition[];
-  toolArm?: ToolArm;
+  toolArm?: ToolCallFormat;
 }): ReplayCase[] {
   const base = {
     tools: worker.tools,
@@ -325,7 +325,7 @@ export function recordedReplayCases(
         request: {
           ...(pack.systemPrompt ? { systemPrompt: pack.systemPrompt } : {}),
           prompt: pack.prompt,
-          toolArm: (pack.toolArm as ToolArm | undefined) ?? "arm_a_flat",
+          toolArm: (pack.toolArm as ToolCallFormat | undefined) ?? "arm_a_flat",
           tools,
           ...(pack.maxTokens !== undefined ? { maxTokens: pack.maxTokens } : {}),
           ...(pack.temperature !== undefined ? { temperature: pack.temperature } : {}),

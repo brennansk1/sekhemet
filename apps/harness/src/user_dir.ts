@@ -37,6 +37,8 @@ export function userPaths() {
     mcp: join(d, "mcp.json"),
     hooks: join(d, "hooks.toml"),
     skills: join(d, "skills"),
+    /** The workspaces this machine's person has used (runtime item 23c, DEC-57). */
+    workspaces: join(d, "workspaces.json"),
   };
 }
 

@@ -55,7 +55,7 @@ const CATALOG = [
   },
   {
     id: "slack",
-    name: "Slack for the PM",
+    name: "Slack for Seshat",
     mono: "SL",
     does: "Seshat posts the daily standup, “needs you” alerts and run reports to one channel.",
     leaves:
@@ -65,7 +65,7 @@ const CATALOG = [
     id: "push",
     name: "Push notifications (ntfy or Gotify)",
     mono: "PU",
-    does: "Your phone hears when an issue waits for review, an issue is put on hold or hits its budget, the agent asks a question, or a run finishes. Tapping opens the issue here.",
+    does: "Your phone hears when an issue waits for review, an issue is put on hold or hits its budget, the Agent asks a question, or a run finishes. Tapping opens the issue here.",
     leaves:
       "The alert title and one line naming the issue, to the ntfy or Gotify server you choose (your own, or ntfy.sh).",
   },
@@ -225,13 +225,13 @@ function controls(e) {
       if (e.connected) {
         return `<div class="iacts"><button class="btn sm" type="button" data-push-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test alert"}</button><button class="btn sm ghost" type="button" data-push-off data-needs="integration.connect">Disconnect</button></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
       }
-      return `<form class="iacts push-form" data-push-form><select name="kind" aria-label="Server"><option value="ntfy">ntfy</option><option value="gotify">Gotify</option></select><input name="url" type="url" required placeholder="https://ntfy.sh or http://192.168.1.5:8080" aria-label="Server URL" autocomplete="off" spellcheck="false"><input name="topic" type="text" placeholder="Topic (ntfy)" aria-label="ntfy topic" autocomplete="off" spellcheck="false"><input name="token" type="password" placeholder="Token (optional for ntfy, required for Gotify)" aria-label="Access token" autocomplete="off"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The token is a credential. ${esc(keptWhere())} The server URL stays in your user directory, never in the repository or the ledger.</span></p>`;
+      return `<form class="iacts push-form" data-push-form><select name="kind" aria-label="Server"><option value="ntfy">ntfy</option><option value="gotify">Gotify</option></select><input name="url" type="url" required placeholder="https://ntfy.sh or http://192.168.1.5:8080" aria-label="Server URL" autocomplete="off" spellcheck="false"><input name="topic" type="text" placeholder="Topic (ntfy)" aria-label="ntfy topic" autocomplete="off" spellcheck="false"><input name="token" type="password" placeholder="Token (optional for ntfy, required for Gotify)" aria-label="Access token" autocomplete="off"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The token is a credential. ${esc(keptWhere())} The server URL stays in your user directory, never in the repository or the Activity log.</span></p>`;
     }
     case "email": {
       if (e.connected) {
         return `<div class="iacts"><button class="btn sm" type="button" data-email-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test email to me"}</button><button class="btn sm ghost" type="button" data-email-off data-needs="integration.connect">Disconnect</button></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
       }
-      return `<form class="iacts email-form" data-email-form><input name="host" type="text" required placeholder="SMTP server, e.g. smtp.example.com" aria-label="SMTP server" autocomplete="off" spellcheck="false"><input name="port" type="number" required min="1" max="65535" value="587" aria-label="Port"><label class="sec"><input name="secure" type="checkbox"> TLS from the start (port 465)</label><input name="user" type="text" placeholder="User name (optional)" aria-label="SMTP user name" autocomplete="off" spellcheck="false"><input name="password" type="password" placeholder="Password (optional)" aria-label="SMTP password" autocomplete="off"><input name="from" type="email" required placeholder="Send from, e.g. sekhemet@example.com" aria-label="Sender address" autocomplete="off" spellcheck="false"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The password is a credential. ${esc(keptWhere())} It is never in the repository or the ledger, and never shown again.</span></p>`;
+      return `<form class="iacts email-form" data-email-form><input name="host" type="text" required placeholder="SMTP server, e.g. smtp.example.com" aria-label="SMTP server" autocomplete="off" spellcheck="false"><input name="port" type="number" required min="1" max="65535" value="587" aria-label="Port"><label class="sec"><input name="secure" type="checkbox"> TLS from the start (port 465)</label><input name="user" type="text" placeholder="User name (optional)" aria-label="SMTP user name" autocomplete="off" spellcheck="false"><input name="password" type="password" placeholder="Password (optional)" aria-label="SMTP password" autocomplete="off"><input name="from" type="email" required placeholder="Send from, e.g. sekhemet@example.com" aria-label="Sender address" autocomplete="off" spellcheck="false"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The password is a credential. ${esc(keptWhere())} It is never in the repository or the Activity log, and never shown again.</span></p>`;
     }
     case "jira":
     case "linear": {
@@ -242,7 +242,7 @@ function controls(e) {
       if (e.connected) {
         return `<div class="iacts"><button class="btn sm" type="button" data-slack-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test message"}</button><button class="btn sm ghost" type="button" data-slack-off data-needs="integration.connect">Disconnect</button></div>`;
       }
-      return `<form class="iacts slack-form" data-slack-form><input type="url" required placeholder="https://hooks.slack.com/services/…" aria-label="Slack incoming webhook URL" autocomplete="off" spellcheck="false"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The webhook URL is a credential. ${esc(keptWhere())} It is never in the repository or the ledger.</span></p>`;
+      return `<form class="iacts slack-form" data-slack-form><input type="url" required placeholder="https://hooks.slack.com/services/…" aria-label="Slack incoming webhook URL" autocomplete="off" spellcheck="false"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The webhook URL is a credential. ${esc(keptWhere())} It is never in the repository or the Activity log.</span></p>`;
     }
     default:
       return "";
@@ -313,7 +313,7 @@ function render() {
   });
   const banner =
     ui.status === 404
-      ? `<p class="ibanner">${icon("alert", 14, "ic s14 i-park")}<span><b>Integrations aren't on this server yet.</b> <code>GET /api/integrations</code> returned 404. Update Sekhemet to connect GitHub, Jira, Linear and Slack.</span></p>`
+      ? `<p class="ibanner">${icon("alert", 14, "ic s14 i-park")}<span><b>Integrations aren't on this server yet.</b> Update Sekhemet and restart it to connect GitHub, Jira, Linear and Slack.</span></p>`
       : ui.status && ui.status !== 200
         ? `<p class="ibanner">${icon("alert", 14, "ic s14 i-fail")}<span><b>Couldn't load integrations.</b> The server returned ${esc(ui.status)}.</span></p>`
         : "";

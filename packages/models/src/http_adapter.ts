@@ -23,8 +23,8 @@ import type {
   ModelSignal,
   ReasoningLevel,
   TokenUsage,
-  ToolArm,
   ToolCall,
+  ToolCallFormat,
   ToolDefinition,
 } from "./types.js";
 
@@ -113,7 +113,7 @@ export interface HttpAdapterOptions {
    */
   ollamaKvCacheType?: string;
   /** The tool arm the registry measured best for this model (M9). */
-  preferredToolArm?: ToolArm;
+  preferredToolArm?: ToolCallFormat;
   /**
    * Where responses are recorded (M3, M18). Defaults to the process-wide
    * `modelTelemetry`; `false` records nothing.
@@ -514,7 +514,7 @@ const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
  */
 export class HttpInferenceAdapter implements LocalInferenceAdapter {
   public readonly modelId: string;
-  public readonly supportedArms: ToolArm[] = ["arm_a_flat", "arm_b_json", "arm_c_sketch"];
+  public readonly supportedArms: ToolCallFormat[] = ["arm_a_flat", "arm_b_json", "arm_c_sketch"];
 
   /** The window this adapter was configured with, so callers can budget prompts. */
   public get contextWindow(): { contextTokens: number; maxTokens: number } | undefined {
@@ -524,7 +524,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     return { contextTokens, maxTokens: this.options.maxTokens ?? 2048 };
   }
   /** The measured tool arm (M9), when the registry supplied one. */
-  public get preferredToolArm(): ToolArm | undefined {
+  public get preferredToolArm(): ToolCallFormat | undefined {
     return this.options.preferredToolArm ?? this.options.registry?.armFor(this.modelId);
   }
 

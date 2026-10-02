@@ -37,8 +37,10 @@ function remember(v) {
   }
 }
 
+/** A page that is the conversation: #/pm, and the start page (design-stage §2.11). */
 function onPmRoute() {
-  return store.state.route?.name === "pm";
+  const r = store.state.route;
+  return r?.name === "pm" || (r?.name === "projects" && r.params?.[0] === "new");
 }
 
 /** DB-P5-6: *Seshat · Project manager* and the presence line; no model (Configuration names it). */
@@ -136,6 +138,12 @@ export async function askSeshat(text, context) {
   const sent = await sendMessage(text, context);
   if (sent) togglePmPanel(true);
   else askMerit(text);
+}
+
+/** Open the full conversation with `text` in its composer, not sent (the start page's `/plan`). */
+export function openConversationWith(text) {
+  pendingPrefill = text;
+  location.hash = "#/pm";
 }
 
 export function setFullThread(t) {

@@ -923,7 +923,7 @@ export function runInit(
 
   const ready = checks.every((c) => c.ok || !c.required);
   say(
-    `Machine: ${Math.round((opts.totalBytes ?? totalmem()) / 1024 ** 3)} GB, tier ${roster.tier}. ${roster.note}`,
+    `Machine: ${Math.round((opts.totalBytes ?? totalmem()) / 1024 ** 3)} GB, class ${roster.tier}. ${roster.note}`,
   );
   say(
     `Models: Coding model ${roster.worker}, Planning model (Seshat) ${roster.manager}, Review model ${roster.reviewer}, Research model ${roster.researcher}.`,

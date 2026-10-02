@@ -432,28 +432,28 @@ describe("flow metrics", () => {
 });
 
 describe("waiting steps (PmStatus.phase)", () => {
-  it("shows the agent rows when the agent is paused, with step and ETA from detail", () => {
+  it("shows the Agent rows when the Agent is paused, with step and ETA from detail", () => {
     const rows = pmSteps({
       phase: "loading_pm",
       workerPaused: true,
       detail: "Pausing the Worker after step 5 · ~40s to load the PM",
     });
     expect(rows.map((r) => `${r.state}:${r.label}`)).toEqual([
-      "done:Paused the agent after step 5",
-      "current:Loading the PM · about 40s",
+      "done:Paused the Agent after step 5",
+      "current:Starting Seshat · about 40s",
       "todo:Thinking",
-      "todo:Resuming the agent",
+      "todo:Resuming the Agent",
     ]);
   });
 
-  it("omits the agent rows when nothing was running, and prefers structured fields", () => {
+  it("omits the Agent rows when nothing was running, and prefers structured fields", () => {
     const rows = pmSteps({ phase: "thinking", etaSeconds: 35 });
     expect(rows.map((r) => `${r.state}:${r.label}`)).toEqual([
-      "done:Loaded the PM",
+      "done:Started Seshat",
       "current:Thinking",
     ]);
     expect(pmSteps({ phase: "waiting_for_step", step: 7 })[0]?.label).toBe(
-      "Pausing the agent after step 7",
+      "Pausing the Agent after step 7",
     );
   });
 });
@@ -477,7 +477,7 @@ describe("worker capability", () => {
     expect(rows[0]).toMatchObject({ trusted: true, text: "14 of 20 passed · 70% (48–86%)" });
     expect(rows[1]?.trusted).toBe(false);
     expect(horizonSentence(118.6)).toBe(
-      "The agent passes 80% of issues that change up to about 119 lines.",
+      "The Agent passes 80% of issues that change up to about 119 lines.",
     );
     expect(horizonSentence(undefined)).toMatch(/^Not enough attempts/);
   });

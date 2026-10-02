@@ -117,7 +117,7 @@ export async function postWeeklyUpdate(
   log: EventLog,
   input: { project: string; text: string; principal: string },
 ): Promise<void> {
-  if (!input.principal) throw new Error("An update is posted by a person; no principal was given");
+  if (!input.principal) throw new Error("An update is posted by a person; no one was named");
   if (!input.text.trim()) throw new Error("An update needs its text");
   await log.append({
     actor: "human",

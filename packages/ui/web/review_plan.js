@@ -40,12 +40,23 @@ async function loadApprovers(me) {
  */
 export function openReviewPlan(
   proposal,
-  { post = postJSON, setup = "solo", level, me, approvers: given = loadApprovers } = {},
+  {
+    post = postJSON,
+    setup = "solo",
+    level,
+    me,
+    approvers: given = loadApprovers,
+    choices,
+    keepTalking = false,
+  } = {},
 ) {
   const group = proposal.patch.group;
   const approval = proposal.approval;
-  let state = reviewState(group, approval?.choices);
-  const view = { setup, level, me, approval, approvers: undefined };
+  // The start page's choices, when it opens Review plan (design-stage §2.11 item 2).
+  let state = choices
+    ? { ...reviewState(group), ...choices }
+    : reviewState(group, approval?.choices);
+  const view = { setup, level, me, approval, approvers: undefined, keepTalking };
   const host = document.createElement("div");
   host.className = "rp-dialog";
   host.setAttribute("role", "dialog");
@@ -104,6 +115,12 @@ export function openReviewPlan(
   host.addEventListener("click", async (e) => {
     const t = e.target instanceof Element ? e.target : null;
     if (!t) return;
+    // Keep talking: back to the conversation, creating nothing (design-stage §2.11 item 2).
+    if (t.closest("[data-keep-talking]")) {
+      remove();
+      close(undefined);
+      return;
+    }
     const accept = t.closest("[data-accept]")?.getAttribute("data-accept");
     const removeKey = t.closest("[data-remove]")?.getAttribute("data-remove");
     if (accept) state = toggleCandidate(state, accept, "accept");

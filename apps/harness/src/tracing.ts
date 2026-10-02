@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { InferenceRequest, LocalInferenceAdapter } from "@sekhemet/models";
+import { plural } from "@sekhemet/ui";
 
 /**
  * OpenTelemetry-shaped spans, stored locally in SQLite (H22).
@@ -158,7 +159,7 @@ export function toolCallSpan(
   }
 }
 
-export type TraceKind = "Card" | "Step" | "Model request" | "Tool call" | "Other";
+export type TraceKind = "Issue" | "Step" | "Model request" | "Tool call" | "Other";
 
 export interface TraceRow {
   kind: TraceKind;
@@ -193,7 +194,7 @@ export function cardTrace(repoPath: string, cardId: string): TraceRow[] {
       .map((s) => {
         const kind: TraceKind =
           s.name === "card.run"
-            ? "Card"
+            ? "Issue"
             : s.name === "card.turn"
               ? "Step"
               : s.name === "gen_ai.chat"
@@ -202,7 +203,7 @@ export function cardTrace(repoPath: string, cardId: string): TraceRow[] {
                   ? "Tool call"
                   : "Other";
         const label =
-          kind === "Card"
+          kind === "Issue"
             ? cardId
             : kind === "Step"
               ? `Step ${++step}`
@@ -371,7 +372,7 @@ export async function tracesCommand(
     if (out) {
       const { writeFileSync } = await import("node:fs");
       writeFileSync(out, `${JSON.stringify(toOtlp(spans), null, 2)}\n`);
-      say(`Wrote ${spans.length} span(s) as OTLP/JSON to ${out}.`);
+      say(`Wrote ${plural(spans.length, "span")} as OTLP/JSON to ${out}.`);
     }
     if (otlp) {
       const res = await (deps.fetch ?? fetch)(`${otlp.replace(/\/$/, "")}/v1/traces`, {
@@ -382,7 +383,7 @@ export async function tracesCommand(
       });
       say(
         res.ok
-          ? `Sent ${spans.length} span(s) to ${otlp}.`
+          ? `Sent ${plural(spans.length, "span")} to ${otlp}.`
           : `The collector answered ${res.status}.`,
       );
       if (!res.ok) return 1;
@@ -396,7 +397,7 @@ export async function tracesCommand(
         e.ms += ms(s);
         byName.set(s.name, e);
       }
-      say(`Last ${hours} h: ${spans.length} span(s).`);
+      say(`Last ${hours} h: ${plural(spans.length, "span")}.`);
       for (const [name, e] of byName)
         say(
           `  ${name}: ${e.n}, ${(e.ms / 1000).toFixed(1)} s total, ${(e.ms / e.n / 1000).toFixed(1)} s mean`,

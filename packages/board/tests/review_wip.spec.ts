@@ -100,9 +100,9 @@ describe("ReviewWIP from human decisions (review-git S6)", () => {
         actor: "executor",
       });
     await expect(toVerify()).rejects.toMatchObject({ code: "back_pressure" });
-    // A person's quick decisions: 12-minute reviews give 5; the next move sees it.
-    for (const id of ["d1", "d2", "d3"]) await reviewed(id, 12);
-    for (const id of ["d1", "d2", "d3"]) {
+    // A person's quick decisions: five 12-minute reviews give 5; the next move sees it.
+    for (const id of ["d1", "d2", "d3", "d4", "d5"]) await reviewed(id, 12);
+    for (const id of ["d1", "d2", "d3", "d4", "d5"]) {
       await store.updateCardStatus(id, "ready", "sent back", "human", { override: true });
     }
     await toVerify();
@@ -113,8 +113,8 @@ describe("ReviewWIP from human decisions (review-git S6)", () => {
     const pa = (await store.ensureProject({ name: "A", rootPath: join(dir, "a") })).id;
     const pb = (await store.ensureProject({ name: "B", rootPath: join(dir, "b") })).id;
     // Project A reviews slowly (60 min each: WIP 1); B has no reviews (prior: 4).
-    for (const id of ["a1", "a2", "a3"]) await reviewed(id, 60, pa);
-    for (const id of ["a1", "a2", "a3"]) {
+    for (const id of ["a1", "a2", "a3", "a4", "a5"]) await reviewed(id, 60, pa);
+    for (const id of ["a1", "a2", "a3", "a4", "a5"]) {
       await store.updateCardStatus(id, "done", "accepted", "human", { override: true });
     }
     const board = new BoardServiceImpl(store, { reviewMinutesPerDay: 60 });
@@ -164,6 +164,29 @@ describe("ReviewWIP from human decisions (review-git S6)", () => {
     const board = new BoardServiceImpl(store, { reviewMinutesPerDay: 0 });
     await expect(board.computeReviewWip()).rejects.toThrow(/review_minutes_per_day/);
     await expect(board.computeReviewWip(-5)).rejects.toThrow(/review_minutes_per_day/);
+  });
+
+  it("RG-S6-9 (BRD-04): fewer than five reviews keep the 15-minute prior; one fast Accept moves nothing", async () => {
+    const board = new BoardServiceImpl(store, { reviewMinutesPerDay: 60 });
+    for (const id of ["f1", "f2", "f3", "f4"]) await reviewed(id, 1 / 60);
+    expect(await board.computeReviewWip()).toBe(4);
+    expect(await board.reviewLimitFacts()).toMatchObject({
+      limit: 4,
+      minutesPerCard: 15,
+      reviews: 4,
+    });
+  });
+
+  it("RG-S6-9 (BRD-04): a median under two minutes counts as two, so the limit stays one a person can hold", async () => {
+    const board = new BoardServiceImpl(store, { reviewMinutesPerDay: 60 });
+    for (const id of ["f1", "f2", "f3", "f4", "f5"]) await reviewed(id, 1 / 60);
+    // Five one-second reviews: 60 ÷ 2 = 30, never 60 ÷ (1/60) = 3,600.
+    expect(await board.computeReviewWip()).toBe(30);
+    expect(await board.reviewLimitFacts()).toMatchObject({
+      limit: 30,
+      minutesPerCard: 2,
+      reviews: 5,
+    });
   });
 
   it("keeps a limit a person fixed with [review] wip", async () => {

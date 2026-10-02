@@ -124,11 +124,11 @@ describe("DB-P4-3, DB-P4-4: each popover's line comes from the project's own num
     const t = tipFor("wip", {
       column: "in_review",
       count: 2,
-      reviewLimit: { limit: 3, fixed: false, minutesPerDay: 60, minutesPerCard: 20, reviews: 4 },
+      reviewLimit: { limit: 3, fixed: false, minutesPerDay: 60, minutesPerCard: 20, reviews: 5 },
     });
     expect(t.term).toBe("WIP limit");
     expect(t.yours).toBe(
-      "In review holds at most 3 because you review about 60 minutes a day and a review takes about 20 minutes (the median of 4 reviews). It holds 2 now.",
+      "In review holds at most 3 because you review about 60 minutes a day and a review takes about 20 minutes (the median of 5 reviews). It holds 2 now.",
     );
     expect(t.source).toEqual({
       label: "The Kanban Guide",
@@ -145,6 +145,18 @@ describe("DB-P4-3, DB-P4-4: each popover's line comes from the project's own num
       }).yours,
     ).toBe(
       "In review holds at most 4 because you review about 60 minutes a day and a review takes about 15 minutes (a starting estimate until you review an issue). It holds 0 now.",
+    );
+  });
+
+  it("BRD-04: under five reviews the line still names the starting estimate, and how many so far", () => {
+    expect(
+      tipFor("wip", {
+        column: "in_review",
+        count: 1,
+        reviewLimit: { limit: 4, fixed: false, minutesPerDay: 60, minutesPerCard: 15, reviews: 1 },
+      }).yours,
+    ).toBe(
+      "In review holds at most 4 because you review about 60 minutes a day and a review takes about 15 minutes (a starting estimate until five reviews are recorded; 1 so far). It holds 1 now.",
     );
   });
 
@@ -168,10 +180,10 @@ describe("DB-P4-3, DB-P4-4: each popover's line comes from the project's own num
     expect(
       tipFor("column:in_review", {
         count: 2,
-        reviewLimit: { limit: 3, fixed: false, minutesPerDay: 60, minutesPerCard: 20, reviews: 4 },
+        reviewLimit: { limit: 3, fixed: false, minutesPerDay: 60, minutesPerCard: 20, reviews: 5 },
       }).yours,
     ).toBe(
-      "In review holds at most 3 because you review about 60 minutes a day and a review takes about 20 minutes (the median of 4 reviews). It holds 2 now.",
+      "In review holds at most 3 because you review about 60 minutes a day and a review takes about 20 minutes (the median of 5 reviews). It holds 2 now.",
     );
   });
 
@@ -231,7 +243,16 @@ describe("DB-P4-3, DB-P4-4: each popover's line comes from the project's own num
         { id: "bounds", label: "Size", state: "pass" },
       ],
     });
-    expect(t.yours).toBe("On this issue 2 of 3 checks passed; Tests failed.");
+    // REV-01: the same verdict the Review queue and the Checks heading give.
+    expect(t.yours).toBe("On this issue: Tests failed · 2 of 3 passed.");
+    expect(
+      tipFor("checks", {
+        checks: [
+          { id: "unit", label: "Tests", state: "pass" },
+          { id: "osv", label: "OSV", state: "skipped" },
+        ],
+      }).yours,
+    ).toBe("On this issue: 1 check that ran passed · OSV skipped.");
     expect(t.more.map((m) => m.term)).toEqual(["Static checks", "Tests", "Size and integrity"]);
     expect(tipFor("checks", { checks: [] }).yours).toBe("No checks have run on this issue yet.");
   });
@@ -291,12 +312,13 @@ describe("DB-P4-1, DB-P4-2: with Tips off nothing renders; on, a labelled ? butt
 });
 
 describe("DB-P4-7: the first-run question sets Tips and the default route", () => {
-  it("asks one question with three answers", () => {
+  it("asks one question with four answers, one of them just talking to Seshat (SHL-03)", () => {
     expect(FIRST_RUN.question).toBe("How will you use Sekhemet?");
     expect(FIRST_RUN.choices.map((c) => [c.role, c.label])).toEqual([
       ["code", "I write code"],
       ["manage", "I manage the work"],
       ["learn", "I'm learning"],
+      ["seshat", "I'll just talk to Seshat"],
     ]);
   });
 
@@ -332,9 +354,9 @@ describe("DB-P4-7: the first-run question sets Tips and the default route", () =
     expect(readRole(s)).toBe("manage");
   });
 
-  it("asks once, and only after a model is set up", () => {
+  it("asks once; with no model yet it asks with the welcome's model step (SHL-03)", () => {
     expect(firstRunDue(memory(), { noModel: false })).toBe(true);
-    expect(firstRunDue(memory(), { noModel: true })).toBe(false);
+    expect(firstRunDue(memory(), { noModel: true })).toBe(true);
     expect(firstRunDue(memory({ [ROLE_KEY]: "code" }), { noModel: false })).toBe(false);
     const later = memory();
     answerFirstRun(later, "later");

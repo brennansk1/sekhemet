@@ -35,21 +35,21 @@ import {
 } from "../src/accept.js";
 import { suggestedAccepters } from "../src/codeowners.js";
 import { reviewPosterFromEnv, runExternalReview } from "../src/external_review.js";
-import { egressRecorder, integrationFetch } from "../src/github_transport.js";
-import { exportBoard, listIntegrations, syncGithub, writeSettings } from "../src/integrations.js";
-import { cardBranchHead, ledgerEvidenceSummary, recordLedgerRun } from "../src/ledger_evidence.js";
+import {
+  applyWebhookIntent,
+  detectDeliveryGaps,
+  handleGithubRoute,
+  startGithubSync,
+} from "../src/github_routes.js";
 import {
   advanceOpenPullRequests,
   mirrorAgentStatuses,
   runDependencyVerifications,
   syncViaAdapter,
-} from "../src/wave2_github.js";
-import {
-  applyWebhookIntent,
-  detectDeliveryGaps,
-  handleWave2Route,
-  startGithubSync,
-} from "../src/wave2_server.js";
+} from "../src/github_sync.js";
+import { egressRecorder, integrationFetch } from "../src/github_transport.js";
+import { exportBoard, listIntegrations, syncGithub, writeSettings } from "../src/integrations.js";
+import { cardBranchHead, ledgerEvidenceSummary, recordLedgerRun } from "../src/ledger_evidence.js";
 
 /**
  * integrations P9 and NEW-integrations-2, with review-git RG-N5-3/-4, end to
@@ -805,7 +805,7 @@ describe("INT-9: a redelivered webhook changes nothing", () => {
     const secret = "hook";
     const serve = async () => {
       const server = createServer((req, res) => {
-        void handleWave2Route(req, res, req.url ?? "", {
+        void handleGithubRoute(req, res, req.url ?? "", {
           repoPath: repo,
           cardStore: store,
           log,
@@ -1335,7 +1335,7 @@ function useApp(api: Api): void {
 async function hookRoute(secret: string, extra: { gapCheckEveryMs?: number } = {}) {
   const { createHmac } = await import("node:crypto");
   const server = createServer((req, res) => {
-    void handleWave2Route(req, res, req.url ?? "", {
+    void handleGithubRoute(req, res, req.url ?? "", {
       repoPath: repo,
       cardStore: store,
       log,

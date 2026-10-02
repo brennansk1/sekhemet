@@ -160,10 +160,13 @@ describe("a refusal says what the server said (teams TEAM-4)", () => {
 });
 
 describe("the account menu (§2.2.6, DB-N9-11)", () => {
-  it("Solo: the name and This computer; no Sign out, Members or Switch workspace", () => {
-    expect(accountHeader(solo)).toEqual({ name: "p_local", detail: "This computer" });
-    const ids = accountMenu(solo, new Set(["members", "audit", "notifications"])).map((i) => i.id);
-    expect(ids).toEqual(["profile", "notifications", "shortcuts", "theme"]);
+  it("Solo: the name and This computer; Switch workspace, and no Sign out or Members (DEC-57)", () => {
+    // SHL-02: a person's name or *You*, never the principal.
+    expect(accountHeader(solo)).toEqual({ name: "You", detail: "This computer" });
+    const ids = accountMenu(solo, new Set(["members", "audit", "notifications", "switch"])).map(
+      (i) => i.id,
+    );
+    expect(ids).toEqual(["profile", "notifications", "shortcuts", "theme", "switch"]);
     // The routes are §3's: the account's pages live under #/account/.
     expect(accountMenu(solo, new Set(["notifications"])).map((i) => i.route ?? "")).toEqual([
       "#/account/profile",
@@ -177,7 +180,7 @@ describe("the account menu (§2.2.6, DB-N9-11)", () => {
     expect(accountHeader({ ...inTeam, name: "Ada Lovelace", email: "ada@northwind.test" })).toEqual(
       { name: "Ada Lovelace", detail: "ada@northwind.test", level: "Member" },
     );
-    expect(accountHeader(inTeam)).toEqual({ name: "p_ada", detail: "Member", level: "Member" });
+    expect(accountHeader(inTeam)).toEqual({ name: "You", detail: "Member", level: "Member" });
     expect(accountMenu(inTeam, new Set()).map((i) => i.id)).toEqual([
       "profile",
       "shortcuts",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { boardModel } from "../src/columns.js";
-import { blockedCardPaths, boardLayout } from "../src/reach.js";
+import { blockedCardPaths, boardLayout, openColumn } from "../src/reach.js";
 
 /**
  * dashboard DB-P3-17 (DEFINITION_OF_DONE §6.4): at 1440 and 1100 px a
@@ -42,34 +42,65 @@ const paths = (width: number, height: number, dockOpen: boolean) =>
     ),
   );
 
-describe("the board's layout at a width (DB-P3-17)", () => {
-  it("at 1440 px the Worker's column and everything left of it fit beside the pinned queues", () => {
+describe("the board's layout at a width (DB-P3-17, BRD-01)", () => {
+  it("at 1440 px every column is in view: the columns relax to 184 px rather than scroll", () => {
     expect(boardLayout(model.columns, { width: 1440, height: 900, cycleHeader: true })).toEqual({
-      colWidth: 200,
+      mode: "tight",
+      colWidth: 192,
       scrollLeft: 0,
-      visible: ["backlog", "todo", "in_progress", "in_review", "on_hold"],
+      pinned: [],
+      visible: ["backlog", "todo", "in_progress", "in_review", "done", "on_hold"],
       underPanel: [],
       rows: 6,
     });
   });
 
-  it("at 1100 px the board scrolls to keep In progress in view, and the panel overlays the queues", () => {
+  it("beside the dock the queues sit in their own pane and cover nothing; the board opens on In progress, uncut", () => {
+    const l = boardLayout(model.columns, {
+      width: 1440,
+      height: 900,
+      cycleHeader: true,
+      dockOpen: true,
+    });
+    expect(l.mode).toBe("split");
+    expect(l.pinned).toEqual(["in_review", "on_hold"]);
+    // In progress cannot sit at the left edge (the scroll ends first), so the
+    // board opens on the column before it, never on a column cut in half.
+    expect(l.scrollLeft).toBe(200);
+    expect(l.visible).toEqual(["todo", "in_progress", "in_review", "on_hold"]);
+  });
+
+  it("at 1100 px the board opens on In progress at the left edge, with the queues pinned beside it", () => {
     expect(boardLayout(model.columns, { width: 1100, height: 800, cycleHeader: true })).toEqual({
+      mode: "split",
       colWidth: 220,
-      scrollLeft: 232,
-      visible: ["todo", "in_progress", "in_review", "on_hold"],
+      scrollLeft: 464,
+      pinned: ["in_review", "on_hold"],
+      visible: ["in_progress", "in_review", "on_hold"],
       underPanel: [],
       rows: 5,
     });
     expect(
       boardLayout(model.columns, { width: 1100, height: 800, cycleHeader: true, dockOpen: true }),
-    ).toEqual({
-      colWidth: 220,
-      scrollLeft: 232,
-      visible: [],
-      underPanel: ["todo", "in_progress", "in_review", "on_hold"],
-      rows: 5,
+    ).toMatchObject({
+      mode: "split",
+      scrollLeft: 464,
+      visible: ["in_progress"],
+      underPanel: ["in_review", "on_hold"],
     });
+  });
+
+  it("on a phone one column shows, the first working one, and the switcher reaches the rest", () => {
+    expect(boardLayout(model.columns, { width: 400, height: 800 })).toMatchObject({
+      mode: "one",
+      colWidth: 384,
+      scrollLeft: 0,
+      pinned: [],
+      visible: ["in_progress"],
+    });
+    expect(openColumn(["backlog", "todo", "in_review"])).toBe("todo");
+    expect(openColumn(["backlog"])).toBe("backlog");
+    expect(openColumn(["backlog", "todo", "in_progress", "done"])).toBe("in_progress");
   });
 });
 
@@ -101,7 +132,7 @@ describe("finding a blocked card and why, within three actions (DB-P3-17)", () =
     });
   });
 
-  it("1100 × 800: three at most; Seshat's panel overlays the board, and closing it is one more", () => {
+  it("1100 × 800: three at most; Seshat's panel overlays only the pinned queues, never the scrolled columns", () => {
     const closed = paths(1100, 800, false);
     expect(closed).toEqual({
       b11: [
@@ -109,13 +140,11 @@ describe("finding a blocked card and why, within three actions (DB-P3-17)", () =
         "Scroll Backlog down a screen",
         "Scroll Backlog down a screen",
       ],
-      t2: [],
+      t2: ["Scroll the board to To do"],
       p1: [],
     });
-    const open = paths(1100, 800, true);
-    for (const id of Object.keys(closed)) {
-      expect(open[id]).toEqual(["Close the Seshat panel", ...(closed[id] ?? [])]);
-    }
+    // The panel covers the queue pane at the right, not the columns that scroll.
+    expect(paths(1100, 800, true)).toEqual(closed);
   });
 
   it("takes the filter when it is shorter, and a folded column costs opening its chip", () => {

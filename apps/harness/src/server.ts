@@ -9,19 +9,18 @@ import {
   statSync,
 } from "node:fs";
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
+import { arch, cpus, platform, totalmem, userInfo } from "node:os";
 import { basename, extname, join, resolve, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { BoardService } from "@sekhemet/board";
 import { type EvidenceBundle, type GatesConfig, loadGatesConfig } from "@sekhemet/gates";
 import {
-  CARD_STATUSES,
   type CardRecord,
   type CardStore,
   EventLog,
   type EventRecord,
   PRINCIPAL_PATTERN,
   STOP_REASONS,
-  isCardStatus,
 } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter, ModelRole } from "@sekhemet/models";
 import { DecisionStore } from "@sekhemet/planner";
@@ -40,45 +39,28 @@ import {
   runningCheckText,
   vocabularyTables,
 } from "@sekhemet/ui";
-import { checkoutNotice, integrationBranch } from "./accept.js";
 import { unenforcedInvariants } from "./architecture_gate.js";
 import { createBenchmarkApi } from "./benchmark_api.js";
 import { type BenchmarkEnv, BenchmarkService, defaultBenchmarkEnv } from "./benchmark_cmd.js";
-import {
-  cardMessages,
-  handBack,
-  postCardMessage,
-  requestPause,
-  submitTakenOver,
-  takeOver,
-} from "./collaborate.js";
+import { handleCardRoute } from "./card_routes.js";
 import { resolveConfig, userConfigPath } from "./config.js";
 import { type ConfigApiDeps, createConfigApi } from "./config_api.js";
 import { effectiveConfig, queueDefaults } from "./config_apply.js";
+import { dashboardQualify, dashboardResidency, dashboardSpeed } from "./config_model_actions.js";
 import {
   type MemorySample,
   activeHardwareTier,
   latestByCard,
   listRuns,
-  liveSteps,
   machineMemory,
   playbookSnapshot,
   queryEvents,
-  readTranscript,
   sampleMemory,
-  transcriptFiles,
   worktrees,
 } from "./dashboard_api.js";
-import { dashboardQualify, dashboardResidency, dashboardSpeed } from "./dashboard_models.js";
 import { runDoctor } from "./doctor.js";
-import {
-  acceptCard,
-  explainCard,
-  forkCard,
-  releaseHeldCards,
-  requestAbort,
-  rewindCard,
-} from "./execute.js";
+import { releaseHeldCards } from "./execute.js";
+import { handleGithubRoute, startGithubSync, startRecurringTicker } from "./github_routes.js";
 import { readLiveGate } from "./live_gate.js";
 import {
   type ModelAccess,
@@ -91,6 +73,7 @@ import { handlePlanApprovalRoute } from "./plan_approval.js";
 import { startGoalTicker } from "./planner_live.js";
 import { audienceFromAccess } from "./pm/audience.js";
 import { attachDocuments, documentsToAttach } from "./pm/documents.js";
+import { newProjectRefusal } from "./pm/pipeline.js";
 import { dailyStandup } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { createPmApi } from "./pm_api.js";
@@ -98,12 +81,13 @@ import { modelRoster } from "./pm_api.js";
 import { describeError } from "./process_errors.js";
 import { projectsOverview } from "./projects_api.js";
 import { gateWorker } from "./qualify.js";
-import { handleRestExtras } from "./rest_extra.js";
-import { reviewDesk } from "./review_desk.js";
+import { handleRunRoutes } from "./run_routes.js";
 import { runnerLease } from "./runner_lease.js";
 import { qualifiedSlotCapacity, slotWaitReason } from "./slot_lease.js";
 import { PresenceRecorder } from "./smart_swap.js";
 import {
+  ACTIONS,
+  AUTO_APPLY_PROPERTIES,
   Access,
   AccessRefusedError,
   LastAdminError,
@@ -116,7 +100,7 @@ import {
   routePermissions,
 } from "./team/access.js";
 import { handleAiTeammateRoute } from "./team/ai_routes.js";
-import { type AiTeammatesDeps, aiStates } from "./team/ai_teammates.js";
+import type { AiTeammatesDeps } from "./team/ai_teammates.js";
 import { handleAuditRoute } from "./team/audit.js";
 import { recordConfigAtStart, recordConfigWrite } from "./team/config_audit.js";
 import { identityDir } from "./team/credential_store.js";
@@ -124,29 +108,22 @@ import { capNote, personOf, queueStanding, runningAgentIssues } from "./team/fai
 import { type InboxDeps, inboxNotifier } from "./team/inbox.js";
 import { handleInboxRoute } from "./team/inbox_routes.js";
 import { allMembers, personName } from "./team/members.js";
+import { MIN_PASSWORD_LENGTH } from "./team/passwords.js";
 import { Presence, handlePresenceRoute, presenceFrame } from "./team/presence.js";
 import { requester as requesterOf } from "./team/requester.js";
 import { handleReviewRoute } from "./team/review_routes.js";
-import { acceptDismissal, openThreadRefusal, reviewThreads } from "./team/review_threads.js";
 import { handleIdentityRoute, identityGate } from "./team/routes.js";
 import {
   type ServerIdentityOptions,
   createServerIdentity,
   soloStartBlocked,
 } from "./team/serve.js";
-import { bindHost } from "./team/settings.js";
-import { cardTrace } from "./tracing.js";
-import { park, recordReviewOpened, reject, revertAccept, sendBack, unpark } from "./triage.js";
+import { LEVELS, bindHost } from "./team/settings.js";
 import { generateDashboardHtml } from "./ui_html.js";
+import { userPaths } from "./user_dir.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { approveBaseline, visualCandidates } from "./visual_baseline.js";
 import { modelRegistry } from "./wave2.js";
-import {
-  handleWave2Route,
-  reviewBrief,
-  startGithubSync,
-  startRecurringTicker,
-} from "./wave2_server.js";
 import {
   MISDIRECTED,
   SAFE_METHODS,
@@ -159,6 +136,12 @@ import {
   securityHeaders,
   tokenMatches,
 } from "./web_guard.js";
+import {
+  type WorkspaceRecord,
+  recordOwnWorkspace,
+  soloPersonName,
+  workspacesRoute,
+} from "./workspaces.js";
 import { type StreamClient, acceptWebSocket } from "./ws.js";
 
 /** The loopback port the design fixes for the dashboard. */
@@ -451,6 +434,7 @@ export function startDashboardServer(
     readJsonBody,
     isTrustedMutation,
     principalOf: (req) => principalOf(req),
+    nameOf: (principal) => namesOf()(principal),
     // planner-pm §2.8.5, §2.18 (B4.3): who Seshat answers, from the access module.
     audience: () => audienceFromAccess(() => access, options.db),
     // SEC-27c: the choice to keep secrets in a file is a config write, recorded with the person.
@@ -500,6 +484,18 @@ export function startDashboardServer(
       (
         boardService as { reviewLimitFacts?: (p?: string) => Promise<{ limit: number }> }
       ).reviewLimitFacts?.(project) ?? Promise.reject(new Error("no review limit")),
+    // DB-N14-1: the checks, the depth profile and the Accept rule, as they are enforced.
+    definitionOfDone: (project) => {
+      const root = (project && options.cardStore?.getProject(project)?.rootPath) || repoPath;
+      const gates = loadGatesConfig(root).gates;
+      const holders = setup === "team" ? access.acceptHolders(project) : undefined;
+      return {
+        checks: gates.map((g) => ({ id: g.id, blocking: g.blocking })),
+        profile: options.cardStore?.depthProfiles.of(project).profile ?? "internal tool",
+        setup,
+        accepters: holders ? holders.map((p) => personName(options.db, p) ?? "a teammate") : null,
+      };
+    },
     mayChangeReviewCapacity: (req, project) => {
       const name = options.cardStore?.getProject(project)?.name;
       const d = access.decide(principalOf(req), "review.capacity", project, name, ceilingOf(req));
@@ -840,6 +836,42 @@ export function startDashboardServer(
   } catch {
     gitUser = undefined;
   }
+  let osUser: string | undefined;
+  try {
+    osUser = userInfo().username;
+  } catch {
+    osUser = undefined;
+  }
+  const soloName = soloPersonName(gitUser, osUser);
+  /** Where this server answers, once it listens (the workspace list's address). */
+  let ownAddress: string | undefined;
+  /**
+   * This server's entry in the machine's list of workspaces (RUN-84): its
+   * id from the ledger (kernel rule 38a), name, address, folder and projects.
+   */
+  const ownWorkspace = (): WorkspaceRecord | undefined => {
+    const id = log.workspaceId();
+    if (!id || !ownAddress) return undefined;
+    const roots = (options.cardStore?.listProjects() ?? []).map((p) => p.rootPath).sort();
+    return {
+      id,
+      name: (setup === "team" ? identity.settings.workspace : undefined) || basename(repoPath),
+      address: identity.settings.publicUrl?.replace(/\/+$/, "") || ownAddress,
+      setup,
+      folder: repoPath,
+      projectRoots: roots,
+      lastOpened: new Date().toISOString(),
+    };
+  };
+  const refreshOwnWorkspace = () => {
+    const own = ownWorkspace();
+    if (own) recordOwnWorkspace(userPaths().workspaces, own);
+  };
+  // A project added or archived refreshes the entry's project roots (RUN-84).
+  const stopProjectWatch = [
+    log.subscribe({ type: "project/created" }, refreshOwnWorkspace),
+    log.subscribe({ type: "project/updated" }, refreshOwnWorkspace),
+  ];
   let version = "0.0.0";
   try {
     version = (
@@ -1042,7 +1074,53 @@ export function startDashboardServer(
         ...(at ? { lastActive: at } : {}),
         ...(teamPresence.active().includes(principal) ? { active: true } : {}),
         ...(identity.limits.accountLocked(principal) ? { locked: true } : {}),
+        // DB-N19-3: the projects whose Accept rule names the person (teams item 7, DEC-42).
+        acceptIn: liveProjects()
+          .filter((p) => access.acceptHolders(p.id)?.includes(principal))
+          .map((p) => p.id),
       };
+    };
+  };
+  const liveProjects = () =>
+    (options.cardStore?.listProjects() ?? []).filter((p) => p.status !== "archived");
+  /**
+   * Members' other parts (DB-N19-3, DEC-51): each access level and what it
+   * newly allows, read from the one action table the server checks (an
+   * action the Accept rule holds is said once, in the page's line); the AI
+   * teammates' facts — the per-person Agent cap and where auto-apply is on —
+   * and the sign-in settings in force.
+   */
+  const workspaceFacts = () => {
+    const s = identity.settings;
+    return {
+      levels: [...LEVELS].reverse().map((level) => ({
+        level,
+        allows: Object.values(ACTIONS)
+          .filter((a) => a.level === level && !("acceptRule" in a && a.acceptRule === "only"))
+          .map((a) => a.does),
+      })),
+      ai: {
+        agentIssuesPerPerson: queueSettings().cap,
+        autoApply: liveProjects()
+          .map((p) => ({
+            project: p.id,
+            name: p.name,
+            properties: AUTO_APPLY_PROPERTIES.filter(
+              (k) => access.settings(p.id).auto_apply?.[k] === true,
+            ),
+          }))
+          .filter((p) => p.properties.length > 0),
+      },
+      signIn: {
+        sso: s.sources.includes("oidc") && Boolean(s.oidc),
+        ...(s.sources.includes("oidc") && s.oidc ? { ssoLevels: s.oidc.levelsManagedBy } : {}),
+        passkeys: s.sources.includes("passkeys"),
+        passwords: s.sources.includes("accounts"),
+        minPasswordLength: MIN_PASSWORD_LENGTH,
+        openSignup: [...s.openSignupDomains],
+        idleMinutes: s.idleMinutes,
+        absoluteHours: s.absoluteHours,
+      },
     };
   };
   /**
@@ -1313,7 +1391,7 @@ export function startDashboardServer(
     // SEC-25: in Solo every write carries this start's token, with or without
     // an Origin, and any Origin is the page's own (security item 37), here
     // for every route, not only those that ask. A GitHub delivery is signed
-    // instead (wave2_server.ts).
+    // instead (github_routes.ts).
     if (
       identity.mode === "solo" &&
       !SAFE_METHODS.has((req.method ?? "GET").toUpperCase()) &&
@@ -1378,7 +1456,11 @@ export function startDashboardServer(
         json,
         readJsonBody,
         ...(identity.mode === "solo" ? { soloCsrf: mutationToken } : {}),
+        // SHL-02: Solo's person by name — git's user.name, then the computer's account.
+        ...(identity.mode === "solo" && soloName ? { soloName } : {}),
         memberFacts: memberFactsReader(),
+        workspaceFacts,
+        projectName: (id) => liveProjects().find((p) => p.id === id)?.name,
         sessionFacts: (principal) => {
           const label = access.projection().members.get(principal)?.label;
           return { projects: ownProjects(principal), ...(label ? { label } : {}) };
@@ -1389,6 +1471,19 @@ export function startDashboardServer(
     }
 
     if (await authorize(req, res, url)) return;
+
+    // DEC-57, runtime item 23c: the account menu's Switch workspace.
+    if (
+      await workspacesRoute(req, res, url, {
+        path: userPaths().workspaces,
+        setup,
+        own: ownWorkspace,
+        json,
+        readBody: (r) => readJsonBody(r),
+      })
+    ) {
+      return;
+    }
 
     // teams TEAM-32: a project's Accept rule, required threads, lead and auto-apply.
     const settingsMatch = /^\/api\/projects\/(proj_[A-Za-z0-9_-]+)\/settings$/.exec(url);
@@ -1527,7 +1622,7 @@ export function startDashboardServer(
     // H12: workspace, project board and cards, split, run, gate, evidence, calibrate.
     if (
       url.startsWith("/api/") &&
-      (await handleRestExtras(req, res, url, {
+      (await handleRunRoutes(req, res, url, {
         repoPath,
         cardStore: options.cardStore,
         boardService,
@@ -1707,6 +1802,20 @@ export function startDashboardServer(
       return;
     }
 
+    // The start page asks before a person drafts (design-stage DS-N7-1): can
+    // this folder take a new project, and if not, why — the words a refused
+    // Create project would use.
+    if (url === "/api/projects/new" && req.method === "GET") {
+      const store = options.cardStore;
+      if (!store) {
+        json(res, 501, { error: "This server was started read-only" });
+        return;
+      }
+      const reason = await newProjectRefusal({ repoPath, cardStore: store, log });
+      json(res, 200, reason ? { allowed: false, reason } : { allowed: true });
+      return;
+    }
+
     if (url === "/api/projects" && req.method !== "POST") {
       const store = options.cardStore;
       // K-N5-3: each project with its derived rollup (active, idle, done, paused, archived).
@@ -1792,47 +1901,30 @@ export function startDashboardServer(
       return;
     }
 
-    // One attempt's steps: the transcript file, or live `card/step` events
-    // while the card is still running and the transcript is not yet written.
-    const transcriptMatch = new RegExp(`^/api/cards/(${CARD_ID})/transcript$`).exec(url);
-    if (transcriptMatch) {
-      const cardId = transcriptMatch[1] as string;
-      const files = transcriptFiles(repoPath, cardId);
-      const card = (await boardService.getBoardState()).cards.find((c) => c.id === cardId);
-      if (!card) {
-        json(res, 404, { error: `No issue ${cardId}` });
-        return;
-      }
-      const wanted = query.get("attempt");
-      const running = card.status === "in_progress";
-      const total = files.length + (running ? 1 : 0);
-      const n = wanted !== null ? Number(wanted) : total;
-      if (total === 0) {
-        json(res, 200, { attempt: 0, attempts: 0, file: null, live: false, steps: [] });
-        return;
-      }
-      if (!Number.isInteger(n) || n < 1 || n > total) {
-        json(res, 404, { error: `No attempt ${wanted} recorded for this issue` });
-        return;
-      }
-      if (running && n === total) {
-        json(res, 200, {
-          attempt: n,
-          attempts: total,
-          file: null,
-          live: true,
-          steps: liveSteps(options.db, cardId),
-        });
-        return;
-      }
-      const file = files[n - 1] as string;
-      json(res, 200, {
-        attempt: n,
-        attempts: total,
-        file: basename(file),
-        live: false,
-        steps: readTranscript(file),
-      });
+    // NAM-03: the server's own /api/cards/:id routes, one table in card_routes.ts.
+    if (
+      url.startsWith("/api/cards/") &&
+      (await handleCardRoute(req, res, url, query, {
+        repoPath,
+        db: options.db,
+        ...(options.cardStore ? { cardStore: options.cardStore } : {}),
+        boardService,
+        log,
+        setup,
+        json,
+        readJsonBody,
+        isTrustedMutation,
+        principalOf,
+        canSee: planningCanSee,
+        projectOfCard,
+        access,
+        namesOf,
+        attemptsFor,
+        acceptanceSources,
+        presentCard: (card, cards) => withDisplay(card, cards, statusEntries(), Date.now()),
+        aiDeps,
+      }))
+    ) {
       return;
     }
 
@@ -1851,18 +1943,11 @@ export function startDashboardServer(
       json(res, 200, { id: runMatch[1], ...report });
       return;
     }
-    // RUN-46: a card's trace — card, step, model-request and tool-call spans.
-    const traceMatch = new RegExp(`^/api/cards/(${CARD_ID})/traces$`).exec(url);
-    if (traceMatch && req.method === "GET") {
-      json(res, 200, { spans: cardTrace(repoPath, traceMatch[1] as string) });
-      return;
-    }
-
     // The machine: memory against its thresholds, the model, health checks.
     if (url === "/api/machine") {
       if (query.get("fresh") === "1") doctorCache = undefined;
       const doctor = await cachedDoctor();
-      const inference = doctor.checks.find((c) => c.name === "Local inference socket");
+      const inference = doctor.checks.find((c) => c.name === "Model server");
       const served = (/model\(s\): (.+)$/.exec(inference?.detail ?? "")?.[1] ?? "")
         .split(",")
         .map((m) => m.trim())
@@ -1872,6 +1957,14 @@ export function startDashboardServer(
         memory: machineMemory(sample),
         // The active hardware tier and what it decides (DB-N2-9).
         tier: activeHardwareTier(sample.totalBytes),
+        // Configuration's machine line (DB-N19-5): the machine in plain words.
+        // No bandwidth until calibration measures one.
+        host: {
+          name: platform() === "darwin" ? "This Mac" : "This machine",
+          ...(cpus()[0]?.model?.trim() ? { chip: cpus()[0]?.model.trim() } : {}),
+          memoryBytes: totalmem(),
+          unified: platform() === "darwin" && arch() === "arm64",
+        },
         models: {
           endpoint: /^(\S+) reachable/.exec(inference?.detail ?? "")?.[1],
           reachable: inference ? inference.status !== "fail" : false,
@@ -1921,67 +2014,6 @@ export function startDashboardServer(
       return;
     }
 
-    // NEW-dashboard-5: what Accept will ask of this viewer, before it is pressed.
-    const deskMatch = new RegExp(`^/api/cards/(${CARD_ID})/review$`).exec(url);
-    if (deskMatch && req.method === "GET") {
-      const store = options.cardStore;
-      const card = store ? await store.getCard(deskMatch[1] as string) : undefined;
-      // PM-N9-8: a card whose project the person cannot see is no card to them.
-      if (!store || !card || !planningCanSee(req, projectOfCard(card))) {
-        json(res, 404, { error: `No issue ${deskMatch[1]}` });
-        return;
-      }
-      const holders = access.acceptHolders(projectOfCard(card));
-      // Teams item 25 (TEAM-24, -25): the review threads, whether the project
-      // requires them resolved and the open one Accept then waits on, and an
-      // accept that new commits dismissed.
-      const nameOf = namesOf();
-      const threads = await reviewThreads(store, card.id, nameOf);
-      const requireResolvedThreads =
-        access.settings(projectOfCard(card)).require_resolved_threads === true;
-      const openThread = requireResolvedThreads ? openThreadRefusal(threads) : undefined;
-      const acceptDismissed = await acceptDismissal(store, card.id, nameOf);
-      json(res, 200, {
-        // P12, P14, RG-N5-3: the route's earlier fields stay in its contract.
-        ...(await reviewBrief(repoPath, store, log, card)),
-        ...(await reviewDesk(
-          { repoPath, cardStore: store, boardService: boardService as never, eventLog: log },
-          card,
-          principalOf(req),
-          { acceptHolders: holders, nameOf },
-        )),
-        threads,
-        requireResolvedThreads,
-        ...(openThread ? { openThread } : {}),
-        ...(acceptDismissed ? { acceptDismissed } : {}),
-      });
-      return;
-    }
-
-    // One card with its presentation and its attempt history.
-    const cardMatch = new RegExp(`^/api/cards/(${CARD_ID})$`).exec(url);
-    if (cardMatch && req.method === "GET") {
-      const state = await boardService.getBoardState();
-      const card = state.cards.find((c) => c.id === cardMatch[1]);
-      if (!card) {
-        json(res, 404, { error: `No issue ${cardMatch[1]}` });
-        return;
-      }
-      json(res, 200, {
-        card: withDisplay(card, state.cards, statusEntries(), Date.now()),
-        attempts: attemptsFor(card.id).map((a) => a.summary),
-        acceptance: acceptanceSources(card),
-        // PM-N8-2: what the card waits on and why (declared, named, imported).
-        dependencies: options.cardStore?.getDependencyReasons(card.id) ?? [],
-        // TEAM-15: the AI teammates' state on the issue, as the harness knows it.
-        ai: await (async () => {
-          const deps = aiDeps();
-          return deps ? aiStates(deps, card.id, principalOf(req)) : [];
-        })(),
-      });
-      return;
-    }
-
     // The gate contract, in execution order, so the UI can show declared gates
     // that never ran and flag a contract that hashed to nothing.
     if (url === "/api/gates") {
@@ -2028,7 +2060,7 @@ export function startDashboardServer(
       }
       const store = options.cardStore;
       if (!store) {
-        json(res, 503, { error: "No ledger: a baseline approval cannot be recorded" });
+        json(res, 503, { error: "No Activity log: a baseline approval cannot be recorded" });
         return;
       }
       let body: Record<string, unknown>;
@@ -2062,127 +2094,6 @@ export function startDashboardServer(
       return;
     }
 
-    const action = new RegExp(
-      `^/api/cards/(${CARD_ID})/(accept|return|park|unpark|reject|revert|opened)$`,
-    ).exec(url);
-    if (action && req.method === "POST") {
-      if (!isTrustedMutation(req)) {
-        json(res, 403, { error: "Triage actions must come from the dashboard itself" });
-        return;
-      }
-      const store = options.cardStore;
-      if (!store) {
-        json(res, 501, { error: "This server was started read-only" });
-        return;
-      }
-      const [, cardId, verb] = action as unknown as [string, string, string];
-      const card = await store.getCard(cardId);
-      if (!card) {
-        json(res, 404, { error: `No issue ${cardId}` });
-        return;
-      }
-      try {
-        const body = await readJsonBody(req);
-        const ctx = {
-          repoPath,
-          restrictedMode: false,
-          cardStore: store,
-          boardService: boardService as never,
-          // DS-N3-1: the project documents follow a person's accept.
-          eventLog: log,
-        };
-        const strings = (v: unknown): string[] =>
-          Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-        // review-git §2.4.3 (RG-S6-6): the files the dashboard showed, recorded.
-        if (verb === "opened") {
-          await recordReviewOpened(ctx, card, strings(body.filesShown), principalOf(req));
-          json(res, 200, { ok: true });
-          return;
-        }
-        if (verb === "accept") {
-          // INT-22, INT-23: the project's Accept rule decides, and the
-          // accepter's principal is recorded on `card/accepted`.
-          const holders = access.acceptHolders(projectOfCard(card));
-          const sha = await acceptCard(ctx, card, "human", {
-            principal: principalOf(req),
-            acknowledgedFindings: strings(body.acknowledgedFindings),
-            ...(holders ? { acceptHolders: holders } : {}),
-            // TEAM-25: the project's rule, from the same fold as its Accept rule.
-            requireResolvedThreads:
-              access.settings(projectOfCard(card)).require_resolved_threads === true,
-            nameOf: namesOf(),
-          });
-          // A checkout on the integration branch is told how to catch up (RG-S5-2).
-          const notice = sha.startsWith("http")
-            ? undefined
-            : checkoutNotice(repoPath, integrationBranch(repoPath), sha);
-          json(res, 200, {
-            ok: true,
-            status: sha.startsWith("http") ? "review" : "done",
-            sha,
-            ...(notice ? { notice } : {}),
-          });
-          return;
-        }
-        if (verb === "revert") {
-          const sha = await revertAccept(
-            ctx,
-            card,
-            typeof body.reason === "string" ? body.reason : "",
-            principalOf(req),
-            access.acceptHolders(projectOfCard(card)),
-          );
-          json(res, 200, { ok: true, status: "ready", sha });
-          return;
-        }
-
-        // Status's Needs you (DB-P5-1): back where it was parked from, as `sekhemet unpark`.
-        if (verb === "unpark") {
-          const to = await unpark(
-            {
-              repoPath,
-              cardStore: store,
-              boardService: boardService as never,
-              log,
-              principal: principalOf(req),
-            },
-            card,
-          );
-          json(res, 200, { ok: true, status: to });
-          return;
-        }
-        const reason = typeof body.reason === "string" ? body.reason : "";
-        if (verb === "return" && !reason.trim()) {
-          json(res, 400, { error: "A return needs a reason: it is what the agent is told next" });
-          return;
-        }
-        // One implementation for the board and the command line (triage.ts).
-        const triage = {
-          repoPath,
-          cardStore: store,
-          boardService: boardService as never,
-          log,
-          principal: principalOf(req),
-        };
-        const to = verb === "return" ? "ready" : verb === "reject" ? "rejected" : "parked";
-        if (verb === "return") {
-          const comments = Array.isArray(body.comments)
-            ? (body.comments as { file?: unknown; line?: unknown; text?: unknown }[]).map((c) => ({
-                file: String(c.file ?? ""),
-                line: Number(c.line),
-                text: String(c.text ?? ""),
-              }))
-            : [];
-          await sendBack(triage, card, reason, { comments });
-        } else if (verb === "reject") await reject(triage, card, reason);
-        else await park(triage, card, reason);
-        json(res, 200, { ok: true, status: to });
-      } catch (err) {
-        json(res, 409, { error: err instanceof Error ? err.message : String(err) });
-      }
-      return;
-    }
-
     if (url === "/api/queue") {
       const path = join(repoPath, ".sekhemet", "queue_report.json");
       json(res, 200, existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : { entries: [] });
@@ -2196,26 +2107,6 @@ export function startDashboardServer(
     }
 
     // --- Human commands (B12), runner control (L25, H18, H19), order (B11) -----
-    const explainMatch = new RegExp(`^/api/cards/(${CARD_ID})/explain$`).exec(url);
-    if (explainMatch && options.cardStore) {
-      try {
-        json(res, 200, {
-          lines: await explainCard(
-            {
-              repoPath,
-              restrictedMode: false,
-              cardStore: options.cardStore,
-              boardService: boardService as never,
-            },
-            explainMatch[1] as string,
-          ),
-        });
-      } catch (err) {
-        json(res, 404, { error: err instanceof Error ? err.message : String(err) });
-      }
-      return;
-    }
-
     // Teams NEW-teams-9 (item 26; TEAM-26, DB-N9-20): presence, in memory over the stream.
     // Solo has none (teams item 1): its one person has no one to see.
     if (url === "/api/presence" && setup !== "team") {
@@ -2296,25 +2187,9 @@ export function startDashboardServer(
       return;
     }
 
-    // WL-N10-1: a card's messages and hand-back notes, each with the step it reached.
-    const messagesMatch = new RegExp(`^/api/cards/(${CARD_ID})/messages$`).exec(url);
-    if (messagesMatch && req.method === "GET" && options.cardStore) {
-      // The issue page's Activity names who wrote each one (DB-N8-1).
-      const nameOf = namesOf();
-      json(res, 200, {
-        messages: (await cardMessages(options.cardStore, messagesMatch[1] as string)).map((m) => {
-          const principalName = nameOf(m.principal);
-          return principalName ? { ...m, principalName } : m;
-        }),
-      });
-      return;
-    }
-
-    const command = new RegExp(
-      `^/api/cards/(${CARD_ID})/(abort|rewind|fork|override|reroute|reorder|message|pause|hand-back|take-over|submit-take-over)$`,
-    ).exec(url);
+    // Pause or resume a project (B13 cap), set its review hours (B3).
     const projectMatch = /^\/api\/projects\/(proj_[A-Za-z0-9_-]+)$/.exec(url);
-    if ((command || projectMatch) && req.method === "POST") {
+    if (projectMatch && req.method === "POST") {
       if (!isTrustedMutation(req)) {
         json(res, 403, { error: "Commands must come from the dashboard itself" });
         return;
@@ -2324,184 +2199,23 @@ export function startDashboardServer(
         json(res, 501, { error: "This server was started read-only" });
         return;
       }
-      const ctx = {
-        repoPath,
-        restrictedMode: false,
-        cardStore: store,
-        boardService: boardService as never,
-      };
       try {
         const body = await readJsonBody(req);
-        if (projectMatch) {
-          // Pause or resume a project (B13 cap), set its review hours (B3).
-          const id = projectMatch[1] as string;
-          if (typeof body.reviewMinutesPerDay === "number") {
-            await store.setProjectReviewMinutes(id, body.reviewMinutesPerDay, "human");
-            const limit = await (
-              boardService as unknown as { calibrateReviewWip(m: number): Promise<number> }
-            ).calibrateReviewWip(body.reviewMinutesPerDay);
-            json(res, 200, { project: store.getProject(id), reviewWip: limit });
-            return;
-          }
-          const status = body.status;
-          if (status !== "active" && status !== "paused" && status !== "archived") {
-            json(res, 400, { error: "status must be active, paused or archived" });
-            return;
-          }
-          json(res, 200, { project: await store.setProjectStatus(id, status, "human") });
+        const id = projectMatch[1] as string;
+        if (typeof body.reviewMinutesPerDay === "number") {
+          await store.setProjectReviewMinutes(id, body.reviewMinutesPerDay, "human");
+          const limit = await (
+            boardService as unknown as { calibrateReviewWip(m: number): Promise<number> }
+          ).calibrateReviewWip(body.reviewMinutesPerDay);
+          json(res, 200, { project: store.getProject(id), reviewWip: limit });
           return;
         }
-        const [, cardId, verb] = command as unknown as [string, string, string];
-        const card = await store.getCard(cardId);
-        if (!card) {
-          json(res, 404, { error: `No issue ${cardId}` });
+        const status = body.status;
+        if (status !== "active" && status !== "paused" && status !== "archived") {
+          json(res, 400, { error: "status must be active, paused or archived" });
           return;
         }
-        if (verb === "abort") {
-          const reason = typeof body.reason === "string" ? body.reason : "";
-          await requestAbort(store, cardId, reason || "stopped from the dashboard");
-          json(res, 200, { ok: true, requested: "abort" });
-          return;
-        }
-        // WL-N10-1..3: collaborate on a running issue (DEC-34).
-        if (verb === "message") {
-          const text = typeof body.text === "string" ? body.text.trim() : "";
-          if (!text) {
-            json(res, 400, { error: "A message needs text" });
-            return;
-          }
-          await postCardMessage(store, cardId, text, principalOf(req));
-          json(res, 200, { ok: true });
-          return;
-        }
-        if (verb === "pause") {
-          await requestPause(store, cardId, principalOf(req));
-          json(res, 200, { ok: true, requested: "pause" });
-          return;
-        }
-        if (verb === "hand-back" || verb === "take-over" || verb === "submit-take-over") {
-          try {
-            if (verb === "hand-back") {
-              await handBack(
-                ctx,
-                cardId,
-                typeof body.note === "string" ? body.note : "",
-                principalOf(req),
-              );
-              json(res, 200, { ok: true });
-            } else if (verb === "take-over") {
-              json(res, 200, { ok: true, ...(await takeOver(ctx, cardId, principalOf(req))) });
-            } else {
-              json(res, 200, {
-                ok: true,
-                ...(await submitTakenOver(ctx, cardId, principalOf(req))),
-              });
-            }
-          } catch (err) {
-            json(res, 409, { error: err instanceof Error ? err.message : String(err) });
-          }
-          return;
-        }
-        if (verb === "rewind" || verb === "fork") {
-          const step = Number(body.step);
-          if (!Number.isInteger(step) || step < 0) {
-            json(res, 400, { error: "A step number is required" });
-            return;
-          }
-          const r =
-            verb === "fork"
-              ? await forkCard(
-                  ctx,
-                  cardId,
-                  step,
-                  typeof body.attemptId === "string" ? body.attemptId : undefined,
-                )
-              : await rewindCard(ctx, cardId, step);
-          json(res, 200, { ok: true, ...r });
-          return;
-        }
-        if (verb === "override") {
-          // Past an entry condition or an illegal edge, as a recorded human decision (B1).
-          const to = body.toStatus;
-          const reason = typeof body.reason === "string" ? body.reason.trim() : "";
-          if (typeof to !== "string" || !reason) {
-            json(res, 400, { error: "An override needs toStatus and a reason" });
-            return;
-          }
-          // K-S7-5: a value outside the nine states is refused before anything is appended.
-          if (!isCardStatus(to)) {
-            json(res, 400, {
-              error: `'${to}' is not an issue state; use one of ${CARD_STATUSES.join(", ")}`,
-            });
-            return;
-          }
-          // Rule 28: an override names the person who takes responsibility —
-          // the one given, or the install's own person on a solo setup (rule 19).
-          // In the Team setup it is always the person who asked (M4).
-          const named =
-            typeof body.principal === "string" && body.principal.trim()
-              ? body.principal.trim()
-              : undefined;
-          const principal = setup === "team" || !named ? principalOf(req) : named;
-          try {
-            await boardService.transitionCard({
-              cardId,
-              fromStatus: card.status,
-              toStatus: to,
-              actor: "human",
-              reason: `override: ${reason}`,
-              ...(principal ? { principal } : {}),
-            });
-          } catch (err) {
-            // B12: a security-layer failure is the one refusal an override
-            // does not carry. Answered with its own code so the dashboard can
-            // say why rather than showing a generic conflict.
-            if ((err as { code?: string }).code === "security_gate") {
-              json(res, 403, {
-                error: err instanceof Error ? err.message : String(err),
-                refused: "security_gate",
-              });
-              return;
-            }
-            throw err;
-          }
-          json(res, 200, { ok: true, status: to });
-          return;
-        }
-        if (verb === "reroute") {
-          // Which model runs the card next (B12 "reroute").
-          const executor = typeof body.executor === "string" ? body.executor : undefined;
-          const planner = typeof body.planner === "string" ? body.planner : undefined;
-          if (!executor && !planner) {
-            json(res, 400, { error: "Name an executor or a planner" });
-            return;
-          }
-          const updated = await store.updateCard(
-            cardId,
-            {
-              modelRoute: {
-                ...(card.modelRoute ?? {}),
-                ...(executor ? { executor } : {}),
-                ...(planner ? { planner } : {}),
-              },
-            },
-            "human",
-            { principal: principalOf(req) },
-          );
-          json(res, 200, { ok: true, modelRoute: updated.modelRoute });
-          return;
-        }
-        // reorder (B11): place the card between two neighbours.
-        const updated = await store.reorderCard(
-          cardId,
-          {
-            ...(typeof body.afterCardId === "string" ? { afterCardId: body.afterCardId } : {}),
-            ...(typeof body.beforeCardId === "string" ? { beforeCardId: body.beforeCardId } : {}),
-          },
-          "human",
-          { principal: principalOf(req) },
-        );
-        json(res, 200, { ok: true, orderKey: updated.orderKey });
+        json(res, 200, { project: await store.setProjectStatus(id, status, "human") });
       } catch (err) {
         json(res, 409, { error: err instanceof Error ? err.message : String(err) });
       }
@@ -2515,18 +2229,6 @@ export function startDashboardServer(
         ? await options.cardStore.verifyProjections()
         : undefined;
       json(res, 200, { chain, ...(projections ? { projections } : {}) });
-      return;
-    }
-
-    const attemptsMatch = new RegExp(`^/api/cards/(${CARD_ID})/attempts$`).exec(url);
-    if (attemptsMatch && options.cardStore) {
-      const runs = options.cardStore.runs;
-      const attempts = runs.listAttempts(attemptsMatch[1] as string).map((a) => ({
-        ...a,
-        steps: runs.listSteps(a.id),
-        gates: runs.listGateResults(a.id),
-      }));
-      json(res, 200, { attempts, evidence: runs.listEvidence(attemptsMatch[1] as string) });
       return;
     }
 
@@ -2591,9 +2293,9 @@ export function startDashboardServer(
     }
 
     // Planner decisions, goals, standup, signals, the structural diff and the
-    // GitHub webhook (wave2_server.ts).
+    // GitHub webhook (github_routes.ts).
     if (
-      await handleWave2Route(req, res, url, {
+      await handleGithubRoute(req, res, url, {
         repoPath,
         ...(options.cardStore ? { cardStore: options.cardStore } : {}),
         log,
@@ -2795,6 +2497,9 @@ export function startDashboardServer(
 
       const address = server.address();
       const boundPort = typeof address === "object" && address ? address.port : port;
+      const shown = host === "0.0.0.0" || host === "::" || !host ? "127.0.0.1" : host;
+      ownAddress = `http://${shown.includes(":") ? `[${shown}]` : shown}:${boundPort}`;
+      refreshOwnWorkspace();
       // H20: push review, park, budget and question events to the user's
       // ntfy or Gotify, when set up. A no-op until then.
       // INT-17 to INT-20a: one notifier for push and Slack, budgeted, with
@@ -2853,6 +2558,7 @@ export function startDashboardServer(
             goalTicker?.stop();
             github?.stop();
             stopIdentity();
+            for (const stop of stopProjectWatch) stop();
             configApi.close();
             if (timer) clearInterval(timer);
             unsubscribe();

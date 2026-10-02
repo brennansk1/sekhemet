@@ -60,6 +60,8 @@ describe("the In review limit's derivation (DB-P3-9)", () => {
       ["a", 10],
       ["b", 30],
       ["c", 20],
+      ["d", 15],
+      ["e", 25],
     ] as const)
       await reviewed(id, m);
     expect(await board.reviewLimitFacts()).toEqual({
@@ -67,7 +69,7 @@ describe("the In review limit's derivation (DB-P3-9)", () => {
       fixed: false,
       minutesPerDay: 60,
       minutesPerCard: 20,
-      reviews: 3,
+      reviews: 5,
     });
     // The facts and the limit the board enforces are one computation.
     expect((await board.getBoardState()).wipLimits.review).toBe(3);

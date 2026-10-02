@@ -1,6 +1,7 @@
 // The project manager's thread and status (PM_CONTRACT §3 Chat, PM_DESIGN §2).
 // One copy of the conversation in the store; the panel and #/pm both render it.
 import { announce, getJSON, postJSON } from "./dom.js";
+import { noteFor } from "./level_gate.js";
 import { statusStep } from "./lib/pm.js";
 import { whyNotSendable } from "./lib/seshat.js";
 import { store } from "./store.js";
@@ -221,7 +222,10 @@ export async function discardAll(proposals) {
  */
 function reportFocus() {
   if (document.visibilityState !== "visible" || !document.hasFocus()) return;
-  postJSON("/api/pm/focus", {}).catch(() => {});
+  // SEC-01: a Viewer or Stakeholder may not make this write; the page never sends
+  // what the server would refuse, and never blames them for a write they did not ask for.
+  if (noteFor("issue.edit")) return;
+  postJSON("/api/pm/focus", {}, { background: true }).catch(() => {});
 }
 
 export function initPm() {

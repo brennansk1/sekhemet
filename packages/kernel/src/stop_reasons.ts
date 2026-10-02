@@ -121,7 +121,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     halts: false,
     measuresModel: true,
     goesTo: "Verify",
-    nextAction: "Read what the agent said on each silent step, and the call it should have made.",
+    nextAction: "Read what the Agent said on each silent step, and the call it should have made.",
   },
   oscillation_detected: {
     class: "no_progress",
@@ -209,7 +209,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     measuresModel: true,
     goesTo: "Parked; the worktree is discarded",
     nextAction:
-      "Compare the gitdir the .git pointer names with the harness's record (no git command ran), and inspect before re-queuing the issue from Ready.",
+      "Compare the gitdir the .git pointer names with Sekhemet's record (no git command ran), and inspect before re-queuing the issue from To do.",
   },
   repair_exhausted: {
     class: "capability_ceiling",
@@ -258,7 +258,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     measuresModel: true,
     goesTo: "Parked",
     nextAction:
-      "See the check and the agent's reason, and decide whether the check or the issue is wrong.",
+      "See the check and the Agent's reason, and decide whether the check or the issue is wrong.",
   },
   human_abort: {
     class: "human_abort",
@@ -294,7 +294,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     halts: true,
     measuresModel: false,
     goesTo: "Parked",
-    nextAction: "See the hook and its reason; change the hook or the issue, then unpark.",
+    nextAction: "See the hook and its reason; change the hook or the issue, then take it off hold.",
   },
   error: {
     class: "environment",

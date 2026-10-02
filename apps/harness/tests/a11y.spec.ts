@@ -173,6 +173,8 @@ describe("the accessibility check (dashboard DB-P12-6)", () => {
         "#/configuration/review",
         "#/configuration/browser",
         "#/configuration/project",
+        // The start page (design-stage §2.11, NEW-design-stage-7).
+        "#/projects/new",
       ];
       const solo = `http://127.0.0.1:${server.port}`;
       const teamBase = `http://127.0.0.1:${team.server.port}`;

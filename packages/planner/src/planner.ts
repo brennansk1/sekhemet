@@ -7,7 +7,7 @@ import {
   DEFAULT_TIER_BUDGET,
   MAX_OPEN_QUESTIONS_PER_PASS,
 } from "./constants.js";
-import { settledAnswerFor, settledBasis } from "./decisions.js";
+import { settledAnswerFor, settledBasis } from "./decision_store.js";
 import { validateInvest } from "./invest.js";
 import { decomposeSpidr } from "./spidr.js";
 import type {

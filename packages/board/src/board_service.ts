@@ -189,6 +189,13 @@ const RECHECK_BEFORE_RUN = new Set<CardStatus>([...BEFORE_RUNNING, "ready"]);
  * `given` is a profile the caller already read; omitted, the one a person
  * recorded for the card's project is read from the ledger (DS-P14-3).
  */
+/** One row of *Ready to start* (DB-N14-2): an entry condition, met or not, with its reason. */
+export interface ReadinessRow {
+  id: "dependencies" | "criteria" | "approval" | "suspect" | "scope" | "small";
+  met: boolean;
+  reason?: string;
+}
+
 export async function planningExitFailure(
   store: CardStore,
   card: CardRecord,
@@ -280,6 +287,14 @@ const GATED_COLUMNS = new Set<CardStatus>(["review", "done"]);
 
 /** Minutes a human review is assumed to take before any is recorded (S6, RG-S6-1). */
 export const REVIEW_MINUTES_PRIOR = 15;
+/** The prior holds until this many human reviews exist (review-git §2.2 item 3). */
+export const REVIEW_PRIOR_UNTIL = 5;
+/**
+ * The least a measured median counts as (FINDINGS BRD-04): a review faster than
+ * this says nothing of a person's reading time, and 60 minutes a day over one
+ * second a review is a limit of 3,600 that nobody can hold.
+ */
+export const REVIEW_MINUTES_FLOOR = 2;
 /** Above this, a decision is reported as fast (RG-S6-7; SmartBear's ceiling). */
 export const FAST_REVIEW_LINES_PER_HOUR = 500;
 
@@ -311,6 +326,97 @@ export class BoardServiceImpl implements BoardService {
     this.options = options;
     this.wipLimits = { ...DEFAULT_WIP_LIMITS, ...(options.customLimits ?? {}) };
     this.reviewWipFixed = options.customLimits?.review !== undefined;
+  }
+
+  /**
+   * *Ready to start* (dashboard NEW-dashboard-14, DB-N14-2): each entry
+   * condition an issue must meet to go from Backlog to Ready and on to In
+   * progress, met or not with its reason in words, read from the same
+   * checks `entryConditionFailure` makes (dependencies, criteria, their
+   * approval by the depth profile, a revised requirement, scope, Small). It
+   * enforces nothing and appends nothing (DB-N14-3); a parent, which never
+   * runs itself, has no approval, scope or size rows.
+   */
+  public async readiness(card: CardRecord): Promise<ReadinessRow[]> {
+    const rows: ReadinessRow[] = [];
+    const isParent = (await this.cardStore.listCards({ parentId: card.id })).length > 0;
+    const waiting = this.cardStore.waitingOn(card.id);
+    const names = await Promise.all(
+      waiting.map(async (id) => (await this.cardStore.getCard(id))?.title ?? "another issue"),
+    );
+    rows.push(
+      waiting.length
+        ? {
+            id: "dependencies",
+            met: false,
+            reason: `It waits on ${names.join(", ")}, which ${names.length === 1 ? "is" : "are"} not done.`,
+          }
+        : { id: "dependencies", met: true },
+    );
+    const criteria =
+      (card.acceptanceCriteria?.length ?? 0) > 0 || (card.acceptanceTests?.length ?? 0) > 0;
+    rows.push(
+      criteria
+        ? { id: "criteria", met: true }
+        : {
+            id: "criteria",
+            met: false,
+            reason: "No acceptance criteria or tests are written yet.",
+          },
+    );
+    if (!isParent && (card.criterionIds?.length ?? 0) > 0) {
+      const failure = await planningExitFailure(
+        this.cardStore,
+        card,
+        this.options.depthProfile,
+        this.options.readStagedFile,
+      );
+      const approval = this.cardStore.stagedTests.criteriaApproval(card.id);
+      rows.push(
+        !failure
+          ? { id: "approval", met: true }
+          : {
+              id: "approval",
+              met: false,
+              reason: !approval.approved
+                ? approval.approvedSha256
+                  ? "Its acceptance criteria changed since a person approved them."
+                  : "No one has approved its acceptance criteria yet."
+                : "Its tests' examples need a person's approval, as the project's Type asks.",
+            },
+      );
+    }
+    const suspect = this.cardStore.requirements.linksFrom("card", card.id).filter((l) => l.suspect);
+    rows.push(
+      suspect.length
+        ? {
+            id: "suspect",
+            met: false,
+            reason:
+              "A requirement it traces to was revised since it was planned; re-plan or re-confirm it.",
+          }
+        : { id: "suspect", met: true },
+    );
+    if (!isParent) {
+      rows.push(
+        card.scopeFiles.length
+          ? { id: "scope", met: true }
+          : { id: "scope", met: false, reason: "It declares no files it may change." },
+      );
+      if (this.options.zone3Fit) {
+        const fit = await this.options.zone3Fit(card);
+        rows.push(
+          fit.tokens <= fit.cap
+            ? { id: "small", met: true }
+            : {
+                id: "small",
+                met: false,
+                reason: `It is too big for the Coding model to build in one pass (${fit.tokens.toLocaleString("en-US")} of ${fit.cap.toLocaleString("en-US")} tokens); split it.`,
+              },
+        );
+      }
+    }
+    return rows;
   }
 
   /**
@@ -505,21 +611,25 @@ export class BoardServiceImpl implements BoardService {
       );
     }
     const { median } = await this.medianReviewMinutes(projectId);
-    return Math.max(1, Math.floor(budget / Math.max(median, 1 / 60)));
+    return Math.max(1, Math.floor(budget / median));
   }
 
-  /** The median minutes of a person's reviews, the prior before the first (S6). */
+  /**
+   * The median minutes of a person's reviews, at least REVIEW_MINUTES_FLOOR;
+   * the prior until five reviews exist (S6, review-git §2.2 item 3; BRD-04).
+   */
   private async medianReviewMinutes(
     projectId?: string,
   ): Promise<{ median: number; reviews: number }> {
     const durations = (await this.measuredReviewMinutes(projectId)).sort((a, b) => a - b);
-    if (durations.length === 0) return { median: REVIEW_MINUTES_PRIOR, reviews: 0 };
+    if (durations.length < REVIEW_PRIOR_UNTIL)
+      return { median: REVIEW_MINUTES_PRIOR, reviews: durations.length };
     const mid = Math.floor(durations.length / 2);
     const median =
       durations.length % 2 === 0
         ? ((durations[mid - 1] as number) + (durations[mid] as number)) / 2
         : (durations[mid] as number);
-    return { median, reviews: durations.length };
+    return { median: Math.max(REVIEW_MINUTES_FLOOR, median), reviews: durations.length };
   }
 
   /**

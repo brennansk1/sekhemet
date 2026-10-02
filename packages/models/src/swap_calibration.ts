@@ -113,7 +113,7 @@ export async function runCalibrationNight(
   deps.scheduler.setLoadGuard(async (weights) => {
     const verdict = dec42HostCheck(await deps.host());
     if (!verdict.ok) {
-      const why = `DEC-42: not loading ${weights}: ${verdict.reason}`;
+      const why = `Not loading ${weights}: ${verdict.reason}`;
       hostRefusals.push(why);
       throw new FootprintRefusal(`${why}; the work stays queued.`);
     }

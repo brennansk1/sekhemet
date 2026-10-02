@@ -95,7 +95,7 @@ export function bindHost(
   if (LOOPBACK.has(host)) return host === "localhost" ? "127.0.0.1" : host;
   if (mode === "solo") {
     throw new Error(
-      `Solo binds loopback only (asked for ${host}); switch to the Team setup to serve other addresses (teams TEAM-1)`,
+      `Solo binds loopback only (asked for ${host}); switch to the Team setup to serve other addresses`,
     );
   }
   if (settings.trustedProxies.length === 0) {

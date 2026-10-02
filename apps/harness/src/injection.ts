@@ -160,7 +160,7 @@ export function workerExposure(
       reason: `the Coding model never replied${stopReason ? ` (stopped: ${stopReason})` : ""}`,
     };
   if (row?.class === "environment")
-    return { ran: false, reason: `the harness stopped the attempt (${stopReason})` };
+    return { ran: false, reason: `Sekhemet stopped the attempt (${stopReason})` };
   return { ran: true };
 }
 

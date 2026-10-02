@@ -1,7 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { DeterministicGateRunner, type GateRung } from "@sekhemet/gates";
 import { CardExecutionSessionImpl } from "@sekhemet/loop";
-import type { LocalInferenceAdapter, ToolArm } from "@sekhemet/models";
+import type { LocalInferenceAdapter, ToolCallFormat } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { applyTestPatch } from "./git.js";
 import { InstrumentedAdapter } from "./instrumentation.js";
@@ -39,7 +39,7 @@ interface RunContext {
   verifier: TestVerifier;
   stepBudget: number;
   gateRungs: GateRung[];
-  toolArm: ToolArm;
+  toolArm: ToolCallFormat;
   defaultRepoPath: string;
   options: BenchmarkOptions;
 }

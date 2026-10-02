@@ -10,6 +10,7 @@ import {
   runBuiltinGates,
 } from "@sekhemet/gates";
 import type { CardRecord, CardStatus, CardStore } from "@sekhemet/kernel";
+import { plural } from "@sekhemet/ui";
 import { recordLedgerRun } from "../ledger_evidence.js";
 import { type Claim, renderDisagreements, reviewEligible } from "./claims.js";
 import type { ResearchAnswer } from "./researcher.js";
@@ -68,7 +69,7 @@ function claimSummary(claims: Claim[] | undefined): string[] {
   return [
     "## Claims",
     "",
-    `${all.length} claim(s): ${counts.join(", ")}.`,
+    `${plural(all.length, "claim")}: ${counts.join(", ")}.`,
     ...(executable.length
       ? [
           "",
@@ -293,7 +294,7 @@ export async function runResearchCard(
   } else {
     await move(
       "parked",
-      `parked: research not settled (${
+      `on hold: research not settled (${
         !answer.grounded
           ? "not grounded"
           : answer.badCitations.length

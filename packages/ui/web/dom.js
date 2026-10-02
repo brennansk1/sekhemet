@@ -85,15 +85,55 @@ async function readBody(res) {
   }
 }
 
-export async function getJSON(path) {
-  const res = await fetch(path, { headers: { Accept: "application/json" } });
+/** How long a read waits for an answer before it says so (FINDINGS ERR-01). */
+const READ_TIMEOUT_MS = 20_000;
+
+/**
+ * No answer at all, in words (FINDINGS ERR-01, ERR-04; §A *Nothing raw*):
+ * never the browser's *Failed to fetch*. Status 0 marks it.
+ */
+function noAnswer(err) {
+  const slow = err?.name === "TimeoutError" || err?.name === "AbortError";
+  return {
+    ok: false,
+    status: 0,
+    data: {
+      error: slow
+        ? "Sekhemet took too long to answer. Try again."
+        : "Sekhemet can't be reached. Check that it is running, then try again.",
+    },
+  };
+}
+
+/**
+ * A read: never throws. No answer, or none within the timeout, comes back
+ * as status 0 with a sentence (ERR-01), so a view shows its error state
+ * with Retry instead of a skeleton that never ends.
+ */
+export async function getJSON(path, { timeout = READ_TIMEOUT_MS } = {}) {
+  let res;
+  try {
+    res = await fetch(path, {
+      headers: { Accept: "application/json" },
+      ...(typeof AbortSignal?.timeout === "function"
+        ? { signal: AbortSignal.timeout(timeout) }
+        : {}),
+    });
+  } catch (err) {
+    return noAnswer(err);
+  }
   const data = await readBody(res);
   noticeAuth(res.status, data);
   return { ok: res.ok, status: res.status, data: refusedWriteBody(res.status, data) };
 }
 
-/** A write with a JSON body: the action header and, signed in, the CSRF token. */
-export async function sendJSON(method, path, body) {
+/**
+ * A write with a JSON body: the action header and, signed in, the CSRF
+ * token. `background`: a write the page makes on its own (focus, files
+ * shown), never one the person asked for — a refusal of it is never
+ * announced page-wide, so no toast blames them for it (FINDINGS SEC-01).
+ */
+export async function sendJSON(method, path, body, { background = false } = {}) {
   try {
     const res = await fetch(path, {
       method,
@@ -101,16 +141,16 @@ export async function sendJSON(method, path, body) {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     const data = await readBody(res);
-    noticeAuth(res.status, data);
+    if (!(background && res.status === 403)) noticeAuth(res.status, data);
     return { ok: res.ok, status: res.status, data: refusedWriteBody(res.status, data) };
   } catch (err) {
-    return { ok: false, status: 0, data: { error: String(err?.message ?? err) } };
+    return noAnswer(err);
   }
 }
 
 /** Triage mutations carry the header the server requires (CSRF guard). */
-export function postJSON(path, body) {
-  return sendJSON("POST", path, body ?? {});
+export function postJSON(path, body, opts) {
+  return sendJSON("POST", path, body ?? {}, opts);
 }
 
 export async function copyText(text) {

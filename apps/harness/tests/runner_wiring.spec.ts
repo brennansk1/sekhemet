@@ -191,12 +191,29 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     });
     expect(await releaseHeldCards(ctx)).toEqual(["card_held"]);
     const released = await cardStore.getCard(card.id);
-    // Its gates passed, so it continues to Review as it would have.
-    expect(released?.status).toBe("review");
-    expect(released?.blockedReason ?? null).toBeNull();
+    // RG-P8-1 (FINDINGS REV-05): its gates passed, but nothing has reviewed
+    // the change, so it waits in Verify for its AI review — never shown in
+    // Review unreviewed. The queue's next run reviews it (`ReviewFlow.resume`).
+    expect(released?.status).toBe("verify");
+    expect(released?.blockedReason).toBe("Waiting for AI review");
     // K-N3-2: released once, on the ledger; the hold is gone.
     expect(released?.hold).toBeUndefined();
     expect(await cardStore.cardEvents(card.id, ["card/released"])).toHaveLength(1);
+    // A change its AI review has read goes on to Review as before.
+    await cardStore.recordDossierEntry({
+      cardId: card.id,
+      kind: "review",
+      actor: "reviewer",
+      verdict: "not_reviewed",
+      text: "No AI review: no Review model outside the Coding model's family is configured.",
+    });
+    await cardStore.updateCard(card.id, { blockedReason: null }, "executor");
+    await cardStore.updateCardStatus(card.id, "in_progress", "setup", "harness", {
+      override: true,
+    });
+    await boardService.holdCard(card.id, "verify full", "executor", "verify");
+    expect(await releaseHeldCards(ctx)).toEqual(["card_held"]);
+    expect((await cardStore.getCard(card.id))?.status).toBe("review");
   });
 
   it("hands askTeam the question's dossier entry id, and files a queued answer under it", async () => {

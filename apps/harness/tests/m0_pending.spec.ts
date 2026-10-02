@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { m0PendingCheck } from "../src/doctor.js";
 import { M0_PENDING, pendingM0, recordM0Pending } from "../src/m0_path.js";
 import { runOvernight } from "../src/overnight.js";
-import { runWave2Command } from "../src/wave2.js";
+import { runDevCommand } from "../src/wave2.js";
 
 // Measurement MS-M9-6 and the lead's ruling: adopting or re-qualifying a
 // Worker leaves M0 pending; the overnight run does it first, inside its
@@ -66,7 +66,7 @@ describe("M0 pending after a Worker is adopted or re-qualified (MS-M9-6)", () =>
     process.env.SEKHEMET_MODEL_REGISTRY = join(k.repoPath, "models.json");
     const out: string[] = [];
     try {
-      await runWave2Command("qualify", ["--models", "silent", "--check"], k, {
+      await runDevCommand("qualify", ["--models", "silent", "--check"], k, {
         print: (l) => out.push(l),
         model: (n) => new MockInferenceAdapter(n, [], { exhaustion: "default" }),
       });
@@ -77,8 +77,8 @@ describe("M0 pending after a Worker is adopted or re-qualified (MS-M9-6)", () =>
       /M0 pending for silent \(mock\): sekhemet overnight runs it, or run sekhemet m0 --worker silent/,
     );
     const check = m0PendingCheck(k.repoPath);
-    expect(check).toMatchObject({ name: "M0", status: "warn" });
-    expect(check.detail).toMatch(/M0 pending: silent/);
+    expect(check).toMatchObject({ name: "First-run benchmark", status: "warn" });
+    expect(check.detail).toMatch(/First-run benchmark pending: silent/);
     expect(m0PendingCheck(kernel().repoPath).status).toBe("pass");
   });
 });

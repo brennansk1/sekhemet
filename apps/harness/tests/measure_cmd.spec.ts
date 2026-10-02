@@ -368,7 +368,7 @@ describe("sekhemet measure (MS-T8-13, MS-T8-14 wired)", () => {
     );
     expect(
       lines.filter((l) =>
-        /ctx-old: not watchable: admitted before B2\.4's profile record; re-admit to watch/.test(l),
+        /ctx-old: not watchable: admitted before profiles were recorded; re-admit to watch/.test(l),
       ),
     ).toHaveLength(1);
     expect(await k.log.getEventsByTypes(["measure/not_watchable"])).toHaveLength(1);
@@ -513,7 +513,7 @@ describe("sekhemet measure (MS-T8-13, MS-T8-14 wired)", () => {
     expect(await runMeasureCommand(["rule-credit", "rule_x"], k, (l) => lines.push(l))).toBe(0);
     // Two pairs, each with the rule passing and without it failing.
     expect(lines.join("\n")).toMatch(
-      /rule_x: credit 2 over 2 pair\(s\) \(2 helpful, 0 harmful\).*insufficient data/,
+      /rule_x: credit 2 over 2 pairs \(2 helpful, 0 harmful\).*insufficient data/,
     );
     const events = await k.log.getEventsByTypes(["learning/credit"]);
     expect(events[0]?.payload).toMatchObject({ ruleId: "rule_x", status: "insufficient data" });

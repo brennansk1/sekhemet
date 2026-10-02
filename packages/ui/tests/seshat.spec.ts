@@ -153,10 +153,11 @@ describe("DB-P5-7: a non-developer at 400 px starts a project and asks how it is
       reachable: true,
       steps: [
         { where: "Bottom bar", press: "Status", route: "#/status" },
-        { where: "Status", press: STATUS_COPY.startProject, route: "#/pm" },
-        { where: "Seshat", press: "Send", route: "#/pm" },
-        { where: "Seshat", press: "Review plan", route: "#/pm" },
-        { where: "Review plan", press: "Create project", route: "#/pm" },
+        // design-stage §2.11: a project starts on its own page with a live draft.
+        { where: "Status", press: STATUS_COPY.startProject, route: "#/projects/new" },
+        { where: "Seshat", press: "Send", route: "#/projects/new" },
+        { where: "Seshat", press: "Review plan", route: "#/projects/new" },
+        { where: "Review plan", press: "Create project", route: "#/projects/new" },
         { where: "Bottom bar", press: "Status", route: "#/status" },
         { where: "Status", press: STATUS_COPY.ask, route: "#/pm" },
       ],
@@ -171,7 +172,7 @@ describe("DB-P5-7: a non-developer at 400 px starts a project and asks how it is
     expect(walk.steps[1]).toEqual({
       where: "Status",
       press: "Start a new project",
-      route: "#/status",
+      route: "#/projects/new",
     });
   });
 

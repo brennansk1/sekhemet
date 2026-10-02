@@ -230,22 +230,27 @@ h3.sh .sec {
 }
 
 /* Gates strip (§2.5.3) */
+/* BRD-11: each segment takes its full width and the strip wraps to a second
+   row rather than cutting a family, its failed names or its count; the 1 px
+   gaps over the strip's border colour are the dividers. */
 .g-strip {
   display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-control);
-  background: var(--bg-base);
+  background: var(--border-subtle);
   position: relative;
 }
 .g-seg {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 1 0 auto;
+  max-width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
   height: 32px;
   padding: 0 12px;
-  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-base);
   font-size: var(--text-sm);
   position: relative;
   white-space: nowrap;
@@ -254,7 +259,6 @@ h3.sh .sec {
   border-radius: 3px 0 0 3px;
 }
 .g-seg:last-child {
-  border-right: 0;
   border-radius: 0 3px 3px 0;
 }
 .g-seg:hover {
@@ -295,7 +299,7 @@ h3.sh .sec {
   color: var(--state-parked);
 }
 .g-seg.warn {
-  flex: 1.3;
+  flex-grow: 1.3;
 }
 .g-seg.warn .ic {
   color: var(--state-parked);
@@ -306,12 +310,18 @@ h3.sh .sec {
 .g-seg .nm {
   flex: none;
 }
-/* A family's failed gates (DB-N1-1): cut, never overlapping the next segment. */
+/* A family's failed gates (DB-N1-1): whole, the strip wraps instead (BRD-11);
+   cut only when one segment is wider than the whole strip. */
 .g-seg .fl {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--state-fail);
+}
+/* REV-01: a family whose only misses were skipped is no failure: its names stay neutral. */
+.g-seg.skipped .fl,
+.g-seg.not_run .fl {
+  color: var(--text-secondary);
 }
 .g-seg .t {
   margin-left: auto;
@@ -480,6 +490,18 @@ h3.sh .sec {
 .facts[hidden] {
   display: none;
 }
+/* The run's settings, folded under Run details (FINDINGS_C1 R-37). */
+.run-details {
+  margin-top: 8px;
+  font-size: var(--text-sm);
+}
+.run-details summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.run-details .kv {
+  margin-top: 8px;
+}
 .crit {
   list-style: none;
   margin: 0;
@@ -630,6 +652,8 @@ dl.kv dd {
 @media (max-width: 599px) {
   .g-strip {
     flex-direction: column;
+    gap: 0;
+    background: var(--bg-base);
   }
   .g-seg {
     height: auto;
@@ -705,11 +729,13 @@ dl.kv dd {
   flex-wrap: wrap;
   align-items: center;
 }
+/* A11Y-03: Park's reason chips are 24 px targets. */
 .chip {
   font-size: var(--text-xs);
   color: var(--text-secondary);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-control);
+  min-height: 24px;
   padding: 2px 8px;
   background: var(--bg-raised);
   max-width: 100%;
@@ -995,4 +1021,96 @@ dl.kv dd {
 }
 .outcome .built-by {
   font-size: var(--text-sm);
+}
+
+/* Accept's conditions as a checklist above the bar (REV-02, GitHub's merge
+   box): full width, one line each, never squeezed beside the buttons. */
+.triage {
+  flex-wrap: wrap;
+  row-gap: 8px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.blockers {
+  flex: 1 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.blockers li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.blockers li .ic {
+  flex: none;
+  margin-top: 2px;
+}
+.blockers li.bl-block .ic {
+  color: var(--state-parked);
+}
+.blockers li.bl-refused {
+  color: var(--text-primary);
+}
+.blockers li.bl-refused .ic {
+  color: var(--state-fail);
+}
+.blockers a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.blockers.flash {
+  outline: 2px solid var(--state-parked);
+  outline-offset: 4px;
+  border-radius: var(--radius-control);
+}
+.triage > .why[role="note"] {
+  flex: 1 0 100%;
+}
+/* REV-07: while the note is open, its own Send back is the only one. */
+body.composing .triage [data-back],
+body.composing .cv-h [data-back] {
+  display: none;
+}
+.composer .cbx {
+  flex: 1 1 280px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+/* REV-02: on a phone the bar is the ReviewPhone mockup's — equal 48 px
+   buttons in one row, words only (no key hints on a touch screen). */
+@media (max-width: 767px) {
+  .triage {
+    padding: 8px 16px;
+  }
+  .triage .btn {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 48px;
+    justify-content: center;
+    padding: 0 8px;
+  }
+  .triage .btn kbd,
+  .triage .btn .ic {
+    display: none;
+  }
+}
+/* REV-02: on a phone a finding's Acknowledge goes under its text, never past the edge. */
+.rfind li.rf > .btn,
+.rfind li.rf > .ack {
+  flex: none;
+}
+@media (max-width: 599px) {
+  .rfind li.rf {
+    flex-wrap: wrap;
+  }
+  .rfind li.rf > .btn,
+  .rfind li.rf > .ack {
+    margin-left: 22px;
+  }
 }

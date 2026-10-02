@@ -13,8 +13,8 @@ import {
   sniffImage,
   visionPrePass,
 } from "../src/attachments.js";
-import { runWave2Command } from "../src/wave2.js";
-import { handleWave2Route } from "../src/wave2_server.js";
+import { handleGithubRoute } from "../src/github_routes.js";
+import { runDevCommand } from "../src/wave2.js";
 
 const PNG = Buffer.from(
   "89504e470d0a1a0a0000000d4948445200000001000000010806000000" +
@@ -131,7 +131,7 @@ describe("X3: multimodal card input", () => {
     });
     const post = Object.assign([Buffer.from(body)], { method: "POST", headers: {} });
     const res: { s?: number; b?: unknown } = {};
-    await handleWave2Route(
+    await handleGithubRoute(
       post as never,
       res as never,
       `/api/cards/${card.id}/attachments`,
@@ -148,7 +148,7 @@ describe("X3: multimodal card input", () => {
         served.bytes = b;
       },
     };
-    await handleWave2Route(
+    await handleGithubRoute(
       { method: "GET", headers: {} } as never,
       out as never,
       `/api/cards/${card.id}/attachments/${id}`,
@@ -161,7 +161,7 @@ describe("X3: multimodal card input", () => {
     writeFileSync(file, Buffer.concat([Buffer.from("GIF89a"), Buffer.alloc(20)]));
     const lines: string[] = [];
     expect(
-      await runWave2Command(
+      await runDevCommand(
         "attach",
         [card.id, file],
         { repoPath: repo, log, cardStore: store },

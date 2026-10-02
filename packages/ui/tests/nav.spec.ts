@@ -89,14 +89,14 @@ describe("the navigation model (dashboard P11)", () => {
     expect(names({ ...withStatus, team: true })).toContain("my-issues");
   });
 
-  it("DB-P11-3: the phone bar is Status · Review · Board · PM, of the views that exist", () => {
+  it("DB-P11-3: the phone bar is Status · Review · Board · Seshat, of the views that exist", () => {
     expect(BOTTOM_BAR).toEqual(["status", "review", "board", "pm"]);
     const withStatus = { ...EMPTY, views: new Set([...BUILT, "status"]) };
     expect(bottomBar(visibleNav(withStatus)).map((i) => i.short)).toEqual([
       "Status",
       "Review",
       "Board",
-      "PM",
+      "Seshat",
     ]);
     expect(bottomBar(visibleNav(EMPTY)).map((i) => i.name)).toEqual(["review", "board", "pm"]);
     for (const i of bottomBar(visibleNav(withStatus))) expect(i.route).toMatch(/^#\/[a-z-]+$/);

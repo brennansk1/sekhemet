@@ -122,7 +122,7 @@ describe("NEW-runtime-9: telemetry as specified", () => {
     // RUN-46: the card's trace, as the dashboard reads it, labels the step span Step.
     const trace = cardTrace(repo, card.id);
     const kinds = new Set(trace.map((s) => s.kind));
-    expect(kinds).toEqual(new Set(["Card", "Step", "Model request", "Tool call"]));
+    expect(kinds).toEqual(new Set(["Issue", "Step", "Model request", "Tool call"]));
     expect(trace.every((s) => typeof s.durationMs === "number" && s.durationMs >= 0)).toBe(true);
     const server = await startDashboardServer({
       db: k.db,

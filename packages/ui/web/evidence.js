@@ -23,6 +23,7 @@ import {
 } from "./review_desk.js";
 import { paintShotDiffs, shotsHtml } from "./shots.js";
 import { store } from "./store.js";
+import { openThreadsHtml } from "./threads.js";
 import { typeTag } from "./tile.js";
 import { toast } from "./toast.js";
 
@@ -37,9 +38,10 @@ export function gatesFor(evidence) {
 export function outcomeIcon(evidence) {
   if (!evidence) return "";
   if (evidence.passed) return icon("check", 14, "ic s14 i-pass");
-  return stopReasonLabel(evidence.stopReason).tone === "parked"
-    ? icon("pause", 14, "ic s14 i-park")
-    : icon("x", 14, "ic s14 i-fail");
+  const tone = stopReasonLabel(evidence.stopReason).tone;
+  // ISS-02: a stopped run shows a pause, never a failure's cross.
+  if (tone === "neutral") return icon("pause", 14, "ic s14");
+  return tone === "parked" ? icon("pause", 14, "ic s14 i-park") : icon("x", 14, "ic s14 i-fail");
 }
 
 /**
@@ -57,10 +59,10 @@ export function reviewHtml(review) {
   const items = findings
     .map((f) => {
       const warn = f.severity === "likely_send_back";
-      return `<li class="${warn ? "warn" : ""}">${icon(warn ? "alert" : "chat", 14, `ic s14${warn ? " i-park" : ""}`)}<div><b>${warn ? "Likely send-back" : "Consider"}</b><span>${esc(f.note)}</span></div></li>`;
+      return `<li class="${warn ? "warn" : ""}">${icon(warn ? "alert" : "chat", 14, `ic s14${warn ? " i-park" : ""}`)}<div><b>${warn ? "Likely to need changes" : "Consider"}</b><span>${esc(f.note)}</span></div></li>`;
     })
     .join("");
-  return `<section aria-label="Seshat's review" class="mreview"><h3 class="sh">Seshat's review <span class="sec">${esc(head)}</span></h3><p class="mr-why">Seshat checked this diff against what it has learned about you (<a href="#/playbook/profile">Playbook</a>). It's advice, not a check: Accept is still yours.</p><ul>${items}</ul></section>`;
+  return `<section aria-label="Seshat's notes" class="mreview"><h3 class="sh">Seshat's notes <span class="sec">${esc(head)}</span></h3><p class="mr-why">Seshat checked this diff against what it has learned about you (<a href="#/playbook/profile">Playbook</a>). It's advice, not a check: Accept is still yours.</p><ul>${items}</ul></section>`;
 }
 
 export class EvidencePane {
@@ -117,7 +119,7 @@ export class EvidencePane {
       return `<div class="ev-error" role="alert">${icon("alert")}<span><b>Couldn't load evidence for ${esc(card.display?.shortId ?? card.id)}.</b> <span class="sec">${detail.error.status ? `The server returned ${esc(detail.error.status)}.` : "Sekhemet did not respond."} ${esc(detail.error.message ?? "")}</span></span><button class="btn sm" type="button" data-retry-ev>${icon("refresh", 14, "ic s14")}Retry</button></div>`;
     }
     if (!detail.evidence) {
-      return `<div class="ev-empty">${brandMark(24)}<b>No attempts yet.</b><span>Evidence appears after the agent's first run. Budget: ${esc(card.stepBudget)} steps.</span></div>`;
+      return `<div class="ev-empty">${brandMark(24)}<b>No attempts yet.</b><span>Evidence appears after the Agent's first run. Budget: ${esc(card.stepBudget)} steps.</span></div>`;
     }
     return null;
   }
@@ -131,6 +133,8 @@ export class EvidencePane {
     out.facts = factsInlineHtml(detail.card ?? card, ev, detail);
     // §2.5.3 4a (NEW-dashboard-5): the Reviewer's findings and coverage, first.
     out.reviewer = reviewerHtml(card, detail);
+    // REV-03: a teammate's open review thread is read on Review, before Accept.
+    out.threads = openThreadsHtml(detail.desk, card.id);
     out.gates = `<section aria-label="Checks"><h3 class="sh">Checks ${checksTip(gates)}<span class="sec">${esc(gatesHeadline(gates))}</span></h3>${gatesStripHtml(gates, { failures: ev.failures, config, emptyContract: ev.gatesConfigSha256 === EMPTY_SHA256, sha: ev.gatesConfigSha256 })}</section>`;
     // SEC-32: files that run outside the sandbox on the next commit or in an editor.
     out.later = ev.executesLater?.length
@@ -159,9 +163,17 @@ export class EvidencePane {
     const missing = this.missingHtml(card, detail);
     if (missing) return missing;
     const s = this.sections(card, detail);
-    return [s.facts, s.reviewer, s.gates, s.later, s.review, s.failures, s.shots, s.changes].join(
-      "",
-    );
+    return [
+      s.facts,
+      s.reviewer,
+      s.threads,
+      s.gates,
+      s.later,
+      s.review,
+      s.failures,
+      s.shots,
+      s.changes,
+    ].join("");
   }
 
   /** The issue page's Checks tab (DB-N8-1): the gates and what they found. */
@@ -268,6 +280,16 @@ export class EvidencePane {
           block.querySelector("a")?.focus();
         } else if (seg.classList.contains("pass")) {
           toast({ text: "No output recorded for passed checks.", duration: 2500 });
+        } else {
+          // REV-08: a family with skipped checks and no failure says what it holds.
+          const quiet = seg.classList.contains("skipped") || seg.classList.contains("not_run");
+          toast({
+            text: `${seg.getAttribute("aria-label") ?? "Checks"}.`,
+            ...(quiet
+              ? { detail: "A skipped check gave no verdict: it neither failed nor passed." }
+              : {}),
+            duration: 5000,
+          });
         }
         return;
       }

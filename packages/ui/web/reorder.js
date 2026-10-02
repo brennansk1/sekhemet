@@ -6,6 +6,7 @@ import { noteFor } from "./level_gate.js";
 import { dropIndex, neighboursFor } from "./reorder_logic.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
+import { toastWithUndo } from "./undo.js";
 
 function columnOf(tile) {
   return tile?.parentElement ?? null;
@@ -21,10 +22,26 @@ function moveNote(tile) {
   return noteFor("priority.change", card?.projectId, card?.projectName);
 }
 
-async function send(id, pos) {
+async function send(id, pos, ids) {
   if (!pos) return;
   const r = await postJSON(`/api/cards/${encodeURIComponent(id)}/reorder`, pos);
-  if (r.ok) window.dispatchEvent(new CustomEvent("sekhemet:refresh-view"));
+  if (!r.ok) return;
+  window.dispatchEvent(new CustomEvent("sekhemet:refresh-view"));
+  // §2.4.23: a move offers Undo, which places the issue back between the
+  // neighbours it had, as one more recorded move.
+  const from = ids.indexOf(id);
+  const back = {
+    ...(ids[from - 1] ? { afterCardId: ids[from - 1] } : {}),
+    ...(ids[from + 1] ? { beforeCardId: ids[from + 1] } : {}),
+  };
+  const name = store.card(id)?.display?.shortId ?? id;
+  toastWithUndo({ tone: "info", text: `Moved ${name}.` }, async () => {
+    const u = await postJSON(`/api/cards/${encodeURIComponent(id)}/reorder`, back);
+    window.dispatchEvent(new CustomEvent("sekhemet:refresh-view"));
+    return u.ok
+      ? { text: `${name} is back where it was.` }
+      : { text: `${name} was not moved back.`, detail: u.data?.error ?? "", tone: "fail" };
+  });
 }
 
 /** Wire drag-and-drop and the keyboard move onto a board container. */
@@ -56,9 +73,11 @@ export function bindReorder(container) {
       const r = t.getBoundingClientRect();
       return r.top + r.height / 2;
     });
+    const ids = idsIn(list);
     void send(
       dragged.dataset.id,
-      neighboursFor(idsIn(list), dragged.dataset.id, dropIndex(mids, e.clientY)),
+      neighboursFor(ids, dragged.dataset.id, dropIndex(mids, e.clientY)),
+      ids,
     );
   });
   container.addEventListener("dragend", () => {
@@ -80,6 +99,6 @@ export function bindReorder(container) {
     const ids = idsIn(list);
     const from = ids.indexOf(tile.dataset.id);
     const to = e.key === "ArrowUp" ? from - 1 : from + 2;
-    void send(tile.dataset.id, neighboursFor(ids, tile.dataset.id, to));
+    void send(tile.dataset.id, neighboursFor(ids, tile.dataset.id, to), ids);
   });
 }

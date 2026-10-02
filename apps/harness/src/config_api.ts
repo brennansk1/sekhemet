@@ -82,7 +82,7 @@ import {
   policyFetch,
   policyRefusal,
 } from "@sekhemet/sandbox";
-import { REVIEW_MINUTES_REFUSED } from "@sekhemet/ui";
+import { type DoneFacts, REVIEW_MINUTES_REFUSED } from "@sekhemet/ui";
 import type { BenchmarkService } from "./benchmark_cmd.js";
 import { type ModelFolderSetting, resolveConfig, userConfigPath } from "./config.js";
 import { networkConfigs } from "./config_apply.js";
@@ -194,6 +194,12 @@ export interface ConfigApiDeps {
     req: IncomingMessage,
     project: string,
   ) => { allowed: boolean; reason?: string };
+  /**
+   * The facts of a project's Definition of done (dashboard DB-N14-1): its
+   * checks from `gates.toml`, its depth profile and who its Accept rule
+   * names. Read-only: it enforces nothing (DB-N14-3).
+   */
+  definitionOfDone?: (project: string | undefined) => DoneFacts;
   /** The hashes already computed, by path, size and modification time; `<user dir>/model-hashes.json`. */
   hashCachePath?: string;
   /** Where a copy to internal storage goes: `~/AI-Models/llm` by default. */
@@ -1950,12 +1956,24 @@ export function createConfigApi(deps: ConfigApiDeps) {
                 };
               })()
             : undefined;
+          // DB-N14-1 and DB-N25-1: the Definition of done, and where the project's repository is.
+          const done = (() => {
+            try {
+              return deps.definitionOfDone?.(project);
+            } catch {
+              return undefined;
+            }
+          })();
           deps.json(res, 200, {
             config: r.config,
             layers: r.layers,
             problems: r.problems,
             sources: r.sources,
             ...(capacity ? { reviewCapacity: capacity } : {}),
+            ...(done ? { definitionOfDone: done } : {}),
+            ...(record
+              ? { project: { id: record.id, name: record.name, rootPath: record.rootPath } }
+              : {}),
           });
           return true;
         }

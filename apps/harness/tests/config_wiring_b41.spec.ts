@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SMALL, writeGguf } from "../../../packages/models/tests/support/gguf_fixture.js";
 import type { BenchmarkEnv } from "../src/benchmark_cmd.js";
 import { createConfigApi } from "../src/config_api.js";
-import { dashboardResidency } from "../src/dashboard_models.js";
+import { dashboardResidency } from "../src/config_model_actions.js";
 import { ModelAccess } from "../src/model_access.js";
 import { startDashboardServer } from "../src/server.js";
 import { pageWriteHeaders } from "./page_headers.js";
@@ -423,7 +423,8 @@ describe("Use the recommended models in the page (DB-N6-16, Chromium)", () => {
       await browser.newContext({ viewport: { width: 1280, height: 900 } })
     ).newPage();
     await page.goto(`${base}/#/configuration/models`);
-    await page.getByRole("button", { name: "Use the recommended models" }).click();
+    // DB-N19-5: *Apply suggestion* opens the same one confirmation (DB-N6-16).
+    await page.getByRole("button", { name: "Apply suggestion" }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByText("Nothing to download.").waitFor();
     expect(await log.getEventsByTypes(["models/assigned"])).toEqual([]);

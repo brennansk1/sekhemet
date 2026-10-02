@@ -2,6 +2,7 @@
 // it better than the one before?" A list of runs, and one run's scorecard.
 import { $, esc, getJSON, icon } from "./dom.js";
 import { runningRunText } from "./lib/live.js";
+import { loadFailedText } from "./lib/switcher.js";
 import {
   formatDuration,
   formatTokens,
@@ -92,7 +93,7 @@ function timelineHtml(run, s) {
     .join("");
   const gap =
     s.overheadShare > 0.001
-      ? `<div class="seg gap" style="flex:1" title="Harness overhead · ${esc(formatDuration(s.overheadShare * s.totalMs))}"></div>`
+      ? `<div class="seg gap" style="flex:1" title="Sekhemet overhead · ${esc(formatDuration(s.overheadShare * s.totalMs))}"></div>`
       : "";
   const start = Date.parse(run.startedAt);
   const ticks = 5;
@@ -149,7 +150,7 @@ function tableHtml(run) {
       return `<tr><td><a class="t" href="#/card/${encodeURIComponent(e.cardId)}/steps">${esc(e.title)}</a><span class="id">${esc(shortId(e.cardId))}</span></td><td class="tnum">${esc(e.attempt ?? 1)}</td><td>${res}</td><td title="${esc(stopReasonLabel(e.stopReason).sentence)}">${esc(e.stop)}</td><td class="r">${esc(e.turns)}</td><td class="r">${esc(formatDuration(e.durationMs))}</td><td class="r">${esc(formatTokens(e.promptTokens))} · ${esc(formatTokens(e.completionTokens))}</td><td>${main}</td></tr>`;
     })
     .join("");
-  return `<section><h3 class="sh">Issues</h3><div class="tbl-wrap"><table class="tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div></section>`;
+  return `<section><h3 class="sh">Issues</h3><div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div></section>`;
 }
 
 function stopsHtml(s) {
@@ -221,7 +222,8 @@ function scoreHtml() {
   const sc = $(".sc", ui.root);
   if (!sc) return;
   if (ui.runs && ui.runs.length === 0) {
-    sc.innerHTML = `<div class="ev-empty">${icon("runs", 24, "ic s24")}<b>No runs yet.</b><span>Run every Ready issue unattended: <code>sekhemet queue --auto-accept</code></span></div>`;
+    // ERR-05: the next step is one the product offers, never a command that refuses to run.
+    sc.innerHTML = `<div class="ev-empty">${icon("runs", 24, "ic s24")}<b>No runs yet.</b><span>A run appears here when the Agent works through the Ready issues unattended, overnight or from the queue. Start the Agent on a Ready issue from the Board.</span><a class="btn sm" href="#/board">Open the Board</a></div>`;
     return;
   }
   const live = runningRow();
@@ -270,7 +272,17 @@ async function selectRun(id, { replace = true } = {}) {
 async function loadRuns(wanted) {
   const res = await getJSON("/api/runs");
   if (!ui.root) return;
-  ui.runs = res.ok ? res.data.runs : [];
+  if (!res.ok) {
+    // ERR-03: a failed read is never "No runs yet".
+    const t = loadFailedText("the runs", res.status);
+    ui.runs = null;
+    $(".runs", ui.root).innerHTML = "";
+    $(".sc", ui.root).innerHTML =
+      `<div class="ev-error" role="alert">${icon("alert")}<span><b>${esc(t.title)}</b> <span class="sec">${esc(t.detail)}</span></span><button class="btn sm" type="button" data-runs-retry>${icon("refresh", 14, "ic s14")}Try again</button></div>`;
+    $("[data-runs-retry]", ui.root)?.addEventListener("click", () => loadRuns(wanted));
+    return;
+  }
+  ui.runs = res.data.runs;
   const r0 = ui.runs[0];
   const crumb = `${store.state.meta?.project ?? ""} · ${ui.runs.length} unattended ${ui.runs.length === 1 ? "run" : "runs"}`;
   setTopbar({ title: "Runs", crumb });

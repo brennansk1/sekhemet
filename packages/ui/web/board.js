@@ -23,13 +23,15 @@ import { QUICK_CREATE_COPY, epicFromFilter } from "./lib/create.js";
 import { columnLessonId } from "./lib/learn.js";
 import { draggedBy } from "./lib/live.js";
 import { formatQuery } from "./lib/pm.js";
-import { START_PROJECT_OPENING } from "./lib/seshat.js";
+import { boardFit, openColumn } from "./lib/reach.js";
+import { START_ROUTE } from "./lib/start.js";
+import { loadFailedText } from "./lib/switcher.js";
 import { GATE_STATE_LABELS, formatDuration } from "./lib/vocabulary.js";
 import * as listView from "./list.js";
 import * as mapView from "./map.js";
 import { openMenu } from "./overlay.js";
 import { openPeek, peekOpenFor } from "./peek.js";
-import { askMerit, togglePmPanel } from "./pm_panel.js";
+import { togglePmPanel } from "./pm_panel.js";
 import { announceDrag } from "./presence.js";
 import { bindReorder } from "./reorder.js";
 import { getSession } from "./session.js";
@@ -55,7 +57,7 @@ const CREATE_COLUMNS = new Set(["backlog", "todo", "ready"]);
 /** Above this many cards a column windows its tiles instead of rendering all. */
 const VIRTUAL_THRESHOLD = 60;
 const ROW = 88;
-/** Comfortable density adds the spec line and the token and time bars (§2.5.1). */
+/** Comfortable density adds the first line of the description (§2.4.4; no budget on the tile, DB-N7-3). */
 const rowHeight = () => (document.documentElement.dataset.density === "comfortable" ? 112 : ROW);
 const GAP = 8;
 const OVERSCAN = 3;
@@ -87,6 +89,12 @@ const ui = {
   /** Card id → its column id, from the last render (DB-P3-15). */
   colOf: new Map(),
   columns: new Map(),
+  /** How the columns sit (BRD-01): `fit`, `tight`, `split` or `one` (`lib/reach.js`). */
+  fit: { mode: "fit", colMin: 200 },
+  /** On a phone, the one column shown (the column switcher, §2.14.3). */
+  phoneCol: null,
+  /** The header controls (New issue, Ask Seshat) live in the shell's top bar. */
+  topHandler: null,
 };
 
 function storage() {
@@ -199,7 +207,7 @@ function chipsHtml(chips) {
         `<button class="col-chip" type="button" data-chip-col="${esc(c.id)}" ${tip(`${c.label}: ${c.empty} Opens the column.`)}><span>${esc(c.label)}</span><span class="c tnum">${c.count}</span>${icon("chevron-right", 12, "ic s12")}</button>`,
     )
     .join("");
-  const toggle = `<button class="col-chip pipe-toggle" type="button" data-pipeline aria-pressed="${ui.pipeline ? "true" : "false"}" ${tip("Show each stored state as its own column (Shift+V).")}>Pipeline stages</button>`;
+  const toggle = `<button class="col-chip pipe-toggle" type="button" data-pipeline aria-pressed="${ui.pipeline ? "true" : "false"}" ${tip("Show each status as its own column (Shift+V).")}>Pipeline stages</button>`;
   return `<div class="col-chips" role="group" aria-label="Columns">${items}${toggle}</div>`;
 }
 
@@ -211,32 +219,68 @@ function renderTopbar() {
     shown === total
       ? `${total} ${total === 1 ? "issue" : "issues"}`
       : `${shown} of ${total} issues`;
-  setTopbar({ title: "Board", crumb: `${project}${project ? " · " : ""}${count}` });
+  // BRD-09: the board's two ways to add work, as the approved mockup has them.
+  const projectAttr = store.state.project?.id
+    ? ` data-needs-project="${esc(store.state.project.id)}"`
+    : "";
+  const actions = `<button class="btn top-ask" type="button" data-top-ask>${icon("chat", 14, "ic s14")}Ask Seshat</button><button class="btn primary top-create" type="button" data-top-create data-needs="issue.create" data-needs-quiet${projectAttr} aria-label="New issue" aria-keyshortcuts="C" title="New issue (C)">${icon("plus", 14, "ic s14")}<span class="lbl">New issue</span></button>`;
+  setTopbar({ title: "Board", crumb: `${project}${project ? " · " : ""}${count}`, actions });
   paintViewBar(ui.barHost, ui.cycHost, "board");
 }
 
-function ensureLayout(columns) {
-  const key = columns.map((c) => c.id).join("|");
+/** The column's section, empty until filled. */
+function sectionHtml(col) {
+  const id = esc(col.id);
+  return `<section class="col${col.queue ? " col-queue" : ""}" role="group" aria-labelledby="h-${id}" data-col="${id}"><div class="col-head" data-head="${id}"></div><ul class="list" role="listbox" aria-orientation="vertical" aria-labelledby="h-${id}" data-list="${id}"></ul></section>`;
+}
+
+/**
+ * How the columns sit in this width (BRD-01, `boardFit`): all in view where
+ * they fit, relaxed to 184 px at 1280 px and wider; else the queues in their
+ * own pane; on a phone, one column.
+ */
+function fitFor(columns) {
+  const width = ui.root.clientWidth || window.innerWidth;
+  return boardFit(columns.length, width, {
+    width: window.innerWidth,
+    dockOpen: document.body.classList.contains("pm-open"),
+  });
+}
+
+function ensureLayout(columns, fit) {
+  const pinned = fit.mode === "split" ? columns.filter((c) => c.queue) : [];
+  const key = `${fit.mode}:${columns.map((c) => c.id).join("|")}`;
   if (key === ui.layoutKey && $(".board", ui.root)) return false;
   ui.layoutKey = key;
+  const frame = document.createElement("div");
+  frame.className = "board-frame";
+  frame.dataset.fit = fit.mode;
   const board = document.createElement("div");
   board.className = "board";
   board.setAttribute("role", "region");
   board.setAttribute("aria-label", "Board");
+  frame.append(board);
+  const oldFrame = $(".board-frame", ui.root);
   const old = $(".board", ui.root);
   const scroll = old ? old.scrollLeft : 0;
   const listScroll = new Map($$(".list", ui.root).map((l) => [l.dataset.list, l.scrollTop]));
-  const parts = [];
-  for (const col of columns) {
-    const id = esc(col.id);
-    parts.push(
-      `<section class="col${col.queue ? " queue" : ""}" role="group" aria-labelledby="h-${id}" data-col="${id}"><div class="col-head" data-head="${id}"></div><ul class="list" role="listbox" aria-orientation="vertical" aria-labelledby="h-${id}" data-list="${id}"></ul></section>`,
-    );
+  board.innerHTML = columns
+    .filter((c) => !pinned.includes(c))
+    .map(sectionHtml)
+    .join("");
+  if (pinned.length) {
+    // The queues beside the scrolling columns, covering none of them (BRD-01).
+    const pane = document.createElement("div");
+    pane.className = "board-pin";
+    pane.setAttribute("role", "region");
+    pane.setAttribute("aria-label", "Your queue");
+    pane.style.setProperty("--pin-col", `${fit.colMin}px`);
+    pane.innerHTML = pinned.map(sectionHtml).join("");
+    frame.append(pane);
   }
-  board.innerHTML = parts.join("");
   ui.html.clear();
-  if (old) old.replaceWith(board);
-  else ui.root.append(board);
+  if (oldFrame) oldFrame.replaceWith(frame);
+  else ui.root.append(frame);
   board.scrollLeft = scroll;
   board.addEventListener(
     "scroll",
@@ -252,12 +296,44 @@ function ensureLayout(columns) {
     },
     { passive: true },
   );
-  for (const list of $$(".list", board)) {
+  for (const list of $$(".list", frame)) {
     // Lists are empty until filled; restore their scroll once tiles exist.
     ui.pendingScroll.set(list.dataset.list, listScroll.get(list.dataset.list) ?? 0);
     list.addEventListener("scroll", () => paintVirtual(list), { passive: true });
   }
   return true;
+}
+
+/**
+ * A phone shows one column (§2.14.3, BRD-01): the switcher above the board
+ * names each column with its count; the board opens on the first working one.
+ */
+function paintSwitcher(columns, fit) {
+  let host = $(":scope > .col-switch", ui.root);
+  if (fit.mode !== "one") {
+    host?.remove();
+    for (const c of $$(".col.on", ui.root)) c.classList.remove("on");
+    return;
+  }
+  const ids = columns.map((c) => c.id);
+  if (!ids.includes(ui.phoneCol)) ui.phoneCol = openColumn(ids) ?? null;
+  const html = columns
+    .map(
+      (c) =>
+        `<button type="button" data-switch-col="${esc(c.id)}" aria-pressed="${c.id === ui.phoneCol ? "true" : "false"}">${esc(c.label)}<span class="c tnum">${c.count}</span></button>`,
+    )
+    .join("");
+  if (!host) {
+    host = document.createElement("div");
+    host.className = "col-switch";
+    host.setAttribute("role", "group");
+    host.setAttribute("aria-label", "Columns on this board");
+    $(".board-frame", ui.root)?.before(host);
+  }
+  if (host.innerHTML !== html) host.innerHTML = html;
+  for (const c of $$(".col[data-col]", ui.root)) {
+    c.classList.toggle("on", c.dataset.col === ui.phoneCol);
+  }
 }
 
 function tileOpts(card) {
@@ -335,7 +411,11 @@ function horizontalWindow() {
     left: c.offsetLeft,
     width: c.offsetWidth,
   }));
-  return columnsInWindow(spans, board.scrollLeft, board.clientWidth || window.innerWidth);
+  const inView = columnsInWindow(spans, board.scrollLeft, board.clientWidth || window.innerWidth);
+  // The queue pane never scrolls, and a phone's one column is the one in view.
+  for (const c of $$(".board-pin .col[data-col]", ui.root)) inView.add(c.dataset.col);
+  if (ui.fit.mode === "one" && ui.phoneCol) inView.add(ui.phoneCol);
+  return inView;
 }
 
 /** An off-screen column keeps its scroll height and header, not its tiles. */
@@ -419,10 +499,17 @@ function render() {
   const activeId = document.activeElement?.closest?.(".tile")?.dataset.id;
   const before = ui.colOf;
 
+  // ERR-03: a failed read is never an empty board; it says so, with Retry.
+  if (s.loaded && s.cards.length === 0 && s.boardError) {
+    ui.layoutKey = "";
+    const t = loadFailedText("the issues", s.boardError > 0 ? s.boardError : 0);
+    ui.root.innerHTML = `<div class="board-empty" role="alert">${icon("alert", 24, "ic s24")}<b>${esc(t.title)}</b><span>${esc(t.detail)}</span><span class="board-empty-acts"><button type="button" class="btn" data-empty-action="retry">${icon("refresh", 14, "ic s14")}Try again</button></span></div>`;
+    return;
+  }
   if (s.loaded && s.cards.length === 0) {
     ui.layoutKey = "";
     // DS-TO-16 (dashboard item 10): start from a brief, or take over a repository someone left.
-    ui.root.innerHTML = `<div class="board-empty">${brandMark(24)}<b>No issues yet.</b><span class="board-empty-acts"><button type="button" class="btn primary" data-empty-action="start">Start a project</button> <button type="button" class="btn" data-empty-action="takeover">Take over a project</button></span><span>Take over reads a repository someone else left, runs what it can once you trust it, and proposes a plan in Seshat.</span><span>From the terminal: <code>sekhemet plan "Build a tamper-evident ledger"</code></span></div>`;
+    ui.root.innerHTML = `<div class="board-empty">${brandMark(24)}<b>No issues yet.</b><span class="board-empty-acts"><button type="button" class="btn primary" data-empty-action="start">Start a project</button> <button type="button" class="btn" data-empty-action="takeover">Take over a project</button></span><span>Take over reads a repository someone else left, runs what it can once you trust it, and proposes a plan in Seshat.</span><span>From the terminal: <code>sekhemet plan "Build a timesheet app with overtime rules"</code></span></div>`;
     return;
   }
   $(".board-empty", ui.root)?.remove();
@@ -455,7 +542,9 @@ function render() {
   ui.columns = new Map(m.columns.map((c) => [c.id, c.cards]));
   ui.colOf = new Map(m.columns.flatMap((c) => c.cards.map((x) => [x.id, c.id])));
   paintChips(m.chips);
-  ensureLayout(m.columns);
+  ui.fit = fitFor(m.columns);
+  ensureLayout(m.columns, ui.fit);
+  paintSwitcher(m.columns, ui.fit);
   const inView = horizontalWindow();
 
   for (const col of m.columns) {
@@ -484,7 +573,7 @@ function render() {
       if (keep.scroll) node.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
   }
-  pinQueueColumns();
+  openOnWorkingColumn();
   scheduleJustNow();
 }
 
@@ -531,29 +620,29 @@ function paintBoardLevelNote() {
 }
 
 /**
- * When the board scrolls sideways, In review and On hold stay pinned to the
- * right edge: the person's queue is never the part that gets scrolled away (§2.4.2).
+ * Until a person scrolls, a board wider than its window opens on the first
+ * working column at its left edge — In progress where it shows (`openColumn`)
+ * — or, where the scroll ends first, on the column before it, so no column
+ * opens cut in half (BRD-01). The queues are in their own pane and need no pinning.
  */
-function pinQueueColumns() {
+function openOnWorkingColumn() {
   const board = $(".board", ui.root);
-  if (!board) return;
-  const overflow = board.scrollWidth > board.clientWidth + 1;
-  let right = 0;
-  for (const col of $$(".col.queue", board).reverse()) {
-    col.classList.toggle("pinned", overflow);
-    col.style.right = overflow ? `${right}px` : "";
-    if (overflow) right += col.offsetWidth + GAP;
-  }
-  // Pinned columns must not hide the Worker: until the user scrolls, keep
-  // Working just left of them (e.g. beside the Seshat dock).
-  const working = $('[data-col="in_progress"]', board);
-  if (overflow && working && !ui.userScrolled) {
-    const edge = board.clientWidth - right;
-    const end = working.offsetLeft + working.offsetWidth - board.scrollLeft;
-    if (end > edge) {
-      ui.autoScroll = true;
-      board.scrollLeft += end - edge + GAP;
-    }
+  if (!board || ui.userScrolled || ui.fit.mode === "one") return;
+  const max = board.scrollWidth - board.clientWidth;
+  if (max <= 1) return;
+  const cols = $$(":scope > .col[data-col]", board);
+  // One column gap in from the edge, so no sliver of the column before it shows.
+  const gap = Number.parseFloat(getComputedStyle(board).columnGap) || 0;
+  const at = (i) => (i === 0 ? 0 : cols[i].offsetLeft - gap);
+  let i = Math.max(
+    0,
+    cols.findIndex((c) => c.dataset.col === openColumn(cols.map((x) => x.dataset.col))),
+  );
+  while (i > 0 && at(i) > max) i--;
+  const want = Math.max(0, at(i));
+  if (Math.abs(board.scrollLeft - want) > 1) {
+    ui.autoScroll = true;
+    board.scrollLeft = want;
   }
 }
 
@@ -572,6 +661,11 @@ function focusTile(id, { scroll = true } = {}) {
   store.state.focusedId = id;
   let node = document.getElementById(`tile-${id}`);
   const colId = ui.colOf.get(id);
+  // A phone shows the focused card's column (h/l move between columns).
+  if (ui.fit.mode === "one" && colId && colId !== ui.phoneCol) {
+    ui.phoneCol = colId;
+    paintSwitcher(ui.layout, ui.fit);
+  }
   if (!node && colId) {
     // Culled out sideways: give the column its tiles first (U6).
     const culled = $(`[data-list="${colId}"][data-culled]`, ui.root);
@@ -601,10 +695,11 @@ function focusTile(id, { scroll = true } = {}) {
   if (peekOpenFor()) openPeek(id);
 }
 
+/** Columns with cards, left to right as drawn: the scrolling columns, then the queue pane. */
 function navColumns() {
-  return ui.layout
-    .map((c) => c.id)
-    .filter((id) => (ui.columns.get(id) ?? []).length > 0 && $(`[data-list="${id}"]`, ui.root));
+  return $$(".col[data-col]", ui.root)
+    .map((c) => c.dataset.col)
+    .filter((id) => (ui.columns.get(id) ?? []).length > 0);
 }
 
 function move(dx, dy, edge) {
@@ -745,15 +840,18 @@ function togglePipeline() {
   loadChoices();
   toast({
     tone: "info",
-    text: ui.pipeline ? "Pipeline stages: one column per stored state." : "The five board columns.",
+    text: ui.pipeline ? "Pipeline stages: one column per status." : "The five board columns.",
   });
   render();
 }
 
-/** The empty board's two ways in (DS-TO-16): both open Seshat. */
+/**
+ * The empty board's two ways in: Start a project opens the start page with
+ * its live draft (design-stage §2.11, DS-N7-1); Take over opens Seshat (DS-TO-16).
+ */
 async function emptyAction(action) {
   if (action === "start") {
-    askMerit(START_PROJECT_OPENING);
+    location.hash = START_ROUTE;
     return;
   }
   togglePmPanel(true);
@@ -776,6 +874,10 @@ function onClick(e) {
   const t = e.target instanceof Element ? e.target : null;
   if (!t) return;
   const empty = t.closest("[data-empty-action]");
+  if (empty?.dataset.emptyAction === "retry") {
+    window.dispatchEvent(new CustomEvent("sekhemet:refresh"));
+    return;
+  }
   if (empty) {
     emptyAction(empty.dataset.emptyAction);
     return;
@@ -833,12 +935,37 @@ function onClick(e) {
     });
     return;
   }
+  const sw = t.closest("[data-switch-col]");
+  if (sw) {
+    ui.phoneCol = sw.dataset.switchCol;
+    paintSwitcher(ui.layout, ui.fit);
+    render();
+    return;
+  }
   const tile = t.closest(".tile");
   if (tile) {
     store.state.focusedId = tile.dataset.id;
     syncFocusAttrs();
     tile.classList.add("focus");
-    if (peekOpenFor()) openPeek(tile.dataset.id);
+    // BRD-06: a click opens the issue's peek, as Linear, Jira and GitHub
+    // Projects open an issue on click; a modifier click selects, as `x` does.
+    if (e.shiftKey || e.metaKey || e.ctrlKey) {
+      toggleSelect(tile.dataset.id);
+      return;
+    }
+    if (t.closest("a, button, [data-pips]")) return;
+    openPeek(tile.dataset.id, { returnFocus: tile });
+  }
+}
+
+/** The top bar's New issue and Ask Seshat (BRD-09). */
+function onTopClick(e) {
+  const t = e.target instanceof Element ? e.target : null;
+  if (t?.closest("[data-top-create]")) createCard();
+  else if (t?.closest("[data-top-ask]")) {
+    // Below 768 px the panel is hidden; the full Seshat view opens instead.
+    if (window.innerWidth < 768) location.hash = "#/pm";
+    else togglePmPanel(true);
   }
 }
 
@@ -861,7 +988,12 @@ export function mount(view, route) {
   ui.mode = "columns";
   ui.layoutKey = "";
   ui.html.clear();
+  // Each visit opens on the first working column again (BRD-01).
+  ui.userScrolled = false;
+  ui.phoneCol = null;
   container.addEventListener("click", onClick);
+  ui.topHandler = onTopClick;
+  document.getElementById("top")?.addEventListener("click", ui.topHandler);
   // B11: drag (or Alt+Up/Down) to reorder cards within a column.
   bindReorder(container);
   // DB-N9-20: the others see this person's avatar on the card being dragged.
@@ -870,10 +1002,6 @@ export function mount(view, route) {
     if (tile?.dataset.id) announceDrag(tile.dataset.id);
   });
   container.addEventListener("dragend", () => announceDrag(null));
-  container.addEventListener("dblclick", (e) => {
-    const tile = e.target instanceof Element ? e.target.closest(".tile") : null;
-    if (tile) openPeek(tile.dataset.id, { returnFocus: tile });
-  });
   container.addEventListener("focusin", (e) => {
     const tile = e.target.closest?.(".tile");
     if (tile && store.state.focusedId !== tile.dataset.id) {
@@ -918,6 +1046,7 @@ export function mount(view, route) {
       hideTip();
       clearTimeout(ui.justNowTimer);
       window.removeEventListener("resize", onResize);
+      document.getElementById("top")?.removeEventListener("click", ui.topHandler);
       outer.remove();
       ui.root = null;
     },

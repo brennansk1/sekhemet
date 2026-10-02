@@ -25,6 +25,7 @@ import {
 } from "@sekhemet/eval";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
+import { plural } from "@sekhemet/ui";
 import { writeMeasurementMarker } from "./measure_cmd.js";
 
 /**
@@ -397,7 +398,8 @@ export async function runM0(
   } catch {
     resume = [];
   }
-  if (resume.length) print(`Resuming M0 for ${o.worker}: ${resume.length} run(s) already done.`);
+  if (resume.length)
+    print(`Resuming M0 for ${o.worker}: ${plural(resume.length, "run")} already done.`);
   const done = [...resume];
   const report = await runM0Protocol({
     tasks: synth.tasks,
@@ -418,7 +420,9 @@ export async function runM0(
     },
   });
   if (report.partial) {
-    print(`M0 for ${o.worker} paused after ${done.length} run(s); it resumes where it stopped.`);
+    print(
+      `M0 for ${o.worker} paused after ${plural(done.length, "run")}; it resumes where it stopped.`,
+    );
     return "stopped";
   }
   print(formatM0Report(report));

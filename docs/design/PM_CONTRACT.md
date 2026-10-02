@@ -318,7 +318,7 @@ Review writes beside Accept what Accept itself would refuse (review-git
   builtBy?, testApprovals, review, escalation?, suggestedAccepters }`
   (`review`, `escalation` and `suggestedAccepters` are the route's earlier
   fields, kept: the review brief P12, a stopped card's diagnosis P14 and
-  the CODEOWNERS suggestion RG-N5-3, `wave2_server.ts` `reviewBrief`): every AI review entry of the card's dossier
+  the CODEOWNERS suggestion RG-N5-3, `github_routes.ts` `reviewBrief`): every AI review entry of the card's dossier
   recorded since its latest evidence (`card/review`, review-git P8; `id` is what Accept's `acknowledgedFindings` names,
   `filesRead` the entry's `sources`, `modelId` the Review model that wrote it;
   `verdict` is `met`, `unmet` or `unclear` for a finding, `coverage` for the
@@ -385,7 +385,7 @@ fold of the issue's events; the text is private.
   `synchronize` for a pull request an accepted issue awaits — a new head —
   records `review/accept_dismissed { id, reason: "new_commits", pr,
   headSha, accepter? }`, clears the hold and the accepter, and the issue
-  waits in Review (`POST /webhooks/github`, `wave2_server.ts`).
+  waits in Review (`POST /webhooks/github`, `github_routes.ts`).
 
 ### Presence (teams NEW-teams-9; dashboard DB-N9-20)
 

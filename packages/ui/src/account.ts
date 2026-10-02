@@ -232,13 +232,18 @@ export function refusalMessage(status: number, body: unknown, mode?: "solo" | "t
   return `The server answered ${status}.`;
 }
 
-/** The account menu's header (§2.2.6): the name, then the email (Solo: *This computer*). */
+/**
+ * The account menu's header (§2.2.6): the name, then the email (Solo: *This
+ * computer*). A person's name, or *You* — never their principal (FINDINGS
+ * SHL-02: §A *Nothing raw*); Solo's server names the person from git's
+ * `user.name`, then the computer's account.
+ */
 export function accountHeader(session: SessionInfo): {
   name: string;
   detail: string;
   level?: string;
 } {
-  const name = session.name || session.principal || "You";
+  const name = session.name?.trim() || "You";
   if (session.mode !== "team") return { name, detail: ACCOUNT_COPY.thisComputer };
   const level = levelLabel(session.level);
   return { name, detail: session.email || level, level };
@@ -262,8 +267,8 @@ export interface AccountMenuItem {
 /**
  * The account menu's items, in order (§2.2.6, DB-N9-11). `pages` are the
  * account pages this build has: a page not built is never linked. Solo shows
- * no Members, Audit, Switch workspace or Sign out (DB-N9-12); Audit is for
- * an Admin.
+ * no Members, Audit or Sign out (DB-N9-12); Audit is for an Admin. *Switch
+ * workspace* is in both setups (DEC-57, DB-N25-3).
  */
 export function accountMenu(session: SessionInfo, pages: ReadonlySet<string>): AccountMenuItem[] {
   const team = session.mode === "team";
@@ -283,9 +288,9 @@ export function accountMenu(session: SessionInfo, pages: ReadonlySet<string>): A
       out.push({ id: "members", label: ACCOUNT_COPY.members, route: "#/members" });
     if (pages.has("audit") && session.level === "admin")
       out.push({ id: "audit", label: ACCOUNT_COPY.audit, route: "#/audit" });
-    if (pages.has("switch")) out.push({ id: "switch", label: ACCOUNT_COPY.switchWorkspace });
-    out.push({ id: "signout", label: ACCOUNT_COPY.signOut });
   }
+  if (pages.has("switch")) out.push({ id: "switch", label: ACCOUNT_COPY.switchWorkspace });
+  if (team) out.push({ id: "signout", label: ACCOUNT_COPY.signOut });
   return out;
 }
 

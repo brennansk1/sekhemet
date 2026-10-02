@@ -35,7 +35,7 @@ import { unregisteredCopyModules } from "../src/prompt_tags.js";
  * prompt and tool descriptions into the new PM copy module and the planner's
  * slice prompt and oracle into the planner copy module.
  */
-const RECORDED_LITERAL_TOTAL = 418;
+const RECORDED_LITERAL_TOTAL = 417;
 
 const texts = (file: string, source: string) =>
   extractModelFacingLiterals(file, source).map((l) => l.text);

@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
 import { type LocalInferenceAdapter, type ModelHold, ModelRegistry } from "@sekhemet/models";
+import { plural } from "@sekhemet/ui";
 import { loadSeededDefects, runSeededDefects } from "./learning/review_eval.js";
 import { sendBackCatches } from "./learning/send_back_catch.js";
 import { roleModelName, sharedQueue } from "./model_access.js";
@@ -128,7 +129,7 @@ export async function runRoleEvalCommand(
     }
     const only = list(flag(args, "--only"));
     print(
-      `Holding ${set.conversations.length} scripted conversations with Seshat on ${model}, ${runs} run(s)…`,
+      `Holding ${set.conversations.length} scripted conversations with Seshat on ${model}, ${plural(runs, "run")}…`,
     );
     const result = await withModel(deps, "planner", model, (adapter) =>
       runSeshatEval(set, adapter, {

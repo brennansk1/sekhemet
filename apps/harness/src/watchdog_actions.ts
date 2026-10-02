@@ -122,7 +122,7 @@ export class PressureControls {
    */
   public async beforeNextCard(pool: { running: number; drain(): Promise<void> }): Promise<void> {
     if (this.throttled && pool.running > 0) {
-      this.targets.log?.("memory watchdog: one card at a time until pressure falls");
+      this.targets.log?.("memory watchdog: one issue at a time until pressure falls");
       await pool.drain();
     }
   }

@@ -65,3 +65,22 @@ export async function replyInThread(cardId, thread, text) {
   if (!res.ok) toast({ text: "Couldn't reply.", detail: res.data?.error ?? "", tone: "fail" });
   return res.ok;
 }
+
+/**
+ * Review's view of the open threads (FINDINGS REV-03): each open thread
+ * with its place and comments by name, so a teammate's question is read
+ * before Accept; replying and resolving happen on the issue's Changes tab.
+ * "" when no thread is open.
+ */
+export function openThreadsHtml(desk, cardId) {
+  const m = threadRows(desk, getSession().principal, mayResolve());
+  const open = m.rows.filter((r) => !r.resolved);
+  if (!open.length) return "";
+  const rows = open
+    .map(
+      (r) =>
+        `<li class="rt-row" data-thread-row="${esc(r.id)}"><div class="rt-top"><span class="mono">${esc(r.place)}</span><span class="rt-state">${esc(r.state)}</span></div><ul class="plain rt-cs">${r.comments.map((c) => `<li><b>${esc(c.who)}</b> <span class="rt-t">${esc(c.text)}</span></li>`).join("")}</ul></li>`,
+    )
+    .join("");
+  return `<section class="rt" aria-labelledby="rt-open-h"><h3 class="sh" id="rt-open-h">${esc(m.heading)} <span class="sec tnum">${esc(m.count)}</span></h3><ul class="plain rt-list">${rows}</ul><a class="sec" href="#/card/${encodeURIComponent(cardId)}/changes">Reply or resolve on the issue's Changes</a></section>`;
+}

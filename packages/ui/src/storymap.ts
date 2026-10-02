@@ -61,9 +61,9 @@ export const REQUIREMENT_STATES: Record<
   { label: string; icon: IconName; tone: RequirementTone }
 > = {
   proven: { label: "Done", icon: "check-circle", tone: "pass" },
-  passing_strength_unmet: { label: "Passing, strength unmet", icon: "ring", tone: "park" },
+  passing_strength_unmet: { label: "Tests too weak", icon: "ring", tone: "park" },
   failing: { label: "Failing on main", icon: "alert", tone: "fail" },
-  suspect: { label: "Suspect", icon: "link", tone: "park" },
+  suspect: { label: "Needs re-checking", icon: "link", tone: "park" },
   planned: { label: "Planned", icon: "calendar", tone: "" },
   unplanned: { label: "Unplanned", icon: "minus", tone: "" },
   cut: { label: "Cut", icon: "x", tone: "" },

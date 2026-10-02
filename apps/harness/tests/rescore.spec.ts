@@ -5,7 +5,7 @@ import { resolveRunProfile } from "@sekhemet/eval";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runMeasureCommand } from "../src/measure_cmd.js";
 import { expectedQueueProfile, rescoreSuiteResult } from "../src/rescore.js";
-import type { Kernel } from "../src/wave2.js";
+import type { RepoContext } from "../src/wave2.js";
 
 // SUITE_RUNS (B2.5, ref-r1): the suite script checked each card's recorded
 // profile against the run's, without the fixture repository's configuration
@@ -149,11 +149,11 @@ describe("sekhemet measure rescore: an existing result re-scored from its work d
     const lines: string[] = [];
     const code = await runMeasureCommand(
       ["rescore", resultPath, "--work", work],
-      {} as Kernel,
+      {} as RepoContext,
       (l) => lines.push(l),
     );
     expect(code).toBe(0);
-    expect(lines.join("\n")).toMatch(/2 of 3 issue\(s\) ran with a different profile/);
+    expect(lines.join("\n")).toMatch(/2 of 3 issues ran with a different profile/);
     expect(lines.join("\n")).toMatch(/chronicle\/card_b \(policies\.stepCap\)/);
   });
 });

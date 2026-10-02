@@ -10,6 +10,7 @@ import { togglePmPanel } from "./pm_panel.js";
 import { currentNav } from "./shell.js";
 import { store } from "./store.js";
 import { undoAccept } from "./triage.js";
+import { undoLatest } from "./undo.js";
 
 // `g` chords come from the one keymap (lib/nav.js): one per visible view,
 // and a chord for a hidden view does nothing (dashboard §2.3.1, DB-P11-4).
@@ -52,6 +53,9 @@ export function initKeys() {
       } else if (store.state.selected.size) {
         // PM_DESIGN §3.4: Esc clears the selection and the bulk bar.
         store.set({ selected: new Set() });
+      } else if (view()?.onEscape?.()) {
+        // A11Y-02: Esc leaves an issue, and closes the Inbox's reading pane on a phone.
+        e.preventDefault();
       }
       return;
     }
@@ -81,10 +85,15 @@ export function initKeys() {
       if (!view()?.focusFilter?.()) openPalette("#", cardAction);
       return;
     }
-    if (e.key === "z" && undoAccept()) {
+    // `z`: Accept's grace window first, else the newest toast offering Undo (§2.4.23).
+    if (e.key === "z" && (undoAccept() || undoLatest())) {
       e.preventDefault();
       return;
     }
+    // Enter on a control outside the page (the skip link, the sidebar, the top
+    // bar) is that control's own, never the view's (A11Y-01).
+    const t = e.target instanceof Element ? e.target : null;
+    if (e.key === "Enter" && t && t !== document.body && !t.closest("#view")) return;
     if (view()?.onKey?.(e)) e.preventDefault();
   });
 

@@ -1,6 +1,6 @@
 import type { DeterministicGateRunner, GateRung } from "@sekhemet/gates";
 import type { ExecutionStopReason } from "@sekhemet/loop";
-import type { LocalInferenceAdapter, ToolArm } from "@sekhemet/models";
+import type { LocalInferenceAdapter, ToolCallFormat } from "@sekhemet/models";
 import type { ProcessSandbox } from "@sekhemet/sandbox";
 
 /** A command invocation executed inside an ephemeral workspace. */
@@ -170,7 +170,7 @@ export interface BenchmarkSettings {
   modelId: string;
   quant: string;
   engine: string;
-  toolArm: ToolArm;
+  toolArm: ToolCallFormat;
   sampling: SamplingSettings;
   contextTokens: number;
   stepBudget: number;
@@ -214,7 +214,7 @@ export interface BenchmarkOptions {
   topK?: number | undefined;
   maxTokens?: number | undefined;
   contextTokens?: number | undefined;
-  toolArm?: ToolArm | undefined;
+  toolArm?: ToolCallFormat | undefined;
   stepBudget?: number | undefined;
   quant?: string | undefined;
   engine?: string | undefined;

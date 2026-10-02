@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { routeFrontDoor } from "../src/front_door.js";
+import { routeFrontDoor } from "../src/cli_commands.js";
 import { initLocalKernel, main } from "../src/index.js";
 
 /**

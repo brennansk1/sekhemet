@@ -67,3 +67,30 @@ export function hardwareTierView(
   }
   return { heading: `Tier ${t.tier}`, range, lines };
 }
+
+/** `/api/machine`'s `host`: the machine in plain words (dashboard §2.16, DB-N19-5). */
+export interface MachineHostFacts {
+  /** "This Mac" or "This machine". */
+  name: string;
+  chip?: string;
+  memoryBytes: number;
+  /** Apple silicon: the memory is shared by the chip and the models. */
+  unified: boolean;
+  /** Measured memory bandwidth, GB/s; absent until calibration measures it. */
+  bandwidthGBs?: number;
+}
+
+/**
+ * Configuration's machine line under the title (DB-N19-5; the approved
+ * mockup): *This Mac · Apple M4 · 24 GB unified memory · about 120 GB/s
+ * memory bandwidth*. The bandwidth is named only once measured.
+ */
+export function machineLine(h: MachineHostFacts | undefined): string {
+  if (!h) return "";
+  const memory = `${Math.round(h.memoryBytes / GB)} GB ${h.unified ? "unified memory" : "memory"}`;
+  const bandwidth =
+    h.bandwidthGBs !== undefined && Number.isFinite(h.bandwidthGBs)
+      ? `about ${Math.round(h.bandwidthGBs)} GB/s memory bandwidth`
+      : "memory bandwidth not measured yet";
+  return [h.name, ...(h.chip?.trim() ? [h.chip.trim()] : []), memory, bandwidth].join(" · ");
+}

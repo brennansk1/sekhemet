@@ -64,15 +64,15 @@ function html(ctx) {
   const start = startCardNote(full);
   if (start) parts.push(`<section class="start-card"><p class="prose">${esc(start)}</p></section>`);
   parts.push(
-    `<section><h3 class="sh">Spec</h3>${full.spec ? `<p class="prose">${esc(full.spec)}</p>` : '<p class="sec">No spec recorded. The agent works from the title and the criteria.</p>'}${type ? `<p class="sec kind-why"><b>${esc(type.label)}</b>: ${esc(type.tooltip)}</p>` : ""}</section>`,
+    `<section><h3 class="sh">Spec</h3>${full.spec ? `<p class="prose">${esc(full.spec)}</p>` : '<p class="sec">No spec recorded. The Agent works from the title and the criteria.</p>'}${type ? `<p class="sec kind-why"><b>${esc(type.label)}</b>: ${esc(type.tooltip)}</p>` : ""}</section>`,
   );
   parts.push(
-    `<section><h3 class="sh">Done when <span class="sec">${criteria.length ? `${criteria.length} criteria` : ""}</span></h3>${criteria.length ? `<ul class="crit">${criteria.map((c) => `<li><span class="bul" aria-hidden="true"></span><span>${esc(c)}</span></li>`).join("")}</ul>` : '<p class="sec">No criteria recorded for this issue.</p>'}</section>`,
+    `<section><h3 class="sh">Acceptance criteria <span class="sec">${criteria.length ? `${criteria.length} criteria` : ""}</span></h3>${criteria.length ? `<ul class="crit">${criteria.map((c) => `<li><span class="bul" aria-hidden="true"></span><span>${esc(c)}</span></li>`).join("")}</ul>` : '<p class="sec">No criteria recorded for this issue.</p>'}</section>`,
   );
   const scope = (full.scopeFiles ?? [])
     .map(
       (f) =>
-        `<div class="prov">${icon("file", 14, "ic s14")}<span class="mono">${esc(f)}</span><span class="end">May edit</span></div>`,
+        `<div class="prov">${icon("file", 14, "ic s14")}<span class="mono">${esc(f)}</span><span class="end">In scope</span></div>`,
     )
     .join("");
   const tests = (full.acceptanceTests ?? [])
@@ -82,7 +82,7 @@ function html(ctx) {
     )
     .join("");
   parts.push(
-    `<div class="two"><section><h3 class="sh">May edit</h3>${scope || '<p class="sec">No files in scope.</p>'}</section><section><h3 class="sh">Acceptance tests</h3>${tests || '<p class="sec">None. The project\'s own checks decide.</p>'}</section></div>`,
+    `<div class="two"><section><h3 class="sh">Files in scope</h3>${scope || '<p class="sec">No files in scope.</p>'}</section><section><h3 class="sh">Acceptance tests</h3>${tests || '<p class="sec">None. The project\'s own checks decide.</p>'}</section></div>`,
   );
   parts.push(
     `<section><h3 class="sh">Budget</h3><dl class="kv budget-kv"><dt>Steps</dt><dd>${meter(full.stepsUsed, full.stepBudget, String, " steps")}</dd><dt>Tokens</dt><dd>${meter(tokensUsed, full.tokenBudget, formatTokens)}</dd><dt>Time</dt><dd>${meter(secondsUsed, full.secondsBudget, (s) => formatDuration(s * 1000))}</dd><dt>Difficulty</dt><dd class="diff-row">${difficultyHtml(full.difficulty)}</dd></dl></section>`,

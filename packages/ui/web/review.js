@@ -4,7 +4,7 @@ import { forget, loadDetail } from "./data.js";
 import { nextDiffMode } from "./diff.js";
 import { $, announce, brandMark, esc, icon } from "./dom.js";
 import { EvidencePane } from "./evidence.js";
-import { ISSUE_TYPE_LABELS, formatWait } from "./lib/vocabulary.js";
+import { ISSUE_TYPE_LABELS, checksVerdict, formatWait } from "./lib/vocabulary.js";
 import {
   acknowledgeFocused,
   focusNextFinding,
@@ -67,11 +67,17 @@ function rowMeta(card) {
     ? `<span>${esc(ISSUE_TYPE_LABELS[d.type].label)}</span>·`
     : "";
   if (card.status === "review") {
+    // REV-01: the same verdict as the Checks heading and the tip; a skipped check is no failure.
     const gates = d.evidence?.gates ?? [];
-    const passed = gates.filter((g) => g.state === "pass").length;
-    const ran = gates.filter((g) => g.state !== "not_run").length;
-    const all = gates.length > 0 && passed === ran;
-    return `${kind}${icon(all ? "check" : "x", 12, `ic s12 ${all ? "i-pass" : "i-fail"}`)}<span>${ran ? `${passed} of ${ran} checks` : "Waiting for you"}</span>${w}`;
+    if (!gates.length) return `${kind}<span>Waiting for you</span>${w}`;
+    const v = checksVerdict(gates);
+    const mark =
+      v.tone === "pass"
+        ? icon("check", 12, "ic s12 i-pass")
+        : v.tone === "fail"
+          ? icon("x", 12, "ic s12 i-fail")
+          : icon("minus", 12, "ic s12");
+    return `${kind}${mark}<span title="${esc(v.text)}">${esc(v.short)}</span>${w}`;
   }
   if (d.tone === "parked")
     return `${icon("pause", 12, "ic s12 i-park")}<span>${esc(d.statusLine)}</span>${w}`;
@@ -89,7 +95,7 @@ function rowHtml(card) {
 
 function renderQueue() {
   const { ready, needYou } = queueGroups();
-  const html = `<div class="q-h" id="q-ready">Ready for review <span class="c tnum">${ready.length}</span></div>${ready.length ? ready.map(rowHtml).join("") : '<div class="q-empty">Nothing waiting for you.</div>'}<div class="q-sep" role="separator"></div><div class="q-h" id="q-need">Need you <span class="c tnum">${needYou.length}</span></div>${needYou.length ? needYou.map(rowHtml).join("") : '<div class="q-empty">Nothing is stuck.</div>'}`;
+  const html = `<div class="q-h" id="q-ready">Ready for review <span class="c tnum">${ready.length}</span></div>${ready.length ? ready.map(rowHtml).join("") : '<div class="q-empty">Nothing waiting for you.</div>'}<div class="q-sep" role="separator"></div><div class="q-h" id="q-need">Needs you <span class="c tnum">${needYou.length}</span></div>${needYou.length ? needYou.map(rowHtml).join("") : '<div class="q-empty">Nothing is stuck.</div>'}`;
   const q = $(".queue", ui.root);
   if (q && html !== ui.queueHtml) {
     const hadFocus = q.contains(document.activeElement);
@@ -270,7 +276,7 @@ function runAction(key, card = selectedCard()) {
   if (key === "r") {
     if (!ev) {
       toast({
-        text: "Nothing to send back yet.",
+        text: "No changes to request yet.",
         detail: "This issue has no attempt to respond to.",
       });
       return true;

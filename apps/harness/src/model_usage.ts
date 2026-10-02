@@ -122,7 +122,7 @@ export function meterModelUsage<A extends LocalInferenceAdapter>(
       opts.record(usagePayload(adapter.modelId, req, res, opts.served()));
     } catch (err) {
       opts.warn?.(
-        `The model's token use for this request could not be recorded on the ledger: ${err instanceof Error ? err.message : String(err)}`,
+        `The model's token use for this request could not be recorded in the Activity log: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
     return res;

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { loadGatesConfig, runBuiltinGates } from "@sekhemet/gates";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
 import { signalGroup, trackGroup, untrackGroup } from "@sekhemet/sandbox";
+import { plural } from "@sekhemet/ui";
 import type { QueueReport } from "./execute.js";
 import { type GovernanceLimits, mayRun, recordUsage } from "./governance.js";
 import { INJECTION_RECORD, injectionCurrentFor } from "./injection.js";
@@ -321,7 +322,7 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
       break;
     }
     summary.rounds++;
-    say(`Round ${summary.rounds}: ${ready} Ready issue(s); ${slot.why}.`);
+    say(`Round ${summary.rounds}: ${plural(ready, "issue")} in To do; ${slot.why}.`);
     // M25: the window's batched plan, one model load per batch.
     say(
       overnightPlanLine(
@@ -420,17 +421,17 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
     payload: { scanner: "osv-scanner", offline: true, ...scan },
   });
   say(
-    `Vulnerability scan: ${scan.skipped ? `skipped (${scan.skipped})` : scan.passed ? "no known vulnerabilities" : `${scan.findings?.length ?? 0} finding(s)`}.`,
+    `Vulnerability scan: ${scan.skipped ? `skipped (${scan.skipped})` : scan.passed ? "no known vulnerabilities" : `${plural(scan.findings?.length ?? 0, "finding")}`}.`,
   );
   say(
-    `Overnight done: ${summary.rounds} round(s), ${summary.passed}/${summary.cardsRun} issue(s) passed; stopped: ${summary.stoppedBecause}.`,
+    `Overnight done: ${plural(summary.rounds, "round")}, ${summary.passed}/${plural(summary.cardsRun, "issue")} passed; stopped: ${summary.stoppedBecause}.`,
   );
   await sendPush(
     opts.repoPath,
     {
       event: "run_report",
       title: "Overnight run finished",
-      message: `${summary.passed}/${summary.cardsRun} passed in ${summary.rounds} round(s). Stopped: ${summary.stoppedBecause}.`,
+      message: `${summary.passed}/${summary.cardsRun} passed in ${plural(summary.rounds, "round")}. Stopped: ${summary.stoppedBecause}.`,
       priority: summary.passed < summary.cardsRun ? 4 : 3,
     },
     { log: opts.log },

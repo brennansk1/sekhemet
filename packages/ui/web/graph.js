@@ -98,7 +98,7 @@ function render() {
     : '<div class="ib-empty"><b>No issues yet.</b><span>Issues and the issues they wait on appear here as a graph.</span></div>';
   const note = $(".dg-note", ui.root);
   note.textContent = lay.cycles.length
-    ? `A dependency loop runs through ${lay.cycles.length} issue(s); Sekhemet refuses to add another.`
+    ? `A dependency loop runs through ${lay.cycles.length} ${lay.cycles.length === 1 ? "issue" : "issues"}; Sekhemet refuses to add another.`
     : linked.length
       ? "Arrows point from an issue to the issues that wait on it. Faded arrows are satisfied."
       : "No issue depends on another yet, so every issue stands alone.";

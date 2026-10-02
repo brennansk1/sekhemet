@@ -37,7 +37,7 @@ describe("sekhemet research-bakeoff", () => {
     await expect(
       main(["research-bakeoff", "--adopt-from", "evt_missing", "--repo", repo]),
     ).rejects.toThrow("exit");
-    expect(out.join("\n")).toContain("No recorded research golden-set run evt_missing");
+    expect(out.join("\n")).toContain("No recorded Research quality run evt_missing");
     expect(exits).toEqual([1]);
   });
 

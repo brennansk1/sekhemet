@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { TextPatch, ToolArm, ToolCall } from "./types.js";
+import type { TextPatch, ToolCall, ToolCallFormat } from "./types.js";
 
 /** Reasoning wrappers emitted by Qwen3.x, DeepSeek-R1 and similar models. */
 const REASONING_TAGS = ["think", "thinking", "reasoning", "scratchpad"];
@@ -333,13 +333,13 @@ function parseNamedArguments(body: string): Record<string, unknown> | null {
  */
 export function parseToolCallsFromText(
   text: string,
-  arm: ToolArm,
+  arm: ToolCallFormat,
   knownTools?: string[],
 ): ToolCall[] {
   const cleaned = stripReasoning(text);
 
   if (arm === "arm_c_sketch") {
-    const fromPatches = parseArmCTextPatches(cleaned).map((patch) => ({
+    const fromPatches = parseSearchReplaceBlocks(cleaned).map((patch) => ({
       id: `call_${randomUUID().slice(0, 8)}`,
       name: "edit",
       arguments: {
@@ -419,7 +419,7 @@ export function looksLikeToolCallAttempt(
 }
 
 /** Parse Arm C SEARCH/REPLACE blocks, with an optional preceding file path. */
-export function parseArmCTextPatches(text: string): TextPatch[] {
+export function parseSearchReplaceBlocks(text: string): TextPatch[] {
   const patches: TextPatch[] = [];
   const cleaned = stripReasoning(text);
   const patchRegex =

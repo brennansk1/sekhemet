@@ -501,11 +501,12 @@ describe("Apodex Agent Team (deep research)", () => {
 
 describe("reasoning never leaks into answers", () => {
   it("drops everything up to the last </think>, even when the opening tag was in the prompt", async () => {
-    const { stripThinking } = await import("../src/research/apodex.js");
-    expect(stripThinking("planning... </think>\n\nThe answer.")).toBe("The answer.");
-    expect(stripThinking("<think>a</think>B")).toBe("B");
-    expect(stripThinking("Plain.")).toBe("Plain.");
-    expect(stripThinking("Answer <think>unfinished")).toBe("Answer");
+    // R-50: the one reader, `stripReasoning`, with no wrapper of its own here.
+    const { stripReasoning } = await import("@sekhemet/models");
+    expect(stripReasoning("planning... </think>\n\nThe answer.")).toBe("The answer.");
+    expect(stripReasoning("<think>a</think>B")).toBe("B");
+    expect(stripReasoning("Plain.")).toBe("Plain.");
+    expect(stripReasoning("Answer <think>unfinished")).toBe("Answer");
   });
 });
 

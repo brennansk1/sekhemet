@@ -177,7 +177,7 @@ export class SuggestionLedger {
   ): Promise<string | null> {
     if (!SUGGESTION_KINDS.includes(input.kind)) {
       throw new Error(
-        `A suggestion's kind is one of ${SUGGESTION_KINDS.join(", ")}, got ${String(input.kind)} (TEAM-18)`,
+        `A suggestion's kind is one of ${SUGGESTION_KINDS.join(", ")}, got ${String(input.kind)}`,
       );
     }
     if (!this.db.prepare("SELECT 1 AS x FROM cards WHERE id = ?").get(input.cardId)) {
@@ -227,7 +227,7 @@ export class SuggestionLedger {
     const s = this.mustOpen(id);
     const auto = options.auto === true;
     if (auto && !AUTO_APPLICABLE_KINDS.includes(s.kind)) {
-      throw new Error(`An ${s.kind} suggestion is never applied automatically (TEAM-18)`);
+      throw new Error(`An ${s.kind} suggestion is never applied automatically`);
     }
     const { blockedReason, ...before } = options.before ?? {};
     await this.log.append({

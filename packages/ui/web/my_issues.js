@@ -36,7 +36,7 @@ function tableHtml(g) {
         `<tr><td data-col="issue"><span class="pj-lbl">${esc(C.columns.issue)}</span><a href="#/card/${encodeURIComponent(i.id)}/activity"><span class="mono sec">${esc(shortId(i.id))}</span> <b>${esc(parseTitle(i.title).title)}</b></a>${aiHtml(i.ai)}</td><td data-col="status"><span class="pj-lbl">${esc(C.columns.status)}</span>${esc(i.statusLabel)}</td><td data-col="why"><span class="pj-lbl">${esc(C.columns.why)}</span>${esc(i.whyLabel)}</td></tr>`,
     )
     .join("");
-  return `<section class="ib-group" aria-labelledby="mi-h-${esc(g.id || "none")}"><h2 id="mi-h-${esc(g.id || "none")}">${esc(g.name)} <span class="sec tnum">${g.issues.length}</span></h2><div class="tbl-wrap"><table class="tbl pj-tbl mi-tbl"><caption class="sr-only">${esc(`${C.title}: ${g.name}`)}</caption><thead><tr><th scope="col">${esc(C.columns.issue)}</th><th scope="col">${esc(C.columns.status)}</th><th scope="col">${esc(C.columns.why)}</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+  return `<section class="ib-group" aria-labelledby="mi-h-${esc(g.id || "none")}"><h2 id="mi-h-${esc(g.id || "none")}">${esc(g.name)} <span class="sec tnum">${g.issues.length}</span></h2><div class="tbl-wrap" tabindex="0"><table class="tbl pj-tbl mi-tbl"><caption class="sr-only">${esc(`${C.title}: ${g.name}`)}</caption><thead><tr><th scope="col">${esc(C.columns.issue)}</th><th scope="col">${esc(C.columns.status)}</th><th scope="col">${esc(C.columns.why)}</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
 }
 
 function render() {

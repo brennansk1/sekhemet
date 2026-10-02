@@ -108,6 +108,11 @@ describe("TEAM-15: the AI's state in DEC-34's words", () => {
     expect(aiStateLine({ who: "agent", state: "paused" }).sentence).toBe(
       "Paused by a person. Hand it back to resume.",
     );
+    // R-36: done is a person's Accept; the Agent's work waiting for review reads finished.
+    expect(aiStateLine({ who: "agent", state: "done", waitingFor: "review" }).label).toBe(
+      "finished",
+    );
+    expect(aiStateLine({ who: "agent", state: "done" }).label).toBe("done");
     expect(aiStateLine({ who: "agent", state: "done", waitingFor: "review" }).sentence).toBe(
       "Finished. Its work is waiting for review.",
     );

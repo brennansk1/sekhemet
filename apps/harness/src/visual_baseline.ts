@@ -62,7 +62,7 @@ export async function approveBaseline(
   }
   // The card is the ledger's, never the caller's word alone.
   if (cardId !== undefined && !(await store.getCard(cardId))) {
-    return { approved: false, reason: `no card ${cardId}`, status: 404 };
+    return { approved: false, reason: `no issue ${cardId}`, status: 404 };
   }
   const r = approveVisualBaseline(visualStateDir(opts.repoPath), {
     key,

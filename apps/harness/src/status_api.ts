@@ -6,7 +6,7 @@ import {
   firstModelAttempts,
 } from "@sekhemet/kernel";
 import { type SignalReading, computeSignals } from "@sekhemet/planner";
-import type { StatusFacts } from "@sekhemet/ui";
+import { type StatusFacts, forecastWords } from "@sekhemet/ui";
 import { type Audience, nameFor, soloAudience } from "./pm/audience.js";
 import { flowMetrics, monteCarloForecast } from "./pm/metrics.js";
 import { UPDATE_POSTED } from "./pm/weekly.js";
@@ -38,6 +38,82 @@ const UPDATE_DUE_DAYS = 7;
 const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 const dayNo = (iso: string) => Math.floor(Date.parse(`${iso.slice(0, 10)}T00:00:00.000Z`) / DAY);
 const isIssue = (c: CardRecord) => c.tier !== "epic" && c.tier !== "initiative";
+
+/**
+ * The forecast of a set of issues (planner-pm §2.6 item 3, DB-N9-3): Monte
+ * Carlo over their finished issues by day, from the first issue (at most 60
+ * days back), and *Not enough history yet* below five days. Status, Projects
+ * and Seshat's /status and /forecast all read it, so one project says one
+ * forecast everywhere (FINDINGS STA-01).
+ */
+export async function forecastOf(
+  cards: readonly CardRecord[],
+  log: EventLog,
+  now: number,
+  random?: () => number,
+): Promise<{
+  forecast: StatusFacts["forecast"];
+  moves: Awaited<ReturnType<EventLog["getEventsByTypes"]>>;
+  doneAt: string[];
+}> {
+  const issues = cards.filter(isIssue);
+  const ids = new Set(issues.map((c) => c.id));
+  const moves = (await log.getEventsByTypes(["card/status_changed"])).filter((e) =>
+    ids.has(String((e.payload as { id?: string }).id ?? e.cardId ?? "")),
+  );
+  // Each issue finished once: an issue reverted and accepted again counts at its last
+  // move to Done (Projects' *Shipped this month* counts issues, not moves).
+  const lastDone = new Map<string, string>();
+  for (const e of moves) {
+    const p = e.payload as { id?: string; toStatus?: string };
+    if (p.toStatus === "done") lastDone.set(String(p.id ?? e.cardId ?? ""), e.createdAt);
+  }
+  const doneAt = [...lastDone.values()];
+  const firstDay = issues.length
+    ? Math.max(
+        dayNo(isoDay(now)) - HISTORY_DAYS + 1,
+        Math.min(...issues.map((c) => dayNo(c.createdAt))),
+      )
+    : dayNo(isoDay(now));
+  const daily = Array.from({ length: Math.max(0, dayNo(isoDay(now)) - firstDay + 1) }, () => 0);
+  for (const at of doneAt) {
+    const i = dayNo(at) - firstDay;
+    if (i >= 0 && i < daily.length) daily[i] = (daily[i] ?? 0) + 1;
+  }
+  const remaining = issues.filter((c) => !["done", "rejected", "parked"].includes(c.status)).length;
+  const fc =
+    daily.length >= FORECAST_MINIMUM
+      ? monteCarloForecast(daily, remaining, 2000, random)
+      : undefined;
+  return {
+    forecast: {
+      remaining,
+      ...(fc ? { p50Days: fc.p50Days, p85Days: fc.p85Days } : {}),
+      historyDays: daily.length,
+      finished: daily.reduce((x, y) => x + y, 0),
+      minimum: FORECAST_MINIMUM,
+    },
+    moves,
+    doneAt,
+  };
+}
+
+/** The forecast in Status's words, as Seshat says it (FINDINGS STA-01). */
+export async function forecastSentence(
+  cards: readonly CardRecord[],
+  log: EventLog,
+  now = Date.now(),
+): Promise<string> {
+  const { forecast } = await forecastOf(cards, log, now);
+  const w = forecastWords(forecast, now);
+  return `${w.value}. ${w.detail}`;
+}
+
+/** The open issues a forecast counts: neither done, won't do nor on hold. */
+export function openIssues(cards: readonly CardRecord[]): number {
+  return cards.filter((c) => isIssue(c) && !["done", "rejected", "parked"].includes(c.status))
+    .length;
+}
 
 export async function statusFacts(deps: {
   cardStore: CardStore;
@@ -74,6 +150,13 @@ export async function statusFacts(deps: {
     Boolean(project) && (!team || isLead || a.levelOf(me, project?.id) === "admin");
   // Unpark is the `review` permission, a Member's (team/access.ts): never offered below it.
   const level = a.levelOf(me, project?.id);
+  // STA-02: who may accept on this project, so Needs you follows the Accept rule.
+  const holders = team ? a.acceptHolders?.(project?.id) : undefined;
+  const mayAccept = !team ? true : holders ? holders.includes(me) : undefined;
+  const accepters =
+    team && holders
+      ? holders.filter((p) => p !== me).map((p) => a.nameOf(p) ?? "a teammate")
+      : undefined;
   const canUnpark = !team || (level !== undefined && levelRank(level) >= levelRank("member"));
 
   // The latest posted update, its text private to the ledger (PM_CONTRACT §3).
@@ -146,41 +229,7 @@ export async function statusFacts(deps: {
           .sort((x, y) => x.name.localeCompare(y.name))
       : [];
 
-  // Finished issues by day, from the project's first issue (at most 60 days back).
-  const moves = (await deps.log.getEventsByTypes(["card/status_changed"])).filter((e) =>
-    ids.has(String((e.payload as { id?: string }).id ?? e.cardId ?? "")),
-  );
-  // Each issue finished once: an issue reverted and accepted again counts at its last
-  // move to Done (Projects' *Shipped this month* counts issues, not moves).
-  const lastDone = new Map<string, string>();
-  for (const e of moves) {
-    const p = e.payload as { id?: string; toStatus?: string };
-    if (p.toStatus === "done") lastDone.set(String(p.id ?? e.cardId ?? ""), e.createdAt);
-  }
-  const doneAt = [...lastDone.values()];
-  const firstDay = cards.length
-    ? Math.max(
-        dayNo(isoDay(now)) - HISTORY_DAYS + 1,
-        Math.min(...cards.map((c) => dayNo(c.createdAt))),
-      )
-    : dayNo(isoDay(now));
-  const daily = Array.from({ length: Math.max(0, dayNo(isoDay(now)) - firstDay + 1) }, () => 0);
-  for (const at of doneAt) {
-    const i = dayNo(at) - firstDay;
-    if (i >= 0 && i < daily.length) daily[i] = (daily[i] ?? 0) + 1;
-  }
-  const remaining = cards.filter((c) => !["done", "rejected", "parked"].includes(c.status)).length;
-  const fc =
-    daily.length >= FORECAST_MINIMUM
-      ? monteCarloForecast(daily, remaining, 2000, deps.random)
-      : undefined;
-  const forecast: StatusFacts["forecast"] = {
-    remaining,
-    ...(fc ? { p50Days: fc.p50Days, p85Days: fc.p85Days } : {}),
-    historyDays: daily.length,
-    finished: daily.reduce((x, y) => x + y, 0),
-    minimum: FORECAST_MINIMUM,
-  };
+  const { forecast, moves, doneAt } = await forecastOf(cards, deps.log, now, deps.random);
 
   // Done this week, with who accepted each issue (never a count per person).
   const accepted = (await deps.log.getEventsByTypes(["card/accepted"]))
@@ -243,6 +292,8 @@ export async function statusFacts(deps: {
     updateMissing,
     canPostUpdate,
     canUnpark,
+    ...(mayAccept !== undefined ? { mayAccept } : {}),
+    ...(accepters?.length ? { accepters } : {}),
     forecast,
     acceptedThisWeek: accepted,
     flow: {

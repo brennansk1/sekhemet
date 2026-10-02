@@ -704,7 +704,7 @@ describe("Smart Swap in the product", () => {
       expect("end" in night).toBe(true);
       const recorded = await log.getEventsByTypes(["measure/calibration"]);
       expect(recorded).toHaveLength(1);
-      await expect(a.use("worker")).rejects.toThrow(/DEC-42/);
+      await expect(a.use("worker")).rejects.toThrow(/^Not loading w: /);
       expect(events).not.toContain("load w");
       host = { swapUsedBytes: 0, freeRatio: 0.7 };
       await a.use("worker");

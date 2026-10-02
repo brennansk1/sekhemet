@@ -88,7 +88,7 @@ function checkPath(path: string): void {
   }
   if (parts.length === 1 && PERSON_FILES.has(path.toLowerCase())) {
     throw new Error(
-      `${path} is the person's: an export offers a change to it as a proposal, never writes it (DS-N3-7)`,
+      `${path} is the person's: an export offers a change to it as a proposal, never writes it`,
     );
   }
 }

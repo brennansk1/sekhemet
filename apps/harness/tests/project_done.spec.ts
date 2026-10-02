@@ -19,7 +19,7 @@ import { buildSnapshot } from "../src/pm/service.js";
 import { PmStore } from "../src/pm/store.js";
 import { checkMain, confirmSliceRelease, extendRefusal, mainHead } from "../src/project_done.js";
 import { startDashboardServer } from "../src/server.js";
-import { type Kernel, queuePrelude, runWave2Command } from "../src/wave2.js";
+import { type RepoContext, queuePrelude, runDevCommand } from "../src/wave2.js";
 import { pageWriteHeaders } from "./page_headers.js";
 
 // planner-pm P13 (§6): on a fixture project whose brief has eight
@@ -144,7 +144,7 @@ let root: string;
 let db: DatabaseSync;
 let log: EventLog;
 let store: CardStore;
-let k: Kernel;
+let k: RepoContext;
 let projectId: string;
 let server: { port: number; close: () => Promise<void> };
 const out: string[] = [];
@@ -317,8 +317,10 @@ describe("P13 fixture: eight requirements, two slices, one revised after its sli
     ]);
     const pmStore = new PmStore(log);
     let snap = await buildSnapshot(root, store, pmStore, "stand-in");
+    // STA-01: the current release's requirements done in Status's words; the
+    // unplanned Must haves by title (no raw ids, §A).
     expect(ledgerStandup(snap)).toMatch(
-      /0 of 6 requirements done\. Unplanned: REQ-1, REQ-2, REQ-3, REQ-4, REQ-6, REQ-7\./,
+      /Requirements: Walking skeleton · 0 of 4 requirements done\. Not started: Save a recipe, List saved recipes, Open a recipe, Search by name, Mark a favourite, Unmark a favourite\./,
     );
 
     // Slice 1 is built: code and tests on main, cards Done with their evidence.
@@ -423,7 +425,7 @@ describe("P13 fixture: eight requirements, two slices, one revised after its sli
       }),
     );
     expect(
-      await runWave2Command(
+      await runDevCommand(
         "release",
         ["revise", "REQ-1", join(root, ".sekhemet", "rev.json")],
         k,
@@ -454,7 +456,7 @@ describe("P13 fixture: eight requirements, two slices, one revised after its sli
     expect(store.requirements.links("REQ-1").find((l) => l.ref === "c_save")?.suspect).toBe(false);
     // The test link is re-confirmed by a person (CLI), as is the held card's.
     for (const l of store.requirements.links("REQ-1").filter((x) => x.suspect)) {
-      expect(await runWave2Command("release", ["confirm", "REQ-1", l.from, l.ref], k, io)).toBe(0);
+      expect(await runDevCommand("release", ["confirm", "REQ-1", l.from, l.ref], k, io)).toBe(0);
     }
     await move("c_more", ["ready", "in_progress", "verify", "review", "done"]);
 
@@ -492,7 +494,7 @@ describe("P13 fixture: eight requirements, two slices, one revised after its sli
     m = await map();
     expect(m.slices[1]?.state).toBe("proven");
     expect(m.projectDone).toBe(false);
-    expect(await runWave2Command("release", ["accept", "SLICE-2"], k, io)).toBe(0);
+    expect(await runDevCommand("release", ["accept", "SLICE-2"], k, io)).toBe(0);
     m = await map();
     expect(m.projectDone).toBe(true);
     expect(await store.projectRollup(projectId)).toBe("done");
@@ -542,7 +544,7 @@ describe("PM-P13-9: the queue prelude stops a slice at its appetite", () => {
     const alog = new EventLog(adb);
     const astore = new CardStore(adb, alog);
     const pid = (await astore.ensureProject({ rootPath: dir, name: "A" })).id;
-    const ak: Kernel = { repoPath: dir, cardStore: astore, log: alog };
+    const ak: RepoContext = { repoPath: dir, cardStore: astore, log: alog };
     try {
       const sliceId = await astore.slices.create(
         { projectId: pid, title: "Skeleton", appetite: { cards: 1 } },
@@ -578,7 +580,7 @@ describe("PM-P13-9: the queue prelude stops a slice at its appetite", () => {
       // The person extends it (CLI): its cards are scheduled again, and it is asked again only at the new appetite.
       const said: string[] = [];
       expect(
-        await runWave2Command("release", ["extend", "SLICE-1", "--cards", "3"], ak, {
+        await runDevCommand("release", ["extend", "SLICE-1", "--cards", "3"], ak, {
           print: (l) => said.push(l),
         }),
       ).toBe(0);

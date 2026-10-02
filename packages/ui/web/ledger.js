@@ -20,7 +20,9 @@ const ui = {
 
 function titleOf(id) {
   const c = store.card(id);
-  return c ? (c.display?.title ?? parseTitle(c.title).title) : undefined;
+  if (c) return c.display?.title ?? parseTitle(c.title).title;
+  // ERR-06: a project's entries name the project, never its id.
+  return store.state.project?.list?.find?.((p) => p.id === id)?.name;
 }
 
 function when(iso) {
@@ -48,9 +50,9 @@ function headerHtml() {
     ? new Date(ui.checkedAt).toLocaleTimeString([], { hourCycle: "h23" })
     : "";
   if (v && v.valid === false) {
-    return `<div class="lg-state bad" role="alert">${icon("alert")}<span><b>Ledger altered at entry #${esc(v.corruptedSeq)}.</b> <span class="sec">An entry no longer matches its hash. Stop and inspect before accepting anything. Accept is disabled.</span></span></div>`;
+    return `<div class="lg-state bad" role="alert">${icon("alert")}<span><b>Activity log altered at entry #${esc(v.corruptedSeq)}.</b> <span class="sec">An entry no longer matches its hash. Stop and inspect before accepting anything. Accept is disabled.</span></span></div>`;
   }
-  return `<div class="lg-state">${icon("check", 16, "ic i-pass")}<span><b>Ledger intact</b> <span class="sec">· ${esc(v?.totalEvents ?? "…")} entries${at ? ` · verified ${esc(at)}` : ""}</span></span></div>`;
+  return `<div class="lg-state">${icon("check", 16, "ic i-pass")}<span><b>Activity log intact</b> <span class="sec">· ${esc(v?.totalEvents ?? "…")} entries${at ? ` · verified ${esc(at)}` : ""}</span></span></div>`;
 }
 
 function filtersHtml() {
@@ -84,24 +86,28 @@ function rowHtml(e) {
   const s = eventSentence(e, titleOf);
   const bad =
     store.state.verification?.valid === false && e.seq === store.state.verification.corruptedSeq;
-  const title = s.title
-    ? ` <a href="#/card/${encodeURIComponent(e.cardId ?? "")}/thread" class="ttl-link">${esc(s.title)}</a>`
-    : "";
+  // ERR-06: only an issue's entry links to the issue; anything else is its words alone.
+  const issue = e.cardId ?? (store.card(e.payload?.id) ? e.payload.id : undefined);
+  const title = !s.title
+    ? ""
+    : issue
+      ? ` <a href="#/card/${encodeURIComponent(issue)}/thread" class="ttl-link">${esc(s.title)}</a>`
+      : ` <span class="ttl">${esc(s.title)}</span>`;
   return `<tr class="${bad ? "bad" : ""}${ui.selected === e.seq ? " sel" : ""}" data-seq="${e.seq}" tabindex="${ui.selected === e.seq ? "0" : "-1"}"><td class="r tnum">${e.seq}</td><td class="tnum sec">${esc(when(e.createdAt))}</td><td>${esc(s.actor)}</td><td class="sentence"><span>${esc(s.verb)}${title}${s.rest ? ` ${esc(s.rest)}` : ""}</span>${s.quote ? `<span class="q">“${esc(s.quote.length > 140 ? `${s.quote.slice(0, 137)}…` : s.quote)}”</span>` : ""}</td><td class="mono sec">${esc(e.type)}</td><td class="mono sec" ${tip(`prev ${e.prevHash}`)}>${esc(String(e.hash).slice(0, 8))}</td></tr>`;
 }
 
 function tableHtml() {
   if (!ui.events.length) {
-    return `<div class="ev-empty">${icon("ledger", 24, "ic s24")}<b>No entries match.</b><span>${ui.filter.card || ui.filter.actor || ui.filter.type ? "Clear the filters to see the whole ledger." : "Every change to the board is written here as it happens."}</span></div>`;
+    return `<div class="ev-empty">${icon("ledger", 24, "ic s24")}<b>No entries match.</b><span>${ui.filter.card || ui.filter.actor || ui.filter.type ? "Clear the filters to see the whole Activity log." : "Every change to the board is written here as it happens."}</span></div>`;
   }
-  return `<div class="tbl-wrap"><table class="tbl lg"><thead><tr><th class="r">#</th><th>Time</th><th>Actor</th><th>What happened</th><th>Type</th><th>Hash</th></tr></thead><tbody>${ui.events.map(rowHtml).join("")}</tbody></table></div>${ui.cursor ? '<button class="more-lines lg-more" type="button" data-more>Load older entries</button>' : '<p class="sec lg-end">The first entry of the ledger.</p>'}`;
+  return `<div class="tbl-wrap" tabindex="0"><table class="tbl lg"><thead><tr><th class="r">#</th><th>Time</th><th>Actor</th><th>What happened</th><th>Type</th><th>Hash</th></tr></thead><tbody>${ui.events.map(rowHtml).join("")}</tbody></table></div>${ui.cursor ? '<button class="more-lines lg-more" type="button" data-more>Load older entries</button>' : '<p class="sec lg-end">The first entry of the Activity log.</p>'}`;
 }
 
 function render() {
   if (!ui.root) return;
   const v = store.state.verification;
   setTopbar({
-    title: "Ledger",
+    title: "Activity log",
     crumb: `${store.state.meta?.project ?? ""} · ${v?.totalEvents ?? ""} entries`,
   });
   const body = $(".lg-body", ui.root);
@@ -117,7 +123,7 @@ async function load({ more = false } = {}) {
   if (seq !== ui.seq || !ui.root) return;
   if (!res.ok) {
     $(".lg-body", ui.root).innerHTML =
-      `<div class="ev-error" role="alert">${icon("alert")}<span><b>Couldn't load the ledger.</b> <span class="sec">The server returned ${esc(res.status)}.</span></span><button class="btn sm" type="button" data-reload>Retry</button></div>`;
+      `<div class="ev-error" role="alert">${icon("alert")}<span><b>Couldn't load the Activity log.</b> <span class="sec">The server returned ${esc(res.status)}.</span></span><button class="btn sm" type="button" data-reload>Retry</button></div>`;
     return;
   }
   ui.events = more ? [...ui.events, ...res.data.events] : res.data.events;
@@ -144,8 +150,8 @@ function openDetail(seq) {
   const s = eventSentence(e, titleOf);
   const node = document.createElement("aside");
   node.className = "peek lg-detail";
-  node.setAttribute("aria-label", `Ledger entry ${seq}`);
-  node.innerHTML = `<header><div><div class="crumb">Ledger ${icon("chevron-right", 12, "ic s12")}<span class="mono">#${esc(seq)}</span> · ${esc(when(e.createdAt))}</div><h3>${esc(s.actor)} ${esc(s.verb)} ${s.title ? esc(s.title) : ""} ${s.rest ? esc(s.rest) : ""}</h3><div class="out"><span class="mono">${esc(e.type)}</span>${e.cardId ? ` · <a href="#/card/${encodeURIComponent(e.cardId)}/thread">${esc(shortId(e.cardId))}</a>` : ""}</div></div><button class="icon-btn" type="button" data-close aria-label="Close (Esc)">${icon("x")}</button></header><div class="body"><section><h4>Payload</h4><pre class="json">${esc(JSON.stringify(e.payload, null, 2))}</pre></section><section><h4>Chain</h4><dl class="kv chain"><dt>Payload hash</dt><dd class="mono">${esc(e.payloadHash)}</dd><dt>Hash</dt><dd class="mono">${esc(e.hash)}</dd><dt>Previous</dt><dd class="mono">${esc(e.prevHash)}</dd><dt>Entry id</dt><dd class="mono">${esc(e.id)}</dd></dl></section></div>`;
+  node.setAttribute("aria-label", `Activity log entry ${seq}`);
+  node.innerHTML = `<header><div><div class="crumb">Activity log ${icon("chevron-right", 12, "ic s12")}<span class="mono">#${esc(seq)}</span> · ${esc(when(e.createdAt))}</div><h3>${esc(s.actor)} ${esc(s.verb)} ${s.title ? esc(s.title) : ""} ${s.rest ? esc(s.rest) : ""}</h3><div class="out"><span class="mono">${esc(e.type)}</span>${e.cardId ? ` · <a href="#/card/${encodeURIComponent(e.cardId)}/thread">${esc(shortId(e.cardId))}</a>` : ""}</div></div><button class="icon-btn" type="button" data-close aria-label="Close (Esc)">${icon("x")}</button></header><div class="body"><section><h4>Payload</h4><pre class="json">${esc(JSON.stringify(e.payload, null, 2))}</pre></section><section><h4>Chain</h4><dl class="kv chain"><dt>Payload hash</dt><dd class="mono">${esc(e.payloadHash)}</dd><dt>Hash</dt><dd class="mono">${esc(e.hash)}</dd><dt>Previous</dt><dd class="mono">${esc(e.prevHash)}</dd><dt>Entry id</dt><dd class="mono">${esc(e.id)}</dd></dl></section></div>`;
   document.getElementById("overlay-root").append(node);
   const close = () => {
     remove();

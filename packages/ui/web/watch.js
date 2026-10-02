@@ -36,6 +36,7 @@ export function mountWatch(host, ctx) {
     if (mine !== seq) return;
     state = r.ok ? r.data : null;
     draw();
+    ctx.onState?.(state);
   };
   host.addEventListener("click", async (e) => {
     const t = e.target instanceof Element ? e.target.closest("[data-watch]") : null;
@@ -54,6 +55,7 @@ export function mountWatch(host, ctx) {
     }
     state = r.data;
     draw();
+    ctx.onState?.(state);
   });
   return { load };
 }

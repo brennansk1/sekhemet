@@ -132,7 +132,7 @@
   font-size: var(--text-xs);
 }
 .smap-band.skeleton .smap-band-h {
-  border-top: 2px solid var(--accent);
+  border-top: 2px solid var(--border-strong);
 }
 .skel {
   display: inline-flex;
@@ -238,4 +238,88 @@
 }
 .bu-sw-done {
   background: var(--state-pass);
+}
+
+/* New issue's properties as pills, and a Bug's reproduction (NEW-dashboard-15). */
+.qc-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+}
+.qc-types legend {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin-bottom: 4px;
+  padding: 0;
+}
+.qc-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.qc-types .qc-pill input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.qc-types .qc-pill:has(input:checked) {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.qc-types .qc-pill:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.qc-props {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+/* A property menu: its name, then the menu, which carries the control edge. */
+.qc-props .qc-sel {
+  border: 0;
+  background: transparent;
+  padding: 0 4px 0 0;
+}
+.qc .qc-sel select {
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  height: 28px;
+  padding: 0 6px;
+}
+.qc-repro {
+  margin: 12px 0 0;
+  padding: 8px 0 0;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.qc-repro[hidden] {
+  display: none;
+}
+.qc-repro legend {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  padding: 0;
+}
+.qc-repro textarea {
+  min-height: 48px;
 }

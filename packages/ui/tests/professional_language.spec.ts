@@ -47,7 +47,7 @@ import {
   stopReasonLabel,
   vocabularyTables,
 } from "../src/vocabulary.js";
-import { literals, retiredIn } from "./copy_scan.js";
+import { literals, rawRetiredIn, retiredIn } from "./copy_scan.js";
 
 const HERE = new URL(".", import.meta.url).pathname;
 const WEB = join(HERE, "../web");
@@ -59,6 +59,9 @@ const NOT_COPY: Record<string, RegExp> = {
   "account.ts": /this browser/i,
   // Tips are the one place the product says *walking skeleton* (DEC-31, NAMING).
   "learn.ts": /^walking skeleton$/i,
+  // The stored state's own label, read only in Pipeline stages (NAMING keeps
+  // the stored names there); the board, its tiles and error text say On hold.
+  "vocabulary.ts": /^Parked$/,
 };
 
 function scan(dir: string, ext: RegExp): string[] {
@@ -66,7 +69,7 @@ function scan(dir: string, ext: RegExp): string[] {
   for (const f of readdirSync(dir).filter((n) => ext.test(n))) {
     const skip = NOT_COPY[f];
     for (const { line, text } of literals(readFileSync(join(dir, f), "utf8"))) {
-      for (const hit of retiredIn(text)) {
+      for (const hit of [...retiredIn(text), ...rawRetiredIn(text)]) {
         if (skip?.test(hit.split(" → ")[0] ?? "")) continue;
         hits.push(`${f}:${line}: ${hit}`);
       }
@@ -163,6 +166,62 @@ describe("DB-N7-1: the page's copy uses DEC-31's words", () => {
   });
 });
 
+describe("NEW-dashboard-23 (DEC-52): the professional words, one pass", () => {
+  it("catches each word the rename table retires, and leaves identifiers alone", () => {
+    const first = (t: string) => retiredIn(t).map((h) => h.split(" → ")[1]);
+    expect(first("Send back")).toEqual(["Request changes"]);
+    expect(first("Sent back. The issue is back in To do.")).toEqual(["Request changes"]);
+    expect(first("Suggested rules from your send-back notes")).toEqual(["Request changes"]);
+    expect(first("Park")).toEqual(["Put on hold / On hold / Take off hold"]);
+    expect(first("Nothing runs until you unpark it.")).toEqual([
+      "Put on hold / On hold / Take off hold",
+    ]);
+    expect(first("Ledger")).toEqual(["Activity log"]);
+    expect(first("Read from the event log.")).toEqual(["Activity log"]);
+    expect(first("Suspect")).toEqual(["Needs re-checking"]);
+    expect(first("Passing, strength unmet")).toEqual(["Tests too weak"]);
+    expect(first("Done when")).toEqual(["Acceptance criteria"]);
+    expect(first("May edit")).toEqual(["Files in scope"]);
+    expect(first("New appetite, in issues")).toEqual(["Size limit"]);
+    expect(first("Need you")).toEqual(["Needs you"]);
+    expect(first("Harness overhead")).toEqual(["Sekhemet"]);
+    expect(first("Loading the PM")).toEqual(["Seshat"]);
+    expect(first("past the day's notice budget")).toEqual(["notification limit"]);
+    expect(first("Facts rail")).toEqual(["Details / status / enablers"]);
+    expect(first("no other Accept-holder yet")).toEqual(["a person on the Accept rule"]);
+    expect(first("lead is a principal")).toEqual(["person"]);
+    expect(first("A loop runs through 3 issue(s)")).toEqual(["plural()"]);
+    expect(first("Unchanged by the agent")).toEqual(["the Agent"]);
+    expect(first("The agent stops at the end of this step.")).toEqual(["the Agent"]);
+    expect(first("Not a registry model")).toEqual(["Sekhemet's model list / Published hash"]);
+    expect(first("No bake-off yet.")).toEqual(["benchmark"]);
+    expect(first("Seshat's review")).toEqual(["Seshat's notes"]);
+    expect(first("a team of sub-researchers")).toEqual(["a plain description"]);
+    expect(first("Local inference socket")).toEqual([
+      "Model server / Sandbox / first-run benchmark / Research quality",
+    ]);
+    expect(first("Ledger TRUNCATED at entry 4")).toEqual(["Activity log", "sentence case"]);
+    // Identifiers, and the sentences that only look like the old words.
+    expect(retiredIn("ic s14 i-park")).toEqual([]);
+    expect(retiredIn("the issue reaches Done when it merges")).toEqual([]);
+    expect(retiredIn("Ready for review Needs you")).toEqual([]);
+    expect(retiredIn("Pipeline stages")).toEqual([]);
+    expect(retiredIn("parked")).toEqual([]);
+    expect(retiredIn("erased by ledger/erased seq 4, see the Ledger-Head trailer")).toEqual([]);
+    expect(rawRetiredIn("<code>GET /api/capability</code> returned 404.")).toEqual([
+      "GET /api/ → what failed, in plain words",
+      "returned 404 → what failed, in plain words",
+    ]);
+    expect(rawRetiredIn("because SEKHEMET_ALLOW_UNCONFINED=1 was set")).toEqual([
+      "SEKHEMET_ALLOW_UNCONFINED= → the setting's name in Configuration",
+    ]);
+    expect(rawRetiredIn("Refused (DEC-39): no sandbox")).toEqual([
+      "DEC-39 → the plain sentence alone",
+    ]);
+    expect(rawRetiredIn("CHR-7 is In review")).toEqual([]);
+  });
+});
+
 describe("DB-N7-1: the issue types are Story, Task, Bug, Spike and Epic", () => {
   it("names each stored kind and change by its standard issue type", () => {
     const cases: [Partial<CardRecord>, IssueType][] = [
@@ -228,6 +287,8 @@ describe("DB-N7-1: roles, checks and sprints in the models' words", () => {
     expect(
       ["worker", "planner", "reviewer", "researcher", "human"].map((a) => actorLabel(a)),
     ).toEqual(["Agent", "Planning model", "AI review", "Research model", "You"]);
+    // The checks record their own evidence in the Activity log (C2a rename).
+    expect(actorLabel("gate")).toBe("Checks");
     expect(rosterRows([]).map((r) => r.label)).toEqual([
       "Coding model",
       "Planning model · Seshat",
@@ -266,15 +327,15 @@ describe("DB-N7-1: roles, checks and sprints in the models' words", () => {
     const groups = groupCards([{ id: "a", status: "ready" }], "cycle");
     expect(groups.map((g) => g.label)).toEqual(["No sprint"]);
     expect(pmSteps({ phase: "waiting_for_step" }, { step: 4 }).map((s) => s.label)).toEqual([
-      "Pausing the agent after step 4",
-      "Loading the PM",
+      "Pausing the Agent after step 4",
+      "Starting Seshat",
       "Thinking",
-      "Resuming the agent",
+      "Resuming the Agent",
     ]);
     expect(horizonSentence(undefined)).toBe(
-      "Not enough attempts yet to say how large a change the agent handles reliably.",
+      "Not enough attempts yet to say how large a change the Agent handles reliably.",
     );
-    expect(RULE_SOURCE_LABELS.struggle).toBe("From a fix that took the agent several tries");
+    expect(RULE_SOURCE_LABELS.struggle).toBe("From a fix that took the Agent several tries");
   });
 
   it("titles the burn-up by sprint, and the story map by release", () => {
@@ -406,7 +467,7 @@ describe("DB-N7-2: points only when the team turns on estimation", () => {
 });
 
 describe("DB-N7-3: the tile has no step counter and no model name", () => {
-  it("says what the agent is doing without its step count, and draws no budget bar", () => {
+  it("says what the Agent is doing without its step count, and draws no budget bar", () => {
     const c = card({
       id: "card_r",
       status: "in_progress",
@@ -421,7 +482,7 @@ describe("DB-N7-3: the tile has no step counter and no model name", () => {
     expect(t.delegate).toEqual({ text: "Agent", worker: true });
     expect(t).not.toHaveProperty("budget");
     expect(JSON.stringify(t)).not.toMatch(/\bstep\b|of 40/i);
-    // The issue keeps the count: "step 9 of 40" in the agent's progress.
+    // The issue keeps the count: "step 9 of 40" in the Agent's progress.
     expect(display.budgetText).toBe("9 of 40 steps");
     const paused = tileModel({ ...c, display }, { now: Date.now(), pmPaused: true });
     expect(paused.status?.text).toBe("Paused for Seshat");

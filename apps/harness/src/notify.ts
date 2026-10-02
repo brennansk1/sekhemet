@@ -150,17 +150,18 @@ export interface Notice {
 }
 
 export function validatePush(p: Partial<PushSettings>): string | undefined {
-  if (p.kind !== "ntfy" && p.kind !== "gotify") return "kind must be ntfy or gotify";
+  if (p.kind !== "ntfy" && p.kind !== "gotify") return "Choose ntfy or Gotify.";
   try {
     const u = new URL(String(p.url ?? ""));
-    if (!/^https?:$/.test(u.protocol)) return "url must be http(s)";
+    if (!/^https?:$/.test(u.protocol))
+      return "Use a web address that starts with http:// or https://.";
   } catch {
-    return "url is not a URL";
+    return "That isn't a web address.";
   }
   if (p.kind === "ntfy" && !/^[A-Za-z0-9_-]{1,64}$/.test(String(p.topic ?? ""))) {
-    return "ntfy needs a topic (letters, digits, - and _)";
+    return "Give ntfy a topic: letters, digits, - and _.";
   }
-  if (p.kind === "gotify" && !p.token) return "Gotify needs an application token";
+  if (p.kind === "gotify" && !p.token) return "Gotify needs an application token.";
   return undefined;
 }
 
@@ -289,7 +290,7 @@ export function noticeFor(e: EventRecord, dashboard?: string): Notice | undefine
     return {
       ...base,
       event: budget ? "budget" : "parked",
-      title: budget ? "Budget reached" : "Issue parked",
+      title: budget ? "Budget reached" : "Issue on hold",
       message: `${card}: ${reason}`.slice(0, 400),
       priority: 4,
     };
@@ -324,12 +325,12 @@ export function noticeFor(e: EventRecord, dashboard?: string): Notice | undefine
     const what =
       r.servedQuant && r.fileQuant
         ? `as ${r.servedQuant}, but the file is ${r.fileQuant}`
-        : "with another weights hash than its file";
+        : "from a file that differs from the one verified";
     return {
       event: "requantised",
       key: `requantised:${r.model}`,
-      title: "A model is served requantised",
-      message: `Ollama serves ${r.model} ${what}. Its answers may differ from the weights verified on this machine; serve it through llama-server where exact weights matter.`,
+      title: "A model is running as a converted copy",
+      message: `Ollama runs ${r.model} ${what}. Its answers may differ from the weights verified on this machine; serve it through llama-server where exact weights matter.`,
       priority: 3,
     };
   }
@@ -337,7 +338,7 @@ export function noticeFor(e: EventRecord, dashboard?: string): Notice | undefine
     return {
       ...base,
       event: "question",
-      title: "The agent has a question",
+      title: "The Agent has a question",
       message: `${card}: ${String(p.text ?? "").slice(0, 300)}`,
       priority: 3,
     };
@@ -557,9 +558,9 @@ export async function remindersFor(
 
 const HELD_LABEL: Partial<Record<NotifyEvent, string>> = {
   review: "waits for review",
-  parked: "was parked",
+  parked: "was put on hold",
   budget: "reached its budget",
-  question: "has a question from the agent",
+  question: "has a question from the Agent",
   decision: "has a decision waiting",
   reminder: "has a reminder",
 };
@@ -576,7 +577,7 @@ function heldSummary(held: EventRecord[], cards: Map<string, LedgerCard>): strin
     const title = e.cardId ? cards.get(e.cardId)?.title : undefined;
     return `- ${title ? plainTitle({ title }) : "an issue"} ${what}`;
   });
-  return `Needs you (held for this standup, past the day's notice budget):\n${lines.join("\n")}`;
+  return `Needs you (held for this standup, past the day's notification limit):\n${lines.join("\n")}`;
 }
 
 export interface NotifierOptions {

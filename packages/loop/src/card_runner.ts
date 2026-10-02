@@ -53,7 +53,7 @@ import {
   defaultSecondsBudget,
   serializeContextPack,
 } from "@sekhemet/kernel";
-import { type ToolArm, candidateSettings, harnessProvenance } from "@sekhemet/models";
+import { type ToolCallFormat, candidateSettings, harnessProvenance } from "@sekhemet/models";
 import {
   EgressProxy,
   ProcessSandbox,
@@ -76,7 +76,7 @@ import type {
 } from "./types.js";
 
 /** The attempt row's letter for a tool arm (kernel `attempts.tool_arm`). */
-const ARM_LETTER: Record<ToolArm, "A" | "B" | "C"> = {
+const FORMAT_CODE: Record<ToolCallFormat, "A" | "B" | "C"> = {
   arm_a_flat: "A",
   arm_b_json: "B",
   arm_c_sketch: "C",
@@ -1755,7 +1755,7 @@ export class CardRunner {
               modelId: this.options.modelAdapter.modelId,
               // The arm the steps are sent in (A3), as the session chooses it.
               toolArm:
-                ARM_LETTER[
+                FORMAT_CODE[
                   this.options.toolArm ?? this.options.modelAdapter.preferredToolArm ?? "arm_a_flat"
                 ],
               ...(resumedFrom ? { resumedFromStep: resumedFrom.step } : {}),

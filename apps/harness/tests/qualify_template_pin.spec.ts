@@ -14,7 +14,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { describeModel } from "../src/model_access.js";
 import { type CombinationDeps, gateWorker } from "../src/qualify.js";
-import { type Kernel, runWave2Command } from "../src/wave2.js";
+import { type RepoContext, runDevCommand } from "../src/wave2.js";
 
 /**
  * Live-test F17: a generic managed model qualified with `sekhemet qualify`
@@ -163,15 +163,15 @@ describe("the chat template qualification measured is the one pinned (live-test 
     const db = new DatabaseSync(":memory:");
     initSchema(db);
     const log = new EventLog(db);
-    const k: Kernel = { repoPath: dir, log, cardStore: new CardStore(db, log) };
+    const k: RepoContext = { repoPath: dir, log, cardStore: new CardStore(db, log) };
     const adapterRegistry = new ModelRegistry(registryPath);
     const out: string[] = [];
-    const code = await runWave2Command("qualify", ["--models", MODEL], k, {
+    const code = await runDevCommand("qualify", ["--models", MODEL], k, {
       print: (l) => out.push(l),
       model: (n) => describeModel(n, "worker", { registry: adapterRegistry }),
       combinationDeps: deps,
     });
-    expect(out.join("\n")).toMatch(/% on \S+ VERIFIED on this machine for /);
+    expect(out.join("\n")).toMatch(/% on \S+ verified on this machine for /);
     expect(code).toBe(0);
     const pinned = new ModelRegistry(registryPath).get(MODEL)?.template?.checksum;
     expect(pinned).toBe(templateChecksum(TEMPLATE));
@@ -207,12 +207,12 @@ describe("the chat template qualification measured is the one pinned (live-test 
     const db = new DatabaseSync(":memory:");
     initSchema(db);
     const log = new EventLog(db);
-    const k: Kernel = { repoPath: dir, log, cardStore: new CardStore(db, log) };
+    const k: RepoContext = { repoPath: dir, log, cardStore: new CardStore(db, log) };
     // The adapter carries a registry at another path, so only the run's own pin reaches this one.
     const elsewhere = new ModelRegistry(join(dir, "elsewhere.json"));
     elsewhere.recordWeights(MODEL, { path: weights, volume: "internal", sha256: "f".repeat(64) });
     elsewhere.upsert(MODEL, { family: "qwen", header: { contextLength: 32_768 } });
-    await runWave2Command("qualify", ["--models", MODEL], k, {
+    await runDevCommand("qualify", ["--models", MODEL], k, {
       print: () => undefined,
       model: (n) => describeModel(n, "worker", { registry: elsewhere }),
       combinationDeps: deps,

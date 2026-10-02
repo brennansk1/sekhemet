@@ -1,12 +1,17 @@
 /* Status (dashboard §2.8, DEC-37): one reading column, like a project
-   overview; state is colour paired with words, everything else neutral.
-   One column at 400 px (§2.8.13). Tokens only. */
+   overview, up to 1279 px; the approved mockup's grid from 1280 px
+   (§2.8.14, NEW-dashboard-18). State is colour paired with words,
+   everything else neutral. One column at 400 px (§2.8.13). Tokens only. */
 .stp {
   max-width: 960px;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+/* A section never shrinks into an inner scroll box (STA-04's cause on Projects). */
+.stp > * {
+  flex: none;
 }
 .stp-head {
   display: flex;
@@ -172,12 +177,37 @@
   flex-direction: column;
   gap: 2px;
 }
+/* STA-03: a key number reads as a value (--text-xl, 600), never as a field. */
 .stp-v {
+  font-size: var(--text-xl);
   font-weight: 600;
+  line-height: 1.2;
   color: var(--text-primary);
+}
+.stp-num .stp-v.link-btn {
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+  white-space: normal;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 3px;
+}
+.stp-num .stp-v.link-btn:hover {
+  background: none;
+  text-decoration-color: currentColor;
+}
+.stp-flow .stp-v {
+  font-size: var(--text-md);
 }
 .stp-d {
   font-size: var(--text-xs);
+}
+.stp-list,
+.stp-flow {
+  margin: 0;
+  padding: 0;
 }
 .stp-list {
   list-style: none;
@@ -290,6 +320,78 @@
   background: var(--text-primary);
 }
 
+/* NEW-dashboard-18 (DEC-51, the approved Status mockup; STA-08): from 1280 px
+   the key numbers first; the burn-up (two thirds) beside Needs you and
+   Waiting on others (one third); a band of Requirements, Risks and Who's
+   working; Done this week, Today's changes and Models; then Flow. Placement
+   by area only: the reading order stays §2.8's (the DOM's). */
+@media (min-width: 1280px) {
+  .sc.stp {
+    max-width: 1440px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-areas:
+      "notice notice notice"
+      "head head head"
+      "numbers numbers numbers"
+      "burnup burnup needs"
+      "burnup burnup waiting"
+      "requirements risks working"
+      "done today models"
+      "flow flow flow"
+      "ask ask ask";
+    grid-auto-rows: auto;
+    column-gap: 24px;
+    row-gap: 16px;
+    align-items: start;
+  }
+  .stp > .stp-notice {
+    grid-area: notice;
+  }
+  .stp > .stp-head {
+    grid-area: head;
+  }
+  .stp-a-numbers {
+    grid-area: numbers;
+  }
+  .stp-a-burnup {
+    grid-area: burnup;
+  }
+  .stp-a-needs {
+    grid-area: needs;
+  }
+  .stp-a-waiting {
+    grid-area: waiting;
+  }
+  .stp-a-requirements {
+    grid-area: requirements;
+  }
+  .stp-a-risks {
+    grid-area: risks;
+  }
+  .stp-a-working {
+    grid-area: working;
+  }
+  .stp-a-done {
+    grid-area: done;
+  }
+  .stp-a-today {
+    grid-area: today;
+  }
+  .stp-a-models {
+    grid-area: models;
+  }
+  .stp-a-flow {
+    grid-area: flow;
+  }
+  .stp-a-ask {
+    grid-area: ask;
+  }
+  .stp-nums {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 767px) {
   .stp {
     padding: 16px;
@@ -297,5 +399,17 @@
   .stp-nums,
   .stp-flow {
     grid-template-columns: 1fr;
+  }
+}
+
+/* DS-N7-2: New project at the top of Status on a phone; the sidebar's
+   project switcher and the foot of Status offer it on a wider window. */
+.stp-new {
+  display: none;
+  align-self: flex-end;
+}
+@media (max-width: 767px) {
+  .stp-new {
+    display: inline-flex;
   }
 }

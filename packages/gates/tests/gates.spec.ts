@@ -1,6 +1,6 @@
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { describe, expect, it } from "vitest";
-import { parseErrorToGateFailure } from "../src/parser.js";
+import { parseErrorToGateFailure } from "../src/fallback_parser.js";
 import { DeterministicGateRunner } from "../src/runner.js";
 import type { GateRung } from "../src/types.js";
 

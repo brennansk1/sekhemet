@@ -87,7 +87,8 @@ describe("the Configuration page (NEW-dashboard-6)", () => {
         "Benchmark",
         "Review capacity",
         "Preferences",
-        "Project configuration",
+        // DB-N19-5 (DEC-51): the approved mockup's tab names.
+        "Project",
       ]);
       expect(await tabs.locator('[aria-current="page"]').innerText()).toBe("Models");
       await page.goto(`${base()}/#/registry`);
@@ -108,13 +109,13 @@ describe("the Configuration page (NEW-dashboard-6)", () => {
     { timeout: 60_000 },
     async () => {
       await page.goto(`${base()}/#/configuration/models`);
-      await page.getByRole("heading", { name: "Models found" }).waitFor();
+      await page.getByRole("heading", { name: /^Available models/ }).waitFor();
       const text = await page.locator(".cfg-models").innerText();
       expect(text).toContain("SEKHEMET_MODELS_DIR");
       expect(text).toContain("Tiny Llama");
       expect(text).toContain("Giant");
       expect(text).toMatch(/Needs \d+(\.\d)? GB more/);
-      await page.getByRole("heading", { name: "Roles" }).waitFor();
+      await page.getByRole("heading", { name: "Suggested setup" }).waitFor();
       const roles = await page.locator(".cfg-role b:first-child").allInnerTexts();
       expect(roles.slice(0, 4)).toEqual([
         "Coding model",

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error: a plain ESM script, shared with vitest.config.ts.
 import { isIntegrationSpec, splitSpecs } from "../../../scripts/test_split.mjs";
-import { runWave2Command } from "../src/wave2.js";
+import { runDevCommand } from "../src/wave2.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const scripts = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).scripts as Record<
@@ -62,13 +62,13 @@ describe("X21: sekhemet fixture", () => {
     const lines: string[] = [];
     const k = { repoPath: dir } as never;
     expect(
-      await runWave2Command("fixture", ["rust", join(dir, "r")], k, {
+      await runDevCommand("fixture", ["rust", join(dir, "r")], k, {
         print: (l) => lines.push(l),
       }),
     ).toBe(0);
     expect(existsSync(join(dir, "r", "Cargo.toml"))).toBe(true);
     expect(lines[0]).toMatch(/Wrote a rust fixture/);
-    expect(await runWave2Command("fixture", ["cobol", dir], k, { print: () => undefined })).toBe(1);
+    expect(await runDevCommand("fixture", ["cobol", dir], k, { print: () => undefined })).toBe(1);
     rmSync(dir, { recursive: true, force: true });
   });
 });

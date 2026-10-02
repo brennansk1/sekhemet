@@ -1,5 +1,5 @@
 /**
- * The issue page: working with the agent (dashboard §2.6, NEW-dashboard-8,
+ * The issue page: working with the Agent (dashboard §2.6, NEW-dashboard-8,
  * DEC-34). Its pure half, shared by the page and the tests:
  *
  * - the tabs (`ISSUE_TABS`, `issueTab`) — Activity, Checks, Changes and AI
@@ -7,23 +7,27 @@
  * - the acceptance criteria with each one's check state (`criteriaChecks`),
  *   read from the latest attempt's test gates: a criterion is proven by a
  *   staged test case that names its id (planner-pm PM-P1-17);
- * - the agent's state and the controls it offers (`agentPanel`, DB-N8-2),
+ * - the Agent's state and the controls it offers (`agentPanel`, DB-N8-2),
  *   in DEC-34's words for an AI teammate's state;
- * - the Activity timeline (`activityItems`, DB-N8-1, DB-N8-3): the agent's
+ * - the Activity timeline (`activityItems`, DB-N8-1, DB-N8-3): the Agent's
  *   plan, progress and questions and the people's messages, in time order;
  * - the line comments a send-back carries (DB-N8-4), validated by the
  *   server's own rule (`triage.ts` `sendBack`).
  *
  * The browser loads the compiled module as `/app/lib/issue.js`.
  */
+import { assigneeLabel, formatFieldValue, showsPoints } from "./pm.js";
 import {
   BOARD_COLUMNS,
   type EventLike,
+  ISSUE_TYPE_LABELS,
   actorLabel,
+  boardColumnLabel,
   boardColumnOf,
   columnLabel,
   eventSentence,
   gateLabel,
+  issueTypeOf,
   plural,
   stepPhrase,
 } from "./vocabulary.js";
@@ -31,7 +35,7 @@ import {
 /** Every word of the issue page's own parts. */
 export const ISSUE_COPY = {
   description: "Description",
-  noDescription: "No description yet. The agent works from the title and the acceptance criteria.",
+  noDescription: "No description yet. The Agent works from the title and the acceptance criteria.",
   criteria: "Acceptance criteria",
   noCriteria: "No acceptance criteria yet.",
   criterionState: {
@@ -39,57 +43,69 @@ export const ISSUE_COPY = {
     fail: "Failing",
     none: "Not checked yet",
     unproven: "Not proven while the tests fail",
+    untested: "No test checks it",
   },
-  criteriaNotRun: "Checked when the agent's work runs its tests.",
+  criteriaNoAcceptanceTest:
+    "No acceptance test is staged for this issue: the checks passed, but no test proves a criterion.",
+  criteriaNotRun: "Checked when the Agent's work runs its tests.",
   criteriaNoTestGate: "No test check ran on the latest attempt, so no criterion is proven yet.",
   agent: "Agent",
   aiBadge: "AI",
   aiBadgeLabel: "AI teammate",
   checks: "Checks",
-  messageLabel: "Message the agent — it reads this at its next step",
+  messageLabel: "Message the Agent — it reads this at its next step",
   messageEmpty: "Write a message first.",
   send: "Send",
-  sent: "Sent. The agent reads it at its next step.",
+  sent: "Sent. The Agent reads it at its next step.",
   notRunning:
-    "The agent isn't running, so there is no one to message. Hand it back to give it a note.",
+    "The Agent isn't running, so there is no one to message. Hand it back to give it a note.",
   controls: {
     pause: "Pause",
     take_over: "Take over",
     hand_back: "Hand back",
     submit: "Run checks on my work",
+    resume: "Resume",
   },
-  handBackNote: "Note for the agent (optional)",
+  resumed: "Resumed. The Agent continues from its last checkpoint.",
+  handBackNote: "Note for the Agent (optional)",
   handBackConfirm: "Hand back",
   cancel: "Cancel",
   pauseAsked: "Pausing at the end of this step.",
   takeOverWhileRunning:
-    "Pausing first: the agent stops at the end of this step, then Take over is yours.",
+    "Pausing first: the Agent stops at the end of this step, then Take over is yours.",
   tookOver: (path: string) =>
     `Taken over. Work in ${path}; Run checks on my work when you're done.`,
-  handedBack: "Handed back. The agent resumes with your note.",
+  handedBack: "Handed back. The Agent resumes with your note.",
   checksPassed: "Your work passed the checks and is in review.",
   checksFailed: (n: number) => `Your work failed the checks: ${plural(n, "failure")}.`,
-  activityEmpty: "Nothing yet. The agent's plan, its progress and your messages appear here.",
-  everyEntry: "Every ledger entry",
+  activityEmpty: "Nothing yet. The Agent's plan, its progress and your messages appear here.",
+  everyEntry: "Every Activity log entry",
   answer: "Answer",
   answered: (label: string) => `Answered: ${label}`,
   lineComment: {
     heading: "Line comments",
-    hint: "Select a line in the diff to comment on it, or name the file and line here. Send back carries every comment to the agent's next attempt.",
+    hint: "Select a line in the diff to comment on it, or name the file and line here. Request changes carries every comment to the Agent's next attempt.",
     file: "File",
     line: "Line",
     text: "Comment",
     add: "Add comment",
     remove: (label: string) => `Remove the comment on ${label}`,
     none: "No line comments yet.",
-    carried: (n: number) => `Send back carries ${plural(n, "line comment")}.`,
-    sendBack: (n: number) => `Send back with ${plural(n, "line comment")}`,
+    carried: (n: number) => `Request changes carries ${plural(n, "line comment")}.`,
+    sendBack: (n: number) => `Request changes with ${plural(n, "line comment")}`,
   },
   aiReviewEmpty:
     "No AI review yet. Seshat reviews the diff against what it has learned about you once the checks pass.",
 } as const;
 
-export type IssueTabId = "activity" | "checks" | "changes" | "ai_review" | "steps" | "plan";
+export type IssueTabId =
+  | "criteria"
+  | "activity"
+  | "checks"
+  | "changes"
+  | "ai_review"
+  | "steps"
+  | "plan";
 
 /** DB-N8-1: the tabs, in order, with their keys. */
 export const ISSUE_TABS: readonly { id: IssueTabId; label: string; key: string }[] = [
@@ -100,6 +116,22 @@ export const ISSUE_TABS: readonly { id: IssueTabId; label: string; key: string }
   { id: "steps", label: "Steps", key: "5" },
   { id: "plan", label: "Plan", key: "6" },
 ];
+
+/**
+ * NEW-dashboard-17 (DB-N17-1): the criteria view, first for a person who
+ * manages the work — each criterion with its check state, the AI review's
+ * summary and the screenshots, with Accept beside them and the diff one tab
+ * away. Key 0, so the six tabs keep 1–6.
+ */
+export const CRITERIA_TAB = { id: "criteria", label: "Criteria", key: "0" } as const;
+
+/** The tabs an issue page shows: the criteria view first for a person who manages the work. */
+export function issueTabsFor(
+  managesWork: boolean,
+  tab?: IssueTabId,
+): readonly { id: IssueTabId; label: string; key: string }[] {
+  return managesWork || tab === "criteria" ? [CRITERIA_TAB, ...ISSUE_TABS] : ISSUE_TABS;
+}
 
 /** The card view's tabs before the issue page, so an old link lands on its content. */
 const TAB_ALIASES: Record<string, IssueTabId> = {
@@ -112,6 +144,7 @@ const TAB_ALIASES: Record<string, IssueTabId> = {
 /** The tab a route names; Activity when it names none. */
 export function issueTab(route: string | undefined): IssueTabId {
   if (!route) return "activity";
+  if (route === CRITERIA_TAB.id) return "criteria";
   if (ISSUE_TABS.some((t) => t.id === route)) return route as IssueTabId;
   return TAB_ALIASES[route] ?? "activity";
 }
@@ -152,7 +185,12 @@ function names(text: string, id: string): boolean {
 }
 
 export function criteriaChecks(
-  card: { acceptanceCriteria?: readonly string[]; criterionIds?: readonly string[] },
+  card: {
+    acceptanceCriteria?: readonly string[];
+    criterionIds?: readonly string[];
+    /** Staged acceptance tests; an empty list means no test proves any criterion (REV-01). */
+    acceptanceTests?: readonly string[];
+  },
   evidence:
     | { passed: boolean; rungResults?: readonly RungLike[]; failures?: readonly FailureLike[] }
     | null
@@ -171,6 +209,12 @@ export function criteriaChecks(
     stateOf = () => "none";
   } else if (ran.length === 0) {
     note = ISSUE_COPY.criteriaNoTestGate;
+    stateOf = () => "none";
+  } else if (ran.every((r) => r.passed) && card.acceptanceTests?.length === 0) {
+    // REV-01: passing tests prove no criterion when no acceptance test is
+    // staged — the same answer the AI review's "no test" finding gives.
+    note = ISSUE_COPY.criteriaNoAcceptanceTest;
+    noneText = ISSUE_COPY.criterionState.untested;
     stateOf = () => "none";
   } else if (ran.every((r) => r.passed)) {
     stateOf = () => "pass";
@@ -204,11 +248,18 @@ export function criteriaChecks(
 }
 
 // ---------------------------------------------------------------------------
-// The agent's state and controls (DB-N8-2)
+// The Agent's state and controls (DB-N8-2)
 // ---------------------------------------------------------------------------
 
-export type AgentState = "working" | "pausing" | "paused" | "taken_over" | "checking" | "idle";
-export type AgentControl = "pause" | "take_over" | "hand_back" | "submit";
+export type AgentState =
+  | "working"
+  | "pausing"
+  | "paused"
+  | "stopped"
+  | "taken_over"
+  | "checking"
+  | "idle";
+export type AgentControl = "pause" | "take_over" | "hand_back" | "submit" | "resume";
 
 /** DEC-34's words for an AI teammate's state: queued, working, needs you, paused, done, failed. */
 export type AgentLabel = "queued" | "working" | "needs you" | "paused" | "done" | "failed" | "";
@@ -218,7 +269,7 @@ export interface AgentPanel {
   label: AgentLabel;
   sentence: string;
   controls: AgentControl[];
-  /** DB-N8-2: the message box for the agent is offered. */
+  /** DB-N8-2: the message box for the Agent is offered. */
   messageBox: boolean;
 }
 
@@ -226,6 +277,31 @@ interface SeqEvent {
   seq?: number;
   type: string;
   payload?: unknown;
+  actor?: string;
+  principalName?: string;
+}
+
+/** The seq of the latest `card/updated` that set this stop reason. */
+const stopRecordedAt = (events: readonly SeqEvent[], reason: string) =>
+  events.reduce((n, e) => {
+    const patch = (e.payload as { patch?: { stopReason?: string } } | undefined)?.patch;
+    return e.type === "card/updated" && patch?.stopReason === reason && (e.seq ?? 0) > n
+      ? (e.seq ?? 0)
+      : n;
+  }, 0);
+
+/** Who asked for the latest stop, by name from the ledger (FINDINGS ISS-03). */
+function stoppedBy(events: readonly SeqEvent[]): string | undefined {
+  const asked = [...events]
+    .filter((e) => e.type === "card/abort_requested")
+    .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
+    .at(-1);
+  if (!asked) return undefined;
+  const name = asked.principalName?.trim();
+  if (name) return name;
+  return asked.actor === "human" || asked.actor === "mcp"
+    ? actorLabel(asked.actor).toLowerCase()
+    : actorLabel(asked.actor ?? "");
 }
 
 const lastSeq = (events: readonly SeqEvent[], type: string) =>
@@ -235,7 +311,7 @@ const lastSeq = (events: readonly SeqEvent[], type: string) =>
 export const ISSUE_EVENTS_LIMIT = 1000;
 
 /**
- * The issue page's ledger read: the card's newest entries, so the agent's
+ * The issue page's ledger read: the card's newest entries, so the Agent's
  * state (a pause, a take-over, the latest move) is in it however long the run
  * — a reload and a page that stayed open read the same state (DB-P3-16).
  */
@@ -243,7 +319,7 @@ export function issueEventsUrl(cardId: string): string {
   return `/api/events?card=${encodeURIComponent(cardId)}&order=desc&limit=${ISSUE_EVENTS_LIMIT}`;
 }
 
-/** Entries in ledger order, as Activity and the agent's state read them. */
+/** Entries in ledger order, as Activity and the Agent's state read them. */
 export function oldestFirst<E extends { seq?: number }>(events: readonly E[]): E[] {
   return [...events].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
 }
@@ -256,13 +332,29 @@ export function agentPanel(
   const used = card.stepsUsed ?? 0;
   const next = used + 1;
   const of = card.stepBudget ? ` of ${card.stepBudget}` : "";
+  // FINDINGS ISS-02: a run a person stopped is one state, Stopped, with
+  // Resume — never "working" or "the checks are running" beside a failure.
+  if (
+    (card.status === "in_progress" || card.status === "verify") &&
+    card.stopReason === "human_abort" &&
+    stopRecordedAt(events, "human_abort") > moved
+  ) {
+    const by = stoppedBy(events);
+    return {
+      state: "stopped",
+      label: "paused",
+      sentence: `Stopped${by ? ` by ${by}` : ""} after step ${used}. Its work so far is kept; Resume continues from its last checkpoint.`,
+      controls: ["resume"],
+      messageBox: false,
+    };
+  }
   if (card.status === "in_progress") {
     if (lastSeq(events, "card/taken_over") > moved) {
       return {
         state: "taken_over",
         label: "paused",
         sentence:
-          "Taken over by a person. Work in the issue's worktree; the agent's work so far is on its branch.",
+          "Taken over by a person. Work in the issue's worktree; the Agent's work so far is on its branch.",
         controls: ["submit", "hand_back"],
         messageBox: false,
       };
@@ -296,7 +388,7 @@ export function agentPanel(
     return {
       state: "working",
       label: "working",
-      sentence: `The agent is working on step ${next}${of}.`,
+      sentence: `The Agent is working on step ${next}${of}.`,
       controls: ["pause", "take_over"],
       messageBox: true,
     };
@@ -305,19 +397,19 @@ export function agentPanel(
     return {
       state: "checking",
       label: "working",
-      sentence: "The checks are running on the agent's work.",
+      sentence: "The checks are running on the Agent's work.",
       controls: [],
       messageBox: false,
     };
   }
   const idle: Record<string, [AgentLabel, string]> = {
-    ready: ["queued", "Queued: the agent starts this issue when a slot is free."],
-    planning: ["queued", "Queued: the planning model is preparing this issue for the agent."],
-    review: ["needs you", "The agent's work is waiting for your review."],
-    parked: ["needs you", "On hold until a person unparks it."],
-    done: ["done", "Done. The agent's work is merged."],
+    ready: ["queued", "Queued: the Agent starts this issue when a slot is free."],
+    planning: ["queued", "Queued: the planning model is preparing this issue for the Agent."],
+    review: ["needs you", "The Agent's work is waiting for your review."],
+    parked: ["needs you", "On hold until a person takes it off hold."],
+    done: ["done", "Done. The Agent's work is merged."],
   };
-  const [label, sentence] = idle[card.status] ?? ["", "The agent isn't working on this issue."];
+  const [label, sentence] = idle[card.status] ?? ["", "The Agent isn't working on this issue."];
   return { state: "idle", label, sentence, controls: [], messageBox: false };
 }
 
@@ -352,7 +444,7 @@ export interface ActivityQuestion {
   id: string;
   source: string;
   options: { index: number; label: string; isDefault: boolean }[];
-  /** The agent carries on with the default while it waits (a safe default). */
+  /** The Agent carries on with the default while it waits (a safe default). */
   continuing: boolean;
   line: string;
 }
@@ -405,6 +497,7 @@ const BRIEF = new Set([
   "card/repair_plan",
   "card/step",
   "card/pause_requested",
+  "card/abort_requested",
   "card/taken_over",
   "card/review",
   "decision/answered",
@@ -466,14 +559,28 @@ function boardLabel(status: string): string {
   return BOARD_COLUMNS.find((c) => c.id === id)?.label ?? columnLabel(status);
 }
 
+/**
+ * A move within one board column, in words (FINDINGS ISS-06): Activity uses
+ * the board's columns (NAMING rows 25-26), so the stored stages inside a
+ * column are said as what happened, never as a column of their own.
+ */
+const WITHIN_COLUMN: Record<string, string> = {
+  verify: "handed its work to the checks",
+  planning: "started planning",
+  in_progress: "went back to work",
+  ready: "finished planning",
+};
+
 function movedText(p: Record<string, unknown>): string {
   const from = String(p.fromStatus ?? "");
   const to = String(p.toStatus ?? "");
   const [a, b] = [boardLabel(from), boardLabel(to)];
-  return a === b
-    ? `moved from ${columnLabel(from)} to ${columnLabel(to)}`
-    : `moved from ${a} to ${b}`;
+  if (a !== b) return `moved from ${a} to ${b}`;
+  return WITHIN_COLUMN[to] ?? `moved within ${a}`;
 }
+
+/** The default reasons a stop is recorded with: not worth quoting. */
+const PLAIN_STOP = /^stopped (from the (dashboard|CLI|terminal)|by a person)$/;
 
 function personActor(e: ActivityEvent): string {
   const person = e.actor === "human" || e.actor === "mcp";
@@ -510,6 +617,25 @@ export function activityItems(input: {
     });
     run = null;
   };
+  // The AI review's findings, folded into one line with its counts (ISS-06, NAMING R-35).
+  let review = null as { at: string; key: string; counts: Record<string, number> } | null;
+  const flushReview = () => {
+    if (!review) return;
+    const c = review.counts;
+    const parts = (["unmet", "unclear", "met"] as const)
+      .filter((v) => c[v])
+      .map((v) => `${c[v]} ${v}`);
+    push({
+      key: review.key,
+      at: review.at,
+      kind: "event",
+      who: "AI review",
+      ai: true,
+      text: parts.length ? `reviewed the change: ${parts.join(", ")}` : "reviewed the change",
+      tone: c.unmet ? "fail" : c.unclear ? "parked" : "neutral",
+    });
+    review = null;
+  };
   const events = [...input.events].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
   for (const e of events) {
     if (NEVER.has(e.type)) continue;
@@ -517,6 +643,15 @@ export function activityItems(input: {
     const at = e.createdAt ?? "";
     const key = `ev${e.seq ?? order}`;
     const p = (e.payload ?? {}) as Record<string, unknown>;
+    if (e.type === "card/review" && e.actor === "reviewer") {
+      flush();
+      const verdict = String(p.verdict ?? "");
+      if (!review) review = { at, key, counts: {} };
+      if (verdict === "met" || verdict === "unmet" || verdict === "unclear")
+        review.counts[verdict] = (review.counts[verdict] ?? 0) + 1;
+      continue;
+    }
+    flushReview();
     if (e.type === "card/step") {
       const s = p as StepPayload;
       const turn = s.turn ?? 0;
@@ -571,7 +706,21 @@ export function activityItems(input: {
         kind: "event",
         who: personActor(e),
         ai: false,
-        text: "asked the agent to pause at its next step",
+        text: "asked the Agent to pause at its next step",
+        tone: "parked",
+      });
+      continue;
+    }
+    if (e.type === "card/abort_requested") {
+      const reason = String(p.reason ?? "").trim();
+      push({
+        key,
+        at,
+        kind: "event",
+        who: personActor(e),
+        ai: false,
+        text: "stopped the run",
+        ...(reason && !PLAIN_STOP.test(reason) ? { quote: reason } : {}),
         tone: "parked",
       });
       continue;
@@ -627,6 +776,7 @@ export function activityItems(input: {
     });
   }
   flush();
+  flushReview();
   for (const c of input.comments ?? []) {
     const seshat = c.by === "seshat";
     push({
@@ -648,12 +798,12 @@ export function activityItems(input: {
       kind: hand ? "hand_back" : "message",
       who: m.principalName?.trim() || "A person",
       ai: false,
-      text: hand ? "handed the issue back to the agent" : "wrote to the agent",
+      text: hand ? "handed the issue back to the Agent" : "wrote to the Agent",
       ...(m.text ? { quote: m.text } : {}),
       meta:
         m.reachedStep !== undefined
-          ? `Seen by the agent at step ${m.reachedStep}`
-          : "Not read yet: the agent reads it at its next step",
+          ? `Seen by the Agent at step ${m.reachedStep}`
+          : "Not read yet: the Agent reads it at its next step",
       tone: "neutral",
     });
   }
@@ -680,10 +830,10 @@ export function activityItems(input: {
         })),
         continuing,
         line: continuing
-          ? `Default: ${def}. The agent continues with it unless you answer.`
+          ? `Default: ${def}. The Agent continues with it unless you answer.`
           : def !== undefined
-            ? `Default: ${def}. The agent waits for your answer.`
-            : "The agent waits for your answer.",
+            ? `Default: ${def}. The Agent waits for your answer.`
+            : "The Agent waits for your answer.",
       },
     });
   }
@@ -755,4 +905,157 @@ export function sendBackBody(
   comments: readonly LineComment[],
 ): { reason: string; comments?: LineComment[] } {
   return { reason: reason.trim(), ...(comments.length ? { comments: [...comments] } : {}) };
+}
+
+// ---------------------------------------------------------------------------
+// The properties rail (NEW-dashboard-19, DB-N19-1, -2; FINDINGS ISS-01, ISS-05)
+// ---------------------------------------------------------------------------
+
+/** A card as the rail reads it: the board's card, with its display. */
+export interface PropertyCard {
+  id: string;
+  status: string;
+  title?: string;
+  tier?: string;
+  kind?: string;
+  change?: string;
+  assignee?: string;
+  delegate?: { kind: string; name?: string; principal?: string } | null;
+  priority?: number;
+  estimate?: number;
+  labels?: string[];
+  cycleId?: string;
+  epicId?: string;
+  dueDate?: string;
+  dependsOn?: string[];
+  difficulty?: number;
+  display?: { shortId?: string; title?: string };
+}
+
+export interface PropertyContext {
+  cycles?: readonly { id: string; name: string }[];
+  epics?: readonly { id: string; title: string }[];
+  cards?: readonly PropertyCard[];
+  /** Preferences → Estimation: Points shows only with `points`. */
+  estimation?: unknown;
+  /** Who filed it, from its creation on the ledger. */
+  reporter?: string;
+  /** The issue's branch, once a run made one. */
+  branch?: string;
+  /** Suggested accepters (CODEOWNERS), by name. */
+  reviewers?: readonly string[];
+  /** Who watches it (Team), by name. */
+  watchers?: readonly string[];
+  /** The delegate's state, in DEC-34's words, when the Agent is the delegate. */
+  agentState?: string;
+}
+
+export interface PropertyLink {
+  id: string;
+  text: string;
+  /** The linked issue's board column. */
+  column: string;
+}
+
+export interface PropertyRow {
+  label: string;
+  text: string;
+  /** The list's editor for this field (fields.js `editField`), when it is editable. */
+  field?: string;
+  ai?: boolean;
+  state?: string;
+  mono?: boolean;
+  copy?: string;
+  links?: PropertyLink[];
+}
+
+const linkOf = (c: PropertyCard): PropertyLink => ({
+  id: c.id,
+  text: c.display?.shortId ?? c.id,
+  column: boardColumnLabel(c.status),
+});
+
+/** The Delegate's name: the Agent (an AI teammate), a person, or no one yet. */
+function delegateText(d: PropertyCard["delegate"]): { text: string; ai: boolean } {
+  if (!d || d.kind === "none") return { text: "No one yet", ai: false };
+  if (d.kind === "worker") return { text: "Agent", ai: true };
+  return { text: d.name?.trim() || "A person", ai: false };
+}
+
+/**
+ * The issue's properties in the approved Issue mockup's order (DB-N19-1):
+ * a label, the value as people read it and, for the fields the list edits,
+ * the list's editor (DB-N19-2). *Release* is not listed: a card carries no
+ * release of its own yet.
+ */
+export function issueProperties(card: PropertyCard, ctx: PropertyContext = {}): PropertyRow[] {
+  const fmt = (field: string, value: unknown) =>
+    formatFieldValue(field, value, {
+      cycles: ctx.cycles as never,
+      epics: ctx.epics as never,
+      cards: ctx.cards as never,
+    });
+  const del = delegateText(card.delegate);
+  const all = ctx.cards ?? [];
+  const blockedBy = (card.dependsOn ?? [])
+    .map((id) => all.find((c) => c.id === id) ?? { id, status: "backlog" })
+    .map(linkOf);
+  const blocks = all.filter((c) => (c.dependsOn ?? []).includes(card.id)).map(linkOf);
+  const names = (list: readonly string[] | undefined) => (list?.length ? list.join(", ") : "None");
+  const rows: PropertyRow[] = [
+    { label: "Assignee", text: assigneeLabel(card.assignee), field: "assignee" },
+    {
+      label: "Delegate",
+      text: del.text,
+      ai: del.ai,
+      ...(del.ai && ctx.agentState ? { state: ctx.agentState } : {}),
+    },
+    { label: "Reviewers", text: names(ctx.reviewers) },
+    { label: "Reporter", text: ctx.reporter ?? "Unknown" },
+    { label: "Type", text: ISSUE_TYPE_LABELS[issueTypeOf(card as never)].label },
+    { label: "Priority", text: fmt("priority", card.priority), field: "priority" },
+  ];
+  if (showsPoints(ctx.estimation))
+    rows.push({ label: "Points", text: fmt("estimate", card.estimate), field: "estimate" });
+  rows.push(
+    { label: "Sprint", text: fmt("cycleId", card.cycleId), field: "cycleId" },
+    { label: "Epic", text: fmt("epicId", card.epicId), field: "epicId" },
+    {
+      label: "Labels",
+      text: card.labels?.length ? card.labels.join(", ") : "None",
+      field: "labels",
+    },
+    { label: "Due", text: fmt("dueDate", card.dueDate), field: "dueDate" },
+    { label: "Blocked by", text: blockedBy.length ? "" : "None", links: blockedBy },
+    { label: "Blocks", text: blocks.length ? "" : "None", links: blocks },
+    ctx.branch
+      ? { label: "Branch", text: ctx.branch, mono: true, copy: ctx.branch }
+      : { label: "Branch", text: "None yet" },
+  );
+  // Watching is the Team setup's (teams item 22): Solo has no watchers to list.
+  if (ctx.watchers) rows.push({ label: "Watchers", text: names(ctx.watchers) });
+  return rows;
+}
+
+/** The peek's people and size (dashboard §2.4.2; FINDINGS ISS-05). */
+export function peekFacts(
+  card: Pick<PropertyCard, "difficulty" | "assignee" | "delegate">,
+  ctx: { accepters?: readonly string[] } = {},
+): { label: string; text: string; ai?: boolean }[] {
+  const del = delegateText(card.delegate);
+  const out: { label: string; text: string; ai?: boolean }[] = [];
+  if (typeof card.difficulty === "number")
+    out.push({ label: "Difficulty", text: `${card.difficulty} of 10` });
+  out.push({ label: "Assignee", text: assigneeLabel(card.assignee) });
+  out.push({ label: "Delegate", text: del.text, ...(del.ai ? { ai: true } : {}) });
+  if (ctx.accepters?.length)
+    out.push({ label: "Suggested accepters", text: ctx.accepters.join(", ") });
+  return out;
+}
+
+/** The browser tab's title on an issue (FINDINGS ISS-08): its key and title, then the project. */
+export function issueDocumentTitle(card: PropertyCard, project?: string): string {
+  const key = card.display?.shortId ?? card.id;
+  const title = card.display?.title ?? card.title ?? "";
+  return [`${key} ${title}`.trim(), project].filter(Boolean).join(" · ");
 }

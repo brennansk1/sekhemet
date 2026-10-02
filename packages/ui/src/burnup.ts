@@ -127,6 +127,15 @@ export function burnupChart(
   const issues = s.unit === "issues";
   const pts = (n: number) =>
     issues ? `${n} ${n === 1 ? "issue" : "issues"}` : `${n} ${n === 1 ? "pt" : "pts"}`;
+  // STA-06: one day of the project's history is a point, not a line; say so
+  // rather than draw axes from a day to the same day with nothing on them.
+  if (s.scope === "project" && days.length < 2) {
+    const only = days[0] as BurnupDay;
+    return {
+      title,
+      empty: `Not enough history yet: ${only.done} of ${pts(only.scope)} done today. The lines start once there are two days.`,
+    };
+  }
   const M = BURNUP_MARGIN;
   const H = BURNUP_HEIGHT;
   const first = days[0] as BurnupDay;

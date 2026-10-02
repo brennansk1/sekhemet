@@ -3,35 +3,28 @@
 // Jira projects list: the totals strip, one row per project the person can
 // see, the Waiting on you list across projects, and the models on this
 // server. Every word is `projectsModel`'s (`/app/lib/projects.js`); a row
-// opens that project's Status, its overview. *New project* opens Seshat on
-// the start-project conversation, the same prompt Status and the board use.
+// opens that project's Status, its overview. *New project* opens the start
+// page, #/projects/new (design-stage §2.11), which this route mounts.
 import { $, aiBadge, esc, getJSON, icon } from "./dom.js";
+import { viewerManagesWork } from "./learn.js";
 import { PROJECTS_COPY as C, projectsModel } from "./lib/projects.js";
-import { START_PROJECT_OPENING } from "./lib/seshat.js";
-import { askMerit } from "./pm_panel.js";
+import { START_ROUTE } from "./lib/start.js";
+import { loadFailedText } from "./lib/switcher.js";
 import { setTopbar } from "./shell.js";
-import { store } from "./store.js";
+import * as startPage from "./start.js";
+import { chooseProject, setProjectList } from "./switcher.js";
 
 const ui = { root: null, last: "", overview: undefined, loading: false };
 
 async function load() {
   ui.loading = true;
-  const r = await getJSON("/api/projects/overview").catch(() => ({ ok: false, status: 0 }));
+  const r = await getJSON("/api/projects/overview");
   ui.loading = false;
   if (r.ok) {
     ui.overview = r.data.overview;
-    // The project switcher's list, as the rollup kept it.
-    store.set({
-      project: {
-        ...store.state.project,
-        list: (ui.overview?.projects ?? []).map((p) => ({
-          id: p.id,
-          name: p.name,
-          status: p.state,
-        })),
-      },
-    });
-  } else ui.overview = r.status === 404 ? null : { error: r.status || "no response" };
+    // The project switcher's list (DB-N25-2), as this page read it.
+    setProjectList(ui.overview);
+  } else ui.overview = r.status === 404 ? null : { error: r.status };
   render();
 }
 
@@ -61,9 +54,21 @@ function progressHtml(r) {
   return `<span class="pj-rel">${esc(r.release)}</span><span class="pj-prog"><progress max="${Math.max(1, total)}" value="${done}" aria-label="${esc(`${r.release}: ${text}`)}"></progress><span class="sec tnum">${esc(text)}</span></span>`;
 }
 
+/** STA-07: two projects of one name are told apart by their folders, as the switcher does. */
+function folderNote(r) {
+  const all = ui.overview?.projects ?? [];
+  if (all.filter((p) => p.name === r.name).length < 2) return "";
+  const root = all.find((p) => p.id === r.id)?.rootPath ?? "";
+  const folder = root
+    .replace(/[\\/]+$/, "")
+    .split(/[\\/]/)
+    .pop();
+  return folder ? ` · ${folder}` : "";
+}
+
 function rowHtml(r, columns) {
   const cells = {
-    name: `<a href="#/status" data-open="${esc(r.id)}"><b>${esc(r.name)}</b></a><span class="sec pj-state">${esc(r.state)}</span>`,
+    name: `<a href="#/status" data-open="${esc(r.id)}"><b>${esc(r.name)}</b></a><span class="sec pj-state">${esc(r.state)}${esc(folderNote(r))}</span>`,
     health: healthHtml(r),
     release: progressHtml(r),
     forecast: `<span class="tnum">${esc(r.forecast)}</span>`,
@@ -81,7 +86,7 @@ function rowHtml(r, columns) {
 }
 
 function tableHtml(v) {
-  return `<div class="tbl-wrap"><table class="tbl pj-tbl"><caption class="sr-only">${esc(C.tableLabel)}</caption><thead><tr>${v.columns
+  return `<div class="tbl-wrap" tabindex="0"><table class="tbl pj-tbl"><caption class="sr-only">${esc(C.tableLabel)}</caption><thead><tr>${v.columns
     .map((c) => `<th scope="col">${labelled(c.label, c.ai)}</th>`)
     .join(
       "",
@@ -120,9 +125,11 @@ function render() {
     html = '<div class="sk" style="height:160px"></div>';
   } else if (o?.error !== undefined) {
     setTopbar({ title: C.title });
-    html = `<p class="stp-notice" role="status"><b>Couldn't load the projects.</b> <span class="sec">The server returned ${esc(o.error)}.</span></p>`;
+    // ERR-04: what failed and what to do, in words, with Retry.
+    const t = loadFailedText("the projects", o.error);
+    html = `<p class="stp-notice" role="alert"><b>${esc(t.title)}</b> <span class="sec">${esc(t.detail)}</span> <button class="btn sm" type="button" data-reload>${icon("refresh", 14, "ic s14")}Try again</button></p>`;
   } else {
-    const v = projectsModel({ now: Date.now(), overview: o });
+    const v = projectsModel({ now: Date.now(), overview: o, managesWork: viewerManagesWork() });
     setTopbar({ title: v.title, crumb: v.crumb });
     if (v.unavailable) {
       html = `<div class="ib-empty">${icon("layers", 24, "ic s24")}<b>${esc(v.unavailable)}</b><span>${esc(C.notOnServerDetail)}</span></div>`;
@@ -138,21 +145,19 @@ function render() {
   $(".sc", ui.root).innerHTML = html;
 }
 
-/** Scope the pages to one project, then go where the person asked. */
+/** Make a project current (the switcher's own choice), then go where the person asked. */
 function scopeTo(id, hash) {
-  if (id && store.state.project.id !== id) {
-    store.set({ project: { ...store.state.project, id } });
-    window.dispatchEvent(new CustomEvent("sekhemet:refresh"));
-  }
+  if (id) chooseProject(id, { stay: true });
   location.hash = hash;
 }
 
-/** Seshat, one step away: the panel, or on a phone the full view (§2.7.1, `askMerit`). */
+/** New project: the start page, the conversation beside the live draft (DS-N7-1). */
 function startProject() {
-  askMerit(START_PROJECT_OPENING);
+  location.hash = START_ROUTE;
 }
 
-export function mount(view) {
+export function mount(view, parsed) {
+  if (parsed?.params?.[0] === "new") return startPage.mount(view);
   const root = document.createElement("div");
   root.className = "view-host";
   root.innerHTML = `<section class="sc pj" aria-label="${esc(C.title)}"></section>`;
@@ -164,6 +169,12 @@ export function mount(view) {
     if (!t) return;
     if (t.closest("[data-new]")) {
       startProject();
+      return;
+    }
+    if (t.closest("[data-reload]")) {
+      ui.overview = undefined;
+      render();
+      load();
       return;
     }
     const open = t.closest("[data-open]");

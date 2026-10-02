@@ -24,13 +24,13 @@ describe("acceptVerdict", () => {
       acceptVerdict({ ...intact, ledger: { valid: false, corruptedSeq: 12 } }, review, passing),
     ).toEqual({
       ok: false,
-      reason: "Ledger altered at entry #12. Inspect before accepting.",
+      reason: "Activity log altered at entry #12. Inspect before accepting.",
     });
     // Even when nothing else would stop it, and before any other reason.
     expect(
       acceptVerdict({ ...intact, ledger: { valid: false } }, { status: "verify" }, undefined)
         .reason,
-    ).toBe("Ledger altered at entry #?. Inspect before accepting.");
+    ).toBe("Activity log altered at entry #?. Inspect before accepting.");
   });
 
   it("says the other reasons in order, and passes the review desk's reason through", () => {
@@ -62,9 +62,10 @@ describe("every Accept goes through it (Review, the issue page, the peek)", () =
     expect(triage).toContain('from "./lib/review_desk.js"');
     expect(triage).toContain("ledger: s.verification");
     expect(triage).toContain("acceptVerdict(ctx, card, evidence");
-    // The toolbar disables Accept from that state, its reason adjacent.
+    // The toolbar disables Accept from that state, its reasons adjacent — a
+    // checklist above the buttons, one line each (FINDINGS REV-02).
     expect(triage).toMatch(/const st = acceptState\(card, evidence, detail\);/);
-    expect(triage).toContain('<span class="why" id="accept-why">');
+    expect(triage).toContain('<ul class="blockers plain" id="accept-why"');
   });
 
   it("Review, the issue page and the peek render Accept only through triageBarHtml", () => {

@@ -81,7 +81,7 @@ describe("the vision checklist's model (GT-N4-2)", () => {
   it("gives the checklist only to a vision model the registry records as qualified, and says why otherwise", () => {
     const load = async () => fakeVisionModel("");
     expect(cardVision([], load)).toEqual({
-      visionNotRun: `no vision model in the registry is verified on this machine on checklist ${VISION_CHECKLIST_VERSION}`,
+      visionNotRun: `no vision model in Sekhemet's model list is verified on this machine on checklist ${VISION_CHECKLIST_VERSION}`,
     });
     const unmeasured: ModelEntry = { id: "vision-u", vision: true };
     const short: ModelEntry = {
@@ -236,7 +236,7 @@ describe.runIf(findChrome() !== undefined)("the visual layer in a card's verific
     const none = await verify({ card: { id: "card_v" }, vision: cardVision([], undefined) });
     expect(none.allFailures).toEqual([]);
     expect(none.advisories).toContain(
-      `vision checklist not run: no vision model in the registry is verified on this machine on checklist ${VISION_CHECKLIST_VERSION}`,
+      `vision checklist not run: no vision model in Sekhemet's model list is verified on this machine on checklist ${VISION_CHECKLIST_VERSION}`,
     );
   }, 60_000);
 

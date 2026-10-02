@@ -31,7 +31,7 @@ export async function setProjectHealth(
   log: EventLog,
   input: { project: string; health: Health; principal: string },
 ): Promise<void> {
-  if (!input.principal) throw new Error("Health is set by a person; no principal was given");
+  if (!input.principal) throw new Error("Health is set by a person; no one was named");
   if (!isHealth(input.health)) throw new Error("Health is On track, At risk or Off track");
   await log.append({
     actor: "human",
@@ -61,7 +61,7 @@ export async function setReleaseTarget(
   log: EventLog,
   input: { sliceId: string; projectId: string; target: string | null; principal: string },
 ): Promise<void> {
-  if (!input.principal) throw new Error("A target date is set by a person; no principal was given");
+  if (!input.principal) throw new Error("A target date is set by a person; no one was named");
   if (input.target !== null && !isDay(input.target)) {
     throw new Error("A target date is a day, YYYY-MM-DD");
   }
@@ -85,8 +85,7 @@ export async function setReleaseLead(
   log: EventLog,
   input: { sliceId: string; projectId: string; lead: string | null; principal: string },
 ): Promise<void> {
-  if (!input.principal)
-    throw new Error("A release's lead is named by a person; no principal was given");
+  if (!input.principal) throw new Error("A release's lead is named by a person; no one was named");
   await log.append({
     actor: "human",
     type: RELEASE_LEAD_SET,

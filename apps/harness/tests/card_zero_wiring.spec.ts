@@ -16,7 +16,7 @@ import {
   generatorOfCard,
   installScaffoldGate,
 } from "../src/card_zero.js";
-import { type Kernel, queuePrelude } from "../src/wave2.js";
+import { type RepoContext, queuePrelude } from "../src/wave2.js";
 
 // design-stage DS-P2-1, -2 in the product: once card zero is Done (a person
 // accepted it), the next pass derives the project's gates from what the
@@ -38,7 +38,7 @@ function write(root: string, rel: string, text: string) {
   writeFileSync(join(root, rel), text);
 }
 
-function kernel(): Kernel {
+function kernel(): RepoContext {
   const repoPath = mkdtempSync(join(tmpdir(), "sek-card0-wire-"));
   dirs.push(repoPath);
   vi.stubEnv("SEKHEMET_USER_CONFIG", join(repoPath, "user-config.toml"));

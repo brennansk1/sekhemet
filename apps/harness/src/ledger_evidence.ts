@@ -80,6 +80,17 @@ export async function ledgerEvidenceSummary(
  * the head it ran on (K-N8-4).
  */
 export function cardBranchHead(repoPath: string, cardId: string): string | undefined {
+  return cardBranch(repoPath, cardId)?.sha;
+}
+
+/**
+ * A card's branch, `sekhemet/<project>/<card-id>[-<slug>]`, with its head:
+ * the issue page's *Branch* (dashboard §2.6 properties rail, ISS-01).
+ */
+export function cardBranch(
+  repoPath: string,
+  cardId: string,
+): { name: string; sha: string } | undefined {
   try {
     const out = execFileSync(
       "git",
@@ -89,7 +100,8 @@ export function cardBranchHead(repoPath: string, cardId: string): string | undef
     for (const line of out.split("\n")) {
       const [ref, sha] = line.trim().split(" ");
       const leaf = ref?.split("/").at(-1) ?? "";
-      if (sha && (leaf === cardId || leaf.startsWith(`${cardId}-`))) return sha;
+      if (ref && sha && (leaf === cardId || leaf.startsWith(`${cardId}-`)))
+        return { name: ref, sha };
     }
   } catch {
     // Not a git repository, or git is missing: no head, so no external result counts.

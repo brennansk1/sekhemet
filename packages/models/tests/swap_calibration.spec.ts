@@ -170,7 +170,7 @@ describe("MS-NM14-3: a calibration night", () => {
     // Each attempt is checked (a boundary may try again); none spins.
     expect(result.hostRefusals.length).toBeGreaterThanOrEqual(1);
     expect(result.hostRefusals.length).toBeLessThanOrEqual(3);
-    for (const r of result.hostRefusals) expect(r).toMatch(/not loading qwen: swap is 5\.0 GB/);
+    for (const r of result.hostRefusals) expect(r).toMatch(/^Not loading qwen: swap is 5\.0 GB/);
     expect(s.residentWeights()).toEqual([]);
   });
 

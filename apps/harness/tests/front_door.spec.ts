@@ -2,11 +2,11 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { RUN_PROFILE_FLAGS } from "@sekhemet/eval";
 import { describe, expect, it } from "vitest";
-import { FRONT_DOOR, KNOWN_FLAGS, routeFrontDoor, unknownFlag } from "../src/front_door.js";
+import { KNOWN_FLAGS, PRIMARY_COMMANDS, routeFrontDoor, unknownFlag } from "../src/cli_commands.js";
 
 describe("the front door", () => {
   it("lists eight commands, and nothing else, in user-facing help", () => {
-    expect(FRONT_DOOR.map((c) => c.usage.split(" ")[1] ?? "")).toEqual([
+    expect(PRIMARY_COMMANDS.map((c) => c.usage.split(" ")[1] ?? "")).toEqual([
       "",
       '"<spec>"',
       "run",
@@ -64,6 +64,19 @@ describe("the front door", () => {
     expect(routeFrontDoor(["review"])).toEqual({ kind: "review", flags: [] });
   });
 
+  it("names Request changes as GitHub does, with send-back kept as its alias (DEC-52)", () => {
+    expect(routeFrontDoor(["request-changes", "card_a", "use the shared parser"])).toEqual({
+      kind: "send-back",
+      cardId: "card_a",
+      reason: "use the shared parser",
+      flags: [],
+    });
+    expect(routeFrontDoor(["request-changes"])).toEqual({
+      kind: "unknown",
+      word: "request-changes needs an issue ID",
+    });
+  });
+
   it("puts everything else behind dev, and still answers it called directly", () => {
     expect(routeFrontDoor(["dev", "replay", "card_a"])).toEqual({
       kind: "argv",
@@ -87,7 +100,7 @@ describe("the front door", () => {
 describe("S10, SUR-15: the list of known flags cannot fall behind the source", () => {
   /** Flags the harness passes to other programs (git, gh, rg, docker, secret-tool), not its own. */
   const TOOL_FLAGS = new Set(
-    "--porcelain --no-ext-diff --no-textconv --name-only --oneline --max-count --line-number --no-heading --unified --cached --short --hard --detach --grep --jq --no-verify --body --head --title --state --format --hostname --others --exclude-standard --no-merges --count --all --no-merged --ignore-scripts --no-audit --no-fund --recursive --offline-vulnerabilities --reporter --diff-filter --label".split(
+    "--porcelain --no-ext-diff --no-textconv --name-only --oneline --max-count --line-number --no-heading --unified --cached --short --hard --detach --grep --jq --no-verify --body --head --title --state --format --hostname --others --exclude-standard --no-merges --count --all --no-merged --ignore-scripts --no-audit --no-fund --recursive --offline-vulnerabilities --reporter --diff-filter --label --list --sort".split(
       " ",
     ),
   );

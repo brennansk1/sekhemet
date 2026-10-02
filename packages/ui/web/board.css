@@ -1,24 +1,48 @@
 /* Board: columns, rails, tiles (FRONTEND_DESIGN §2.4.2, §2.5.1) and the peek drawer. */
+/* The frame holds the scrolling columns and, where they do not all fit, the
+   queue pane beside them: In review and On hold, which cover no column
+   (BRD-01). `board.js` sets `tight`, `split` or `one` from `boardFit`. */
+.board-frame {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
 .board {
   flex: 1;
+  /* No intrinsic width: the columns scroll inside the board, never widen the page. */
+  width: 0;
+  min-width: 0;
   min-height: 0;
   display: flex;
   gap: 8px;
   padding: 16px;
   overflow-x: auto;
+  position: relative;
+}
+.board-pin {
+  flex: none;
+  min-height: 0;
+  display: flex;
+  gap: 8px;
+  padding: 16px;
+  border-left: 1px solid var(--border-subtle);
+}
+.board-pin .col {
+  flex: none;
+  width: var(--pin-col, 200px);
 }
 .board:focus-visible {
   outline-offset: -2px;
 }
+/* One level of container (§2.13, BRD-10): a column is a heading over its
+   tiles, with no box of its own, as the approved board mockup draws it. */
 .col {
   flex: 1 1 0;
   min-width: 200px;
   max-width: 300px;
   display: flex;
   flex-direction: column;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-card);
   min-height: 0;
 }
 .col-h {
@@ -27,7 +51,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 8px 0 12px;
+  padding: 0 0 0 8px;
 }
 .col-h h2 {
   font-size: var(--text-sm);
@@ -71,7 +95,7 @@
 }
 .cap {
   height: 2px;
-  margin: 0 12px;
+  margin: 0 8px;
   background: var(--bg-overlay);
   border-radius: 1px;
   overflow: hidden;
@@ -272,10 +296,12 @@
 .tile.done .r3 {
   color: var(--text-secondary);
 }
+/* Row 3 wraps rather than cut a chip until it says nothing (BRD-11). */
 .r3 {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
   font-size: var(--text-xs);
   color: var(--text-secondary);
   min-height: 16px;
@@ -283,9 +309,9 @@
 }
 .r3 .lbls {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 4px;
   min-width: 0;
-  overflow: hidden;
 }
 /* Teams item 19: the Agent's state on the issue, with the AI badge. */
 .tile-ai {
@@ -310,22 +336,25 @@
 }
 /* Row 4: the status badge, gate pips and work item age. The status wraps
    and never cuts off its cause (DB-P3-7). */
+/* BRD-02: the status takes its own line before it would break a word; the
+   checks are one summary beside it (tile.js). */
 .r4s {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
-  gap: 8px;
+  gap: 4px 8px;
   font-size: var(--text-xs);
   color: var(--text-secondary);
   min-width: 0;
 }
 .r4s .st {
   white-space: normal;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   display: inline-flex;
   align-items: flex-start;
   gap: 4px;
-  min-width: 0;
-  flex: 1;
+  min-width: min(100%, 96px);
+  flex: 1 1 96px;
 }
 .r4s .st > .ic,
 .r4s .st > .dot {
@@ -383,7 +412,7 @@
   flex: none;
   background: var(--bg-overlay);
   color: var(--text-primary);
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 /* DB-P3-5: the owner's name in words on the focused (or tapped) tile. */
@@ -416,14 +445,23 @@
   gap: 3px;
   white-space: nowrap;
   color: var(--text-primary);
-  max-width: 120px;
+  max-width: 100%;
+  min-width: 0;
+}
+.epic-chip > span {
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .pips {
   display: flex;
+  align-items: center;
   gap: 3px;
   flex: none;
+}
+/* More than six checks: one pip and the count (BRD-02). */
+.pips .pip-n {
+  color: var(--text-primary);
+  white-space: nowrap;
 }
 .pip {
   width: 12px;
@@ -605,26 +643,56 @@
     min-width: 220px;
   }
 }
+/* At 1280 px and wider every column stays in view by relaxing to 184 px
+   rather than scrolling (BRD-01; the dock's own minimum, pm.css). */
+.board-frame[data-fit="tight"] .col {
+  min-width: 184px;
+}
+/* A phone: one column, chosen in the column switcher (§2.14.3, BRD-01). */
+.col-switch {
+  display: flex;
+  gap: 4px;
+  padding: 8px 8px 0;
+  overflow-x: auto;
+  flex: none;
+}
+.col-switch button {
+  flex: none;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.col-switch button[aria-pressed="true"] {
+  border-color: var(--border-strong);
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.col-switch .c {
+  margin-left: 4px;
+}
 @media (max-width: 767px) {
   .board {
     padding: 8px;
   }
-  .col {
-    min-width: calc(100vw - 16px);
+  /* A phone files no issues (§2.14.3) and reaches Seshat from the bottom bar's PM tab. */
+  #top .top-ask,
+  #top .top-create {
+    display: none;
   }
-}
-.col.pinned {
-  position: sticky;
-  z-index: 1;
-}
-.col.pinned::before {
-  content: "";
-  position: absolute;
-  top: -1px;
-  bottom: -1px;
-  left: -9px;
-  width: 8px;
-  background: var(--bg-base);
+  .board-frame[data-fit="one"] .col {
+    min-width: 0;
+    max-width: none;
+    flex: 1 1 auto;
+  }
+  .board-frame[data-fit="one"] .col:not(.on) {
+    display: none;
+  }
 }
 
 /* B11: the tile being dragged to a new place in its column. */

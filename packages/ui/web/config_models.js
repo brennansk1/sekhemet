@@ -31,7 +31,7 @@ const HASH_WORD = {
   pending: "Hashing…",
   verified: "Verified",
   hash_differs: "Hash differs",
-  not_registry: "Not a registry model",
+  not_registry: "Not in Sekhemet's model list",
 };
 
 const gb = (b) => `${(b / 1e9).toFixed(1)} GB`;
@@ -128,7 +128,11 @@ function disabledAttr() {
   return ui.readOnly ? ' disabled aria-describedby="cfg-ro"' : "";
 }
 
-function foldersHtml(m) {
+// C2a (NEW-dashboard-19, DEC-51; FINDINGS CFG-07): Models' parts are the
+// approved mockup's cards — Model library, Available models, Suggested setup
+// and Compare setups — each one card, with no box inside a card.
+
+function foldersHtml(m, extra = "") {
   const folders = m.folders ?? [];
   const rows = folders.length
     ? `<ul class="cfg-folders">${folders
@@ -154,11 +158,11 @@ function foldersHtml(m) {
         `<button class="btn sm" type="button" data-add-folder="${esc(p)}"${disabledAttr()}>Add ${esc(p)}</button>`,
     )
     .join("");
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-folders"><h3 id="cfg-h-folders">Model folders</h3>${rows}${
+  return `<section class="cfg-card" aria-labelledby="cfg-h-folders"><h2 id="cfg-h-folders">Model library</h2><p class="sec">Nothing is downloaded, loaded or run until you press the button.</p>${rows}${
     suggested
       ? `<div class="row"><span class="sec">Found on this machine:</span>${suggested}</div>`
       : ""
-  }<form class="row" data-folder-form><label class="sr-only" for="cfg-folder-path">Folder path</label><input id="cfg-folder-path" type="text" name="path" placeholder="/path/to/models" autocomplete="off"${disabledAttr()}><label class="inline"><input type="checkbox" name="sub"${disabledAttr()}>Include subfolders</label><button class="btn" type="submit"${disabledAttr()}>Add folder</button><button class="btn" type="button" data-scan${disabledAttr()}>Scan</button></form><p class="sec">The scan only reads a folder; only a download you confirm writes into one.</p></section>`;
+  }<form class="row" data-folder-form><label class="sr-only" for="cfg-folder-path">Folder path</label><input id="cfg-folder-path" type="text" name="path" placeholder="/path/to/models" autocomplete="off"${disabledAttr()}><label class="inline"><input type="checkbox" name="sub"${disabledAttr()}>Include subfolders</label><button class="btn" type="submit"${disabledAttr()}>Add folder</button><button class="btn" type="button" data-scan${disabledAttr()}>Scan</button></form><p class="sec">The scan only reads a folder; only a download you confirm writes into one.</p>${extra}</section>`;
 }
 
 /* ---------- Models found ---------- */
@@ -167,7 +171,7 @@ function modelsHtml(m) {
   const list = m.models ?? [];
   const skipped = (m.skipped ?? []).filter((s) => s.reason !== "not_a_model");
   const table = list.length
-    ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Size</th><th>Quantisation</th><th>Context</th><th>Family</th><th>Fits this machine (Coding model)</th><th>Registry hash</th></tr></thead><tbody>${list
+    ? `<div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr><th>Name</th><th>Size</th><th>Quantisation</th><th>Context</th><th>Family</th><th>Fits this machine (Coding model)</th><th>Published hash</th></tr></thead><tbody>${list
         .map((x) => {
           const fit = x.fits?.worker ?? "yes";
           return `<tr><td><button class="btn ghost sm" type="button" data-open-model="${esc(x.id)}" aria-expanded="${ui.open === x.id}">${esc(x.name)}</button>${x.noEngine ? `<div class="why">${esc(x.noEngine)}</div>` : ""}</td><td>${fromFile(x.sizeBytes, gb)}</td><td class="mono">${esc(x.quantisation)}</td><td>${x.contextLength ? fromFile(x.contextLength, tokens) : '<span class="sec">Not in the header</span>'}</td><td>${esc(x.family ?? "Unknown")}</td><td><span class="fit-${esc(fit)}">${esc(FIT_WORD[fit] ?? fit)}</span><div class="why">${esc(x.fitReason?.worker ?? "")}</div></td><td>${esc(HASH_WORD[x.hash] ?? x.hash)}</td></tr>${
@@ -183,7 +187,7 @@ function modelsHtml(m) {
         )
         .join("")}</ul></details>`
     : "";
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-found"><h3 id="cfg-h-found">Models found</h3>${table}${skip}</section>`;
+  return `<section class="cfg-card" aria-labelledby="cfg-h-found"><h2 id="cfg-h-found">Available models <span class="sec tnum">${list.length}</span></h2>${table}${skip}</section>`;
 }
 
 function detailHtml() {
@@ -250,11 +254,10 @@ function rolesHtml(r, models) {
   const roles = r.roles ?? [];
   const found = (models?.models ?? []).filter((m) => !m.noEngine);
   const anyRec = roles.some((x) => x.recommendation);
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-roles"><h3 id="cfg-h-roles">Roles</h3>${
-    anyRec
-      ? `<div class="row"><button class="btn primary" type="button" data-use-recommended${disabledAttr()}>Use the recommended models</button></div>`
-      : ""
-  }${recommendedHtml()}<div class="cfg-roles">${roles
+  // DB-N19-5: the recommendation rule's suggestion (models NEW-models-12), so the
+  // card is not titled as Seshat's; *Apply suggestion* is *Use the recommended
+  // models* with its one confirmation, and *Choose each role* the role pickers.
+  return `<section class="cfg-card" aria-labelledby="cfg-h-roles"><h2 id="cfg-h-roles">Suggested setup</h2>${recommendedHtml()}<div class="cfg-roles">${roles
     .map((x) => {
       const name = ROLE_NAME[x.role] ?? x.role;
       const state =
@@ -294,7 +297,15 @@ function rolesHtml(r, models) {
           : ""
       }</div></div>`;
     })
-    .join("")}</div></section>`;
+    .join("")}</div><div class="row">${
+    anyRec
+      ? `<button class="btn primary" type="button" data-use-recommended${disabledAttr()}>Apply suggestion</button>`
+      : ""
+  }${
+    found.length
+      ? `<button class="btn" type="button" data-choose-roles${disabledAttr()}>Choose each role</button>`
+      : ""
+  }</div></section>`;
 }
 
 /** Where *Use the recommended models* stands, and at its end what was assigned and why not (DB-N6-16). */
@@ -359,7 +370,7 @@ function dialogHtml() {
     return `<div class="cfg-dialog" role="dialog" aria-modal="false" aria-labelledby="cfg-dlg-h"><h4 id="cfg-dlg-h">Download ${esc(d.model)}</h4><dl><div><dt>Source</dt><dd>${esc(d.source)}</dd></div><div><dt>Size</dt><dd>${d.size ? graded({ value: d.size, grade: "published" }, gb) : "Not published"}</dd></div><div><dt>Published SHA-256</dt><dd class="hash">${esc(d.sha)} <button class="btn sm" type="button" data-copy-sha="${esc(d.sha)}">Copy</button></dd></div><div><dt>Written to</dt><dd class="mono">${esc(folder?.path ?? "Add a model folder that can be written first")}</dd></div></dl>${rename}<p>A request for this file to its source host. Nothing about your project is sent.</p><div class="row"><button class="btn primary" type="button" data-confirm-download${folder ? "" : " disabled"}>Download</button><button class="btn" type="button" data-cancel-dialog>Cancel</button></div></div>`;
   }
   if (d.existing)
-    return `<div class="cfg-dialog" role="dialog" aria-modal="false" aria-labelledby="cfg-dlg-h"><h4 id="cfg-dlg-h">Use the internal copy of ${esc(d.name)}</h4><dl><div><dt>Internal copy</dt><dd class="mono">${esc(d.existing)}</dd></div><div><dt>SHA-256</dt><dd class="hash">${esc(d.sha ?? "")}</dd></div></dl><p>Its hash matches the original, so nothing is copied; the registry then loads it from internal storage, and the original is kept.</p><div class="row"><button class="btn primary" type="button" data-confirm-copy="${esc(d.model)}">Use it</button><button class="btn" type="button" data-cancel-dialog>Cancel</button></div></div>`;
+    return `<div class="cfg-dialog" role="dialog" aria-modal="false" aria-labelledby="cfg-dlg-h"><h4 id="cfg-dlg-h">Use the internal copy of ${esc(d.name)}</h4><dl><div><dt>Internal copy</dt><dd class="mono">${esc(d.existing)}</dd></div><div><dt>SHA-256</dt><dd class="hash">${esc(d.sha ?? "")}</dd></div></dl><p>Its hash matches the original, so nothing is copied; Sekhemet then loads it from internal storage, and the original is kept.</p><div class="row"><button class="btn primary" type="button" data-confirm-copy="${esc(d.model)}">Use it</button><button class="btn" type="button" data-cancel-dialog>Cancel</button></div></div>`;
   return `<div class="cfg-dialog" role="dialog" aria-modal="false" aria-labelledby="cfg-dlg-h"><h4 id="cfg-dlg-h">Copy ${esc(d.name)} to internal storage</h4><dl><div><dt>Size</dt><dd>${fromFile(d.size, gb)}</dd></div><div><dt>Destination</dt><dd class="mono">${esc(d.destination)}</dd></div><div><dt>Free after</dt><dd>${graded(d.freeAfter, gb)}</dd></div><div><dt>SHA-256</dt><dd class="hash">${esc(d.sha ?? "Computing…")}</dd></div></dl><p>The copy is checked against this hash before it is used; the original is kept.</p><div class="row"><button class="btn primary" type="button" data-confirm-copy="${esc(d.model)}">Copy</button><button class="btn" type="button" data-cancel-dialog>Cancel</button></div></div>`;
 }
 
@@ -372,7 +383,7 @@ function progressHtml() {
         return `<p class="fit-no" role="alert">${esc(what)} failed: ${esc(p.error ?? "")}</p>`;
       if (p.state === "verifying") return `<p>${esc(what)}: Verifying…</p>`;
       if (p.state === "done")
-        return `<p>${esc(p.kind === "download" ? "Verified. Ready to assign." : "Copied and verified. The registry now uses the internal copy.")}</p>`;
+        return `<p>${esc(p.kind === "download" ? "Verified. Ready to assign." : "Copied and verified. Sekhemet now uses the internal copy.")}</p>`;
       const rate = p.rate ? `, ${(p.rate / 1e6).toFixed(0)} MB/s` : "";
       // An unknown size is said so, never "of 0.0 GB".
       if (!p.total)
@@ -389,8 +400,9 @@ function progressHtml() {
 
 /* ---------- Combinations, placement, residency ---------- */
 
-function combosHtml(c) {
-  const all = c.combinations ?? [];
+/** Compare setups (DB-N19-5): the benchmark's quick run and overnight schedule, then the combinations. */
+function combosHtml(c, extra = "") {
+  const all = c?.combinations ?? [];
   const kept = all.filter((x) => !x.excluded).slice(0, 8);
   const excluded = all.filter((x) => x.excluded).slice(0, 8);
   const row = (x) => {
@@ -401,9 +413,9 @@ function combosHtml(c) {
       .join("<br>");
     return `<tr><td>${models}</td><td>${x.floorsMet ? "Met" : "Not met"}</td><td>${graded(e.timePerCardMs, mins)}</td><td>${graded(e.expectedSwaps, (v) => v.toFixed(1))}</td><td>${graded(x.peakBytes, gb)}</td><td>${graded(e.acceptedPerNight, (v) => String(v))}</td></tr>`;
   };
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-combos"><h3 id="cfg-h-combos">Combinations</h3><p class="sec">Ordered by each role's quality floor, then the least time per issue including swaps, then the smaller footprint. No combined score.</p>${
+  return `<section class="cfg-card" aria-labelledby="cfg-h-combos"><h2 id="cfg-h-combos">Compare setups</h2><p class="sec">Run the quick benchmark now or schedule it overnight; the scores show under Benchmark.</p><div class="row"><a class="btn" href="#/configuration/benchmark">Run or schedule the benchmark</a></div><h3>Combinations</h3><p class="sec">Ordered by each role's quality floor, then the least time per issue including swaps, then the smaller footprint. No combined score.</p>${
     kept.length
-      ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Models</th><th>Quality floors</th><th>Time per issue</th><th>Swaps per issue</th><th>Peak memory</th><th>Issues per night</th></tr></thead><tbody>${kept.map(row).join("")}</tbody></table></div>`
+      ? `<div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr><th>Models</th><th>Quality floors</th><th>Time per issue</th><th>Swaps per issue</th><th>Peak memory</th><th>Issues per night</th></tr></thead><tbody>${kept.map(row).join("")}</tbody></table></div>`
       : '<p class="sec">No combination to compare yet.</p>'
   }${
     excluded.length
@@ -411,12 +423,12 @@ function combosHtml(c) {
           .map((x) => `<li>${esc(x.excluded)}</li>`)
           .join("")}</ul></details>`
       : ""
-  }</section>`;
+  }${extra}</section>`;
 }
 
 function placementHtml(p) {
   const rows = p.rows ?? [];
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-place"><h3 id="cfg-h-place">Placement</h3><p class="sec">At least 20 GB of internal space is kept free. Free now: ${graded(p.internalFreeBytes, gb)}.</p>${
+  return `<div class="cfg-part" role="group" aria-labelledby="cfg-h-place"><h3 id="cfg-h-place">Placement</h3><p class="sec">At least 20 GB of internal space is kept free. Free now: ${graded(p.internalFreeBytes, gb)}.</p>${
     rows.length
       ? `<ul>${rows
           .map(
@@ -429,7 +441,7 @@ function placementHtml(p) {
           )
           .join("")}</ul>`
       : '<p class="sec">Every model is on internal storage.</p>'
-  }</section>`;
+  }</div>`;
 }
 
 function residencyHtml(r) {
@@ -447,7 +459,7 @@ function residencyHtml(r) {
     )
     .join("");
   const total = hours.reduce((n, h) => n + h.value, 0) / Math.max(1, hours.length);
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-res"><h3 id="cfg-h-res">The last 24 hours</h3><p>Time spent swapping: ${graded({ value: total * 100, grade: "measured" }, (v) => `${v.toFixed(1)}%`)}</p><div class="cfg-timeline">${bars}</div>${segs ? `<ul>${segs}</ul>` : '<p class="sec">No loads recorded yet.</p>'}</section>`;
+  return `<div class="cfg-part" role="group" aria-labelledby="cfg-h-res"><h3 id="cfg-h-res">The last 24 hours</h3><p>Time spent swapping: ${graded({ value: total * 100, grade: "measured" }, (v) => `${v.toFixed(1)}%`)}</p><div class="cfg-timeline">${bars}</div>${segs ? `<ul>${segs}</ul>` : '<p class="sec">No loads recorded yet.</p>'}</div>`;
 }
 
 /* ---------- Render and events ---------- */
@@ -459,13 +471,18 @@ function render() {
   if (ui.error) parts.push(`<p class="fit-no" role="alert">${esc(ui.error)}</p>`);
   parts.push(dialogHtml(), progressHtml());
   const m = ui.models;
-  if (!m) parts.push('<div class="sk" style="height:160px"></div>');
-  else if (m.error) parts.push(`<p role="alert">Couldn't read the models: ${esc(m.error)}</p>`);
-  else parts.push(foldersHtml(m), modelsHtml(m));
-  if (ui.roles && !ui.roles.error) parts.push(rolesHtml(ui.roles, m));
-  if (ui.combos && !ui.combos.error) parts.push(combosHtml(ui.combos));
-  if (ui.placement && !ui.placement.error) parts.push(placementHtml(ui.placement));
-  if (ui.residency && !ui.residency.error) parts.push(residencyHtml(ui.residency));
+  const left = [];
+  const right = [];
+  const placement = ui.placement && !ui.placement.error ? placementHtml(ui.placement) : "";
+  if (!m) left.push('<div class="sk" style="height:160px"></div>');
+  else if (m.error) left.push(`<p role="alert">Couldn't read the models: ${esc(m.error)}</p>`);
+  else left.push(foldersHtml(m, placement), modelsHtml(m));
+  if (ui.roles && !ui.roles.error) right.push(rolesHtml(ui.roles, m));
+  const residency = ui.residency && !ui.residency.error ? residencyHtml(ui.residency) : "";
+  right.push(combosHtml(ui.combos && !ui.combos.error ? ui.combos : null, residency));
+  parts.push(
+    `<div class="cfg-cards"><div class="cfg-col">${left.join("")}</div><div class="cfg-col">${right.join("")}</div></div>`,
+  );
   const html = parts.join("");
   const host = $(".cfg-models", ui.root);
   if (host && host.dataset.html !== html) {
@@ -530,6 +547,9 @@ async function onClick(e) {
       announce(`${ROLE_NAME[role]} assigned.`);
     }
     load("roles");
+  } else if (d.chooseRoles !== undefined) {
+    // *Choose each role*: to the first role's picker, where each role is assigned.
+    ui.root?.querySelector("[data-assign-select]")?.focus();
   } else if (d.useRecommended !== undefined) {
     const r = await getJSON("/api/config/recommended");
     if (!r.ok) return error(r.data?.error ?? "The recommendation could not be read.");

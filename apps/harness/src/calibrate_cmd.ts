@@ -35,6 +35,7 @@ import {
   selectEngine,
   withMeasurementRun,
 } from "@sekhemet/models";
+import { plural } from "@sekhemet/ui";
 import { describeModel, launchVariant } from "./model_access.js";
 
 /** The two adapters a speculative-decoding measurement compares (M19). */
@@ -240,12 +241,12 @@ export async function runCalibrate(
   });
   const gb = (n: number) => Math.round(n / 1024 ** 3);
   say(
-    `Machine: ${gb(profile.fingerprint.totalBytes)} GB, tier ${profile.tier}, ${gb(profile.usableBytes)} GB usable for models (${profile.usableMemorySource ?? "given"}), ${profile.memoryBandwidthGbPerSecond ?? "?"} GB/s.`,
+    `Machine: ${gb(profile.fingerprint.totalBytes)} GB, class ${profile.tier}, ${gb(profile.usableBytes)} GB usable for models (${profile.usableMemorySource ?? "given"}), ${profile.memoryBandwidthGbPerSecond ?? "?"} GB/s.`,
   );
   if (profile.settings) {
     const s = profile.settings;
     say(
-      `  working context ${s.workingContextTokens} tokens, ${s.parallelCards} issue(s) at once, roles ${s.coLoadRoles ? "co-loaded" : "swapped"} — ${s.reason}.`,
+      `  working context ${s.workingContextTokens} tokens, ${plural(s.parallelCards, "issue")} at once, roles ${s.coLoadRoles ? "co-loaded" : "swapped"} — ${s.reason}.`,
     );
   }
   if (profile.launch) say(`  ${profile.launch.reason}.`);
@@ -470,7 +471,8 @@ export async function runMtpAb(opts: {
     say(err instanceof Error ? err.message : String(err));
     return 1;
   }
-  for (const [why, n] of Object.entries(recorded.skipped)) say(`Skipped ${n} step(s): ${why}.`);
+  for (const [why, n] of Object.entries(recorded.skipped))
+    say(`Skipped ${plural(n, "step")}: ${why}.`);
   const { requests, thinking } = recorded;
   if (!thinking || requests.length === 0) {
     say(`No replayable steps of ${adapter.modelId} in ${opts.repos.join(", ")}.`);
@@ -509,7 +511,7 @@ export async function runMtpAb(opts: {
     return 1;
   }
   say(
-    `${method} ${r.enabled ? "on" : "off"} for thinking ${thinking}: ${r.reason} (median ${r.speedup.toFixed(2)}x seconds per step). It is used only once \`sekhemet qualify --speculative on\` has also passed with it (MD-N8-2).`,
+    `${method} ${r.enabled ? "on" : "off"} for thinking ${thinking}: ${r.reason} (median ${r.speedup.toFixed(2)}x seconds per step). It is used only once \`sekhemet qualify --speculative on\` has also passed with it.`,
   );
   if (r.evidencePath) say(`Per-step timings: ${r.evidencePath}`);
   return 0;

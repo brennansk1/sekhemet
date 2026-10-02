@@ -13,6 +13,7 @@
  * health words are Status's own (`forecastDates`, `HEALTH_LABELS`).
  * `web/projects.js` renders this; the browser loads it as `/app/lib/projects.js`.
  */
+import { reviewItHref } from "./learn.js";
 import { type RosterRoleLike, formatShortDate, rosterRows } from "./pm.js";
 import {
   HEALTH_LABELS,
@@ -30,6 +31,8 @@ import { formatWait, parseTitle, plural } from "./vocabulary.js";
 export interface ProjectFacts {
   id: string;
   name: string;
+  /** Where its repository is on the server: the project switcher's tooltip (DB-N25-1). */
+  rootPath?: string;
   /** The project's rollup (kernel K-N5-3). */
   state: "active" | "idle" | "done" | "paused" | "archived";
   /** The lead's name ("you" for the viewer), or null when none is named. */
@@ -83,6 +86,8 @@ export interface ProjectsOverview {
 
 export interface ProjectsInput {
   now: number;
+  /** The viewer manages the work: *Review it* opens the criteria view (DB-N17-1). */
+  managesWork?: boolean;
   /** null when the server has no overview route. */
   overview: ProjectsOverview | null;
 }
@@ -195,7 +200,7 @@ const GB = 1024 ** 3;
 const gb = (bytes: number) => String(Math.round((bytes / GB) * 10) / 10);
 const capital = (s: string) => (s ? s[0]?.toUpperCase() + s.slice(1) : s);
 
-function waitingItem(w: WaitingFacts, now: number): WaitingItem & { ms: number } {
+function waitingItem(w: WaitingFacts, now: number, manages: boolean): WaitingItem & { ms: number } {
   const title = titleOf(w.title);
   const ms = Math.max(0, now - Date.parse(w.since));
   const base = {
@@ -210,7 +215,7 @@ function waitingItem(w: WaitingFacts, now: number): WaitingItem & { ms: number }
         ...base,
         text: `${title} is waiting for your review.`,
         action: "Review it",
-        href: `#/review/${w.cardId}`,
+        href: reviewItHref(w.cardId, manages),
       };
     case "plan":
       return {
@@ -286,7 +291,7 @@ export function projectsModel(input: ProjectsInput): ProjectsView {
   }
 
   const waitingItems = o.waiting
-    .map((w) => waitingItem(w, now))
+    .map((w) => waitingItem(w, now, input.managesWork === true))
     .sort((a, b) => b.ms - a.ms)
     .map(({ ms: _ms, ...w }) => w);
 

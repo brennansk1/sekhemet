@@ -66,7 +66,7 @@ export const CONTROL_RULES = {
   "agent.guide": { level: "member", does: "guide the Agent" },
   "agent.pause": { level: "member", does: "pause the Agent" },
   "agent.take_over": { level: "member", does: "take this issue over from the Agent" },
-  review: { level: "member", does: "send back, park or reject this issue" },
+  review: { level: "member", does: "request changes, put on hold or reject this issue" },
   "gates.run": { level: "member", does: "run the checks" },
   "proposal.apply": { level: "member", does: "apply Seshat's proposals" },
   "plan.approve": { level: "member", does: "approve plans" },
@@ -253,6 +253,8 @@ export interface MemberFacts {
   /** Active in the last five minutes (in memory, never recorded). */
   active?: boolean;
   locked?: boolean;
+  /** The projects whose Accept rule names the person, by id (DB-N19-3). */
+  acceptIn?: string[];
 }
 
 export interface MemberRow {
@@ -269,6 +271,8 @@ export interface MemberRow {
   pending: boolean;
   locked: boolean;
   you: boolean;
+  /** *Can accept in*: the projects' names, sorted (DB-N19-3). */
+  acceptIn: string[];
   /** The row's actions: an Admin's, none for anyone else (DB-N9-16). */
   actions: (
     | "level"
@@ -358,9 +362,225 @@ export function memberRows(
       pending: m.pending === true,
       locked: m.locked === true,
       you,
+      acceptIn: (m.acceptIn ?? [])
+        .map((p) => ctx.projectNames?.[p] ?? p)
+        .sort((a, b) => a.localeCompare(b)),
       actions,
     };
   });
+}
+
+/* ---------- Members' parts (DB-N19-3, DB-N19-4; DEC-51, the approved mockup) ---------- */
+
+/** Every word of Members' tabs, Invites, Sign-in, AI teammates and Access levels. */
+export const MEMBERS_PARTS_COPY = {
+  tabs: { members: "Members", invites: "Invites", signin: "Sign-in" },
+  tabsLabel: "Members' parts",
+  auditLog: "Audit log",
+  invitePeople: "Invite people",
+  columns: {
+    name: "Name",
+    access: "Access",
+    labels: "Labels",
+    projects: "Projects",
+    acceptIn: "Can accept in",
+    lastActive: "Last active",
+  },
+  allProjects: (n: number) => (n === 1 ? "The 1 project" : `All ${n}`),
+  noProjects: "No projects yet",
+  aiTitle: "AI teammates",
+  aiNote: "not members · no access level · no seat",
+  levelsTitle: "Access levels",
+  levelsNote:
+    "Accepting work is set per project. Labels such as Developer or Product owner set a person's home page, not what they can do.",
+  invitesTitle: "Outstanding invites",
+  invitesLead:
+    "Each link works once, until it expires. Revoke one and it stops working at once; the person can be invited again.",
+  invitesEmpty: "No outstanding invites.",
+  inviteColumns: {
+    email: "Email",
+    access: "Access",
+    project: "Project",
+    by: "Sent by",
+    expires: "Expires",
+  },
+  anyEmail: "Anyone with the link",
+  wholeWorkspace: "Whole workspace",
+  anAdmin: "An Admin",
+  revoke: "Revoke",
+  revoked: "Invite revoked: the link no longer works.",
+  revokeConfirm: (who: string) => `Revoke the invite for ${who}? The link stops working at once.`,
+  signInTitle: "Sign-in",
+  signInLead:
+    "The sign-in settings in force on this server. They are changed in the server's user config.toml, never from a repository.",
+  where: "Changed in",
+} as const;
+
+export type MembersTab = "members" | "invites" | "signin";
+
+/** Members' tabs: Invites only for an Admin — an invite is a credential (DB-N19-4). */
+export function membersTabs(admin: boolean): { id: MembersTab; label: string }[] {
+  const t = MEMBERS_PARTS_COPY.tabs;
+  return [
+    { id: "members", label: t.members },
+    ...(admin ? [{ id: "invites" as const, label: t.invites }] : []),
+    { id: "signin", label: t.signin },
+  ];
+}
+
+/** The tab a route asks for, if the person may see it; else Members. */
+export function membersTab(asked: string | undefined, admin: boolean): MembersTab {
+  return membersTabs(admin).some((t) => t.id === asked) ? (asked as MembersTab) : "members";
+}
+
+/** The AI teammates' facts `GET /api/members` sends (teams items 19, 30; PM auto-apply). */
+export interface AiTeammateFacts {
+  agentIssuesPerPerson: number;
+  autoApply: { project: string; name?: string; properties: string[] }[];
+}
+
+const sentence = (s: string) => `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
+const andList = (items: readonly string[]): string =>
+  items.length <= 1
+    ? (items[0] ?? "")
+    : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+
+/**
+ * Seshat and the Agent, under the table (DB-N19-3, DEC-36): AI shown as AI,
+ * not members, each with its role and what it may do — Seshat suggests and
+ * people apply, with where auto-apply is on; the Agent acts with the access
+ * of the person who starts it, at the per-person cap.
+ */
+export function aiTeammateLines(ai: AiTeammateFacts): {
+  who: "seshat" | "agent";
+  name: string;
+  role: string;
+  does: string;
+}[] {
+  const auto = ai.autoApply.length
+    ? `on for ${ai.autoApply.map((p) => `${andList(p.properties)} in ${p.name ?? p.project}`).join("; ")}`
+    : "off for every property";
+  const cap = Math.max(1, Math.round(ai.agentIssuesPerPerson));
+  return [
+    {
+      who: "seshat",
+      name: "Seshat",
+      role: "Project manager · Planning model",
+      does: `Suggests; people apply. Auto-apply: ${auto}.`,
+    },
+    {
+      who: "agent",
+      name: "Agent",
+      role: "Coding model",
+      does: `Acts with the access of the person who starts it · ${cap} ${cap === 1 ? "issue" : "issues"} per person at a time.`,
+    },
+  ];
+}
+
+/** Each access level and what it newly allows, in the server's table's words (DB-N19-3). */
+export function accessLevelLines(
+  levels: readonly { level: string; allows: readonly string[] }[],
+): { level: string; word: string; allows: string }[] {
+  return levels
+    .filter((l) => isAccessLevel(l.level))
+    .map((l) => ({
+      level: l.level,
+      word: accessLevelWord(l.level),
+      allows: l.allows.length ? `${sentence(l.allows.join("; "))}.` : "",
+    }));
+}
+
+/** An outstanding invite as `GET /api/invites` sends it: by reference, never the link. */
+export interface InviteFacts {
+  ref: string;
+  level: string;
+  expires: string;
+  email?: string;
+  project?: string;
+  projectName?: string;
+  invitedBy?: string;
+}
+
+/** "in 3 hours", "in 7 days": when an invite stops working. */
+function expiresIn(iso: string, now: number): string {
+  const ms = Date.parse(iso) - now;
+  if (!Number.isFinite(ms) || ms <= 0) return "expired";
+  const hours = Math.round(ms / 3_600_000);
+  if (hours < 1) return "within the hour";
+  if (hours < 24) return `in ${hours} hour${hours === 1 ? "" : "s"}`;
+  const days = Math.round(hours / 24);
+  return `in ${days} day${days === 1 ? "" : "s"}`;
+}
+
+/** The Invites tab's rows (DB-N19-4), soonest to expire last as the server sends them. */
+export function inviteRows(
+  invites: readonly InviteFacts[],
+  now: number,
+): {
+  ref: string;
+  email: string;
+  levelWord: string;
+  project: string;
+  by: string;
+  expires: string;
+}[] {
+  const c = MEMBERS_PARTS_COPY;
+  return invites.map((i) => ({
+    ref: i.ref,
+    email: i.email || c.anyEmail,
+    levelWord: accessLevelWord(i.level),
+    project: i.project ? (i.projectName ?? i.project) : c.wholeWorkspace,
+    by: i.invitedBy || c.anAdmin,
+    expires: expiresIn(i.expires, now),
+  }));
+}
+
+/** The sign-in settings in force, as `GET /api/members` sends them (teams items 11–14). */
+export interface SignInFacts {
+  sso: boolean;
+  ssoLevels?: "sekhemet" | "provider";
+  passkeys: boolean;
+  passwords: boolean;
+  minPasswordLength: number;
+  openSignup: readonly string[];
+  idleMinutes: number;
+  absoluteHours: number;
+}
+
+const hoursText = (minutes: number) =>
+  minutes % 60 === 0 ? `${minutes / 60} h` : `${minutes} min`;
+
+/** The Sign-in tab: each setting, its value in words, and where it is changed. */
+export function signInLines(s: SignInFacts): { label: string; value: string; where: string }[] {
+  const cfg = "the server's user config.toml";
+  return [
+    {
+      label: "Company SSO",
+      value: s.sso
+        ? `On · ${s.ssoLevels === "provider" ? "levels from the identity provider" : "levels set here"}`
+        : "Off",
+      where: `[identity] sources and [identity.oidc] in ${cfg}`,
+    },
+    { label: "Passkeys", value: s.passkeys ? "On" : "Off", where: `[identity] sources in ${cfg}` },
+    {
+      label: "Passwords",
+      value: s.passwords ? `On · ${s.minPasswordLength} characters minimum` : "Off",
+      where: `[identity] sources in ${cfg}`,
+    },
+    {
+      label: "Open sign-up",
+      // The key is read, not yet acted on (teams NEW-teams-3): invite links only, either way.
+      value: s.openSignup.length
+        ? `Set for ${andList([...s.openSignup])}, not yet in effect · invite links only`
+        : "Off · invite links only",
+      where: `[identity] open_signup_domains in ${cfg}`,
+    },
+    {
+      label: "Sessions",
+      value: `${hoursText(s.idleMinutes)} idle · ${s.absoluteHours} h total`,
+      where: `[sessions] idle_minutes and absolute_hours in ${cfg}`,
+    },
+  ];
 }
 
 /* ---------- Audit (TEAM-27) ---------- */
@@ -398,7 +618,7 @@ export const AUDIT_CATEGORIES: readonly {
       "release/lead_set",
     ],
   },
-  { id: "invite", label: "Invites", types: ["member/invited"] },
+  { id: "invite", label: "Invites", types: ["member/invited", "member/invite_revoked"] },
   { id: "token", label: "Tokens", types: ["token/created", "token/used", "token/revoked"] },
   {
     id: "password",
@@ -438,7 +658,7 @@ export function auditCategoryOf(type: string): AuditCategory | undefined {
 
 export const AUDIT_COPY = {
   title: "Audit",
-  lead: "Every sign-in, refusal, lock, level change, invite, token, password reset, model change and configuration change, read from the event log.",
+  lead: "Every sign-in, refusal, lock, level change, invite, token, password reset, model change and configuration change, read from the Activity log.",
   refused: "Only an Admin can open the audit log.",
   time: "Time",
   actor: "Actor",
@@ -532,6 +752,8 @@ export function auditAction(type: string, p: Payload): string {
       return "Removed from the workspace";
     case "member/invited":
       return `Invited as ${accessLevelWord(str(p.level))}`;
+    case "member/invite_revoked":
+      return "Invite revoked";
     case "token/created":
       return `Personal access token created at ${accessLevelWord(str(p.level))}`;
     case "token/used":

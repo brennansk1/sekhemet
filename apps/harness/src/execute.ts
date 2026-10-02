@@ -62,7 +62,8 @@ import {
 import { type SpidrSliceKind, scoreDifficulty, stepBudgetForDifficulty } from "@sekhemet/planner";
 import { confinedSandbox, mergeNetworkConfigs, policyFetch } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
-import { integrationBranch } from "./accept.js";
+import { plural } from "@sekhemet/ui";
+import { integrationBranch, ledgerBundle, reviewEntriesSinceEvidence } from "./accept.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { baselineInput, cardGateRunner, gateBaseBranch } from "./card_gates.js";
 import { cardOneTests, cardZeroSteps, withoutCardOneStaging } from "./card_zero.js";
@@ -76,6 +77,7 @@ import {
 import { configOverrideLines, networkConfigs } from "./config_apply.js";
 import { egressEvent } from "./egress_event.js";
 import type { evidenceSummary } from "./evidence_summary.js";
+import { PR_EVENT, openPullRequestViaApp, prBody } from "./github_sync.js";
 import {
   decideEgress,
   egressRecorder,
@@ -95,7 +97,6 @@ import { workerWebDocs } from "./research/service.js";
 import { Tracer, toolCallSpan, traced } from "./tracing.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { cardVision } from "./vision_check.js";
-import { PR_EVENT, openPullRequestViaApp, prBody } from "./wave2_github.js";
 import { loadRepoSkills, untrustedFiles } from "./workspace_trust.js";
 
 /** The repo's trace store, or none when it cannot be opened (tracing never blocks a card). */
@@ -215,7 +216,7 @@ export function visionForCard(ctx: ExecutionContext): ReturnType<typeof cardVisi
     models = ctx.visionModels ? ctx.visionModels() : new ModelRegistry().visionModels();
   } catch (err) {
     return {
-      visionNotRun: `the model registry could not be read: ${err instanceof Error ? err.message : String(err)}`,
+      visionNotRun: `Sekhemet's model list could not be read: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
   return cardVision(models, ctx.loadVisionModel);
@@ -686,7 +687,7 @@ export async function executeCard(
           fromStatus: current.status,
           toStatus: to,
           actor: "executor",
-          reason: reason ?? `the agent's run moved the issue to ${to}`,
+          reason: reason ?? `the Agent's run moved the issue to ${to}`,
         });
       },
       // A move the board refuses (back-pressure, WIP) holds the card with its
@@ -830,7 +831,7 @@ export async function executeCard(
     );
   }
   if (result.held) log(`   held (wanted ${result.held.wanted}): ${result.held.reason}`);
-  if (result.parked) log(`   parked (${result.parked.stopReason}): ${result.parked.suggestion}`);
+  if (result.parked) log(`   on hold (${result.parked.stopReason}): ${result.parked.suggestion}`);
   if (result.replan) log(`   re-plan requested: ${result.replan.summary.slice(0, 200)}`);
   if (ctx.learning) {
     try {
@@ -848,7 +849,9 @@ export async function executeCard(
           ),
       });
       if (proposed > 0)
-        log(`   learning: ${proposed} candidate rule(s) from this attempt, waiting for approval`);
+        log(
+          `   learning: ${plural(proposed, "candidate rule")} from this attempt, waiting for approval`,
+        );
     } catch {
       // Learning is a side channel; it must never fail a card.
     }
@@ -1464,7 +1467,7 @@ export async function explainCard(ctx: ExecutionContext, cardId: string): Promis
   if (attempts.length > 0) {
     const last = attempts.at(-1);
     lines.push(
-      `${attempts.length} attempt(s); the last used ${last?.tokensUsed ?? 0} tokens in ${Math.round(last?.secondsUsed ?? 0)} s.`,
+      `${plural(attempts.length, "attempt")}; the last used ${last?.tokensUsed ?? 0} tokens in ${Math.round(last?.secondsUsed ?? 0)} s.`,
     );
   }
   try {
@@ -1482,7 +1485,7 @@ export async function explainCard(ctx: ExecutionContext, cardId: string): Promis
   }
   const parked = (await ctx.cardStore.cardEvents(card.id, ["card/parked"])).at(-1);
   if (parked)
-    lines.push(`Park diagnosis: ${(parked.payload as { suggestion?: string }).suggestion ?? ""}`);
+    lines.push(`Hold diagnosis: ${(parked.payload as { suggestion?: string }).suggestion ?? ""}`);
   if (card.status === "parked" || card.stopReason) {
     // P14: the diagnosis, what was tried, and the smallest unblocking action.
     const { diagnoseEscalation } = await import("@sekhemet/planner");
@@ -1531,6 +1534,17 @@ export async function releaseHeldCards(ctx: ExecutionContext): Promise<string[]>
     if (!ok) continue;
     released.push(card.id);
     if (wanted === "verify" && latestEvidencePassed(ctx.repoPath, card.id)) {
+      // RG-P8-1 (FINDINGS REV-05): a change no AI review has read waits in
+      // Verify for it, as the runner's own pass would have; the queue's next
+      // run reviews it, or records why it cannot (`ReviewFlow.resume`).
+      const reviewed = (await reviewEntriesSinceEvidence(ctx.cardStore, card.id)).length > 0;
+      const diff = reviewed ? "" : ((await ledgerBundle(ctx, card.id))?.diff ?? "").trim();
+      if (diff) {
+        await ctx.cardStore
+          .updateCard(card.id, { blockedReason: REVIEW_WAIT_REASON }, "executor")
+          .catch(() => undefined);
+        continue;
+      }
       try {
         await ctx.boardService.transitionCard({
           cardId: card.id,
@@ -1553,6 +1567,9 @@ export async function releaseHeldCards(ctx: ExecutionContext): Promise<string[]>
   }
   return released;
 }
+
+/** `review_flow.ts`'s REVIEW_WAIT: the reason a card waits in Verify for its AI review. */
+const REVIEW_WAIT_REASON = "Waiting for AI review";
 
 function latestEvidencePassed(repoPath: string, cardId: string): boolean {
   try {

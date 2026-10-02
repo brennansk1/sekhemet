@@ -38,7 +38,7 @@ import { leaseRefusal, runnerLease } from "./runner_lease.js";
  * every other write.
  */
 
-export interface RestExtraContext {
+export interface RunRouteContext {
   repoPath: string;
   cardStore?: CardStore | undefined;
   boardService: BoardService;
@@ -108,11 +108,11 @@ function cardFields(b: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-export async function handleRestExtras(
+export async function handleRunRoutes(
   req: IncomingMessage,
   res: ServerResponse,
   url: string,
-  ctx: RestExtraContext,
+  ctx: RunRouteContext,
 ): Promise<boolean> {
   const { json } = ctx;
   const store = ctx.cardStore;

@@ -2,19 +2,27 @@
 // across projects, grouped by reason — Needs you, Mentioned, Review
 // requested, Watching, Agent finished — the way Linear's Inbox reads, with
 // Done, Snooze and Save on each row and the Inbox · Saved · Done tabs.
-// Opening a row marks it read. *Needs you* carries the questions waiting on
+// Selecting a row marks it read and fills the reading pane (NEW-dashboard-19,
+// DEC-51: two panes from 1100 px, one list below with the pane in its place).
+// *Needs you* carries the questions waiting on
 // you: a request to start the Agent (Start, Decline), a plan sent for your
 // approval, a mention of someone who cannot see the project (Invite, Don't
 // invite), and decision requests, answered here with their options (the
 // planner's and the kernel's, §2.5.7). Every word is `/app/lib/inbox.js`'s.
 import { byWait, duration, mergeDecisions, policyLine, waited } from "./decision.js";
 import { $, $$, aiBadge, esc, getJSON, icon, postJSON } from "./dom.js";
+import { viewerManagesWork } from "./learn.js";
 import {
   INBOX_COPY as C,
   INBOX_FILTERS,
+  INBOX_SPLIT_PX,
+  INBOX_PANE_COPY as PC,
   SNOOZE_CHOICES,
+  causeComment,
   inboxGroups,
   itemLine,
+  paneOpenHref,
+  readingFacts,
   snoozeUntil,
 } from "./lib/inbox.js";
 import { parseTitle, shortId } from "./lib/vocabulary.js";
@@ -31,7 +39,15 @@ const ui = {
   confirm: new Set(),
   focus: 0,
   last: "",
+  lastPane: "",
   timer: 0,
+  /** The item the reading pane shows (DB-N19-7). */
+  selected: "",
+  /** Below 1100 px: the pane is open in the list's place (DB-N19-9). */
+  reading: false,
+  /** The selected issue's card and comments: `{id, loading?, card?, comments?}`. */
+  pane: { id: "" },
+  draftFor: "",
 };
 
 /** Fetch both decision sources into the store (`decisions` slice, U21). */
@@ -95,21 +111,22 @@ function aiHtml(lines) {
     .join("")}</span>`;
 }
 
-function actionsHtml(item) {
+function actionsHtml(item, { primaryDone = false } = {}) {
   const id = esc(item.id);
   const done =
     ui.filter === "done"
       ? `<button class="btn sm" type="button" data-act="undone" data-id="${id}">${esc(C.undone)}</button>`
-      : `<button class="btn sm" type="button" data-act="done" data-id="${id}">${icon("check", 14, "ic s14")}${esc(C.done)}</button>`;
-  const snooze = `<details class="ib-snooze"><summary class="btn sm">${icon("clock", 14, "ic s14")}${esc(C.snooze)}</summary><div class="ib-menu" role="menu">${SNOOZE_CHOICES.map(
+      : `<button class="btn sm${primaryDone ? " primary" : ""}" type="button" data-act="done" data-id="${id}" aria-keyshortcuts="e">${icon("check", 14, "ic s14")}${esc(C.done)}</button>`;
+  // A disclosure of buttons, not an ARIA menu: Tab and Enter reach each choice (A11Y-04).
+  const snooze = `<details class="ib-snooze"><summary class="btn sm">${icon("clock", 14, "ic s14")}${esc(C.snooze)}</summary><div class="ib-menu">${SNOOZE_CHOICES.map(
     (c) =>
-      `<button type="button" role="menuitem" data-snooze="${esc(c.value)}" data-id="${id}">${esc(c.label)}</button>`,
+      `<button type="button" data-snooze="${esc(c.value)}" data-id="${id}">${esc(c.label)}</button>`,
   ).join("")}</div></details>`;
   const save = `<button class="btn sm" type="button" data-act="${item.saved ? "unsave" : "save"}" data-id="${id}" aria-pressed="${item.saved}">${esc(item.saved ? C.saved : C.save)}</button>`;
-  return `${done}${snooze}${save}`;
+  return `${snooze}${save}${done}`;
 }
 
-/** The row's own answers: Start/Decline, Invite/Don't invite, the plan's Open. */
+/** The item's own answers: Start/Decline, Invite/Don't invite. */
 function answersHtml(item) {
   if (item.kind === "start_request" && item.request)
     return `<span class="ib-answers"><button class="btn sm primary" type="button" data-start="${esc(item.request.id)}" data-card="${esc(item.cardId)}" data-needs="agent.start"${item.project ? ` data-needs-project="${esc(item.project.id)}" data-needs-project-name="${esc(item.project.name)}"` : ""}>${esc(C.start)}</button><button class="btn sm" type="button" data-decline="${esc(item.request.id)}" data-card="${esc(item.cardId)}" data-needs="agent.start" data-needs-quiet${item.project ? ` data-needs-project="${esc(item.project.id)}" data-needs-project-name="${esc(item.project.name)}"` : ""}>${esc(C.decline)}</button></span>`;
@@ -118,51 +135,51 @@ function answersHtml(item) {
   return "";
 }
 
+/** One row of the list (DB-N19-7): what it is about, why, and when; its actions are the pane's. */
 function rowHtml(item, i) {
   const words = itemLine(item);
   const key = item.cardId ? `<span class="ib-key mono">${esc(shortId(item.cardId))}</span>` : "";
   const project = item.project ? `<span class="ib-proj sec">${esc(item.project.name)}</span>` : "";
-  const decision =
-    item.kind === "decision"
-      ? (store.state.decisions.items ?? []).find((d) => d.id === item.id)
-      : undefined;
-  const panel = decision
-    ? decisionHtml(decision, {
-        picked: ui.picked.get(decision.id),
-        confirm: ui.confirm.has(decision.id),
-        now: store.state.now ?? Date.now(),
-      })
-    : "";
   const snoozed = item.snoozedUntil
-    ? `<span class="sec">${esc(C.snoozedUntil(new Date(item.snoozedUntil).toLocaleString()))}</span>`
+    ? `<span class="sec ib-snoozed">${esc(C.snoozedUntil(new Date(item.snoozedUntil).toLocaleString()))}</span>`
     : "";
-  return `<li class="ib-row${item.unread ? " unread" : ""}${i === ui.focus ? " focus" : ""}" data-i="${i}" data-item="${esc(item.id)}"><div class="ib-line"><span class="ib-dot" aria-hidden="true"></span><a class="ib-main" href="${esc(item.link)}" data-open="${esc(item.id)}">${item.unread ? '<span class="sr-only">Unread: </span>' : ""}${key}<span class="ib-title">${esc(words.title)}</span>${project}<span class="ib-what">${esc(words.line)}</span></a><time class="ib-time sec tnum" datetime="${esc(item.at)}">${esc(ago(item.at))}</time></div>${aiHtml(words.ai)}${snoozed}<div class="ib-acts">${answersHtml(item)}${actionsHtml(item)}</div>${panel}</li>`;
+  const sel = item.id === ui.selected;
+  return `<li class="ib-row${item.unread ? " unread" : ""}${i === ui.focus ? " focus" : ""}${sel ? " selected" : ""}" data-i="${i}" data-item="${esc(item.id)}"><div class="ib-line"><span class="ib-dot" aria-hidden="true"></span><a class="ib-main" href="${esc(paneOpenHref(item, viewerManagesWork()))}" data-open="${esc(item.id)}"${sel ? ' aria-current="true"' : ""} tabindex="${i === ui.focus ? "0" : "-1"}">${item.unread ? '<span class="sr-only">Unread: </span>' : ""}<span class="ib-title">${esc(words.title)}</span><span class="ib-sub">${key}${project}<span class="ib-what">${esc(words.line)}</span></span></a><time class="ib-time sec tnum" datetime="${esc(item.at)}">${esc(ago(item.at))}</time></div>${aiHtml(words.ai)}${snoozed}</li>`;
 }
 
+/** A planning-model question not filed as an item: a row like the others, answered in the pane. */
 function plannerRowHtml(d, i) {
   const c = d.cardId ? store.card(d.cardId) : null;
   const title = c ? (c.display?.title ?? parseTitle(c.title).title) : "";
-  return `<li class="ib-row unread${i === ui.focus ? " focus" : ""}" data-i="${i}"><div class="ib-wait tnum${waited(d, store.state.now) > 2 * 3600_000 ? " long" : ""}">${icon("clock", 12, "ic s12")}waiting ${esc(duration(waited(d, store.state.now)))}</div>${decisionHtml(
-    d,
-    {
-      picked: ui.picked.get(d.id),
-      confirm: ui.confirm.has(d.id),
-      now: store.state.now ?? Date.now(),
-      title: title
-        ? `For <a href="#/card/${encodeURIComponent(d.cardId)}/activity">${esc(title)}</a>`
-        : "",
-    },
-  )}</li>`;
+  const id = `planner:${d.id}`;
+  const sel = id === ui.selected;
+  const long = waited(d, store.state.now) > 2 * 3600_000;
+  return `<li class="ib-row unread${i === ui.focus ? " focus" : ""}${sel ? " selected" : ""}" data-i="${i}" data-item="${esc(id)}"><div class="ib-line"><span class="ib-dot" aria-hidden="true"></span><a class="ib-main" href="#/inbox" data-open="${esc(id)}"${sel ? ' aria-current="true"' : ""} tabindex="${i === ui.focus ? "0" : "-1"}"><span class="sr-only">Unread: </span><span class="ib-title">${esc(d.question)}</span><span class="ib-sub">${title ? `<span class="ib-proj sec">${esc(title)}</span>` : ""}<span class="ib-what">The planning model asks.</span></span></a><span class="ib-wait tnum${long ? " long" : ""}">${icon("clock", 12, "ic s12")}waiting ${esc(duration(waited(d, store.state.now)))}</span></div></li>`;
 }
 
-function render() {
-  if (!ui.root) return;
+/** Every row the list shows, in its order: the items, and the planner's questions under Needs you. */
+function listEntries() {
   const data = ui.data;
-  const unread = store.state.inbox?.unread ?? 0;
-  setTopbar({ title: C.title, crumb: unread ? C.unread(unread) : "" });
-  const tabs = `<div class="ib-tabs" role="tablist" aria-label="${esc(C.title)}">${INBOX_FILTERS.map(
+  if (!data || data.error !== undefined) return [];
+  const items = data.items ?? [];
+  const extra = ui.filter === "inbox" ? plannerDecisions(items) : [];
+  const out = [];
+  const groups = inboxGroups(items);
+  if (extra.length && !groups.some((g) => g.reason === "needs_you"))
+    for (const d of extra) out.push({ id: `planner:${d.id}`, planner: d });
+  for (const g of groups) {
+    for (const it of g.items) out.push({ id: it.id, item: it });
+    if (g.reason === "needs_you")
+      for (const d of extra) out.push({ id: `planner:${d.id}`, planner: d });
+  }
+  return out;
+}
+
+function listHtml() {
+  const data = ui.data;
+  const tabs = `<div class="tabs ptabs ib-tabs" role="tablist" aria-label="${esc(C.title)}">${INBOX_FILTERS.map(
     (f) =>
-      `<button type="button" role="tab" data-filter="${esc(f.value)}" aria-selected="${ui.filter === f.value}">${esc(f.label)}</button>`,
+      `<button class="tab" type="button" role="tab" data-filter="${esc(f.value)}" aria-selected="${ui.filter === f.value}" tabindex="${ui.filter === f.value ? "0" : "-1"}">${esc(f.label)}</button>`,
   ).join("")}</div>`;
   let body;
   if (!data) body = '<div class="sk" style="height:160px"></div>';
@@ -173,17 +190,17 @@ function render() {
     const extra = ui.filter === "inbox" ? plannerDecisions(items) : [];
     const groups = inboxGroups(items);
     let i = 0;
+    const alone = extra.length && !groups.some((g) => g.reason === "needs_you");
+    const first = alone
+      ? `<section class="ib-group" aria-labelledby="ib-h-needs_you"><h2 id="ib-h-needs_you">Needs you <span class="sec tnum">${extra.length}</span></h2><ol class="ib-rows">${extra.map((d) => plannerRowHtml(d, i++)).join("")}</ol></section>`
+      : "";
     const sections = groups.map((g) => {
       const rows = g.items.map((it) => rowHtml(it, i++)).join("");
       const more =
         g.reason === "needs_you" ? extra.map((d) => plannerRowHtml(d, i++)).join("") : "";
       return `<section class="ib-group" aria-labelledby="ib-h-${esc(g.reason)}"><h2 id="ib-h-${esc(g.reason)}">${esc(g.label)} <span class="sec tnum">${g.items.length + (g.reason === "needs_you" ? extra.length : 0)}</span></h2><ol class="ib-rows">${rows}${more}</ol></section>`;
     });
-    if (extra.length && !groups.some((g) => g.reason === "needs_you")) {
-      sections.unshift(
-        `<section class="ib-group" aria-labelledby="ib-h-needs_you"><h2 id="ib-h-needs_you">Needs you <span class="sec tnum">${extra.length}</span></h2><ol class="ib-rows">${extra.map((d) => plannerRowHtml(d, i++)).join("")}</ol></section>`,
-      );
-    }
+    if (first) sections.unshift(first);
     ui.count = i;
     ui.focus = Math.min(ui.focus, Math.max(0, i - 1));
     const empty =
@@ -192,13 +209,136 @@ function render() {
       ? sections.join("")
       : `<div class="ib-empty">${icon("inbox", 24, "ic s24")}<b>${esc(empty)}</b>${ui.filter === "inbox" ? `<span>${esc(C.emptyHint)}</span>` : ""}</div>`;
   }
-  const html = `${tabs}${body}`;
-  if (html === ui.last) return;
-  ui.last = html;
-  const host = $(".sc", ui.root);
-  const top = host.scrollTop;
+  return `${tabs}${body}`;
+}
+
+/** The selected entry: an Inbox item, or a planner question. */
+function selectedEntry() {
+  return listEntries().find((e) => e.id === ui.selected);
+}
+
+/** DB-N19-7: the reading pane for the selected item. */
+function paneHtml() {
+  const entry = selectedEntry();
+  const back = `<button class="btn sm ghost ib-back" type="button" data-back>${icon("back", 14, "ic s14")}${esc(PC.backToInbox)}</button>`;
+  if (!entry)
+    return `<div class="ib-pane-empty">${icon("inbox", 24, "ic s24")}<span class="sec">${esc(PC.noSelection)}</span></div>`;
+  const now = store.state.now ?? Date.now();
+  if (entry.planner) {
+    const d = entry.planner;
+    return `<header class="ib-pane-h">${back}</header><div class="ib-pane-b">${decisionHtml(d, {
+      picked: ui.picked.get(d.id),
+      confirm: ui.confirm.has(d.id),
+      now,
+      title: d.cardId
+        ? `For <a href="#/card/${encodeURIComponent(d.cardId)}/activity">${esc(store.card(d.cardId)?.display?.title ?? d.cardId)}</a>`
+        : "",
+    })}</div>`;
+  }
+  const item = entry.item;
+  const words = itemLine(item);
+  const crumb = `<span class="ib-crumb sec">${item.project ? `${esc(item.project.name)} <span aria-hidden="true">/</span> ` : ""}${item.cardId ? `<span class="mono">${esc(shortId(item.cardId))}</span>` : ""}</span>`;
+  const pane = ui.pane.id === item.id ? ui.pane : { id: item.id, loading: Boolean(item.cardId) };
+  const facts = pane.card ? `<p class="ib-facts sec">${esc(readingFacts(pane.card))}</p>` : "";
+  const decision =
+    item.kind === "decision"
+      ? (store.state.decisions.items ?? []).find((d) => d.id === item.id)
+      : undefined;
+  let cause = "";
+  if (decision)
+    cause = decisionHtml(decision, {
+      picked: ui.picked.get(decision.id),
+      confirm: ui.confirm.has(decision.id),
+      now,
+    });
+  else {
+    const c = pane.comments ? causeComment(item, pane.comments) : undefined;
+    const quote = c
+      ? `<blockquote class="ib-quote"><p class="ib-quote-h"><b>${esc(c.name)}</b> <time class="sec tnum" datetime="${esc(c.postedAt)}">${esc(ago(c.postedAt))}</time></p><p>${esc(c.text)}</p></blockquote>`
+      : "";
+    cause = `<p class="ib-cause">${esc(words.line)}</p>${quote}${aiHtml(words.ai)}${answersHtml(item)}`;
+  }
+  const inReview = item.kind === "plan_approval" || item.reason === "review_requested";
+  const href = paneOpenHref(item, viewerManagesWork());
+  const open = href
+    ? `<a class="btn sm" href="${esc(href)}" data-open-issue="${esc(item.id)}">${esc(inReview ? PC.reviewIt : PC.openIssue)}</a>`
+    : "";
+  const reply = item.cardId
+    ? `<form class="ib-reply" data-reply="${esc(item.cardId)}"><label class="sr-only" for="ib-reply-text">${esc(PC.replyLabel)}</label><textarea id="ib-reply-text" name="text" rows="3" placeholder="${esc(PC.replyPlaceholder)}"></textarea><div class="ib-reply-f"><span class="sec">${esc(PC.replyPlaceholder)}</span>${open}<button class="btn sm primary" type="submit">${esc(PC.reply)}</button></div></form>`
+    : open
+      ? `<div class="ib-reply-f">${open}</div>`
+      : "";
+  return `<header class="ib-pane-h">${back}${crumb}<span class="ib-pane-acts">${actionsHtml(item, { primaryDone: true })}</span></header><div class="ib-pane-b"><h2 class="ib-pane-t" id="ib-pane-title" tabindex="-1">${esc(words.title)}</h2>${pane.loading ? `<p class="sec">${esc(PC.loading)}</p>` : facts}${cause}${reply}</div>`;
+}
+
+/** Two panes from 1100 px; below, one list and the pane in its place (DB-N19-7, -9). */
+const wide = () => window.matchMedia(`(min-width: ${INBOX_SPLIT_PX}px)`).matches;
+
+function render() {
+  if (!ui.root) return;
+  const unread = store.state.inbox?.unread ?? 0;
+  setTopbar({ title: C.title, crumb: unread ? C.unread(unread) : "" });
+  // On a wide page the first item is shown until another is chosen; it is not marked read.
+  const entries = listEntries();
+  if (!entries.some((e) => e.id === ui.selected)) {
+    ui.selected = wide() ? (entries[ui.focus]?.id ?? entries[0]?.id ?? "") : "";
+    if (!ui.selected) ui.reading = false;
+    if (ui.selected) void loadPane();
+  }
+  const split = $(".ib-split", ui.root);
+  split.classList.toggle("reading", ui.reading && Boolean(ui.selected));
+  const listHost = $(".ib-list", ui.root);
+  const list = listHtml();
+  if (list !== ui.last) {
+    ui.last = list;
+    const top = listHost.scrollTop;
+    const had = listHost.contains(document.activeElement) ? document.activeElement : null;
+    const refocus = had?.closest(".ib-row")?.dataset.item;
+    listHost.innerHTML = list;
+    listHost.scrollTop = top;
+    if (refocus) $(`.ib-row[data-item="${CSS.escape(refocus)}"] .ib-main`, listHost)?.focus();
+  }
+  renderPane();
+}
+
+function renderPane() {
+  const host = $(".ib-pane", ui.root);
+  if (!host) return;
+  const html = paneHtml();
+  if (html === ui.lastPane) return;
+  ui.lastPane = html;
+  // A reply being written survives a refresh of the pane.
+  const draft = $("#ib-reply-text", host)?.value ?? "";
+  const typing = document.activeElement?.id === "ib-reply-text";
   host.innerHTML = html;
-  host.scrollTop = top;
+  const box = $("#ib-reply-text", host);
+  if (box && draft && ui.draftFor === ui.selected) box.value = draft;
+  if (box && typing) box.focus();
+  ui.draftFor = ui.selected;
+}
+
+/** The selected issue's column, people and comments, for the pane. */
+async function loadPane() {
+  const entry = selectedEntry();
+  const item = entry?.item;
+  if (!item?.cardId) {
+    ui.pane = { id: entry?.id ?? "" };
+    return;
+  }
+  const id = item.id;
+  ui.pane = { id, loading: true };
+  const [c, m] = await Promise.all([
+    getJSON(`/api/cards/${encodeURIComponent(item.cardId)}`).catch(() => ({ ok: false })),
+    getJSON(`/api/cards/${encodeURIComponent(item.cardId)}/comments`).catch(() => ({ ok: false })),
+  ]);
+  if (ui.pane.id !== id) return;
+  ui.pane = {
+    id,
+    loading: false,
+    ...(c.ok && c.data?.card ? { card: c.data.card } : {}),
+    comments: m.ok ? (m.data?.comments ?? []) : [],
+  };
+  renderPane();
 }
 
 async function act(id, action, extra) {
@@ -221,7 +361,7 @@ async function answerDecision(id) {
   if (!d || option === undefined) return;
   if (d.options[option]?.destructive && !ui.confirm.has(id)) {
     ui.confirm.add(id);
-    ui.last = "";
+    ui.lastPane = "";
     render();
     return;
   }
@@ -259,27 +399,92 @@ async function post(path, body, done) {
   await refreshInbox();
 }
 
+/** DB-N19-8: *Reply* posts on the issue as the person's comment, and the pane stays. */
+async function reply(form) {
+  const box = $("textarea", form);
+  const text = box?.value.trim() ?? "";
+  if (!text) {
+    box?.focus();
+    return;
+  }
+  const res = await postJSON(`/api/cards/${encodeURIComponent(form.dataset.reply)}/comments`, {
+    text,
+  });
+  if (!res.ok) {
+    toast({
+      text: PC.couldNotReply,
+      detail: res.data?.error ?? `The server returned ${res.status}.`,
+      tone: "fail",
+    });
+    return;
+  }
+  if (box) box.value = "";
+  toast({ text: PC.replied, tone: "pass" });
+  void loadPane();
+}
+
 function pick(id, i) {
   ui.picked.set(id, i);
   ui.confirm.delete(id);
-  ui.last = "";
-  render();
+  ui.lastPane = "";
+  renderPane();
 }
 
-/** Opening an item marks it read (teams item 24), then goes where it points. */
-function open(id, href) {
+/**
+ * Selecting an item fills the pane and keeps the person in the Inbox
+ * (DB-N19-8); it marks the item read (teams item 24). Below 1100 px the pane
+ * takes the list's place, with *Back to Inbox*.
+ */
+function select(i, { open = false, focus = true } = {}) {
+  const list = rows();
+  const row = list[i];
+  if (!row) return;
+  ui.focus = i;
+  const id = row.dataset.item;
+  const changed = id !== ui.selected;
+  ui.selected = id;
   const item = (ui.data?.items ?? []).find((x) => x.id === id);
   if (item?.unread) void act(id, "read");
-  if (href) location.hash = href.replace(/^#/, "");
+  if (open && !wide()) ui.reading = true;
+  for (const [j, n] of list.entries()) {
+    n.classList.toggle("focus", j === i);
+    n.classList.toggle("selected", j === i);
+    const a = $(".ib-main", n);
+    a?.setAttribute("tabindex", j === i ? "0" : "-1");
+    if (j === i) a?.setAttribute("aria-current", "true");
+    else a?.removeAttribute("aria-current");
+  }
+  ui.last = "";
+  if (changed) {
+    ui.pane = { id, loading: true };
+    void loadPane();
+  }
+  render();
+  if (ui.reading) $("#ib-pane-title", ui.root)?.focus();
+  else if (focus) {
+    const r = rows()[i];
+    $(".ib-main", r)?.focus();
+    r?.scrollIntoView({ block: "nearest" });
+  }
 }
 
-const rows = () => $$(".ib-row", ui.root);
+/** *Back to Inbox*: the list again, focus on the same row (DB-N19-9). */
+function back() {
+  ui.reading = false;
+  render();
+  const r = rows()[ui.focus];
+  $(".ib-main", r)?.focus();
+  r?.scrollIntoView({ block: "nearest" });
+}
+
+const rows = () => $$(".ib-list .ib-row", ui.root);
 
 export function onKey(e) {
+  if (document.activeElement?.closest?.(".ib-reply")) return false;
   const list = rows();
   const cur = list[ui.focus];
   const id = cur?.dataset.item;
-  const decision = cur?.querySelector("[data-decision]")?.dataset.decision;
+  const decision = $(".ib-pane [data-decision]", ui.root)?.dataset.decision;
   if (/^[1-9]$/.test(e.key) && decision) {
     const d = (store.state.decisions.items ?? []).find((x) => x.id === decision);
     if (d && Number(e.key) <= d.options.length) {
@@ -289,19 +494,18 @@ export function onKey(e) {
   }
   if (e.key === "Enter" && cur) {
     if (decision && ui.picked.has(decision)) answerDecision(decision);
-    else if (id) open(id, cur.querySelector("[data-open]")?.getAttribute("href"));
+    else select(ui.focus, { open: true });
     return true;
   }
-  if (e.key === "e" && id) {
+  if (e.key === "e" && id && !id.startsWith("planner:")) {
     void act(id, ui.filter === "done" ? "undone" : "done");
     return true;
   }
   const step =
     e.key === "j" || e.key === "ArrowDown" ? 1 : e.key === "k" || e.key === "ArrowUp" ? -1 : 0;
-  if (step && list.length) {
-    ui.focus = Math.max(0, Math.min(list.length - 1, ui.focus + step));
-    for (const [i, n] of list.entries()) n.classList.toggle("focus", i === ui.focus);
-    list[ui.focus]?.scrollIntoView({ block: "nearest" });
+  if (step && list.length && !ui.reading) {
+    // j/k move the selection and the focus together (DB-N19-8; FINDINGS TEAM-01).
+    select(Math.max(0, Math.min(list.length - 1, ui.focus + step)));
     return true;
   }
   return false;
@@ -310,17 +514,27 @@ export function onKey(e) {
 export function mount(view) {
   const root = document.createElement("div");
   root.className = "view-host";
-  root.innerHTML = `<section class="sc ib-view" aria-label="${esc(C.title)}"></section>`;
+  root.innerHTML = `<section class="sc ib-view" aria-label="${esc(C.title)}"><div class="ib-split"><div class="ib-list"></div><section class="ib-pane" aria-label="${esc(PC.paneLabel)}"></section></div></section>`;
   view.append(root);
   ui.root = root;
   ui.last = "";
+  ui.lastPane = "";
   ui.data = null;
   ui.filter = "inbox";
+  ui.selected = "";
+  ui.reading = false;
+  ui.pane = { id: "" };
   root.addEventListener("change", (e) => {
     const input = e.target instanceof HTMLInputElement ? e.target : null;
     const art = input?.closest("[data-decision]");
     if (input?.dataset.opt !== undefined && art)
       pick(art.dataset.decision, Number(input.dataset.opt));
+  });
+  root.addEventListener("submit", (e) => {
+    const form = e.target instanceof HTMLFormElement ? e.target : null;
+    if (!form?.matches("[data-reply]")) return;
+    e.preventDefault();
+    void reply(form);
   });
   root.addEventListener("click", (e) => {
     const t = e.target instanceof Element ? e.target : null;
@@ -330,8 +544,14 @@ export function mount(view) {
       ui.filter = tab.dataset.filter;
       ui.data = null;
       ui.focus = 0;
+      ui.selected = "";
+      ui.reading = false;
       render();
       void refreshInbox();
+      return;
+    }
+    if (t.closest("[data-back]")) {
+      back();
       return;
     }
     const answer = t.closest("[data-answer]");
@@ -370,19 +590,24 @@ export function mount(view) {
     }
     const o = t.closest("[data-open]");
     if (o) {
+      // A plain click selects; a modified click opens the issue as a link does.
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
       e.preventDefault();
-      open(o.dataset.open, o.getAttribute("href"));
-      return;
-    }
-    const row = t.closest(".ib-row");
-    if (row && Number(row.dataset.i) !== ui.focus) {
-      ui.focus = Number(row.dataset.i);
-      for (const n of rows()) n.classList.toggle("focus", n === row);
+      const row = o.closest(".ib-row");
+      select(Number(row?.dataset.i ?? 0), { open: true });
     }
   });
   const unsub = store.on((_s, patch) => {
     if ("inbox" in patch || "decisions" in patch || "now" in patch) render();
   });
+  // Crossing 1100 px changes the layout: one list, or two panes.
+  const mq = window.matchMedia(`(min-width: ${INBOX_SPLIT_PX}px)`);
+  const onWidth = () => {
+    ui.reading = false;
+    ui.last = "";
+    render();
+  };
+  mq.addEventListener("change", onWidth);
   render();
   void refreshInbox();
   refreshDecisions().catch(() => {});
@@ -390,8 +615,14 @@ export function mount(view) {
   ui.timer = setInterval(() => store.set({ now: Date.now() }), 60_000);
   return {
     onKey,
+    onEscape() {
+      if (!ui.reading) return false;
+      back();
+      return true;
+    },
     unmount() {
       clearInterval(ui.timer);
+      mq.removeEventListener("change", onWidth);
       unsub();
       root.remove();
       ui.root = null;

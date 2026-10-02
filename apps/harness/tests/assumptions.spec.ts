@@ -7,7 +7,7 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { loadCalibrationLog } from "@sekhemet/planner";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startDashboardServer } from "../src/server.js";
-import { type Kernel, runWave2Command } from "../src/wave2.js";
+import { type RepoContext, runDevCommand } from "../src/wave2.js";
 import { pageWriteHeaders } from "./page_headers.js";
 
 /**
@@ -21,7 +21,7 @@ describe("recording the outcome of a logged assumption (P15)", () => {
   let db: DatabaseSync;
   let log: EventLog;
   let cardStore: CardStore;
-  let k: Kernel;
+  let k: RepoContext;
 
   const logAssumption = (id: string, cardId: string) =>
     log.append({
@@ -59,12 +59,12 @@ describe("recording the outcome of a logged assumption (P15)", () => {
     const lines: string[] = [];
     const io = { print: (l: string) => lines.push(l) };
 
-    expect(await runWave2Command("assume", [], k, io)).toBe(0);
+    expect(await runDevCommand("assume", [], k, io)).toBe(0);
     expect(lines.join("\n")).toContain("asm_aaaaaaaaaa");
 
-    expect(await runWave2Command("assume", ["keep", "asm_aaaaaaaaaa"], k, io)).toBe(0);
+    expect(await runDevCommand("assume", ["keep", "asm_aaaaaaaaaa"], k, io)).toBe(0);
     expect(
-      await runWave2Command(
+      await runDevCommand(
         "assume",
         ["override", "asm_bbbbbbbbbb", "--answer", "epoch millis, not ISO"],
         k,
@@ -82,8 +82,8 @@ describe("recording the outcome of a logged assumption (P15)", () => {
       "epoch millis, not ISO",
     );
 
-    expect(await runWave2Command("assume", ["keep", "asm_nope"], k, io)).toBe(1);
-    expect(await runWave2Command("assume", ["shrug", "asm_aaaaaaaaaa"], k, io)).toBe(1);
+    expect(await runDevCommand("assume", ["keep", "asm_nope"], k, io)).toBe(1);
+    expect(await runDevCommand("assume", ["shrug", "asm_aaaaaaaaaa"], k, io)).toBe(1);
   });
 
   it("records a verdict over REST, and refuses an outcome it does not understand", async () => {

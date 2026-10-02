@@ -27,6 +27,7 @@ import {
   qualifyModel,
 } from "@sekhemet/models";
 import { confinedSandbox } from "@sekhemet/sandbox";
+import { plural } from "@sekhemet/ui";
 import { readCiSteps } from "./ci_files.js";
 import { type CiStep, deriveGates, installGates, shellWord } from "./init.js";
 import { applyExploration, exploreProject } from "./learning/explore.js";
@@ -590,7 +591,7 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
     rulesProposed = exploreProject(root).length;
   }
   say(
-    `5. Conventions: ${conventions.dominantNaming} files, tests ${conventions.testLayout}; ${rulesProposed} draft rule(s) for the playbook (candidates until approved).`,
+    `5. Conventions: ${conventions.dominantNaming} files, tests ${conventions.testLayout}; ${plural(rulesProposed, "draft rule")} for the playbook (candidates until approved).`,
   );
 
   // 6. AGENTS.md / CLAUDE.md drafts.
@@ -673,7 +674,7 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
   } else if (opts.baseline !== false) {
     baseline = await recordOnboardingBaseline(root, dir, opts.store?.log, opts.restricted === true);
     say(
-      `8. Baseline: ${baseline.entries} pre-existing finding(s), ${baseline.flaky} flaky test(s)${baseline.recorded ? ", on the ledger" : ""} (${baseline.path}); issues count only new ones.`,
+      `8. Baseline: ${plural(baseline.entries, "pre-existing finding")}, ${plural(baseline.flaky, "flaky test")}${baseline.recorded ? ", in the Activity log" : ""} (${baseline.path}); issues count only new ones.`,
     );
   }
 

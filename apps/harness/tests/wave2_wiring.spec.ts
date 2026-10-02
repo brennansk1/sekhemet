@@ -9,13 +9,13 @@ import { DecisionStore } from "@sekhemet/planner";
 import { afterEach, describe, expect, it } from "vitest";
 import { learnFromOutcome } from "../src/execute.js";
 import {
-  type Kernel,
+  type RepoContext,
   appliedStepBudget,
   applyTunedPolicy,
   planCommand,
   queuePrelude,
   roleForCard,
-  runWave2Command,
+  runDevCommand,
 } from "../src/wave2.js";
 import { skillsLockPath } from "../src/workspace_trust.js";
 
@@ -24,7 +24,7 @@ afterEach(() => {
   while (dirs.length) rmSync(dirs.pop() as string, { recursive: true, force: true });
 });
 
-function kernel(): Kernel {
+function kernel(): RepoContext {
   const repoPath = mkdtempSync(join(tmpdir(), "sek-wave2-"));
   dirs.push(repoPath);
   const w = (rel: string, text: string) => {
@@ -237,7 +237,7 @@ describe("goal and decide commands (P17, P18, P9, P11)", () => {
     const k = kernel();
     const out: string[] = [];
     const io = { print: (l: string) => out.push(l) };
-    await runWave2Command(
+    await runDevCommand(
       "goal",
       ["Users can log in, the test suite passes, and coverage is at least 80%."],
       k,
@@ -246,9 +246,9 @@ describe("goal and decide commands (P17, P18, P9, P11)", () => {
     const id = /Draft (goal_\w+) saved/.exec(out.join("\n"))?.[1] as string;
     expect(id).toBeTruthy();
     expect(await k.cardStore.listCards()).toHaveLength(0);
-    expect(await runWave2Command("goal", ["approve", id], k, io)).toBe(0);
+    expect(await runDevCommand("goal", ["approve", id], k, io)).toBe(0);
     expect((await k.cardStore.listCards()).length).toBeGreaterThan(1);
-    await runWave2Command("goal", ["status"], k, io);
+    await runDevCommand("goal", ["status"], k, io);
     expect(out.join("\n")).toContain(`${id} [active]`);
   });
 
@@ -271,10 +271,10 @@ describe("goal and decide commands (P17, P18, P9, P11)", () => {
       createdAt: "",
     });
     const out: string[] = [];
-    await runWave2Command("decide", [], k, { print: (l) => out.push(l) });
+    await runDevCommand("decide", [], k, { print: (l) => out.push(l) });
     const id = out[0]?.split(" ")[0] as string;
     expect(out.join("\n")).toContain("1. SQLite (recommended)");
-    expect(await runWave2Command("decide", [id, "2"], k, quiet)).toBe(0);
+    expect(await runDevCommand("decide", [id, "2"], k, quiet)).toBe(0);
     expect((await k.cardStore.getCard("c"))?.status).toBe("ready");
   });
 });
@@ -287,11 +287,11 @@ describe("skills, release, ci and improve commands (C10, Y17, Y18, E10, E14, E15
       join(k.repoPath, ".sekhemet", "skills", "db", "SKILL.md"),
       "---\ntriggers: [db]\n---\nUse WAL.",
     );
-    expect(await runWave2Command("skills", ["approve", "db"], k, quiet)).toBe(0);
+    expect(await runDevCommand("skills", ["approve", "db"], k, quiet)).toBe(0);
     // S9, SEC-31: the lock is in the user directory, never the repository.
     const lock = JSON.parse(readFileSync(skillsLockPath(k.repoPath), "utf8"));
     expect(Object.keys(lock.skills)).toEqual(["db"]);
-    await runWave2Command("skills", ["revoke", "db"], k, quiet);
+    await runDevCommand("skills", ["revoke", "db"], k, quiet);
     expect(
       Object.keys(JSON.parse(readFileSync(skillsLockPath(k.repoPath), "utf8")).skills),
     ).toEqual([]);
@@ -315,31 +315,31 @@ describe("skills, release, ci and improve commands (C10, Y17, Y18, E10, E14, E15
     await checked("checked", "checked");
     const out: string[] = [];
     expect(
-      await runWave2Command("skills", ["approve", "distilled"], k, { print: (l) => out.push(l) }),
+      await runDevCommand("skills", ["approve", "distilled"], k, { print: (l) => out.push(l) }),
     ).toBe(1);
     expect(out.join("\n")).toMatch(/distilled is not approved: its own checks are unchecked/);
-    expect(await runWave2Command("skills", ["approve", "failing"], k, quiet)).toBe(1);
-    expect(await runWave2Command("skills", ["approve", "checked"], k, quiet)).toBe(0);
+    expect(await runDevCommand("skills", ["approve", "failing"], k, quiet)).toBe(1);
+    expect(await runDevCommand("skills", ["approve", "checked"], k, quiet)).toBe(0);
     // A hand-written project skill has no such record: a person may approve it.
     mkdirSync(join(k.repoPath, ".sekhemet", "skills", "handwritten"), { recursive: true });
     writeFileSync(
       join(k.repoPath, ".sekhemet", "skills", "handwritten", "SKILL.md"),
       "---\ntriggers: [y]\n---\nDo y.",
     );
-    expect(await runWave2Command("skills", ["approve", "handwritten"], k, quiet)).toBe(0);
+    expect(await runDevCommand("skills", ["approve", "handwritten"], k, quiet)).toBe(0);
   });
 
   it("proposes a release and tags only with --confirm; ci is typed-unavailable without act", async () => {
     const k = kernel();
     const out: string[] = [];
-    await runWave2Command("release", [], k, { print: (l) => out.push(l) });
+    await runDevCommand("release", [], k, { print: (l) => out.push(l) });
     expect(out[0]).toMatch(/-> v0\.1\.0 \(minor/);
     expect(execFileSync("git", ["tag"], { cwd: k.repoPath, encoding: "utf8" }).trim()).toBe("");
-    await runWave2Command("release", ["--confirm"], k, quiet);
+    await runDevCommand("release", ["--confirm"], k, quiet);
     expect(execFileSync("git", ["tag"], { cwd: k.repoPath, encoding: "utf8" }).trim()).toBe(
       "v0.1.0",
     );
-    expect(await runWave2Command("ci", [], k, quiet)).toBe(2);
+    expect(await runDevCommand("ci", [], k, quiet)).toBe(2);
   });
 
   it("improve mines the ledger for tool and skill candidates, and keeps no variant archive (DEC-25 R31)", async () => {
@@ -368,7 +368,7 @@ describe("skills, release, ci and improve commands (C10, Y17, Y18, E10, E14, E15
       });
     }
     const out: string[] = [];
-    expect(await runWave2Command("improve", [], k, { print: (l) => out.push(l) })).toBe(0);
+    expect(await runDevCommand("improve", [], k, { print: (l) => out.push(l) })).toBe(0);
     const text = out.join("\n");
     expect(text).toMatch(/tool candidate node: node \{path0\} \{path1\}/);
     expect(text).toMatch(/skill candidate .*ledger/);
@@ -383,7 +383,7 @@ describe("skills, release, ci and improve commands (C10, Y17, Y18, E10, E14, E15
 
 describe("tune --apply and the learning guard (E8, E17)", () => {
   /** One card outcome through the card runner's one observer of the guard (review minor). */
-  const observe = (k: Kernel, i: number, passed: boolean, lines: string[]) =>
+  const observe = (k: RepoContext, i: number, passed: boolean, lines: string[]) =>
     learnFromOutcome(
       {
         repoPath: k.repoPath,
@@ -432,13 +432,13 @@ describe("qualify and m0 need a model resolver", () => {
     const k = kernel();
     process.env.SEKHEMET_MODEL_REGISTRY = join(k.repoPath, "models.json");
     const out: string[] = [];
-    const code = await runWave2Command("qualify", ["--models", "silent"], k, {
+    const code = await runDevCommand("qualify", ["--models", "silent"], k, {
       print: (l) => out.push(l),
       model: (n) => new MockInferenceAdapter(n, [], { exhaustion: "default" }),
     });
     expect(code).toBe(1);
     expect(out[0]).toMatch(/^silent: .* not verified on this machine for /);
-    expect(await runWave2Command("m0", [], k, quiet)).toBe(1);
+    expect(await runDevCommand("m0", [], k, quiet)).toBe(1);
     expect(existsSync(join(k.repoPath, "models.json"))).toBe(true);
     Reflect.deleteProperty(process.env, "SEKHEMET_MODEL_REGISTRY");
   });

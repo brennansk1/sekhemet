@@ -47,7 +47,7 @@ function freePort(): Promise<number> {
     });
   });
 }
-import { matchesGlob } from "./glob.js";
+import { matchesGlob } from "@sekhemet/sandbox";
 import { type ToolObservation, clampObservation, denied, fail, ok } from "./observation.js";
 import { PathEscapeError, canonicalizeRoot, resolveInWorktree } from "./paths.js";
 import { findSymbol, listSymbolNames } from "./symbols.js";

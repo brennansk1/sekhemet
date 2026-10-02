@@ -178,17 +178,24 @@ export async function handBack(
   principal = ctx.cardStore.localPrincipal(),
 ): Promise<void> {
   const card = await requireCard(ctx.cardStore, cardId);
-  if (card.stopReason !== "paused" || card.status !== "in_progress") {
-    throw new Error(`${cardId} is not paused; only a paused issue is handed back`);
+  // FINDINGS ISS-02: a run a person stopped (`human_abort`, resumable from its
+  // checkpoint) resumes the same way, from In progress or the Verify it stopped in.
+  const stopped =
+    card.stopReason === "human_abort" &&
+    (card.status === "in_progress" || card.status === "verify");
+  if (!stopped && (card.stopReason !== "paused" || card.status !== "in_progress")) {
+    throw new Error(
+      `${cardId} is not paused or stopped; only a paused or stopped issue is handed back`,
+    );
   }
   // The note and the move in one transaction (kernel S7): a refused move records neither.
   await ctx.boardService.transitionCard({
     cardId,
-    fromStatus: "in_progress",
+    fromStatus: card.status,
     toStatus: "ready",
     actor: "human",
     principal,
-    reason: "handed back to the agent",
+    reason: stopped ? "resumed after a stop" : "handed back to the Agent",
     with: [
       {
         type: COLLABORATION_EVENTS.handedBack,

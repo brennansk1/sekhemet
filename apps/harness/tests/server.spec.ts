@@ -367,7 +367,7 @@ describe("@sekhemet/harness Dashboard Server", () => {
     // Accepting is only legal from Review; the board's transition table rules.
     const accept = await post("/api/cards/card_triage/accept");
     expect(accept.status).toBe(409);
-    expect((await accept.json()).error).toContain("Review");
+    expect((await accept.json()).error).toContain("In review");
   });
 
   it("returns 404 for an unknown card and reports project metadata", async () => {

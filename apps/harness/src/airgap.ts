@@ -24,6 +24,7 @@ import {
   mergeNetworkConfigs,
   policyFetch,
 } from "@sekhemet/sandbox";
+import { plural } from "@sekhemet/ui";
 import { networkConfigs } from "./config_apply.js";
 import { egressEvent } from "./egress_event.js";
 import { type TextFetch, docRoot, sitemapUrls } from "./research/docs.js";
@@ -630,7 +631,7 @@ export function applyUpdate(
   if (!manifest.compatibleSchema.includes(opts.schemaVersion)) {
     return {
       applied: false,
-      detail: `update ${manifest.version} does not support ledger schema ${opts.schemaVersion}: ${manifest.note}`,
+      detail: `update ${manifest.version} does not support the Activity log's schema ${opts.schemaVersion}: ${manifest.note}`,
     };
   }
   const db = join(opts.repo, ".sekhemet", "events.db");
@@ -745,7 +746,7 @@ export async function airgapSelfTest(
           ? `outbound attempts: ${[...new Set(attempts.map((a) => a.host))].join(", ")}`
           : notRun.length > 0
             ? `not proven, these checks did not run to completion: ${notRun.join(", ")}`
-            : `${opts.gateRuns.length} check(s) ran with no outbound attempt`,
+            : `${plural(opts.gateRuns.length, "check")} ran with no outbound attempt`,
     });
   }
   for (const g of opts.gates ?? []) {
@@ -842,7 +843,7 @@ export async function airgapCommand(
         flag("--store-dir") ? { storeDir: flag("--store-dir") as string } : {},
       );
       print(
-        `Mirror allowlist: ${r.packages} package(s) at ${AIRGAP_DIR}/allowlist.json; ${r.detail}.`,
+        `Mirror allowlist: ${plural(r.packages, "package")} at ${AIRGAP_DIR}/allowlist.json; ${r.detail}.`,
       );
       return r.fetched || !existsSync(join(repo, "pnpm-lock.yaml")) ? 0 : 1;
     }
@@ -853,7 +854,7 @@ export async function airgapCommand(
       mkdirSync(join(repo, AIRGAP_DIR), { recursive: true });
       writeFileSync(out, `${JSON.stringify(m, null, 2)}\n`);
       print(
-        `Manifest: ${m.models.length} model(s) at ${out}. Sign it: sekhemet airgap sign ${out} --key <key>`,
+        `Manifest: ${plural(m.models.length, "model")} at ${out}. Sign it: sekhemet airgap sign ${out} --key <key>`,
       );
       return 0;
     }
@@ -903,7 +904,7 @@ export async function airgapCommand(
         mkdirSync(cacheDir, { recursive: true });
         writeBundleMeta(cacheDir, { versions: r.versions, unavailable: r.unavailable });
         print(
-          `Cached ${r.pages} page(s) for ${Object.keys(r.versions).length} pinned dependencies.`,
+          `Cached ${plural(r.pages, "page")} for ${Object.keys(r.versions).length} pinned dependencies.`,
         );
         if (r.missing.length) {
           print(
@@ -921,20 +922,20 @@ export async function airgapCommand(
         new ResearchCache(cacheDir),
         Number(flag("--pages") ?? 200),
       );
-      print(`Cached ${r.pages} page(s) of ${r.root ?? entry}.`);
+      print(`Cached ${plural(r.pages, "page")} of ${r.root ?? entry}.`);
       return 0;
     }
     case "export-docs": {
       if (!a1) return done("Usage: sekhemet airgap export-docs <out>", 1);
       const b = exportDocBundle(cacheDir, a1);
       print(
-        `Exported ${b.entries.length} cached page(s) to ${a1} (sha256 ${b.sha256.slice(0, 12)}).`,
+        `Exported ${plural(b.entries.length, "cached page")} to ${a1} (sha256 ${b.sha256.slice(0, 12)}).`,
       );
       return 0;
     }
     case "import-docs": {
       if (!a1) return done("Usage: sekhemet airgap import-docs <file>", 1);
-      print(`Imported ${importDocBundle(a1, cacheDir)} page(s) into ${cacheDir}.`);
+      print(`Imported ${plural(importDocBundle(a1, cacheDir), "page")} into ${cacheDir}.`);
       return 0;
     }
     case "sign": {
@@ -959,7 +960,7 @@ export async function airgapCommand(
         schemaVersion: Number(flag("--schema") ?? 1),
       });
       print(r.detail);
-      if (r.backup) print(`Ledger backed up to ${r.backup}.`);
+      if (r.backup) print(`Activity log backed up to ${r.backup}.`);
       await deps.log
         ?.append({ actor: "system", type: "airgap/update", payload: r })
         .catch(() => undefined);

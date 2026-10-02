@@ -19,17 +19,31 @@
 .tab:hover {
   color: var(--text-primary);
 }
-.tab[aria-selected="true"] {
+/* One tab treatment (VIS-05, §2.6): the issue page's, also as a page's own
+   underlined bar of links (Members, Configuration) or filters (Inbox). */
+a.tab {
+  text-decoration: none;
+}
+.tabs.ptabs {
+  margin: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
+  column-gap: 20px;
+  row-gap: 0;
+}
+.tab[aria-selected="true"],
+.tab[aria-current="page"] {
   color: var(--text-primary);
 }
-.tab[aria-selected="true"]::after {
+.tab[aria-selected="true"]::after,
+.tab[aria-current="page"]::after {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
   bottom: -1px;
   height: 2px;
-  background: var(--accent);
+  background: var(--text-primary);
 }
 .tab .c {
   font-size: var(--text-xs);
@@ -326,6 +340,9 @@ blockquote {
 }
 
 /* Tables (Files, Runs, Ledger, Playbook) */
+/* A table that scrolls sideways is reachable by keyboard: every wrapper is
+   focusable (tabindex="0"), so arrow keys scroll it (A11Y-04, axe
+   scrollable-region-focusable). */
 .tbl-wrap {
   overflow-x: auto;
 }
@@ -1426,6 +1443,248 @@ ul.plain {
   flex: 0 0 auto;
 }
 .tile .av.pres {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--state-pass);
   outline-offset: 1px;
+}
+
+/* The issue page's properties rail (NEW-dashboard-19, DB-N19-1; FINDINGS
+   ISS-01): 288 px on the right from 1280 px, a label/value list with no card
+   around it; below 1280 px a *Properties* disclosure under the header. */
+.cv-cols {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.cv-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cv-rail {
+  flex: none;
+  width: 288px;
+  border-left: 1px solid var(--border-subtle);
+  padding: 16px;
+  overflow: auto;
+  background: var(--bg-surface);
+}
+.cv-rail > summary {
+  display: none;
+}
+.iprops {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+.iprop {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-height: 28px;
+  font-size: var(--text-sm);
+}
+.iprop dt {
+  color: var(--text-secondary);
+  padding: 4px 0;
+}
+.iprop dd {
+  margin: 0;
+  min-width: 0;
+  padding: 4px 0;
+  overflow-wrap: anywhere;
+}
+.iprop .none {
+  color: var(--text-secondary);
+}
+.iprop .iprop-edit {
+  all: unset;
+  display: block;
+  width: 100%;
+  margin: -4px -6px;
+  padding: 4px 6px;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+.iprop .iprop-edit:hover {
+  background: var(--bg-overlay);
+}
+.iprop .iprop-edit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+.iprop .iprop-note {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.iprop .icon-btn.sm {
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.cv-rail .cv-watch {
+  margin-top: 12px;
+}
+/* ISS-07: the header's actions keep their place top right; Accept's
+   conditions are a full-width list under it (REV-02). */
+.cv-h .line {
+  flex-wrap: nowrap;
+}
+.cv-h .acts {
+  flex: 0 1 auto;
+  max-width: 62%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.cv-h > .blockers {
+  margin-top: 12px;
+}
+.crit-view {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+@media (max-width: 1279px) {
+  .cv-cols {
+    flex-direction: column;
+  }
+  .cv-rail {
+    width: auto;
+    order: -1;
+    border-left: 0;
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 8px 24px;
+    max-height: 40vh;
+  }
+  .cv-rail > summary {
+    display: list-item;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: var(--text-sm);
+  }
+  .cv-rail[open] > summary {
+    margin-bottom: 8px;
+  }
+  .iprops {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    column-gap: 24px;
+  }
+}
+@media (max-width: 767px) {
+  .cv-rail {
+    padding: 8px 16px;
+  }
+  /* A touch target is 44 px tall (DB-P12-6). */
+  .iprop .iprop-edit {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    margin: -12px -6px;
+  }
+  .cv-h .line {
+    flex-wrap: wrap;
+  }
+  .cv-h .acts {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+}
+
+/* REV-09: on the issue's Changes tab a diff line shows its comment control
+   in the gutter on hover or focus, GitHub's "+": a click opens the line's
+   comment, filled in with its file and line. */
+#panel .group .ln:not(.hunk):not(.blank) {
+  cursor: pointer;
+}
+#panel .group .ln:not(.hunk):not(.blank) .o,
+#panel .group .ln:not(.hunk):not(.blank) .n {
+  position: relative;
+}
+#panel .group .ln:not(.hunk):not(.blank):hover .o::before {
+  content: "+";
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 3px;
+  background: var(--text-primary);
+  color: var(--on-ink, var(--bg-surface));
+  font-weight: 600;
+}
+
+/* Ready to start on the issue page (§2.6, NEW-dashboard-14, DB-N14-2). */
+.cv-ready {
+  padding: 0 0 12px;
+}
+.rd-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-sm);
+}
+.rd-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 8px;
+}
+.rd-s {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.rd-row.unmet .rd-s {
+  color: var(--text-primary);
+}
+.rd-r {
+  grid-column: 2 / 4;
+  font-size: var(--text-xs);
+}
+/* Configuration › Project: the Definition of done (DB-N14-1). */
+.cfg-dod {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cfg-dod .dod-sentence {
+  font-size: var(--text-md);
+  color: var(--text-primary);
+}
+.cfg-dod dl {
+  display: grid;
+  grid-template-columns: minmax(140px, max-content) minmax(0, 1fr);
+  gap: 6px 16px;
+  font-size: var(--text-sm);
+}
+.cfg-dod dt {
+  color: var(--text-secondary);
+}
+@media (max-width: 767px) {
+  .cfg-dod dl {
+    grid-template-columns: 1fr;
+  }
+}
+/* Insights › Model use (STA-05): the sentence wraps above the table. */
+.model-use .mu-caption {
+  margin-bottom: 8px;
+  font-size: var(--text-sm);
+}
+
+/* A page's tab bar at phone width: 44 px targets (WCAG 2.5.5, DB-P12-6). */
+@media (max-width: 767px) {
+  .tabs.ptabs .tab {
+    min-height: 44px;
+    min-width: 44px;
+    justify-content: center;
+  }
 }

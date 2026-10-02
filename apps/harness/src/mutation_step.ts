@@ -18,6 +18,7 @@ import {
 } from "@sekhemet/gates";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
 import { ProcessSandbox } from "@sekhemet/sandbox";
+import { plural } from "@sekhemet/ui";
 
 /**
  * Loop 10, gate hardening (E16, design "The ten self-improvement loops"):
@@ -325,7 +326,7 @@ export async function mutateAcceptedCards(
       const proposal = await store.createCard(
         {
           tier: "task",
-          title: `Pin the behaviour of ${card?.title ?? cardId} (${proposals.length} mutant(s) survive)`,
+          title: `Pin the behaviour of ${card?.title ?? cardId} (${plural(proposals.length, "mutant")} ${proposals.length === 1 ? "survives" : "survive"})`,
           status: "backlog",
           spec: [
             `Mutation testing of ${cardId} (${sha.slice(0, 10)}) found behaviour its tests do not pin down (score ${run.score}). Add one test per line below; they stay advisory until a person promotes them.`,

@@ -1,10 +1,11 @@
 // Peek drawer (FRONTEND_DESIGN §2.4.2): Space on a tile. Gates, failures, Done
 // when and files, with triage keys that work inside the drawer.
 import { loadDetail } from "./data.js";
-import { esc, icon, kbd } from "./dom.js";
+import { aiBadge, esc, icon, kbd } from "./dom.js";
 import { failuresHeadline, failuresHtml } from "./failures.js";
 import { gatesStripHtml } from "./gates.js";
 import { checksTip } from "./learn.js";
+import { peekFacts } from "./lib/issue.js";
 import { EMPTY_SHA256, gateSummary, outcomeSentence, stopReasonLabel } from "./lib/vocabulary.js";
 import { pushOverlay } from "./overlay.js";
 import { store } from "./store.js";
@@ -97,9 +98,21 @@ async function fill(id) {
       );
     }
   }
+  // ISS-05: who has it, who builds it, how hard it is and who may accept it.
+  const s = detail.desk?.suggestedAccepters;
+  const accepters = [
+    ...(s?.unmapped ?? []),
+    ...(s?.principals?.length
+      ? [`${s.principals.length} ${s.principals.length === 1 ? "member" : "members"}`]
+      : []),
+  ];
+  const facts = peekFacts(detail.card ?? card, { accepters })
+    .map((f) => `<dt>${esc(f.label)}</dt><dd>${esc(f.text)}${f.ai ? ` ${aiBadge()}` : ""}</dd>`)
+    .join("");
+  body.push(`<section><dl class="kv peek-kv">${facts}</dl></section>`);
   if (criteria.length) {
     body.push(
-      `<section><h4>Done when</h4><div class="crit-line">${criteria.map(esc).join(" · ")}</div></section>`,
+      `<section><h4>Acceptance criteria</h4><div class="crit-line">${criteria.map(esc).join(" · ")}</div></section>`,
     );
   }
   body.push(filesHtml(ev));

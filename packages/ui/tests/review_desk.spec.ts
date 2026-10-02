@@ -52,6 +52,35 @@ describe("the Reviewer's findings (dashboard §2.5.3 4a)", () => {
     expect(m.rows[0]?.citations).toEqual([{ file: "src/c.ts", from: 5, to: 5 }]);
   });
 
+  it("FINDINGS_C1 R-38: a machine prefix becomes a chip, and the citation is not repeated", () => {
+    const m = reviewerFindings(
+      [
+        {
+          id: "f_nt",
+          verdict: "unmet",
+          text: "no test: Totals round half-even — no staged test checks it (src/total.ts:12)",
+        },
+        { id: "f_out", verdict: "unclear", text: "outside: src/util.ts — reformatted a helper" },
+      ],
+      new Set(),
+    );
+    expect(m.rows.map((r) => [r.chip, r.text, r.citations])).toEqual([
+      [
+        "No test checks this",
+        "Totals round half-even — no staged test checks it",
+        [{ file: "src/total.ts", from: 12, to: 12 }],
+      ],
+      ["Outside the criteria", "src/util.ts — reformatted a helper", []],
+    ]);
+    // A criterion without a prefix has no chip and keeps its words.
+    expect(reviewerFindings([entries[2] as (typeof entries)[0]], new Set()).rows[0]).toMatchObject({
+      text: "criterion 2 unmet: no test exercises src/c.ts:5",
+    });
+    expect(reviewerFindings([entries[2] as (typeof entries)[0]], new Set()).rows[0]?.chip).toBe(
+      undefined,
+    );
+  });
+
   it("with only met findings the title counts them, and nothing is open", () => {
     const m = reviewerFindings([entries[0] as (typeof entries)[0]], new Set());
     expect(m.title).toBe("AI review · 1 met");
@@ -181,12 +210,12 @@ describe("DB-N5-9: independent accept names who may accept", () => {
     expect(
       acceptPermissionText({ may: false, code: "not_independent", because: "built", who }),
     ).toBe(
-      "You built this issue; on a team another Accept-holder accepts it. Who may accept: Bob, p_carol.",
+      "You built this issue; on a team, another person on the Accept rule accepts it. Who may accept: Bob, p_carol.",
     );
     expect(
       acceptPermissionText({ may: false, code: "not_independent", because: "delegated", who: [] }),
     ).toBe(
-      "You delegated this issue to the agent; on a team another Accept-holder accepts it. Who may accept: no other Accept-holder yet.",
+      "You delegated this issue to the Agent; on a team, another person on the Accept rule accepts it. Who may accept: no one else on the Accept rule yet.",
     );
   });
   it("a person without Accept is told who holds it; one who may accept is told nothing", () => {

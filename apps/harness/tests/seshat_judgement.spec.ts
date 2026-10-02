@@ -117,7 +117,7 @@ const move = (s: S, id: string, to: CardRecord["status"]) =>
 /** A standup's text without its basis line, which names the ledger's length. */
 const body = (text: string) =>
   text
-    .replace(/\n\n_Answered from the ledger[\s\S]*$/, "")
+    .replace(/\n\n_Answered from the Activity log[\s\S]*$/, "")
     .replace(/\nBased on: .*$/m, "")
     // The Monte Carlo forecast resamples at random each time it is drawn.
     .replace(/\nForecast: .*$/m, "");

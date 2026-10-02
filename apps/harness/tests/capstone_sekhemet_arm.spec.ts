@@ -335,7 +335,7 @@ describe("the Sekhemet arm, driven end to end against a stand-in model", () => {
     const moved = pulls.filter((p) => p.basis.moved === true);
     expect(moved.length).toBeGreaterThan(0);
     for (const p of moved) {
-      expect(p.basis.reply).toBe(`Moved ${p.basis.issue} to Ready.`);
+      expect(p.basis.reply).toBe(`Moved ${p.basis.issue} to To do.`);
       expect(queue.passes.some((pass) => pass.includes(p.basis.issue as string))).toBe(true);
     }
 

@@ -74,7 +74,7 @@ export interface JudgementAnswer {
   cites: PmCite[];
 }
 
-const FROM_LEDGER = "\n\n_Answered from the ledger without loading a model._";
+const FROM_LEDGER = "\n\n_Answered from the Activity log without loading a model._";
 
 const hours = (h: number) =>
   h < 1 ? `${Math.max(1, Math.round(h * 60))}m` : `${Math.round(h * 10) / 10}h`;

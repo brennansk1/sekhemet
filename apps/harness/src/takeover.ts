@@ -17,6 +17,7 @@ import {
 } from "@sekhemet/gates";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
 import { runConfined } from "@sekhemet/sandbox";
+import { plural } from "@sekhemet/ui";
 import { deriveGates, installGates, packageManagerOf } from "./init.js";
 import { recordOnboardingBaseline } from "./onboard.js";
 import {
@@ -319,7 +320,7 @@ export async function runTakeover(root: string, options: TakeoverOptions): Promi
   say(
     secrets.notScanned
       ? `1. History not scanned for secrets (${secrets.notScanned.replace(/_/g, " ")}): ${redactSecrets(secrets.reason ?? "")}. Treat every commit as unscanned.`
-      : `1. History: ${secrets.commits} commit(s) scanned for secrets with ${secrets.scanner}; ${secrets.findings.length} to rotate.${secrets.reason ? ` (${redactSecrets(secrets.reason)})` : ""}`,
+      : `1. History: ${plural(secrets.commits, "commit")} scanned for secrets with ${secrets.scanner}; ${secrets.findings.length} to rotate.${secrets.reason ? ` (${redactSecrets(secrets.reason)})` : ""}`,
   );
   // The repository's agent configuration: inert, listed (DS-TO-2, SEC-54).
   for (const path of agentConfigFiles(root)) {
@@ -344,7 +345,7 @@ export async function runTakeover(root: string, options: TakeoverOptions): Promi
     }),
   );
   say(
-    `2. Recon: ${recon.manifests.length} manifest(s), ${recon.commits.length} recent commit(s), ${recon.branches.length} unmerged branch(es), ${recon.todos.length} TODO/FIXME; dependency age ${recon.dependencyAge}; vulnerabilities ${recon.vulnerabilities}.`,
+    `2. Recon: ${plural(recon.manifests.length, "manifest")}, ${plural(recon.commits.length, "recent commit")}, ${plural(recon.branches.length, "unmerged branch", "unmerged branches")}, ${recon.todos.length} TODO/FIXME; dependency age ${recon.dependencyAge}; vulnerabilities ${recon.vulnerabilities}.`,
   );
 
   // Half-done work, deterministically (DS-TO-8): files only, before or after trust.
@@ -407,7 +408,7 @@ export async function runTakeover(root: string, options: TakeoverOptions): Promi
       baselineSeq = latest?.seq ?? 0;
     }
     say(
-      `3. Baseline: ${baseline.entries} pre-existing finding(s), ${baseline.flaky} flaky test(s), the suite run twice.`,
+      `3. Baseline: ${plural(baseline.entries, "pre-existing finding")}, ${plural(baseline.flaky, "flaky test")}, the suite run twice.`,
     );
   }
 
@@ -480,7 +481,7 @@ export async function runTakeover(root: string, options: TakeoverOptions): Promi
     const labels = new Map<string, number>();
     for (const c of plan.claims) labels.set(c.label, (labels.get(c.label) ?? 0) + 1);
     say(
-      `4. Brief as found: ${plan.claims.length} claim(s): ${labels.get("proven") ?? 0} proven, ${labels.get("claimed_unproven") ?? 0} claimed but unproven, ${labels.get("contradicted") ?? 0} contradicted.`,
+      `4. Brief as found: ${plural(plan.claims.length, "claim")}: ${labels.get("proven") ?? 0} proven, ${labels.get("claimed_unproven") ?? 0} claimed but unproven, ${labels.get("contradicted") ?? 0} contradicted.`,
     );
     if (plan.reconciliation) {
       say(

@@ -286,7 +286,7 @@ export function withLicenseGate(inner: GateRunner, repoRoot: string, base = "mai
               suggestedFixFiles: [],
               location: { file: "." },
               expected: "every new dependency's licence read",
-              actual: reason || "the licence gate could not run",
+              actual: reason || "the licence check could not run",
               minimalRepro: RERUN_GATES,
               suggestedAction: gateCopy.gateNotRun("licenses"),
               notRun: true,

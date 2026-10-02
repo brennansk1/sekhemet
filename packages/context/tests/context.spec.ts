@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractSymbolOutline } from "../src/repo_map.js";
+import { extractSymbolOutline } from "../src/symbol_outline.js";
 
 describe("@sekhemet/context", () => {
   it("extracts clean symbol outline from TypeScript source code", () => {

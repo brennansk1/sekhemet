@@ -10,7 +10,7 @@ import {
   describeCombination,
   roleOf,
 } from "./qualification_key.js";
-import type { ModelRole, ReasoningLevel, ToolArm } from "./types.js";
+import type { ModelRole, ReasoningLevel, ToolCallFormat } from "./types.js";
 
 /**
  * The model registry (M11): the harness's memory of what works on this
@@ -183,8 +183,8 @@ export interface ModelEntry {
    */
   thinksWhenOff?: { tokens: number; at: string };
   /** The winning arm from qualification runs (measured, not assumed). */
-  toolArm?: ToolArm;
-  armMeasurements?: Partial<Record<ToolArm, ArmMeasurement>>;
+  toolArm?: ToolCallFormat;
+  armMeasurements?: Partial<Record<ToolCallFormat, ArmMeasurement>>;
   scriptCapable?: boolean;
   /** Tokens/s per context bucket (e.g. "2k", "8k", "16k"). */
   throughput?: Record<string, { prefill: number; decode: number }>;
@@ -277,7 +277,7 @@ export function defaultRegistryPath(): string {
 /** Minimum trials before an arm measurement may decide the arm. */
 export const MIN_ARM_TRIALS = 5;
 
-const ARM_ORDER: ToolArm[] = ["arm_a_flat", "arm_b_json", "arm_c_sketch"];
+const ARM_ORDER: ToolCallFormat[] = ["arm_a_flat", "arm_b_json", "arm_c_sketch"];
 
 export interface TemplatePinResult {
   /** No template was pinned before; this one is now. */
@@ -622,7 +622,7 @@ export class ModelRegistry {
    */
   public recordArmMeasurement(
     id: string,
-    arm: ToolArm,
+    arm: ToolCallFormat,
     passRate: number,
     trials: number,
     validCalls?: number,
@@ -649,7 +649,7 @@ export class ModelRegistry {
   }
 
   /** The measured arm for a model, undefined until measured (M9). */
-  public armFor(id: string): ToolArm | undefined {
+  public armFor(id: string): ToolCallFormat | undefined {
     this.refresh();
     return this.entries.get(id)?.toolArm;
   }
@@ -1006,9 +1006,9 @@ export function armLeadInterval(
  * interval excluding zero. Otherwise none: the model runs arm A unmeasured.
  */
 export function selectArm(
-  measurements: Partial<Record<ToolArm, ArmMeasurement>> | undefined,
+  measurements: Partial<Record<ToolCallFormat, ArmMeasurement>> | undefined,
   minTrials = MIN_ARM_TRIALS,
-): ToolArm | undefined {
+): ToolCallFormat | undefined {
   if (!measurements) return undefined;
   const scored = ARM_ORDER.map((arm) => ({ arm, m: measurements[arm] }));
   if (scored.some(({ m }) => !m || m.trials < minTrials || m.validCalls === undefined))
@@ -1017,8 +1017,8 @@ export function selectArm(
     (x, y) => (y.m?.toolCallValidity ?? 0) - (x.m?.toolCallValidity ?? 0),
   );
   const [first, second] = ranked as [
-    { arm: ToolArm; m: ArmMeasurement },
-    { arm: ToolArm; m: ArmMeasurement },
+    { arm: ToolCallFormat; m: ArmMeasurement },
+    { arm: ToolCallFormat; m: ArmMeasurement },
   ];
   const lead = armLeadInterval(first.m, second.m);
   return lead.difference >= ARM_LEAD - 1e-9 && lead.low > 0 ? first.arm : undefined;

@@ -303,7 +303,7 @@ export async function runRecon(root: string, options: ReconOptions = {}): Promis
     manifests,
     dependencies: dependencies(root, manifests),
     dependencyAge: options.researchAllowed
-      ? "not checked: the registry lookup runs with research (design-stage §2.6)"
+      ? "not checked: package lookups run only when research is allowed"
       : "not checked: offline",
     vulnerabilities: await vulnerabilities(root, options),
     scripts,

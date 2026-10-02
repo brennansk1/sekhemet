@@ -194,8 +194,8 @@ export const FIELD_LABELS: Record<string, string> = {
   spec: "Spec",
   orderKey: "Position",
   dependsOn: "Waits on",
-  acceptanceCriteria: "Done when",
-  scopeFiles: "May edit",
+  acceptanceCriteria: "Acceptance criteria",
+  scopeFiles: "Files in scope",
 };
 
 export function fieldLabel(field: string): string {
@@ -308,8 +308,8 @@ export const PROPOSAL_KINDS: Record<string, { label: string; icon: string }> = {
   move_card: { label: "Move", icon: "arrow-right" },
   create_cycle: { label: "Create sprint", icon: "cycle" },
   assign_cycle: { label: "Add to sprint", icon: "cycle" },
-  park: { label: "Park", icon: "park" },
-  unpark: { label: "Unpark", icon: "undo" },
+  park: { label: "Put on hold", icon: "park" },
+  unpark: { label: "Take off hold", icon: "undo" },
 };
 
 export function proposalKind(kind: string): { label: string; icon: string } {
@@ -562,7 +562,7 @@ export const FILTER_KEYS: Record<FilterField, string> = {
   label: "label",
   epic: "epic",
   cycle: "sprint",
-  owner: "owner",
+  owner: "assignee",
   delegate: "delegate",
   type: "type",
   state: "state",
@@ -1099,18 +1099,18 @@ export function pmSteps(
       case "waiting_for_step":
         label =
           state === "done"
-            ? `Paused the agent${step ? ` after step ${step}` : ""}`
-            : `Pausing the agent${step ? ` after step ${step}` : " at its next step"}`;
+            ? `Paused the Agent${step ? ` after step ${step}` : ""}`
+            : `Pausing the Agent${step ? ` after step ${step}` : " at its next step"}`;
         break;
       case "loading_pm":
         label =
-          state === "done" ? "Loaded the PM" : `Loading the PM${eta ? ` · about ${eta}s` : ""}`;
+          state === "done" ? "Started Seshat" : `Starting Seshat${eta ? ` · about ${eta}s` : ""}`;
         break;
       case "thinking":
         label = state === "done" ? "Replied" : "Thinking";
         break;
       case "resuming_worker":
-        label = state === "done" ? "Resumed the agent" : "Resuming the agent";
+        label = state === "done" ? "Resumed the Agent" : "Resuming the Agent";
         break;
       default:
         label = phase;
@@ -1128,7 +1128,7 @@ export const PM_LONG_ANSWER_MS = 90_000;
  * The pending block under Seshat's header (dashboard §2.7.8, DB-N2-8): its
  * rows and its note for the phase the status is in, with the over-time
  * notes once the phase has run `elapsedMs` past its bound. The page renders
- * exactly this; the words are DEC-31's (the Worker is "the agent").
+ * exactly this; the words are DEC-31's (the Worker is "the Agent").
  */
 export function pendingView(
   status: PmStatusLike,
@@ -1148,11 +1148,11 @@ export function pendingView(
   let note = "";
   switch (status.phase) {
     case "waiting_for_step":
-      note = `Waiting for ${step ? `step ${step}` : "the current step"} to finish. The agent is never stopped mid-edit.`;
+      note = `Waiting for ${step ? `step ${step}` : "the current step"} to finish. The Agent is never stopped mid-edit.`;
       break;
     case "loading_pm": {
       note = opts.workerInvolved
-        ? `Only one model fits in memory, so the agent waits at a safe step boundary and continues from ${next} once ${name} has replied. You can keep working; the reply lands here.`
+        ? `Only one model fits in memory, so the Agent waits at a safe step boundary and continues from ${next} once ${name} has replied. You can keep working; the reply lands here.`
         : `${name} runs on this machine. You can keep working; the reply lands here.`;
       const eta = statusEtaSeconds(status) ?? PM_LOAD_ETA_FALLBACK_SECONDS;
       if (elapsed > eta * 1000)
@@ -1163,10 +1163,10 @@ export function pendingView(
       note =
         elapsed > PM_LONG_ANSWER_MS
           ? "Long answers can take up to two minutes on this machine."
-          : "Reading the board, the runs and the ledger.";
+          : "Reading the board, the runs and the Activity log.";
       break;
     case "resuming_worker":
-      note = `Reloading the agent; ${next} starts next.`;
+      note = `Reloading the Agent; ${next} starts next.`;
       break;
   }
   return { rows, note };
@@ -1223,9 +1223,9 @@ export function capabilityRows(types: CapabilityType[] | undefined): CapabilityR
 /** The headline sentence for the size curve. */
 export function horizonSentence(lines: number | undefined): string {
   if (typeof lines !== "number" || !Number.isFinite(lines) || lines <= 0) {
-    return "Not enough attempts yet to say how large a change the agent handles reliably.";
+    return "Not enough attempts yet to say how large a change the Agent handles reliably.";
   }
-  return `The agent passes 80% of issues that change up to about ${Math.round(lines)} lines.`;
+  return `The Agent passes 80% of issues that change up to about ${Math.round(lines)} lines.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1248,8 +1248,8 @@ export interface LearnedRuleLike {
 }
 
 export const RULE_SOURCE_LABELS: Record<string, string> = {
-  struggle: "From a fix that took the agent several tries",
-  send_back: "From your send-back note",
+  struggle: "From a fix that took the Agent several tries",
+  send_back: "From your note when you requested changes",
   reflection: "From Seshat's end-of-run review",
   seed: "Seeded with the project",
 };
@@ -1317,7 +1317,7 @@ export const PROFILE_CATEGORIES: { id: ProfileEntryLike["category"]; label: stri
 ];
 
 export const PROFILE_SOURCE_LABELS: Record<string, string> = {
-  send_back: "From your send-back notes",
+  send_back: "From your notes when you requested changes",
   proposal_choices: "From which proposals you apply or discard",
   edits: "From fields you changed after Seshat set them",
   reflection: "From Seshat's end-of-run review",

@@ -28,6 +28,7 @@ import {
   resolveModelPath,
   withMeasurementRun,
 } from "@sekhemet/models";
+import { plural } from "@sekhemet/ui";
 import { type CombinationDeps, qualificationCombination } from "./qualify.js";
 import { EFFORT_CAPS } from "./research/effort.js";
 import {
@@ -222,8 +223,8 @@ export const failuresOf = (r: ContenderResult): number =>
 export function describeResult(r: ContenderResult): string {
   const failed = failuresOf(r);
   if (failed > 0)
-    return `${r.model} (${r.pipeline}): not measured — its pipeline failed on ${failed} of ${r.n} question(s) (first: ${r.items.find((i) => i.error)?.error ?? ""})`;
-  return `${r.model} (${r.pipeline}): ${r.correct}/${r.n} right, citation precision ${pct(r.citationPrecision)}, ${r.unverifiedCitations} unverified citation(s), ${r.secondsPerQuestion.toFixed(1)} s a question, peak memory ${r.peakResidentBytes === undefined ? "not measured" : `${(r.peakResidentBytes / GB).toFixed(1)} GB`}`;
+    return `${r.model} (${r.pipeline}): not measured — its pipeline failed on ${failed} of ${plural(r.n, "question")} (first: ${r.items.find((i) => i.error)?.error ?? ""})`;
+  return `${r.model} (${r.pipeline}): ${r.correct}/${r.n} right, citation precision ${pct(r.citationPrecision)}, ${plural(r.unverifiedCitations, "unverified citation")}, ${r.secondsPerQuestion.toFixed(1)} s a question, peak memory ${r.peakResidentBytes === undefined ? "not measured" : `${(r.peakResidentBytes / GB).toFixed(1)} GB`}`;
 }
 
 /** Correct/incorrect per item, as the paired comparison reads it. */
@@ -402,7 +403,7 @@ export function researcherAdoption(
   const failed = results.filter((r) => failuresOf(r) > 0);
   if (failed.length) {
     const said = failed
-      .map((r) => `${r.model} (${r.pipeline}) failed on ${failuresOf(r)} question(s)`)
+      .map((r) => `${r.model} (${r.pipeline}) failed on ${plural(failuresOf(r), "question")}`)
       .join("; ");
     return {
       incumbent,
@@ -665,7 +666,7 @@ export async function adoptResearcher(
   const verdict = record.adoption.verdicts.find((v) => v.model === input.model);
   if (!verdict?.allowed)
     throw new AssignmentRefusal(
-      `Refusing to adopt ${input.model} as the Research model: MD-N11-2 does not allow it${verdict ? ` (${verdict.reason})` : " (it was not in the bake-off)"}; the Research model stays ${currentAssignment(registry, input.host, "researcher", "default")?.model ?? INCUMBENT_RESEARCHER}.`,
+      `Refusing to adopt ${input.model} as the Research model: the comparison does not support it${verdict ? ` (${verdict.reason})` : " (it was not in the bake-off)"}; the Research model stays ${currentAssignment(registry, input.host, "researcher", "default")?.model ?? INCUMBENT_RESEARCHER}.`,
     );
   const eventId = record.benchmarkEvents[input.model];
   if (!eventId) throw new AssignmentRefusal(`No recorded bake-off event for ${input.model}.`);
@@ -796,7 +797,7 @@ export async function runResearchBakeoffCommand(
     if (!record) {
       print(
         from
-          ? `No recorded research golden-set run ${from} on this ledger.`
+          ? `No recorded Research quality run ${from} in this Activity log.`
           : RESEARCH_BAKEOFF_USAGE,
       );
       return 1;

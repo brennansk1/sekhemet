@@ -311,7 +311,7 @@ function verdictFailures(
       gate: "reachability",
       layer: "hygiene",
       exitCode: 1,
-      errorExcerpt: `${file}: does not parse cleanly (${reason}); the card did not change it, so the verdict on what it uses is partial`,
+      errorExcerpt: `${file}: does not parse cleanly (${reason}); the issue did not change it, so the verdict on what it uses is partial`,
       suggestedFixFiles: [],
       location: { file, line: 0, column: 0 },
       expected: `${file} parses without errors, or the onboarding baseline records it`,
@@ -347,7 +347,7 @@ function verdictFailures(
         errorExcerpt: `${file}: export ${name} is used by nothing in production and required by no acceptance test`,
         suggestedFixFiles: [file],
         location: { file, line: 0, column: 0 },
-        expected: "every export this card adds is used or required",
+        expected: "every export this issue adds is used or required",
         actual: `${name} has no caller`,
         minimalRepro: RERUN_GATES,
         // Completable in one step, as every remedy must be: the model already

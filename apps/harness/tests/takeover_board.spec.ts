@@ -13,9 +13,10 @@ import { pageWriteHeaders } from "./page_headers.js";
 import { buildTakeoverFixture, fakeTracker } from "./takeover_fixtures.js";
 
 // DS-TO-16 (dashboard item 10) in a real Chromium: a board with no cards
-// offers Take over a project beside Start a project, and pressing it opens
-// Seshat and starts the take-over of this repository (recon only: it is not
-// trusted). No model is loaded.
+// offers Take over a project beside Start a project (which opens the start
+// page, DS-N7-1), and pressing Take over opens Seshat and starts the
+// take-over of this repository (recon only: it is not trusted). No model is
+// loaded.
 
 type Server = { port: number; close: () => Promise<void> };
 
@@ -75,16 +76,21 @@ describe("the empty board's Start and Take over (DS-TO-16)", () => {
       const takeOver = empty.getByRole("button", { name: "Take over a project" });
       expect(await start.isVisible()).toBe(true);
       expect(await takeOver.isVisible()).toBe(true);
-      // Start a project opens Seshat with the words ready to finish, not sent.
+      // Start a project opens the start page (dashboard item 10, DS-N7-1) with
+      // the words ready to finish in its conversation, not sent.
       await start.click();
-      await page.waitForFunction(() => document.body.classList.contains("pm-open"));
-      expect(await page.locator("aside textarea").first().inputValue()).toBe(
-        "Start a new project: ",
-      );
+      await expect.poll(() => new URL(page.url()).hash).toBe("#/projects/new");
+      const composer = page.locator(".start-convo textarea");
+      await composer.waitFor();
+      expect(await composer.inputValue()).toBe("Start a new project: ");
+      // Back on the empty board, Take over a project opens Seshat with the take-over.
+      await page.goto(`http://127.0.0.1:${server.port}/#/board`);
+      await empty.waitFor();
       const posted = page.waitForResponse(
         (r) => r.url().endsWith("/api/takeover") && r.request().method() === "POST",
       );
       await takeOver.click();
+      await page.waitForFunction(() => document.body.classList.contains("pm-open"));
       const res = await posted;
       expect(res.status()).toBe(200);
       const body = (await res.json()) as { trusted: boolean; inventory: { findings: unknown[] } };

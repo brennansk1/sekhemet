@@ -122,7 +122,22 @@ export function pointsText(points: number): string {
   return `${points} ${points === 1 ? "pt" : "pts"}`;
 }
 
-const FULL = "Full. The agent holds finished issues until you clear one.";
+const FULL = "Full. The Agent holds finished issues until you clear one.";
+
+/** The review-git prior holds until this many reviews exist (§2.2 item 3; `board_service.ts`). */
+export const REVIEW_PRIOR_UNTIL = 5;
+
+/**
+ * Where the minutes per review come from (BRD-04): the median once five
+ * reviews exist, else the starting estimate and how many so far.
+ */
+export function reviewBasis(reviews: number, article: "the" | "a"): string {
+  if (reviews >= REVIEW_PRIOR_UNTIL) return `the median of ${plural(reviews, "review")}`;
+  const start = `${article} starting estimate until`;
+  return reviews === 0
+    ? `${start} you review an issue`
+    : `${start} five reviews are recorded; ${reviews} so far`;
+}
 
 /** The In review limit and its derivation, whatever its size (DB-P3-9). */
 export function reviewLimitText(f: ReviewLimitFacts, now: { count: number; held: number }): string {
@@ -130,10 +145,7 @@ export function reviewLimitText(f: ReviewLimitFacts, now: { count: number; held:
   if (f.fixed) {
     parts.push(`Limit ${f.limit}, set by [review] wip in the project configuration.`);
   } else if (f.minutesPerDay !== undefined && f.minutesPerCard !== undefined) {
-    const basis =
-      (f.reviews ?? 0) > 0
-        ? `the median of ${plural(f.reviews ?? 0, "review")}`
-        : "the starting estimate until you review an issue";
+    const basis = reviewBasis(f.reviews ?? 0, "the");
     parts.push(
       `Limit ${f.limit}, from ${f.minutesPerDay} review minutes a day at ~${Math.round(f.minutesPerCard)} min per issue (${basis}).`,
     );

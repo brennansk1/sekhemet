@@ -1,5 +1,5 @@
 export * from "./types.js";
-export * from "./parser.js";
+export * from "./fallback_parser.js";
 export * from "./runner.js";
 export * from "./parsers.js";
 export * from "./config.js";

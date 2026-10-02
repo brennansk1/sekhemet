@@ -196,7 +196,7 @@ export function judgeRegressions(
   const restated = kept.map((f): GateFailure => {
     const file = f.location?.file ? normalise(f.location.file) : undefined;
     if (f.rung !== "test" || !file || !guaranteed.has(file) || own.has(basename(file))) return f;
-    const where = changed.length ? changed.join(", ") : "the source this card changed";
+    const where = changed.length ? changed.join(", ") : "the source this issue changed";
     return {
       ...f,
       gate: "regression",

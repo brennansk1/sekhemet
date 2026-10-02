@@ -67,7 +67,7 @@ export function shotsHtml(evidence, attachments = [], cardId = "") {
   const attHtml = attachments
     .map(
       (a) =>
-        `<figure class="shot"><img src="/api/cards/${encodeURIComponent(cardId)}/attachments/${esc(a.id)}" alt="${esc(a.name)}" loading="lazy"><figcaption>${esc(a.name)} · attached to the issue; the agent read the vision model's description</figcaption></figure>`,
+        `<figure class="shot"><img src="/api/cards/${encodeURIComponent(cardId)}/attachments/${esc(a.id)}" alt="${esc(a.name)}" loading="lazy"><figcaption>${esc(a.name)} · attached to the issue; the Agent read the vision model's description</figcaption></figure>`,
     )
     .join("");
   const head = [

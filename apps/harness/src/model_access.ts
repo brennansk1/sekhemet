@@ -257,7 +257,7 @@ export function resolvedWorkerWindowTokens(opts: {
   // PM-13: no fixed default — a Worker with no known window cannot be measured against.
   if (!window)
     throw new Error(
-      `The Coding model ${name} has no context window in the registry, so INVEST's Small cannot be checked; verify it on this machine first (sekhemet qualify).`,
+      `The Coding model ${name} has no context window in Sekhemet's model list, so INVEST's Small cannot be checked; verify it on this machine first (sekhemet qualify).`,
     );
   return window.contextTokens;
 }
@@ -402,7 +402,7 @@ export class ModelAccess {
           // slot files an erasure on this ledger covers.
           adapter.setErasureSource?.(() => {
             const index = this.ledger?.erasureIndex?.();
-            if (!index) throw new Error("no ledger to read erasures from");
+            if (!index) throw new Error("no Activity log to read erasures from");
             return index;
           });
           // Measurement rule 4a: every request outside a card's step is a

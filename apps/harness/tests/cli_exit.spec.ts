@@ -17,7 +17,7 @@ import { ModelRegistry, ModelRoster, QUALIFICATION_SUITE_VERSION } from "@sekhem
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { recordReviewOpened } from "../src/accept.js";
-import { runExitCode } from "../src/front_door.js";
+import { runExitCode } from "../src/cli_commands.js";
 import { openLocalLedger } from "../src/ledger_cmds.js";
 import { recordLedgerRun } from "../src/ledger_evidence.js";
 import { qualificationCombination } from "../src/qualify.js";

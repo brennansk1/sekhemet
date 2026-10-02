@@ -1,6 +1,6 @@
 import { arch, platform } from "node:os";
 import type { GateRung } from "@sekhemet/gates";
-import type { ToolArm } from "@sekhemet/models";
+import type { ToolCallFormat } from "@sekhemet/models";
 import { headSha, isGitRepository, isWorkingTreeDirty } from "./git.js";
 import type { BenchmarkOptions, BenchmarkSettings, SamplingSettings } from "./types.js";
 
@@ -17,7 +17,7 @@ export const DEFAULT_SINGLE_SAMPLE_TEMPERATURE = 0.2;
 export { DEFAULT_STEP_BUDGET } from "@sekhemet/kernel";
 export const DEFAULT_CONTEXT_TOKENS = 32_768;
 export const DEFAULT_SUITE_VERSION = "sekhemet-eval-v1";
-export const DEFAULT_TOOL_ARM: ToolArm = "arm_a_flat";
+export const DEFAULT_TOOL_ARM: ToolCallFormat = "arm_a_flat";
 /** Recorded rather than omitted: an unstated setting is still a setting. */
 export const UNDECLARED = "undeclared";
 
@@ -86,7 +86,7 @@ export function resolveHarnessRevision(repoPath: string): HarnessRevision {
 export interface SettingsInput {
   modelId: string;
   engine: string;
-  toolArm: ToolArm;
+  toolArm: ToolCallFormat;
   stepBudget: number;
   gateRungs: GateRung[];
   plan: SamplingPlan;

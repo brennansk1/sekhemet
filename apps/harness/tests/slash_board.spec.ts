@@ -107,7 +107,7 @@ describe("a slash command's move goes through the harness's board", () => {
         reply = messages.find((m) => m.role === "pm")?.text;
         if (!reply) await new Promise((r) => setTimeout(r, 25));
       }
-      expect(reply).toBe("Moved card_chron_hasher to Ready.");
+      expect(reply).toBe("Moved card_chron_hasher to To do.");
       movedThroughTheBoard();
       expect((await cards.getCard("card_chron_hasher"))?.status).toBe("ready");
     } finally {
@@ -127,7 +127,7 @@ describe("a slash command's move goes through the harness's board", () => {
       say: (l) => lines.push(l),
     });
     expect(code).toBe(0);
-    expect(lines.join("\n")).toContain("Moved card_chron_hasher to Ready.");
+    expect(lines.join("\n")).toContain("Moved card_chron_hasher to To do.");
     movedThroughTheBoard();
   });
 
@@ -149,7 +149,7 @@ describe("a slash command's move goes through the harness's board", () => {
       method: "session/prompt",
       params: { sessionId: "sess_1", prompt: [{ type: "text", text: "/ready hasher" }] },
     });
-    expect(JSON.stringify(sent)).toContain("Moved card_chron_hasher to Ready");
+    expect(JSON.stringify(sent)).toContain("Moved card_chron_hasher to To do");
     movedThroughTheBoard();
   });
 

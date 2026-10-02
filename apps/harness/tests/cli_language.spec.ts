@@ -14,15 +14,16 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { DESIGN_COPY } from "@sekhemet/planner";
 import { describe, expect, it } from "vitest";
-import { literals, retiredIn } from "../../../packages/ui/tests/copy_scan.js";
+import { literals, rawRetiredIn, retiredIn } from "../../../packages/ui/tests/copy_scan.js";
 import { START_BY_CONVERSATION, recommendRoster } from "../src/init.js";
 
 const SRC = join(new URL(".", import.meta.url).pathname, "../src");
 
 /** The modules whose literals are the CLI's output, then the server's person-facing strings. */
 const CLI_FILES = [
-  "front_door.ts",
+  "cli_commands.ts",
   "index.ts",
   "init.ts",
   "first_run.ts",
@@ -34,9 +35,9 @@ const CLI_FILES = [
   "research/plan_research.ts",
   // The server: API errors a page shows, notifications, Seshat's code replies.
   "server.ts",
-  "rest_extra.ts",
+  "run_routes.ts",
   "pm_api.ts",
-  "wave2_server.ts",
+  "github_routes.ts",
   "triage.ts",
   "accept.ts",
   "collaborate.ts",
@@ -73,11 +74,42 @@ const CLI_FILES = [
   "supervisor.ts",
   "takeover.ts",
   "external_review.ts",
-  "wave2_github.ts",
+  "github_sync.ts",
   "research_bakeoff.ts",
   "research/service.ts",
   "research/reuse.ts",
   "research/cards.ts",
+  // FINDINGS_C1 WRD-01 and the rename table's places: Seshat's proposals and
+  // replies, the terminal board, the Activity log commands, the Team pages'
+  // refusals and the reports the CLI prints.
+  "planner_live.ts",
+  "pm/pm_copy.ts",
+  "pm/agent.ts",
+  "pm/standup.ts",
+  "pm/weekly.ts",
+  "pm/judgement.ts",
+  "pm/pipeline.ts",
+  "terminal_board.ts",
+  "ledger_cmds.ts",
+  "team/health.ts",
+  "tracing.ts",
+  "takeover_backlog.ts",
+  "acp.ts",
+  "ask_cmd.ts",
+  "model_usage.ts",
+  // The routes C2a moved out of the server, and the checks' failure text the
+  // issue's Checks tab shows.
+  "card_routes.ts",
+  "issue_forms.ts",
+  "workspaces.ts",
+  "reachability_gate.ts",
+  "regression_gate.ts",
+  "architecture_gate.ts",
+  "license_gate.ts",
+  "watchdog_actions.ts",
+  "visual_baseline.ts",
+  "takeover_recon.ts",
+  "smart_swap.ts",
 ];
 
 /**
@@ -97,6 +129,9 @@ const NOT_COPY: Record<string, RegExp[]> = {
     /^loaded between cards$/,
     // A command in `sekhemet dev --help`'s usage column.
     /^gates init$/,
+    // The Coding model comparison `bake-off` and the Research one: renamed
+    // with the dev help in C5 (FINDINGS_C1 R-21, WRD-14).
+    /bake-?off|golden set/i,
   ],
   // `config.toml`'s keys (`planner = "…"`) are names the file is read by.
   "init.ts": [/^planner = "/],
@@ -108,6 +143,7 @@ const NOT_COPY: Record<string, RegExp[]> = {
   ],
   // Request fields and role values an API caller types (`planner`, `worker=`).
   "server.ts": [/^Name an executor or a planner$/],
+  "card_routes.ts": [/^Name an executor or a planner$/],
   "config_api.ts": [/^role is worker, planner, reviewer or researcher\.$/],
   "benchmark_api.ts": [/^Name the combination: \?combination=/],
   // Linear's own CSV column is named *Cycle*.
@@ -125,6 +161,32 @@ const NOT_COPY: Record<string, RegExp[]> = {
   // (`Lesson: …` in card_runner's dossier lines); no screen prints a lesson's
   // text. Model-facing, so frozen by PROMPT_STANDARD until a suite A/B.
   "execute.ts": [/^After its parent was accepted and it was rebased, these gates failed: /],
+  // Seshat's prompt: the board digest and the summariser's system prompt it
+  // reads, and the Research model's failure as its tool result. Model-facing,
+  // frozen by PROMPT_STANDARD until a suite A/B (dashboard item 5, DEC-52).
+  "pm/agent.ts": [
+    /^cycle\s+\$\{\}\s*$/,
+    /^Today: /,
+    /^You compress a project manager's conversation/,
+    /^The Researcher failed: /,
+  ],
+  // Seshat's tool descriptions and card one's spec, which the Agent reads:
+  // model-facing, under the same rule.
+  "pm/pm_copy.ts": [
+    /^Delegate a question that needs evidence/,
+    /^Propose moving an issue to ready, backlog or parked\.$/,
+    /^Write one test, /,
+    /^Card one's test must run and fail at an assertion/,
+  ],
+  // The front help's line of triage verbs: `park` and `unpark` are command
+  // names a person types, which stay (DEC-52); Put on hold is the dashboard's.
+  "cli_commands.ts": [/^Accept and merge\. Also: request-changes /],
+  // The developers' Research model comparison (`research-bakeoff`): its words,
+  // bake-off and golden set, are renamed with the dev help in C5 (FINDINGS_C1
+  // R-21, WRD-14), not here.
+  "research_bakeoff.ts": [/bake-?off|golden[ -]set/i],
+  // A git format string: `Ledger-Head` is the commit trailer's name.
+  "ledger_cmds.ts": [/^--format=%\(trailers:key=Ledger-Head/],
 };
 
 function hits(): string[] {
@@ -133,9 +195,16 @@ function hits(): string[] {
     const skip = NOT_COPY[f] ?? [];
     for (const { line, text } of literals(readFileSync(join(SRC, f), "utf8"))) {
       if (skip.some((re) => re.test(text.trim()))) continue;
-      // A route pattern (`^/api/cards/…/gate$`) is an identifier.
+      // A route pattern (`^/api/cards/…/gate$`) and an SQL query are identifiers.
       if (/^\^\/api\//.test(text.trim())) continue;
+      if (/^\s*(?:SELECT|INSERT|UPDATE|DELETE) /.test(text)) continue;
       for (const hit of retiredIn(text)) out.push(`${f}:${line}: ${hit}`);
+      // FINDINGS_C1 R-12: no spec, decision or milestone id in what a person
+      // reads. API paths and environment switches are a developer's words on
+      // the command line, so only the ids are read here.
+      for (const hit of rawRetiredIn(text).filter((h) => h.endsWith("the plain sentence alone"))) {
+        out.push(`${f}:${line}: ${hit}`);
+      }
     }
   }
   return out;
@@ -149,6 +218,23 @@ describe("DB-N7-4, the CLI and the server: what they say uses DEC-31's words", (
   it("offers a start by conversation in checks and issues, never gates or card zero", () => {
     expect(START_BY_CONVERSATION).toBe(
       "Nothing here yet, so there are no checks to find. Start a project by conversation: tell Seshat on the board what you want built, in one sentence. It proposes the plan — a setup issue first runs the ecosystem's own generator, and the checks come from what that makes — and nothing is created until you apply it.",
+    );
+  });
+
+  it("calls the depth profile the project's Type in `sekhemet depth` (FINDINGS_C1 R-34)", () => {
+    const O = DESIGN_COPY.offer;
+    expect(O.unknown("Banana")).toBe(
+      'No project Type "Banana": one of prototype, internal tool, production, regulated.',
+    );
+    expect(O.proposed("production", "People sign in to it.")).toBe(
+      "Proposed Type: production. People sign in to it.",
+    );
+    expect(O.inForce("internal tool", true)).toBe("Type: internal tool, chosen.");
+    expect(O.chosen("production", 2)).toBe(
+      "Type: production, chosen. Added 2 quality checks as Must have.",
+    );
+    expect(DESIGN_COPY.depth.regulatedNote).toBe(
+      "The Regulated Type selects stricter checks and more of your approval. It claims no compliance with any standard or regulation.",
     );
   });
 

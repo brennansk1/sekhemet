@@ -5,13 +5,15 @@ import { tipsOn, toggleTips } from "./learn.js";
 import { ACCOUNT_COPY } from "./lib/account.js";
 import { paletteGoTo } from "./lib/nav.js";
 import { paletteSeshat } from "./lib/seshat.js";
+import { START_ROUTE } from "./lib/start.js";
 import { ISSUE_TYPE_LABELS, columnLabel } from "./lib/vocabulary.js";
 import { pushOverlay, trapFocus } from "./overlay.js";
-import { askMerit, askSeshat } from "./pm_panel.js";
+import { askSeshat } from "./pm_panel.js";
 import { currentContext } from "./pm_thread.js";
 import { getSession, signOutAndLeave } from "./session.js";
 import { currentNav, setDensity, toggleTheme } from "./shell.js";
 import { store } from "./store.js";
+import { openProjectSwitcher, openWorkspaceSwitcher } from "./switcher.js";
 import { toast } from "./toast.js";
 
 let open = null;
@@ -99,14 +101,14 @@ function views() {
     },
     {
       label: "Talk to Seshat, the project manager",
-      search: "Seshat PM project manager chat ask",
+      search: "Seshat project manager chat ask",
       keys: [`${MOD}J`],
       run: () => window.dispatchEvent(new CustomEvent("sekhemet:open-pm")),
     },
   ];
 }
 
-/** Compact (88px tiles) or comfortable (112px: spec line, token and time bars, difficulty). */
+/** Compact (88px tiles) or comfortable (112px: the first line of the issue's description, BRD-13). */
 export function toggleDensity() {
   // The same setting as Configuration › Preferences › Density ("sekhemet-density").
   setDensity(
@@ -120,7 +122,7 @@ function prefs() {
     { label: "Switch theme", search: "theme dark light", run: toggleTheme },
     {
       label: "Switch density (compact or comfortable)",
-      search: "density comfortable compact tile bars tokens difficulty",
+      search: "density comfortable compact tile description line",
       run: toggleDensity,
     },
     // Tips, the Learn layer (§2.9.1): explain each column, check and chart where it is.
@@ -130,6 +132,27 @@ function prefs() {
       run: toggleTips,
     },
     { label: "Keyboard shortcuts", keys: ["?"], run: () => setTimeout(openCheatsheet, 0) },
+    // DB-N25-4: the two switchers, from anywhere.
+    ...(store.state.project?.list?.length
+      ? [
+          {
+            label: "Switch project…",
+            search: "switch project change current",
+            run: () =>
+              setTimeout(() => {
+                const anchor =
+                  document.querySelector("#side [data-project-switch]") ??
+                  document.getElementById("view-title");
+                if (anchor) openProjectSwitcher(anchor);
+              }, 0),
+          },
+        ]
+      : []),
+    {
+      label: `${ACCOUNT_COPY.switchWorkspace}…`,
+      search: "switch workspace server open another",
+      run: () => setTimeout(openWorkspaceSwitcher, 0),
+    },
     // The account menu's pages are in the palette, with no chord (§2.2.1).
     {
       label: ACCOUNT_COPY.profile,
@@ -176,13 +199,18 @@ function cardActions(actions) {
     out.push({ label: `Accept “${title}”`, search: "Accept", keys: ["a"], run: run("a") });
   if (card.display?.evidence)
     out.push({
-      label: `Send back “${title}”`,
-      search: "Send back return",
+      label: `Request changes on “${title}”`,
+      search: "Request changes return",
       keys: ["r"],
       run: run("r"),
     });
   if (card.status !== "parked" && card.status !== "done")
-    out.push({ label: `Park “${title}”`, search: "Park", keys: ["p"], run: run("p") });
+    out.push({
+      label: `Put “${title}” on hold`,
+      search: "Put on hold",
+      keys: ["p"],
+      run: run("p"),
+    });
   out.push({
     label: `Open “${title}”`,
     search: "Open issue",
@@ -270,7 +298,12 @@ function build(query, actions) {
       label: it.label,
       hits: [],
       run:
-        it.kind === "start" ? () => askMerit(it.text) : () => askSeshat(it.text, currentContext()),
+        // DS-N7-1: Start a new project opens the start page.
+        it.kind === "start"
+          ? () => {
+              location.hash = START_ROUTE;
+            }
+          : () => askSeshat(it.text, currentContext()),
     }));
   if (seshat.length) groups.unshift({ name: "Seshat", items: seshat });
   return groups;

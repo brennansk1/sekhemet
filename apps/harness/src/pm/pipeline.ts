@@ -3,10 +3,12 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { basename, dirname, join } from "node:path";
 import { type BoardService, BoardServiceImpl } from "@sekhemet/board";
 import type {
+  CardChange,
   CardKind,
   CardRecord,
   CardStatus,
   CardStore,
+  CardUpdate,
   DepthProfile,
   EventLog,
 } from "@sekhemet/kernel";
@@ -52,7 +54,7 @@ import {
 } from "../card_zero.js";
 import { LearningStore } from "../learning/store.js";
 import { blockLines, isHeading, markdownBlocks } from "../markdown.js";
-import { type Kernel, isGreenfield, planCommand, repoPlanner } from "../wave2.js";
+import { type RepoContext, isGreenfield, planCommand, repoPlanner } from "../wave2.js";
 import { flowMetrics, monteCarloForecast } from "./metrics.js";
 import { NEW_PROJECT_REFUSAL } from "./pm_copy.js";
 
@@ -131,7 +133,7 @@ export function sliceReplyAdapter(slices: Record<string, unknown>[]): LocalInfer
   };
 }
 
-const kernelOf = (d: PipelineDeps): Kernel => ({
+const kernelOf = (d: PipelineDeps): RepoContext => ({
   repoPath: d.repoPath,
   cardStore: d.cardStore,
   log: d.log,
@@ -185,6 +187,8 @@ async function planSlices(
     /** The Planner's model; without slices or one, the heuristic plans and says so. */
     adapter?: LocalInferenceAdapter;
     riskiest?: string;
+    /** A person's chosen type, as the card's `change` (NEW-dashboard-15: a Bug is a `fix`). */
+    change?: CardChange;
   },
 ): Promise<PipelineOutcome> {
   const planner = await repoPlanner(
@@ -216,6 +220,7 @@ async function planSlices(
       repoRoot: deps.repoPath,
       ...(deps.actor ? { actor: deps.actor } : {}),
       ...(deps.principal ? { principal: deps.principal } : {}),
+      ...(input.change ? { change: input.change } : {}),
     },
   );
   const cards: CardRecord[] = [];
@@ -253,9 +258,42 @@ export async function createThroughPipeline(
       spec,
       projectId: typeof draft.projectId === "string" ? draft.projectId : undefined,
     });
-    out.push(await planSlices(deps, { epicId, spec, slices: [sliceOf(draft, "path")] }));
+    // NEW-dashboard-15 (DEC-31's types): a Bug is planned as a `fix` card, a
+    // Task as a `refactor`, a Spike as a spike slice; a Story as the planner judges.
+    const change = CHANGE_OF_TYPE[String(draft.type)];
+    const outcome = await planSlices(deps, {
+      epicId,
+      spec,
+      slices: [sliceOf(draft, draft.type === "spike" ? "spike" : "path")],
+      ...(change ? { change } : {}),
+    });
+    // The properties a person chose on New issue, set as that person's edit.
+    const props = draftProperties(draft);
+    if (props) {
+      for (const [i, card] of outcome.cards.entries()) {
+        outcome.cards[i] = await deps.cardStore.updateCard(
+          card.id,
+          props,
+          deps.actor ?? "human",
+          deps.principal ? { principal: deps.principal } : {},
+        );
+      }
+    }
+    out.push(outcome);
   }
   return out;
+}
+
+const CHANGE_OF_TYPE: Record<string, CardChange> = { bug: "fix", task: "refactor" };
+
+/** Priority, labels, sprint and assignee from a New issue draft (DB-N15-1). */
+function draftProperties(draft: CardDraft): CardUpdate | undefined {
+  const p: CardUpdate = {};
+  if (typeof draft.priority === "number") p.priority = draft.priority;
+  if (Array.isArray(draft.labels) && draft.labels.length) p.labels = strings(draft.labels);
+  if (typeof draft.cycleId === "string" && draft.cycleId) p.cycleId = draft.cycleId;
+  if (typeof draft.assignee === "string" && draft.assignee) p.assignee = draft.assignee;
+  return Object.keys(p).length ? p : undefined;
 }
 
 /**
@@ -429,7 +467,7 @@ async function acceptedBriefSources(
   ]
     .filter((l): l is string => typeof l === "string" && l.trim() !== "")
     .join("\n\n");
-  return briefSources(text, `accepted at ledger seq ${e.seq}`);
+  return briefSources(text, `accepted at Activity log entry ${e.seq}`);
 }
 
 export async function settledSourcesFor(
@@ -754,9 +792,19 @@ export function projectGroupOf(
  * instead. Nothing is written.
  */
 async function refuseUnlessNewFolder(deps: Pick<PipelineDeps, "repoPath" | "cardStore" | "log">) {
-  if (!isGreenfield(deps.repoPath)) {
-    throw new PipelineRefusal(NEW_PROJECT_REFUSAL.hasCode);
-  }
+  const refusal = await newProjectRefusal(deps);
+  if (refusal) throw new PipelineRefusal(refusal);
+}
+
+/**
+ * Why this folder cannot take a new project, in the words a refused Create
+ * project would use, or undefined when it can: asked by the start page before
+ * a person drafts one (design-stage DS-N7-1, `GET /api/projects/new`).
+ */
+export async function newProjectRefusal(
+  deps: Pick<PipelineDeps, "repoPath" | "cardStore" | "log">,
+): Promise<string | undefined> {
+  if (!isGreenfield(deps.repoPath)) return NEW_PROJECT_REFUSAL.hasCode;
   let root = deps.repoPath;
   try {
     root = realpathSync(deps.repoPath);
@@ -776,15 +824,14 @@ async function refuseUnlessNewFolder(deps: Pick<PipelineDeps, "repoPath" | "card
   );
   const cards = (await deps.cardStore.listCards()).filter((c) => ours(c.projectId));
   if (briefs.length > 0 || cards.length > 0) {
-    throw new PipelineRefusal(
-      NEW_PROJECT_REFUSAL.hasProject(
-        project?.name ?? basename(root),
-        briefs.length > 0
-          ? NEW_PROJECT_REFUSAL.acceptedBrief
-          : NEW_PROJECT_REFUSAL.cards(cards.length),
-      ),
+    return NEW_PROJECT_REFUSAL.hasProject(
+      project?.name ?? basename(root),
+      briefs.length > 0
+        ? NEW_PROJECT_REFUSAL.acceptedBrief
+        : NEW_PROJECT_REFUSAL.cards(cards.length),
     );
   }
+  return undefined;
 }
 
 /**

@@ -36,7 +36,7 @@ describe("the Benchmark section's words (DB-N6-9–13, DB-N6-18)", () => {
         roles: [{ role: "worker", state: "to_measure", minutes: 17.5, overTarget: true }],
         endToEnd: { minutes: 6, overTarget: false, cached: false },
       }),
-    ).toBe("Run quick — about 24 min (Coding model over its target)");
+    ).toBe("Run quick · about 24 min (Coding model over its target)");
     expect(
       estimateLabel({
         totalMinutes: 0,
@@ -44,7 +44,7 @@ describe("the Benchmark section's words (DB-N6-9–13, DB-N6-18)", () => {
         roles: [{ role: "worker", state: "cached", minutes: 0, overTarget: false }],
         endToEnd: { minutes: 0, overTarget: false, cached: true },
       }),
-    ).toBe("Run quick — everything is cached");
+    ).toBe("Run quick · everything is cached");
     expect(QUICK_COPY).toBe(
       "The quick benchmark shows speed, fit and large differences; the overnight benchmark settles close calls",
     );
@@ -61,7 +61,7 @@ describe("the Benchmark section's words (DB-N6-9–13, DB-N6-18)", () => {
     );
     expect(opts).toEqual([
       { value: "a", label: "Small", disabled: false },
-      { value: "b", label: "Big — Needs 21 GB", disabled: true },
+      { value: "b", label: "Big · Needs 21 GB", disabled: true },
       { value: "c", label: "Swaps (swaps)", disabled: false },
     ]);
   });
@@ -129,7 +129,7 @@ describe("the Benchmark section's words (DB-N6-9–13, DB-N6-18)", () => {
         partial: false,
         progress: { done: 3, total: 6, elapsedSeconds: 60 },
       }),
-    ).toBe("Running — 3 of 6");
+    ).toBe("Running · 3 of 6");
     expect(
       runStateText({
         runId: "r",
@@ -138,7 +138,7 @@ describe("the Benchmark section's words (DB-N6-9–13, DB-N6-18)", () => {
         state: "stopped",
         partial: true,
       }),
-    ).toBe("Stopped — results so far kept (partial)");
+    ).toBe("Stopped · results so far kept (partial)");
     expect(
       runStateText({
         runId: "r",
@@ -148,7 +148,7 @@ describe("the Benchmark section's words (DB-N6-9–13, DB-N6-18)", () => {
         partial: false,
         schedule: { window: { start: "22:00", end: "03:00" }, fitsTonight: 1 },
       }),
-    ).toBe("Queued — Tonight 22:00–03:00: 1 of 2 combinations fits");
+    ).toBe("Queued · Tonight 22:00–03:00: 1 of 2 combinations fits");
   });
 
   it("offers Assign this combination only when every model is verified on this machine, else Verify on this machine to assign", () => {

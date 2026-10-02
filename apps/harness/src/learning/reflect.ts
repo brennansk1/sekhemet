@@ -2,6 +2,7 @@ import { DEFAULT_BUILTIN_GATES, remedyFor } from "@sekhemet/gates";
 import { type AttemptOutcome, type CardRecord, cardKind } from "@sekhemet/kernel";
 import type { CardRunResult } from "@sekhemet/loop";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
+import { plural } from "@sekhemet/ui";
 import { type LearningStore, type RuleScope, similarity } from "./store.js";
 
 /**
@@ -78,7 +79,7 @@ export async function learnFromAttempt(
       key,
       evidence: {
         cardId: card.id,
-        note: `${s.text} survived ${s.edits} edit(s) before it was fixed`,
+        note: `${s.text} survived ${plural(s.edits, "edit")} before it was fixed`,
         source: "gate",
         verified: "execution",
       },

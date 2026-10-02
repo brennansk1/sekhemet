@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InferenceRequest, ModelRole, UnloadableAdapter } from "@sekhemet/models";
 import { afterEach, describe, expect, it } from "vitest";
-import { dashboardSpeed } from "../src/dashboard_models.js";
+import { dashboardSpeed } from "../src/config_model_actions.js";
 import { ModelAccess } from "../src/model_access.js";
 
 // DB-NM14-3 (B4.1 half-B review): a person's *Measure speed* runs llama-bench

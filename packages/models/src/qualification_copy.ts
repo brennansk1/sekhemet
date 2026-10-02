@@ -1,4 +1,4 @@
-import type { ChatTurn, ToolArm } from "./types.js";
+import type { ChatTurn, ToolCallFormat } from "./types.js";
 
 /**
  * The qualification suite's copy module (PROMPT_STANDARD rule 13; context
@@ -50,7 +50,7 @@ export const qualificationCopy = {
       'Reply with exactly one JSON object and nothing else: {"name": <tool>, "arguments": {...}}.',
     arm_c_sketch:
       'For an edit, reply with the file path on one line followed by a <<<<<<< SEARCH / ======= / >>>>>>> REPLACE block. For any other tool, reply with a JSON object {"name": <tool>, "arguments": {...}}.',
-  } satisfies Record<ToolArm, string>,
+  } satisfies Record<ToolCallFormat, string>,
   tools: {
     read_file: "Read a file in the repository.",
     edit: "Replace exact text in a file.",

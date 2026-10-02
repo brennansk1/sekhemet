@@ -285,6 +285,16 @@ export const SPLIT_BY_CRITERIA_COPY = {
     `${spec}\n\nThis part delivers only: ${own.join("; ")}.`,
 };
 
+/** A proposed sprint's summary (`propose_create_cycle`, `pm/agent.ts`), in DEC-31's words. */
+export function sprintProposalSummary(
+  name: string,
+  startsOn: string,
+  endsOn: string,
+  issues: number,
+): string {
+  return `Plan sprint ${name} (${startsOn} to ${endsOn})${issues ? ` with ${issues} ${issues === 1 ? "issue" : "issues"}` : ""}`;
+}
+
 /** A congestion step-budget proposal's summary (`respondToSignals`, `planner_live.ts`). */
 export function stepBudgetSummary(cardId: string, before: number, after: number): string {
   return `Step budget of ${cardId}: ${before} → ${after}`;
@@ -292,7 +302,7 @@ export function stepBudgetSummary(cardId: string, before: number, after: number)
 
 /** A suspect-link revision's change-card summary (`reviseAndPropose`, `project_done.ts`). */
 export function changeCardSummary(cardId: string, requirementId: string, version: number): string {
-  return `Change card for ${cardId} (${requirementId} v${version})`;
+  return `Change issue for ${cardId} (${requirementId} v${version})`;
 }
 
 /**
@@ -305,7 +315,7 @@ export const NEW_PROJECT_REFUSAL = {
   hasProject: (name: string, what: string) =>
     `This folder already holds the project "${name}", with ${what}: plan the next piece of work with /plan instead.`,
   acceptedBrief: "an accepted brief",
-  cards: (n: number) => `${n} card${n === 1 ? "" : "s"}`,
+  cards: (n: number) => `${n} ${n === 1 ? "issue" : "issues"}`,
   notAType: (type: string) => `"${type}" is not a project Type.`,
 };
 

@@ -32,8 +32,32 @@ export function gateDetail(g) {
   return parts.join(" · ");
 }
 
+/** Above this many checks a tile shows one summary pip and the count (BRD-02). */
+export const PIP_SUMMARY_ABOVE = 6;
+
+/** "11 of 13 checks passed, 2 skipped": the summary pip's words. */
+export function gatesSummaryAria(gates) {
+  const n = (state) => gates.filter((g) => g.state === state).length;
+  const parts = [`${n("pass")} of ${gates.length} checks passed`];
+  if (n("fail")) parts.push(`${n("fail")} failed`);
+  if (n("running")) parts.push(`${n("running")} running`);
+  if (n("skipped")) parts.push(`${n("skipped")} skipped`);
+  if (n("not_run")) parts.push(`${n("not_run")} not run`);
+  return parts.join(", ");
+}
+
 export function pips(gates) {
   if (!gates?.length) return "";
+  if (gates.length > PIP_SUMMARY_ABOVE) {
+    // One pip in the worst state, and passed / ran; the popover lists each check.
+    const state = gates.some((g) => g.state === "fail")
+      ? "fail"
+      : gates.some((g) => g.state === "running")
+        ? "running"
+        : "pass";
+    const passed = gates.filter((g) => g.state === "pass").length;
+    return `<span class="pips sum" role="img" aria-label="${esc(gatesSummaryAria(gates))}" data-pips><span class="pip ${state}">${icon(PIP_ICON[state], 10)}</span><span class="pip-n tnum" aria-hidden="true">${passed}/${gates.length}</span></span>`;
+  }
   const items = gates
     .map((g) => {
       const glyph = PIP_ICON[g.state];
@@ -52,12 +76,6 @@ const MARK = {
   wait: () => icon("clock", 12, "ic s12"),
   fail: () => icon("x", 12, "ic s12 i-fail"),
 };
-
-/** The planner's 1-10 difficulty, as a diamond and the number (comfortable density). */
-export function difficultyMark(card) {
-  if (typeof card.difficulty !== "number") return "";
-  return `<span class="diff comfy tnum" title="${esc(`Difficulty ${card.difficulty} of 10`)}"><i aria-hidden="true"></i>${card.difficulty}</span>`;
-}
 
 /**
  * Markup for one tile (dashboard §2.4.4), from the pure tile model
@@ -89,7 +107,7 @@ export function tileHtml(card, opts = {}) {
   const key = `<span class="key" ${tip(card.id)}>${esc(t.key)}</span>`;
   const pts = t.points ? `<span class="pts tnum">${esc(t.points)}</span>` : "";
   const owner = t.owner
-    ? `<span class="av" role="img" aria-label="${esc(`Owner: ${t.owner.name}`)}" ${tip(`Owner: ${t.owner.name}`)}>${esc(t.owner.initials)}</span><span class="av-name" aria-hidden="true">${esc(t.owner.name)}</span>`
+    ? `<span class="av" role="img" aria-label="${esc(`Assignee: ${t.owner.name}`)}" ${tip(`Assignee: ${t.owner.name}`)}>${esc(t.owner.initials)}</span><span class="av-name" aria-hidden="true">${esc(t.owner.name)}</span>`
     : "";
   // The delegate is a text chip; the Agent never has an avatar (DB-P3-5) and
   // carries the AI badge after its name, a person never (DB-N9-18).
@@ -150,5 +168,14 @@ export function tileHtml(card, opts = {}) {
   const described = [t.blocker ? blkId : "", st ? stId : "", ai ? aiId : ""]
     .filter(Boolean)
     .join(" ");
-  return `<li class="${cls}" role="option" id="tile-${esc(card.id)}" data-id="${esc(card.id)}" aria-selected="${opts.selected ? "true" : "false"}"${described ? ` aria-describedby="${esc(described)}"` : ""}>${r1}<p class="title">${esc(t.title)}</p>${r3}${blocker}${r4s}${aiRow}${excerpt}</li>`;
+  // A11Y-05: a short name — type, key, title, owner and delegate — never the
+  // whole face; the status, a blocker and the Agent's state are its description.
+  const name = [
+    `${t.type.label} ${t.key}: ${t.title}`,
+    t.owner ? `owner ${t.owner.name}` : "",
+    t.delegate ? `delegate ${t.delegate.text}` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return `<li class="${cls}" role="option" id="tile-${esc(card.id)}" data-id="${esc(card.id)}" aria-label="${esc(name)}" aria-selected="${opts.selected ? "true" : "false"}"${described ? ` aria-describedby="${esc(described)}"` : ""}>${r1}<p class="title">${esc(t.title)}</p>${r3}${blocker}${r4s}${aiRow}${excerpt}</li>`;
 }

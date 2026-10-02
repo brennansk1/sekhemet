@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { onPath } from "../../../packages/gates/src/builtin.js";
 import { checkSyntax } from "../../../packages/loop/src/parse_gate.js";
+import { tokenMatches } from "../src/github_routes.js";
 import { localLicense } from "../src/license_gate.js";
-import { tokenMatches } from "../src/wave2_server.js";
 
 /** NEW-security-3: three small hardening items (SEC-35, SEC-36, SEC-37). */
 describe("small hardening items (NEW-security-3)", () => {

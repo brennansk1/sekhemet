@@ -104,7 +104,7 @@ describe("Agent Client Protocol surface (H14)", () => {
       params: { sessionId: "sess_1", prompt: [{ type: "text", text: "/ready card_x" }] },
     });
     expect((await cardStore.getCard("card_x"))?.status).toBe("ready");
-    expect(JSON.stringify(sent)).toContain("Moved card_x to Ready");
+    expect(JSON.stringify(sent)).toContain("Moved card_x to To do");
     await agent.handle({
       jsonrpc: "2.0",
       id: 3,

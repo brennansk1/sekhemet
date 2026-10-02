@@ -3,7 +3,7 @@ import type {
   InferenceRequest,
   InferenceResponse,
   LocalInferenceAdapter,
-  ToolArm,
+  ToolCallFormat,
 } from "./types.js";
 
 /**
@@ -56,7 +56,7 @@ function requestText(req: InferenceRequest): string {
  * exhaustion mode decides what happens after the last one.
  */
 export class MockInferenceAdapter implements LocalInferenceAdapter {
-  public readonly supportedArms: ToolArm[] = ["arm_a_flat", "arm_b_json", "arm_c_sketch"];
+  public readonly supportedArms: ToolCallFormat[] = ["arm_a_flat", "arm_b_json", "arm_c_sketch"];
   public callHistory: InferenceRequest[] = [];
   private responseIndex = 0;
   private rules: (MockRule & { used: number })[];

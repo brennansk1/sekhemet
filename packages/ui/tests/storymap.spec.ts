@@ -115,7 +115,7 @@ describe("the story map (DB-P3-13)", () => {
     ).toEqual([["REQ-1", "Done", ["c_parse", "c_upload"]]]);
     expect(cell(0, "ep_tag")?.requirements.map((r) => r.id)).toEqual(["REQ-2"]);
     expect(cell(0, "ep_report")?.requirements.map((r) => [r.id, r.label, r.tone])).toEqual([
-      ["REQ-3", "Passing, strength unmet", "park"],
+      ["REQ-3", "Tests too weak", "park"],
     ]);
     // A requirement with no cards has no epic yet: the last column.
     expect(cell(1, "")?.requirements.map((r) => [r.id, r.label])).toEqual([
@@ -183,9 +183,9 @@ describe("the story map (DB-P3-13)", () => {
       ),
     ).toEqual({
       proven: "check-circle Done",
-      passing_strength_unmet: "ring Passing, strength unmet",
+      passing_strength_unmet: "ring Tests too weak",
       failing: "alert Failing on main",
-      suspect: "link Suspect",
+      suspect: "link Needs re-checking",
       planned: "calendar Planned",
       unplanned: "minus Unplanned",
       cut: "x Cut",

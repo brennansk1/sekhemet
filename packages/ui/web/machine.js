@@ -23,7 +23,7 @@ const LEVEL = {
   normal: {
     label: "Normal",
     tone: "pass",
-    text: "Issues run normally. Sekhemet stops adding worktrees at 90% and pauses the agent at 94%.",
+    text: "Issues run normally. Sekhemet stops adding worktrees at 90% and pauses the Agent at 94%.",
   },
   warning: {
     label: "Warning",
@@ -33,7 +33,7 @@ const LEVEL = {
   critical: {
     label: "Critical",
     tone: "fail",
-    text: "Above 94%: the agent is paused safely before the system would swap. Work resumes below 85%.",
+    text: "Above 94%: the Agent is paused safely before the system would swap. Work resumes below 85%.",
   },
 };
 
@@ -51,7 +51,7 @@ function memoryHtml(m) {
   // legend under the gauge, never a hover title (DB-P12-6).
   const tick = (r, up = false) =>
     `<span class="tick${up ? " up" : ""}" style="left:${r * 100}%"><i></i><em class="tnum">${Math.round(r * 100)}%</em></span>`;
-  const legend = `<p class="sec mem-ticks tnum">${Math.round(t.warning * 100)}% warning · ${Math.round(t.throttle * 100)}% no new worktrees · ${Math.round(t.critical * 100)}% pause the agent</p>`;
+  const legend = `<p class="sec mem-ticks tnum">${Math.round(t.warning * 100)}% warning · ${Math.round(t.throttle * 100)}% no new worktrees · ${Math.round(t.critical * 100)}% pause the Agent</p>`;
   const kernel = m.kernelLevel
     ? ({ 1: "normal", 2: "warning", 4: "critical" }[m.kernelLevel] ?? String(m.kernelLevel))
     : null;
@@ -84,7 +84,7 @@ function rosterHtml() {
   if (r.status !== 200 || !r.data) {
     const why =
       r.status === 404
-        ? "<b>The model roster isn't on this server yet.</b> <code>GET /api/models</code> returned 404. It will list the Coding, Planning (Seshat), Review and Research models, and which of them is loaded."
+        ? "<b>The model roster isn't on this server yet.</b> Update Sekhemet and restart it. It lists the Coding, Planning (Seshat), Review and Research models, and which of them is loaded."
         : `<b>Couldn't read the model roster.</b> The server returned ${esc(r.status > 0 ? r.status : "no response")}.`;
     return `<section>${head("Coding, Planning, Review and Research models")}<p class="roster-empty">${icon("machine", 14, "ic s14")}<span>${why}</span></p></section>`;
   }

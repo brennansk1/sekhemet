@@ -29,12 +29,22 @@ export interface IdentityRouteDeps {
    * answers no other Host.
    */
   soloCsrf?: string;
+  /** Solo: the person's name, from git's user.name or the computer's account (SHL-02). */
+  soloName?: string;
   /**
    * What Members shows beside a person's level (DB-N9-16): their profile
    * label, per-project levels, last active and whether they are active now
    * or locked. Read from the access projection and the ledger.
    */
   memberFacts?: (principal: string) => MemberFacts;
+  /**
+   * Members' other parts (DB-N19-3, DEC-51): the access levels from the
+   * table the server checks, the AI teammates' facts and the sign-in
+   * settings in force, merged into `GET /api/members`.
+   */
+  workspaceFacts?: () => Record<string, unknown>;
+  /** A project's name, for the outstanding invites' list (DB-N19-4). */
+  projectName?: (id: string) => string | undefined;
   /**
    * A person's own per-project levels and the projects they lead, for the
    * page's level notes (DB-N9-17), and their profile label, which sets their
@@ -53,6 +63,8 @@ export interface MemberFacts {
   lastActive?: string;
   active?: boolean;
   locked?: boolean;
+  /** The projects whose Accept rule names the person (DB-N19-3, teams item 7). */
+  acceptIn?: string[];
 }
 
 const INVITE = /^\/api\/invites\/([A-Za-z0-9_-]+)$/;
@@ -183,6 +195,7 @@ export async function handleIdentityRoute(
         signIn: false,
         principal: who.principal,
         level: who.level,
+        ...(deps.soloName ? { name: deps.soloName } : {}),
         ...(deps.soloCsrf ? { csrf: deps.soloCsrf } : {}),
       });
     } else {
@@ -396,6 +409,27 @@ export async function handleIdentityRoute(
     return true;
   }
 
+  // DB-N19-4: an invite is a credential, so only an Admin lists or revokes them.
+  if (url === "/api/invites" && method === "GET") {
+    if (notAdmin("see the outstanding invites")) return true;
+    const r = identity.listInvites(actor);
+    if (!r.ok) refuse(r);
+    else
+      json(res, 200, {
+        invites: r.invites.map((i) => {
+          const name = i.project ? deps.projectName?.(i.project) : undefined;
+          return { ...i, ...(name ? { projectName: name } : {}) };
+        }),
+      });
+    return true;
+  }
+  const revoke = INVITE.exec(url);
+  if (revoke?.[1] && method === "DELETE") {
+    if (notAdmin("revoke invites")) return true;
+    done(identity.revokeInvite(actor, revoke[1]));
+    return true;
+  }
+
   if (url === "/api/tokens" && method === "POST") {
     const b = await body();
     const r = identity.createToken(
@@ -443,6 +477,7 @@ export async function handleIdentityRoute(
       })),
       // The Admin's actions show only for an Admin (DB-N9-16).
       canManage: admin,
+      ...(deps.workspaceFacts ? deps.workspaceFacts() : {}),
     });
     return true;
   }

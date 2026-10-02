@@ -6,9 +6,9 @@ import { esc, icon } from "./dom.js";
 import { gateStripModel } from "./lib/strip.js";
 import {
   GATE_STATE_LABELS,
+  checksVerdict,
   formatDuration,
   invariantsNotEnforced,
-  joinWords,
 } from "./lib/vocabulary.js";
 
 const ICON = {
@@ -24,20 +24,12 @@ function seconds(ms) {
   return `${(ms / 1000).toFixed(1)} seconds`;
 }
 
-/** "3 of 3 passed · Lint not run" */
+/**
+ * The Checks heading: the one verdict every view uses (REV-01) —
+ * *All 11 checks that ran passed · OSV and Semgrep skipped*.
+ */
 export function gatesHeadline(gates) {
-  const ran = gates.filter(
-    (g) => g.state === "pass" || g.state === "fail" || g.state === "unavailable",
-  );
-  const passed = gates.filter((g) => g.state === "pass").length;
-  const notRun = gates.filter((g) => g.state === "not_run").map((g) => g.label);
-  const skipped = gates.filter((g) => g.state === "skipped").map((g) => g.label);
-  const down = gates.filter((g) => g.state === "unavailable").map((g) => g.label);
-  const parts = [`${passed} of ${ran.length + skipped.length} passed`];
-  if (down.length) parts.push(`${joinWords(down)} unavailable`);
-  if (skipped.length) parts.push(`${joinWords(skipped)} skipped`);
-  if (notRun.length) parts.push(`${joinWords(notRun)} not run`);
-  return parts.join(" · ");
+  return checksVerdict(gates).text;
 }
 
 /**

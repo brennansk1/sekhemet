@@ -36,7 +36,7 @@ import {
   runGoldenSet,
   runResearchBakeoffCommand,
 } from "../src/research_bakeoff.js";
-import { runWave2Command } from "../src/wave2.js";
+import { runDevCommand } from "../src/wave2.js";
 
 // Design-stage DS-N2-9 and models NEW-models-11 (MD-N11-1..3): the research
 // golden set run per pipeline and per model, compared by the exact paired
@@ -527,7 +527,7 @@ describe("the record, the advice and the adoption on the ledger (DS-N2-9, MD-N11
         principal,
         qualification: "qualified",
       }),
-    ).rejects.toThrow(/MD-N11-2/);
+    ).rejects.toThrow(/the comparison does not support it/);
     const done = await adoptResearcher(k.log, registry, rec, {
       model: "spark-x2.5-4b",
       host: "host-a",
@@ -549,7 +549,7 @@ describe("the record, the advice and the adoption on the ledger (DS-N2-9, MD-N11
     // The Apodex profile is still there to restore to.
     expect(RESEARCHER_CANDIDATES[0]?.modelId).toBe("apodex-1.1-mini");
     const out: string[] = [];
-    const code = await runWave2Command("models", ["restore", "researcher", "--default"], k, {
+    const code = await runDevCommand("models", ["restore", "researcher", "--default"], k, {
       print: (l: string) => out.push(l),
       combinationDeps: deps,
     });

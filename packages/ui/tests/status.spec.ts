@@ -331,7 +331,7 @@ describe("the page's sections and words (§2.8's order, DB-N9-1)", () => {
       cancel: "Cancel",
       posted: "Update posted.",
       loadingDraft: "Seshat is drafting the update…",
-      extendLabel: "New appetite, in issues",
+      extendLabel: "New size limit, in issues",
       save: "Save",
       askLabel: "Ask Seshat about this project",
       askPlaceholder: "How is it going? What's at risk?",
@@ -340,8 +340,10 @@ describe("the page's sections and words (§2.8's order, DB-N9-1)", () => {
       notOnServer: "Status isn't on this server yet.",
       notOnServerDetail: "Update Sekhemet and restart it.",
       loadFailed: "Couldn't load the project's facts.",
-      loadFailedDetail:
-        "Health, the update, the forecast and the flow are missing below. Reload the page to try again.",
+      // ERR-04: the page offers Try again beside it, not "Reload the page".
+      loadFailedDetail: "Health, the update, the forecast and the flow are missing below.",
+      tryAgain: "Try again",
+      askEmpty: "Type a question for Seshat first.",
     });
   });
 });
@@ -432,22 +434,35 @@ describe("Status (DB-P5-1, DB-N9-1)", () => {
 
   it("DB-N9-5: counts requirements done per release, never counting tests too weak as done", () => {
     expect(v.numbers.slice(1)).toEqual([
+      // STA-01: the current release's Must haves, the planner's *requirements done*.
       {
         id: "requirements",
         label: "Requirements",
-        value: "Release 1 · 1 of 7 requirements done",
-        detail: "1 with tests too weak, not counted as done. Suspect since a change: Import.",
+        value: "Release 1 · 1 of 3 requirements done",
+        detail:
+          "Must have requirements. 1 with tests too weak, not counted as done. To re-check since a change: Import. Should and Could have requirements are listed below and not counted.",
       },
-      { id: "issues", label: "Issues done", value: "1 of 6" },
-      { id: "sprint", label: "Sprint", value: "Sprint 4 · 3 days left" },
+      // STA-01: what the count leaves out, against the board's tiles.
+      {
+        id: "issues",
+        label: "Issues done",
+        value: "1 of 6",
+        detail: "Not counted: 1 epic and 1 won't do issue.",
+      },
+      // STA-01: the board's count of days left, today included.
+      { id: "sprint", label: "Sprint", value: "Sprint 4 · 4 days left" },
       // A jump to Needs you on this page; a hash link would change the route.
       { id: "attention", label: "Needs attention", value: "5", jump: "needs" },
     ]);
-    expect(v.appetite).toBe("Appetite used: 5 of 8 issues.");
+    expect(v.appetite).toBe("Size limit used: 5 of 8 issues.");
   });
 
   it("DB-N9-5: groups requirements as Must, Should and Could have, each in one of five states", () => {
-    expect(v.requirements.groups).toEqual([
+    // STA-01: by release, each counted as its key number counts it.
+    expect(v.requirements.releases.map((r) => [r.name, r.summary, r.current])).toEqual([
+      ["Release 1", "1 of 3 requirements done", true],
+    ]);
+    expect(v.requirements.releases[0]?.groups).toEqual([
       {
         label: "Must have",
         summary: "1 done · 1 tests too weak · 1 blocked",
@@ -506,7 +521,7 @@ describe("Status (DB-P5-1, DB-N9-1)", () => {
     ]);
     const none = statusModel(input({ storyMap: null }));
     expect(none.requirements).toEqual({
-      groups: [],
+      releases: [],
       empty: "No requirements yet. Seshat lists them when a person accepts the project's brief.",
     });
     expect(none.numbers[1]).toEqual({
@@ -532,12 +547,12 @@ describe("Status (DB-P5-1, DB-N9-1)", () => {
       {
         kind: "parked",
         text: "Export is on hold. Used every budgeted step without passing.",
-        buttons: [{ label: "Unpark", act: "unpark", id: "card_export" }],
+        buttons: [{ label: "Take off hold", act: "unpark", id: "card_export" }],
       },
       {
         // Unproven, so it cannot be accepted yet; a requirement is unplanned, so it cannot be extended.
         kind: "slice",
-        text: "Release 1 reached its appetite with 2 of 3 Must have requirements not done. Choose how it goes on.",
+        text: "Release 1 reached its size limit with 2 of 3 Must have requirements not done. Choose how it goes on.",
         buttons: [
           {
             label: "Move the rest to Later",
@@ -655,7 +670,7 @@ describe("Status (DB-P5-1, DB-N9-1)", () => {
         { label: "Cycle time, median", value: "3h", href: "#/insights" },
         { label: "Cycle time, 85th percentile", value: "7.3h", href: "#/insights" },
         { label: "Throughput", value: "0.7 issues a week", href: "#/insights" },
-        { label: "Sent back", value: "2 in 30 days", href: "#/insights" },
+        { label: "Changes requested", value: "2 in 30 days", href: "#/insights" },
         { label: "Checks passed first time", value: "75% (3 of 4)", href: "#/insights" },
       ],
     });
@@ -724,11 +739,11 @@ describe("Status in the Team setup (DB-N9-2, DB-N9-4, DB-N9-7, DB-N9-21)", () =>
     ).toBeNull();
   });
 
-  it("offers Unpark only to a level that may use it; a Stakeholder's parked issue waits on a Member", () => {
+  it("offers Take off hold only to a level that may use it; a Stakeholder's parked issue waits on a Member", () => {
     const mine = cards.map((c) => (c.id === "card_export" ? { ...c, owner: "p_me" } : c));
     const member = statusModel(input({ cards: mine, facts: team }));
     expect(member.needsYou.items.find((i) => i.kind === "parked")?.buttons).toEqual([
-      { label: "Unpark", act: "unpark", id: "card_export" },
+      { label: "Take off hold", act: "unpark", id: "card_export" },
     ]);
     const stakeholder = statusModel(input({ cards: mine, facts: { ...team, canUnpark: false } }));
     expect(stakeholder.needsYou.items.map((i) => i.kind)).toEqual(["decision"]);

@@ -7,12 +7,13 @@
 import { burnupHtml, loadBurnup } from "./burnup.js";
 import { $, announce, esc, getJSON, icon, postJSON } from "./dom.js";
 import { aiBadge } from "./issue_view.js";
+import { viewerManagesWork } from "./learn.js";
 import { noteFor } from "./level_gate.js";
 import { burnupTarget } from "./lib/burnup.js";
-import { START_PROJECT_OPENING } from "./lib/seshat.js";
+import { START_COPY, START_ROUTE } from "./lib/start.js";
 import { STATUS_COPY, STATUS_SECTIONS, statusModel } from "./lib/status.js";
 import { sendMessage } from "./pm_client.js";
-import { askMerit, togglePmPanel } from "./pm_panel.js";
+import { togglePmPanel } from "./pm_panel.js";
 import { getSession } from "./session.js";
 import { setTopbar } from "./shell.js";
 import { store, triageBlocker } from "./store.js";
@@ -100,14 +101,17 @@ function model() {
     standup: ui.standup,
     signals: ui.signals,
     standing: ui.standing,
+    managesWork: viewerManagesWork(),
   });
 }
 
 /* ---------- Sections ---------- */
 
+// Each section names its place in the wide grid (NEW-dashboard-18); the DOM
+// order, and so the reading order, stays §2.8's.
 const section = (id, body, extra = "") => {
   const s = STATUS_SECTIONS.find((x) => x.id === id);
-  return `<section class="stp-sec" aria-labelledby="stp-h-${id}"${extra}><h2 id="stp-h-${id}" tabindex="-1">${esc(s?.heading ?? id)}</h2>${body}</section>`;
+  return `<section class="stp-sec stp-a-${id}" aria-labelledby="stp-h-${id}"${extra}><h2 id="stp-h-${id}" tabindex="-1">${esc(s?.heading ?? id)}</h2>${body}</section>`;
 };
 
 const empty = (text) => `<p class="sec stp-empty">${esc(text)}</p>`;
@@ -168,7 +172,11 @@ function headerHtml(v) {
     releaseLead || setReleaseLead
       ? `<div class="stp-row">${releaseLead}${setReleaseLead}</div>`
       : "";
-  return `<header class="stp-head"><p class="stp-headline">${esc(v.headline)}</p><div class="stp-row">${health}${setHealth}${write}</div>${healthFormHtml(v)}${target || setTarget ? `<div class="stp-row">${target}${setTarget}</div>` : ""}${targetFormHtml(v)}${leadRow}${releaseLeadFormHtml(v)}${missing}${editorHtml()}${update}</header>`;
+  // DS-N7-2: on a phone New project is at the top of Status, not only at its foot.
+  const newProject = noteFor("project.create")
+    ? ""
+    : `<a class="btn sm stp-new" href="${START_ROUTE}" data-new-project>${icon("plus", 14, "ic s14")}${esc(START_COPY.title)}</a>`;
+  return `<header class="stp-head">${newProject}<p class="stp-headline">${esc(v.headline)}</p><div class="stp-row">${health}${setHealth}${write}</div>${healthFormHtml(v)}${target || setTarget ? `<div class="stp-row">${target}${setTarget}</div>` : ""}${targetFormHtml(v)}${leadRow}${releaseLeadFormHtml(v)}${missing}${editorHtml()}${update}</header>`;
 }
 
 /** The lead's health call (TEAM-28): three words, one checked; nothing changes until Save. */
@@ -218,7 +226,8 @@ function numbersHtml(v) {
   const items = v.numbers
     .map((n) => {
       const value = n.jump
-        ? `<button class="link-btn stp-v tnum" type="button" data-jump="${esc(n.jump)}">${esc(n.value)}</button>`
+        ? // A11Y-06: the number's button says what it counts and where it goes.
+          `<button class="link-btn stp-v tnum" type="button" data-jump="${esc(n.jump)}" aria-label="${esc(`${n.label}: ${n.value}. Show them`)}">${esc(n.value)}</button>`
         : `<span class="stp-v tnum">${esc(n.value)}</span>`;
       return `<div class="stp-num"><dt>${esc(n.label)}</dt><dd>${value}${n.detail ? `<span class="sec stp-d">${esc(n.detail)}</span>` : ""}</dd></div>`;
     })
@@ -260,17 +269,23 @@ const list = (items, emptyText) =>
     ? `<ul class="stp-list">${items.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>`
     : empty(emptyText);
 
+/** By release, each with the count its key number uses (STA-01), then by MoSCoW group. */
 function requirementsHtml(v) {
   if (v.requirements.empty) return empty(v.requirements.empty);
-  return v.requirements.groups
+  return v.requirements.releases
     .map(
-      (g) =>
-        `<div class="stp-group"><h3>${esc(g.label)} <span class="sec">${esc(g.summary)}</span></h3><ul class="stp-list">${g.rows
+      (rel) =>
+        `<div class="stp-release${rel.current ? " current" : ""}"><h3>${esc(rel.name)} <span class="sec">${esc(rel.summary)}</span></h3>${rel.groups
           .map(
-            (r) =>
-              `<li><span>${esc(r.title)}</span><span class="stp-state">${toneDot(r.tone)}${esc(r.label)}</span></li>`,
+            (g) =>
+              `<div class="stp-group"><h4>${esc(g.label)} <span class="sec">${esc(g.summary)}</span></h4><ul class="stp-list">${g.rows
+                .map(
+                  (r) =>
+                    `<li><span>${esc(r.title)}</span><span class="stp-state">${toneDot(r.tone)}${esc(r.label)}</span></li>`,
+                )
+                .join("")}</ul></div>`,
           )
-          .join("")}</ul></div>`,
+          .join("")}</div>`,
     )
     .join("");
 }
@@ -305,7 +320,8 @@ function flowHtml(v) {
 }
 
 function askHtml() {
-  return `<form class="stp-ask" data-ask><label class="sr-only" for="stp-ask-q">${esc(C.askLabel)}</label><input id="stp-ask-q" autocomplete="off" placeholder="${esc(C.askPlaceholder)}"><button class="btn" type="submit">${icon("chat", 14, "ic s14")}${esc(C.ask)}</button></form><button class="btn primary stp-start" type="button" data-start>${icon("plus", 14, "ic s14")}${esc(C.startProject)}</button>`;
+  // STA-10: an empty question is refused beside the box, never silently dropped.
+  return `<form class="stp-ask" data-ask novalidate><label class="sr-only" for="stp-ask-q">${esc(C.askLabel)}</label><input id="stp-ask-q" autocomplete="off" aria-describedby="stp-ask-note" placeholder="${esc(C.askPlaceholder)}"><button class="btn" type="submit">${icon("chat", 14, "ic s14")}${esc(C.ask)}</button></form><button class="btn primary stp-start" type="button" data-start>${icon("plus", 14, "ic s14")}${esc(C.startProject)}</button><p class="why sec" id="stp-ask-note" role="status" data-ask-note></p>`;
 }
 
 function render() {
@@ -321,9 +337,14 @@ function render() {
       ui.facts.status === 404
         ? `<p class="stp-notice" role="status"><b>${esc(C.notOnServer)}</b> <span class="sec">${esc(C.notOnServerDetail)}</span></p>`
         : ui.facts.status !== 200
-          ? `<p class="stp-notice" role="status"><b>${esc(C.loadFailed)}</b> <span class="sec">${esc(C.loadFailedDetail)}</span></p>`
+          ? `<p class="stp-notice" role="alert"><b>${esc(C.loadFailed)}</b> <span class="sec">${esc(C.loadFailedDetail)}</span> <button class="btn sm" type="button" data-reload>${icon("refresh", 14, "ic s14")}${esc(C.tryAgain)}</button></p>`
           : "";
-    const width = Math.min(900, Math.max(320, (ui.root.clientWidth || 900) - 32));
+    // In the wide grid the burn-up takes two of three columns (NEW-dashboard-18).
+    const avail = (ui.root.clientWidth || 900) - 32;
+    const wide = window.matchMedia?.("(min-width: 1280px)").matches ?? false;
+    const width = wide
+      ? Math.max(320, Math.floor(((avail - 48) * 2) / 3) + 24)
+      : Math.min(900, Math.max(320, avail));
     html = [
       notice,
       headerHtml(v),
@@ -536,8 +557,8 @@ async function act(btn) {
   btn.disabled = true;
   if (kind === "unpark") {
     const r = await postJSON(`/api/cards/${encodeURIComponent(id)}/unpark`, {});
-    if (r.ok) toast({ tone: "pass", text: "Unparked. It is back where it was parked from." });
-    else fail("unpark it", r);
+    if (r.ok) toast({ tone: "pass", text: "Taken off hold. It is back where it was." });
+    else fail("take it off hold", r);
   } else if (kind === "agent-start" || kind === "agent-decline") {
     // TEAM-39: a Member starts the Agent on the request, on their own behalf, or declines it.
     const card = btn.dataset.card ?? "";
@@ -587,20 +608,25 @@ async function extend(form) {
     return;
   }
   ui.extend = null;
-  toast({ tone: "pass", text: `Appetite extended to ${cards} issues.` });
+  toast({ tone: "pass", text: `Size limit raised to ${cards} issues.` });
   refreshAll();
 }
 
 /** Seshat, one step away: the panel, or on a phone the full view (§2.7.1, `pm_panel.js`). */
-function openSeshat(prefill) {
-  if (prefill) askMerit(prefill);
-  else togglePmPanel(true);
+function openSeshat() {
+  togglePmPanel(true);
 }
 
 async function ask(form) {
   const input = $("#stp-ask-q", form);
   const text = input?.value.trim();
-  if (!text) return;
+  const note = $("[data-ask-note]", ui.root);
+  if (!text) {
+    if (note) note.textContent = C.askEmpty;
+    input?.focus();
+    return;
+  }
+  if (note) note.textContent = "";
   const sent = await sendMessage(text, { view: "status" });
   if (!sent) return;
   input.value = "";
@@ -637,8 +663,12 @@ export function mount(view) {
       ui.extend = null;
       render();
       $(`[data-act="slice-extend"][data-id="${CSS.escape(id ?? "")}"]`, ui.root)?.focus();
-    } else if (t.closest("[data-start]")) openSeshat(START_PROJECT_OPENING);
-    else if (t.closest("[data-jump]")) {
+    } else if (t.closest("[data-start]")) location.hash = START_ROUTE;
+    else if (t.closest("[data-reload]")) {
+      ui.facts = { status: 0, data: null };
+      render();
+      load();
+    } else if (t.closest("[data-jump]")) {
       const h = $(`#stp-h-${t.closest("[data-jump]").dataset.jump}`, ui.root);
       h?.scrollIntoView({ block: "start" });
       h?.focus({ preventScroll: true });

@@ -10,6 +10,8 @@ export const store = {
     reconnectingSince: 0,
     offlineSince: 0,
     loaded: false,
+    /** ERR-03: the board's last read failed (its status, -1 for no answer); 0 when it did not. */
+    boardError: 0,
     cards: [],
     wipLimits: {},
     /** `/api/board`'s `reviewLimit`: how the In review limit was reached. */

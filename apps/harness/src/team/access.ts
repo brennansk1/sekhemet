@@ -58,7 +58,7 @@ export const ACTIONS = {
   "agent.guide": { level: "member", does: "guide the Agent" },
   "agent.pause": { level: "member", does: "pause the Agent" },
   "agent.take_over": { level: "member", does: "take this issue over from the Agent" },
-  review: { level: "member", does: "send back, park or reject this issue" },
+  review: { level: "member", does: "request changes, put on hold or reject this issue" },
   "gates.run": { level: "member", does: "run the checks" },
   "proposal.apply": { level: "member", does: "apply Seshat's proposals" },
   "plan.approve": { level: "member", does: "approve plans" },
@@ -629,46 +629,46 @@ export function parseSettingsPatch(body: Record<string, unknown>): ProjectSettin
   if ("accept_rule" in body) {
     const v = body.accept_rule;
     if (!Array.isArray(v) || v.some((x) => typeof x !== "string" || !PRINCIPAL.test(x))) {
-      throw new Error("accept_rule is a list of principals (p_…)");
+      throw new Error("The Accept rule lists people by their ids (p_…).");
     }
     out.accept_rule = [...new Set(v as string[])];
   }
   if ("require_resolved_threads" in body) {
     if (typeof body.require_resolved_threads !== "boolean") {
-      throw new Error("require_resolved_threads is true or false");
+      throw new Error("Requiring resolved conversations is either on or off.");
     }
     out.require_resolved_threads = body.require_resolved_threads;
   }
   if ("lead" in body) {
     if (typeof body.lead !== "string" || !PRINCIPAL.test(body.lead)) {
-      throw new Error("lead is a principal (p_…)");
+      throw new Error("The lead is a person's id (p_…).");
     }
     out.lead = body.lead;
   }
   if ("auto_apply" in body) {
     const v = body.auto_apply;
     if (!v || typeof v !== "object" || Array.isArray(v)) {
-      throw new Error("auto_apply maps a property to true or false");
+      throw new Error("Automatic changes are set per property, each on or off.");
     }
     for (const [k, on] of Object.entries(v)) {
       if (!(AUTO_APPLY_PROPERTIES as readonly string[]).includes(k)) {
         throw new Error(
-          `auto_apply is not available for ${k}; only ${AUTO_APPLY_PROPERTIES.join(", ")} (TEAM-18)`,
+          `Automatic changes are not available for ${k}; only ${AUTO_APPLY_PROPERTIES.join(", ")} can be applied automatically.`,
         );
       }
-      if (typeof on !== "boolean") throw new Error(`auto_apply.${k} is true or false`);
+      if (typeof on !== "boolean") throw new Error(`Automatic ${k} is either on or off.`);
     }
     out.auto_apply = v as Record<string, boolean>;
   }
   if ("estimation" in body) {
     if (body.estimation !== "off" && body.estimation !== "points") {
-      throw new Error("estimation is off or points");
+      throw new Error("Estimation is Off or Story points.");
     }
     out.estimation = body.estimation;
   }
   if (Object.keys(out).length === 0) {
     throw new Error(
-      "Nothing to change: accept_rule, require_resolved_threads, lead, auto_apply or estimation",
+      "Nothing to change: name the Accept rule, the lead, resolved conversations, automatic changes or estimation.",
     );
   }
   return out;

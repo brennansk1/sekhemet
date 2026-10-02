@@ -1008,7 +1008,7 @@ export class CardStore {
       // the planner wrote can leave Planning without a person's approval.
       if ((existing.criterionIds?.length ?? 0) > 0 && (ids ?? []).length === 0) {
         throw new Error(
-          `Card ${id}: its criterion ids cannot be cleared; a planned card keeps one id per criterion (PM-N7-5)`,
+          `Card ${id}: its criterion ids cannot be cleared; a planned card keeps one id per criterion`,
         );
       }
       const why = criterionIdsProblem(patch.acceptanceCriteria ?? existing.acceptanceCriteria, ids);
@@ -1739,7 +1739,7 @@ export class CardStore {
   ): Promise<void> {
     if (!DEPENDENCY_SOURCES.includes(source)) {
       throw new Error(
-        `A dependency's source is one of ${DEPENDENCY_SOURCES.join(", ")}, got ${String(source)} (PM-N8-2)`,
+        `A dependency's source is one of ${DEPENDENCY_SOURCES.join(", ")}, got ${String(source)}`,
       );
     }
     for (const id of [cardId, dependsOnId]) {

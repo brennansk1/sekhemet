@@ -9,10 +9,10 @@ import { MockInferenceAdapter } from "@sekhemet/models";
 import { NodeGitSyncAdapter, intentFor } from "@sekhemet/sync";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AcceptRefusedError, acceptCard, acceptPreconditions } from "../src/accept.js";
+import { applyWebhookIntent } from "../src/github_routes.js";
 import { recordLedgerRun } from "../src/ledger_evidence.js";
 import { startDashboardServer } from "../src/server.js";
 import { identitySettings } from "../src/team/settings.js";
-import { applyWebhookIntent } from "../src/wave2_server.js";
 
 /**
  * B4.11, teams NEW-teams-8 (item 25; TEAM-24, TEAM-25) and review-git §2

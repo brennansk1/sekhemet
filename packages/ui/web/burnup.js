@@ -16,7 +16,7 @@ export async function loadBurnup(url) {
 }
 
 function tableHtml(rows) {
-  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Done</th><th>Scope</th></tr></thead><tbody>${rows
+  return `<div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr><th>Date</th><th>Done</th><th>Scope</th></tr></thead><tbody>${rows
     .map((r) => `<tr>${r.map((c) => `<td class="tnum">${esc(c)}</td>`).join("")}</tr>`)
     .join("")}</tbody></table></div>`;
 }

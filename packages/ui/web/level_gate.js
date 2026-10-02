@@ -70,10 +70,22 @@ export function applyLevelGate(control) {
     control.setAttribute("aria-disabled", "true");
     control.setAttribute("tabindex", "-1");
   }
-  const id = `level-note-${++seq}`;
-  const span = document.createElement("span");
   // A quiet control's note is its title and a hidden description (see above).
   const quiet = control.dataset.needsQuiet !== undefined;
+  // ISS-09: controls side by side that need the same level share one written
+  // note (Send back and Park), each described by it; it is never written twice.
+  const twin = quiet
+    ? undefined
+    : [
+        ...(control.parentElement?.querySelectorAll(":scope > .level-note:not(.sr-only)") ?? []),
+      ].find((n) => n.textContent === note);
+  if (twin) {
+    const described = control.getAttribute("aria-describedby");
+    control.setAttribute("aria-describedby", described ? `${described} ${twin.id}` : twin.id);
+    return;
+  }
+  const id = `level-note-${++seq}`;
+  const span = document.createElement("span");
   span.className = quiet ? "level-note sr-only" : "level-note";
   span.id = id;
   span.textContent = note;

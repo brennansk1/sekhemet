@@ -42,12 +42,12 @@ describe("sekhemet log: projections derive from the ledger (K8), the repo is a p
     lines.length = 0;
     await main(["log", "--repo", dir]);
     expect(process.exitCode).toBe(1);
-    expect(lines.join("\n")).toContain("DRIFTED from the ledger: cards");
+    expect(lines.join("\n")).toContain("Projections differ from the Activity log: cards");
 
     process.exitCode = 0;
     lines.length = 0;
     await main(["log", "--repo", dir, "--rebuild"]);
-    expect(lines.join("\n")).toContain("Projections rebuilt from the ledger");
+    expect(lines.join("\n")).toContain("Projections rebuilt from the Activity log");
     const again = new DatabaseSync(join(dir, ".sekhemet", "events.db"));
     const title = again.prepare("SELECT title FROM cards WHERE id = 'card_l'").get() as {
       title: string;

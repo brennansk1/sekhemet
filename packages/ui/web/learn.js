@@ -6,12 +6,15 @@ import { esc, icon } from "./dom.js";
 import {
   FIRST_RUN,
   answerFirstRun,
+  managesWork,
+  readRole,
   readTips,
   tipButtonHtml,
   tipFor,
   writeTips,
 } from "./lib/learn.js";
 import { placeUnder, pushOverlay, trapFocus } from "./overlay.js";
+import { getSession } from "./session.js";
 
 export function storage() {
   try {
@@ -19,6 +22,19 @@ export function storage() {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * NEW-dashboard-17: this person manages the work (Solo's *I manage the work*,
+ * or the Team profile label Product owner or Stakeholder).
+ */
+export function viewerManagesWork() {
+  const session = getSession();
+  return managesWork({
+    team: session.mode === "team",
+    profileLabel: session.label,
+    role: readRole(storage()),
+  });
 }
 
 /** Kept for this page when the browser blocks storage. */
@@ -181,7 +197,13 @@ export function initTips() {
  * focus, so a deep link opens as it was. *I'm learning* turns Tips on; the
  * other answers leave them off. `onAnswer(role)` goes on from there.
  */
-export function showFirstRun(onAnswer) {
+/**
+ * The first visit (§2.2.5; FINDINGS SHL-03): a welcome — what Sekhemet is,
+ * the model step when no model is set up yet (an Admin's, in the Team
+ * setup) — and the one question, *I'll just talk to Seshat* among its
+ * answers. A bar above the view: it blocks nothing and takes no focus.
+ */
+export function showFirstRun(onAnswer, { noModel = false, setsUpModels = true } = {}) {
   if (document.getElementById("sk-firstrun")) return;
   const bar = document.createElement("section");
   bar.id = "sk-firstrun";
@@ -193,7 +215,10 @@ export function showFirstRun(onAnswer) {
         `<button class="btn fr-choice" type="button" data-fr="${esc(c.role)}"><b>${esc(c.label)}</b><span class="sec">${esc(c.detail)}</span></button>`,
     )
     .join("");
-  bar.innerHTML = `<div class="fr-head"><h2 id="fr-q">${esc(FIRST_RUN.question)}</h2><span class="sec">${esc(FIRST_RUN.note)}</span></div><div class="fr-choices">${choices}<button class="btn ghost" type="button" data-fr="later">${esc(FIRST_RUN.later)}</button></div>`;
+  const step = noModel
+    ? `<p class="fr-step">${esc(setsUpModels ? FIRST_RUN.modelStep : FIRST_RUN.modelStepAdmin)}${setsUpModels ? ` <a href="#/configuration/models">${esc(FIRST_RUN.setUpModels)}</a>` : ""}</p>`
+    : "";
+  bar.innerHTML = `<div class="fr-head"><p class="fr-welcome"><b>${esc(FIRST_RUN.welcome)}</b> <span class="sec">${esc(FIRST_RUN.lede)}</span></p>${step}<h2 id="fr-q">${esc(FIRST_RUN.question)}</h2><span class="sec">${esc(FIRST_RUN.note)}</span></div><div class="fr-choices">${choices}<button class="btn ghost" type="button" data-fr="later">${esc(FIRST_RUN.later)}</button></div>`;
   bar.addEventListener("click", (e) => {
     const b = e.target instanceof Element ? e.target.closest("[data-fr]") : null;
     if (!b) return;

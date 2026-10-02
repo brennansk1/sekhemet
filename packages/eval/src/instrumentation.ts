@@ -2,7 +2,7 @@ import type {
   InferenceRequest,
   InferenceResponse,
   LocalInferenceAdapter,
-  ToolArm,
+  ToolCallFormat,
 } from "@sekhemet/models";
 
 export interface SamplingOverrides {
@@ -21,7 +21,7 @@ export interface SamplingOverrides {
  */
 export class InstrumentedAdapter implements LocalInferenceAdapter {
   public readonly modelId: string;
-  public readonly supportedArms: ToolArm[];
+  public readonly supportedArms: ToolCallFormat[];
 
   public promptTokens = 0;
   /** Of `promptTokens`, those the server served from its prompt cache (MS-M9-2). */
@@ -54,7 +54,7 @@ export class InstrumentedAdapter implements LocalInferenceAdapter {
     return this.inner.contextWindow;
   }
 
-  public get preferredToolArm(): ToolArm | undefined {
+  public get preferredToolArm(): ToolCallFormat | undefined {
     return this.inner.preferredToolArm;
   }
 

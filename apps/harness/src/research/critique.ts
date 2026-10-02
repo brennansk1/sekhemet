@@ -1,5 +1,4 @@
-import type { LocalInferenceAdapter } from "@sekhemet/models";
-import { stripThinking } from "./apodex.js";
+import { type LocalInferenceAdapter, stripReasoning } from "@sekhemet/models";
 import { type EvidenceLedger, verifyReferences } from "./apodex_loop.js";
 import {
   type Disagreement,
@@ -148,7 +147,7 @@ export async function critiquePass(
       maxTokens: 1500,
       purpose: "planning",
     });
-    const raw = stripThinking(res.text);
+    const raw = stripReasoning(res.text);
     for (const d of parseDisagreements(raw, ledger, opts.numbered)) {
       if (!disagreements.some((o) => o.topic.toLowerCase() === d.topic.toLowerCase()))
         disagreements.push(d);

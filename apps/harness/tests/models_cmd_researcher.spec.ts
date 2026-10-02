@@ -6,7 +6,7 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { MockInferenceAdapter, ModelRegistry, currentAssignment } from "@sekhemet/models";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CombinationDeps, qualificationCombination } from "../src/qualify.js";
-import { type Kernel, runWave2Command } from "../src/wave2.js";
+import { type RepoContext, runDevCommand } from "../src/wave2.js";
 
 // models MD-N11-2 on the generic path: the Researcher's shipped default
 // changes only as the research golden-set run's adoption verdict allows,
@@ -36,7 +36,7 @@ describe("models assign researcher --default (MD-N11-2)", () => {
     const db = new DatabaseSync(join(repoPath, "events.db"));
     initSchema(db);
     const log = new EventLog(db);
-    const k: Kernel = { repoPath, log, cardStore: new CardStore(db, log) };
+    const k: RepoContext = { repoPath, log, cardStore: new CardStore(db, log) };
     const out: string[] = [];
     const io = {
       print: (l: string) => out.push(l),
@@ -71,7 +71,7 @@ describe("models assign researcher --default (MD-N11-2)", () => {
       },
     });
     expect(
-      await runWave2Command(
+      await runDevCommand(
         "models",
         ["assign", "researcher", "spark-x", "--default", "--bake-off", night.id],
         k,
@@ -88,6 +88,6 @@ describe("models assign researcher --default (MD-N11-2)", () => {
       ),
     ).toBeUndefined();
     // A person's own choice is still theirs to make.
-    expect(await runWave2Command("models", ["assign", "researcher", "spark-x"], k, io)).toBe(0);
+    expect(await runDevCommand("models", ["assign", "researcher", "spark-x"], k, io)).toBe(0);
   });
 });

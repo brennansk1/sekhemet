@@ -35,7 +35,8 @@ function criteriaHtml(card, evidence) {
  */
 function withAiState(panel, ai) {
   const agent = (ai ?? []).find((a) => a.who === "agent");
-  if (!agent) return panel;
+  // ISS-02, ISS-03: the page's own Stopped line names the person from the ledger.
+  if (!agent || panel.state === "stopped") return panel;
   const line = aiStateLine(agent);
   return { ...panel, label: line.label, sentence: line.sentence };
 }
@@ -52,13 +53,21 @@ const AGENT_NEEDS = {
   pause: "agent.pause",
   take_over: "agent.take_over",
   hand_back: "agent.guide",
+  resume: "agent.guide",
+};
+
+const AGENT_ICON = {
+  pause: "pause",
+  take_over: "user",
+  submit: "check-circle",
+  resume: "refresh",
 };
 
 function agentHtml(panel, handBackOpen, seshat = "", project = "") {
   const buttons = panel.controls
     .map(
       (id) =>
-        `<button class="btn" type="button" data-agent="${esc(id)}"${AGENT_NEEDS[id] ? ` data-needs="${AGENT_NEEDS[id]}"${project ? ` data-needs-project="${esc(project)}"` : ""}` : ""}${id === "hand_back" && handBackOpen ? ' aria-expanded="true"' : id === "hand_back" ? ' aria-expanded="false"' : ""}>${icon(id === "pause" ? "pause" : id === "take_over" ? "user" : id === "submit" ? "check-circle" : "send", 14, "ic s14")}${esc(ISSUE_COPY.controls[id])}</button>`,
+        `<button class="btn" type="button" data-agent="${esc(id)}"${AGENT_NEEDS[id] ? ` data-needs="${AGENT_NEEDS[id]}"${project ? ` data-needs-project="${esc(project)}"` : ""}` : ""}${id === "hand_back" && handBackOpen ? ' aria-expanded="true"' : id === "hand_back" ? ' aria-expanded="false"' : ""}>${icon(AGENT_ICON[id] ?? "send", 14, "ic s14")}${esc(ISSUE_COPY.controls[id])}</button>`,
     )
     .join("");
   const form =
@@ -176,6 +185,9 @@ export function mountIssue(host, ctx) {
               },
         ),
       );
+    } else if (id === "resume") {
+      // ISS-02: a stopped run resumes from its last checkpoint (the server's hand-back).
+      void act("hand-back", { note: "" }, () => toast({ text: ISSUE_COPY.resumed }));
     } else if (id === "hand_back") {
       state.handBack = !state.handBack;
       draw();

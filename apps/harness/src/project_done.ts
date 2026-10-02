@@ -55,7 +55,7 @@ import {
   exportProjectDocuments,
   renderedDocuments,
 } from "./project_docs.js";
-import type { Kernel } from "./wave2.js";
+import type { RepoContext } from "./wave2.js";
 
 /**
  * Project done, computed (planner-pm §2.15, P13) — the harness side: the
@@ -68,7 +68,7 @@ import type { Kernel } from "./wave2.js";
  * (`requirement_graph.ts`); this module runs processes and writes files.
  */
 
-const ledgerOf = (k: Kernel): PlannerLedger => ({
+const ledgerOf = (k: RepoContext): PlannerLedger => ({
   store: k.cardStore,
   log: k.log,
   ...(k.boardService ? { board: k.boardService } : {}),
@@ -118,7 +118,7 @@ export function strengthVerdict(
 
 /** The test-strength record in the card's latest evidence bundle, read and checked against its SHA-256. */
 export async function cardStrength(
-  k: Kernel,
+  k: RepoContext,
   cardId: string,
 ): Promise<TestStrengthRecord | undefined> {
   const record = await latestLedgerEvidence(k.cardStore, cardId);
@@ -142,7 +142,7 @@ export async function cardStrength(
  * head was checked already (unless `force`, e.g. after a new evidence bundle).
  */
 export async function checkMain(
-  k: Kernel,
+  k: RepoContext,
   options: { sandbox?: ProcessSandbox; force?: boolean; restricted?: boolean } = {},
 ): Promise<{ check?: MainCheck; skipped?: string }> {
   const ledger = ledgerOf(k);
@@ -237,7 +237,7 @@ export async function checkMain(
 
 /** The story map of a project (the default one when omitted), judged against main's head now. */
 export async function projectStoryMap(
-  k: Kernel,
+  k: RepoContext,
   projectId?: string,
 ): Promise<StoryMap | undefined> {
   const ledger = ledgerOf(k);
@@ -256,7 +256,7 @@ export async function projectStoryMap(
  * are committed when the release is confirmed, before the tag.
  */
 export async function acceptSliceAndRelease(
-  k: Kernel,
+  k: RepoContext,
   sliceId: string,
   principal: string,
 ): Promise<{
@@ -327,7 +327,7 @@ export async function acceptSliceAndRelease(
  * queue prelude's ask computes (`enforceAppetite`). The REST route is
  * refused on the same terms, not only the offer that led to it.
  */
-export async function extendRefusal(k: Kernel, sliceId: string): Promise<string | undefined> {
+export async function extendRefusal(k: RepoContext, sliceId: string): Promise<string | undefined> {
   const ledger = ledgerOf(k);
   const status = await sliceStatus(ledger, sliceId, mainHead(k.repoPath).sha);
   if (!status) return `No release ${sliceId}`;
@@ -373,7 +373,7 @@ export function sliceReleaseVersion(
  * resolves once accepted (PM-P13-12).
  */
 export async function reviseAndPropose(
-  k: Kernel,
+  k: RepoContext,
   requirementId: string,
   revision: RequirementRevision,
   principal: string,
@@ -386,7 +386,7 @@ export async function reviseAndPropose(
   if (out.changeCards.length > 0) {
     await new PmStore(k.log).appendReply({
       replyTo: [],
-      text: `${requirementId} was revised to version ${out.version}. ${out.changeCards.length === 1 ? "One done issue was" : `${out.changeCards.length} done issues were`} built against the earlier version; suggested: a change issue for each. Why: until one is accepted, or you re-confirm the link, ${requirementId} is suspect and its release not done.${out.held.length ? ` Held in Planning: ${out.held.join(", ")}.` : ""}${out.running.length ? ` Running, re-checked when it stops: ${out.running.join(", ")}.` : ""}`,
+      text: `${requirementId} was revised to version ${out.version}. ${out.changeCards.length === 1 ? "One done issue was" : `${out.changeCards.length} done issues were`} built against the earlier version; suggested: a change issue for each. Why: until one is accepted, or you re-confirm the link, ${requirementId} needs re-checking and its release is not done.${out.held.length ? ` Held in Planning: ${out.held.join(", ")}.` : ""}${out.running.length ? ` Running, re-checked when it stops: ${out.running.join(", ")}.` : ""}`,
       proposals: out.changeCards.map((c) => ({
         kind: "create_card" as const,
         summary: changeCardSummary(c.cardId, c.requirementId, c.version),
@@ -411,7 +411,7 @@ export async function reviseAndPropose(
  * schedule and the lines to print.
  */
 export async function projectDonePass(
-  k: Kernel,
+  k: RepoContext,
 ): Promise<{ held: Set<string>; lines: string[]; asks: AppetiteAsk[] }> {
   const lines: string[] = [];
   if ((await k.cardStore.slices.list()).length === 0) {
@@ -465,7 +465,7 @@ function printMap(map: StoryMap, print: (l: string) => void): void {
   } else print("Main has not been checked yet: `sekhemet release check`.");
   for (const s of map.slices) {
     print(
-      `${s.id}${s.title ? ` ${s.title}` : ""}: ${s.state}, ${s.provenLine}${s.appetiteReached ? ", appetite reached" : ""}.`,
+      `${s.id}${s.title ? ` ${s.title}` : ""}: ${s.state}, ${s.provenLine}${s.appetiteReached ? ", size limit reached" : ""}.`,
     );
     for (const r of s.requirements) {
       print(
@@ -486,7 +486,7 @@ function printMap(map: StoryMap, print: (l: string) => void): void {
  * arguments are not one of these, so the caller keeps the commit-only path.
  */
 export async function releaseSubcommand(
-  k: Kernel,
+  k: RepoContext,
   args: string[],
   print: (l: string) => void,
 ): Promise<number | undefined> {
@@ -609,7 +609,11 @@ export async function releaseSubcommand(
 }
 
 /** The sha proven for a slice's release, from `release/proven` (recorded at proposal time). */
-async function provenSha(k: Kernel, sliceId: string, version: string): Promise<string | undefined> {
+async function provenSha(
+  k: RepoContext,
+  sliceId: string,
+  version: string,
+): Promise<string | undefined> {
   const events = await k.log.getEventsByTypes(["release/proven"]);
   const match = events.filter((e) => {
     const p = e.payload as { sliceId?: string; version?: string };
@@ -659,7 +663,7 @@ export function documentsOnlyCommit(
  * `release/proven` there). Sekhemet never deploys.
  */
 export async function confirmSliceRelease(
-  k: Kernel,
+  k: RepoContext,
   sliceId: string,
 ): Promise<{ tag: string; sha: string; notice?: string }> {
   const release = (await k.cardStore.slices.releases(sliceId)).at(-1);
@@ -722,7 +726,7 @@ export async function confirmSliceRelease(
  * here; a failure is said in Seshat's thread, never swallowed.
  */
 async function exportAfter(
-  k: Kernel,
+  k: RepoContext,
   principal: string,
   card: string,
   print?: (line: string) => void,
@@ -748,7 +752,7 @@ async function exportAfter(
  * is a person's decision on one (design-stage DS-N3-1, -2, -3).
  */
 async function docsSubcommand(
-  k: Kernel,
+  k: RepoContext,
   args: string[],
   principal: string,
   print: (l: string) => void,
@@ -798,7 +802,7 @@ async function docsSubcommand(
   }
   print(
     r.sha
-      ? `Committed ${r.written.join(", ")} onto ${r.branch} as ${r.sha.slice(0, 10)} (ledger seq ${r.seq}).`
+      ? `Committed ${r.written.join(", ")} onto ${r.branch} as ${r.sha.slice(0, 10)} (Activity log entry ${r.seq}).`
       : "The project documents on the integration branch are up to date.",
   );
   if (r.notice) print(r.notice);
@@ -814,7 +818,7 @@ async function docsSubcommand(
 }
 
 /** The slice of the latest proposed release no `release/tagged` has followed, or undefined. */
-export async function latestUntaggedRelease(k: Kernel): Promise<string | undefined> {
+export async function latestUntaggedRelease(k: RepoContext): Promise<string | undefined> {
   const events = await k.log.getEventsByTypes(["release/proposed", "release/tagged"]);
   const tagged = new Set(
     events
@@ -833,7 +837,7 @@ export async function latestUntaggedRelease(k: Kernel): Promise<string | undefin
 
 export interface ProjectDoneRouteContext {
   repoPath: string;
-  kernel: Kernel;
+  kernel: RepoContext;
   json: (res: ServerResponse, status: number, body: unknown) => void;
   isTrustedMutation: (req: IncomingMessage) => boolean;
   readJsonBody: (req: IncomingMessage) => Promise<Record<string, unknown>>;
@@ -967,5 +971,27 @@ export async function handleProjectDoneRoute(
     const status = /^No project /.test(message) ? 404 : 409;
     json(res, status, { error: message });
     return true;
+  }
+}
+
+/**
+ * The repository's tags, newest first (at most 50), for a Bug's *Release*
+ * (NEW-dashboard-15). The harness's own read-only git in the hardened
+ * environment; a folder that is not a repository has none.
+ */
+export function releaseTags(repoPath: string): string[] {
+  try {
+    return execFileSync("git", ["tag", "--list", "--sort=-creatordate"], {
+      cwd: repoPath,
+      encoding: "utf8",
+      env: gitEnvFor(repoPath),
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split("\n")
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .slice(0, 50);
+  } catch {
+    return [];
   }
 }

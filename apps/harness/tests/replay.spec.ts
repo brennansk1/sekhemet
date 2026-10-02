@@ -89,7 +89,7 @@ describe("sekhemet replay (H8)", () => {
       [2, "qwen3.8-27b", 3, "passed"],
     ]);
     const text = formatTrajectory(all[0] as NonNullable<(typeof all)[0]>);
-    expect(text).toMatch(/Attempt 1 .* on cyber-tiel: failed, 3 step\(s\), 360 tokens/);
+    expect(text).toMatch(/Attempt 1 .* on cyber-tiel: failed, 3 steps, 360 tokens/);
     expect(text).toMatch(/2\. write_file src\/a\.ts \| checks FAIL typecheck/);
     expect(text).toMatch(/3\. finish_card \| stop: repair_exhausted/);
     expect(formatTrajectory(all[1] as NonNullable<(typeof all)[1]>)).toMatch(

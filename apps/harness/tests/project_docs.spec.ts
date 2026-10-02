@@ -42,7 +42,7 @@ import {
   releaseSubcommand,
   strengthVerdict,
 } from "../src/project_done.js";
-import type { Kernel } from "../src/wave2.js";
+import type { RepoContext } from "../src/wave2.js";
 
 // design-stage NEW-design-stage-3 (DS-N3-1..8): the brief, the requirements
 // and the decision records are generated from the ledger into the
@@ -56,7 +56,7 @@ let db: DatabaseSync;
 let log: EventLog;
 let store: CardStore;
 let board: BoardServiceImpl;
-let k: Kernel;
+let k: RepoContext;
 let projectId: string;
 let principal: string;
 

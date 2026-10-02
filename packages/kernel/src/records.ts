@@ -26,7 +26,7 @@ import type {
   StartAttemptInput,
   StepRecord,
   StepToolCall,
-  ToolArm,
+  ToolCallFormatCode,
 } from "./types.js";
 import { ATTEMPT_ROLES } from "./types.js";
 
@@ -51,7 +51,7 @@ export const RUN_EVENTS = {
 export const DECISION_DELIVERED_EVENT = "decision/delivered";
 
 const RUNGS = new Set<RepairRung>([1, 2, 3, 4]);
-const TOOL_ARMS = new Set<ToolArm>(["A", "B", "C"]);
+const TOOL_ARMS = new Set<ToolCallFormatCode>(["A", "B", "C"]);
 
 const GATE_LAYERS = new Set([
   "static",
@@ -155,7 +155,7 @@ export function readAttemptOutcomes(
       cardId: String(f.cardId ?? s.cardId ?? ""),
       attemptNumber: Number(f.attemptNumber ?? s.attemptNumber ?? 1),
       rung: (f.rung ?? s.rung ?? 1) as RepairRung,
-      toolArm: (f.toolArm ?? s.toolArm ?? "A") as ToolArm,
+      toolArm: (f.toolArm ?? s.toolArm ?? "A") as ToolCallFormatCode,
       role: f.role ?? "worker",
       modelId,
       status: f.status,
@@ -316,7 +316,7 @@ export class RunLedger {
       attemptNumber: Number(r.attempt_number),
       rung: Number(r.rung ?? 1) as RepairRung,
       modelId: String(r.model_id),
-      toolArm: (r.tool_arm ?? "A") as ToolArm,
+      toolArm: (r.tool_arm ?? "A") as ToolCallFormatCode,
       status: r.status as AttemptStatus,
       ...(r.stop_reason ? { stopReason: r.stop_reason as CardStopReason } : {}),
       tokensUsed: Number(r.tokens_used),

@@ -6,7 +6,7 @@ import { EventLog, initSchema } from "@sekhemet/kernel";
 import { ModelRegistry, type ModelRole, type UnloadableAdapter } from "@sekhemet/models";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultBenchmarkEnv } from "../src/benchmark_cmd.js";
-import { dashboardQualify } from "../src/dashboard_models.js";
+import { dashboardQualify } from "../src/config_model_actions.js";
 import { ModelAccess } from "../src/model_access.js";
 
 // B4.1 half-B review: a benchmark's models load through the one residency

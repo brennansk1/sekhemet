@@ -2,7 +2,7 @@ import { type OvernightVerdict, overnightVerdict } from "@sekhemet/eval";
 import type { CardRecord, CardStore, EventLog, EventRecord } from "@sekhemet/kernel";
 import { MODEL_ROLES } from "@sekhemet/models";
 import { EstimationModel } from "@sekhemet/planner";
-import { stopReasonLabel } from "@sekhemet/ui";
+import { sprintDaysLeft, stopReasonLabel } from "@sekhemet/ui";
 import type { Audience } from "./audience.js";
 import { namedDecisions } from "./decisions.js";
 import { burnupFromEvents } from "./metrics.js";
@@ -262,10 +262,8 @@ function sprintPace(
   });
   const last = b.days.at(-1);
   if (!last || last.scope === 0) return undefined;
-  const left = Math.max(
-    0,
-    Math.round((Date.parse(active.endsOn.slice(0, 10)) - Date.parse(today)) / 86_400_000),
-  );
+  // STA-01: the board's and Status's count, today included.
+  const left = sprintDaysLeft(active, now.getTime());
   const word = unit === "points" ? "points" : "issues";
   return `${active.name}: ${last.done} of ${last.scope} ${word} done, ${count(left, "day")} left.`;
 }
@@ -405,6 +403,6 @@ export async function standupFacts(deps: {
     next: ordered.slice(0, 3).map((c) => ({ ...item(c), estimate: estimateOf(estimator, c) })),
     ...(sprint ? { sprint } : {}),
     ...(verdict ? { benchmark: benchmarkLine(verdict) } : {}),
-    basedOn: `Based on: the board at ${hh}:${mm}${last ? ` and ledger entry ${last.seq}` : ""}.`,
+    basedOn: `Based on: the board at ${hh}:${mm}${last ? ` and Activity log entry ${last.seq}` : ""}.`,
   };
 }

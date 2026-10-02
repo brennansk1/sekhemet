@@ -110,13 +110,13 @@ describe("DB-N9-14: the Inbox groups what reached you by reason", () => {
     expect(changeLine({ type: "commented", by: "Dana Lee" })).toBe("Dana Lee commented.");
     expect(changeLine({ type: "mentioned", by: "Dana Lee" })).toBe("Dana Lee mentioned you.");
     expect(changeLine({ type: "status", by: "Mo Member", status: "review" })).toBe(
-      "Mo Member moved it to Review.",
+      "Mo Member moved it to In review.",
     );
     expect(changeLine({ type: "status", byAi: "agent", status: "review" })).toBe(
-      "Agent moved it to Review.",
+      "Agent moved it to In review.",
     );
     expect(changeLine({ type: "owner", by: "Ada Admin", to: "you" })).toBe(
-      "Ada Admin made you the owner.",
+      "Ada Admin assigned it to you.",
     );
     expect(changeLine({ type: "delegated", by: "Mo Member", toAi: "agent" })).toBe(
       "Mo Member delegated it to the Agent.",
@@ -155,9 +155,9 @@ describe("DB-N9-14: the Inbox groups what reached you by reason", () => {
       }),
     );
     expect(line.ai).toEqual([
-      { name: "Agent", label: "done", sentence: "Finished. Its work is waiting for review." },
+      { name: "Agent", label: "finished", sentence: "Finished. Its work is waiting for review." },
     ]);
-    expect(line.line).toBe("Agent moved it to Review.");
+    expect(line.line).toBe("Agent moved it to In review.");
     // More than one change since it was done: the row says how many.
     expect(itemLine(item({ count: 3, change: { type: "commented", by: "Vic" } })).line).toBe(
       "Vic commented. 3 updates.",
@@ -266,9 +266,9 @@ describe("DB-N9-15: My issues, grouped by project", () => {
       ["Chronicle", ["c2", "c3"]],
       ["Zeta", ["c1"]],
     ]);
-    expect(groups[0]?.issues[0]?.whyLabel).toBe("Owner · Review requested");
+    expect(groups[0]?.issues[0]?.whyLabel).toBe("Assigned to you · Review requested");
     expect(groups[0]?.issues[1]?.whyLabel).toBe("Delegated to you");
-    expect(groups[0]?.issues[0]?.statusLabel).toBe("Review");
+    expect(groups[0]?.issues[0]?.statusLabel).toBe("In review");
     expect(MY_ISSUES_COPY.title).toBe("My issues");
   });
 });

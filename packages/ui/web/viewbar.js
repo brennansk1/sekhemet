@@ -55,7 +55,7 @@ const FIELD_NAMES = {
   label: "Label",
   epic: "Epic",
   cycle: "Sprint",
-  owner: "Owner",
+  owner: "Assignee",
   delegate: "Delegate",
   type: "Type",
   state: "State",
@@ -223,7 +223,7 @@ function valueLabel(field, v) {
 
 /** An owner or delegate value in words: You, Agent, a person's name, or none. */
 function personValueLabel(field, v) {
-  if (v === "none") return field === "owner" ? "No owner" : "No delegate";
+  if (v === "none") return field === "owner" ? "No assignee" : "No delegate";
   if (v === "@me" || v === "me" || v === "you") return "You";
   if (v === "agent" || v === "worker") return "Agent";
   for (const c of store.state.cards) {
@@ -281,7 +281,7 @@ function optionsFor(field) {
       return list;
     }
     case "owner":
-      return [opt("@me", "You"), ...peopleOptions("owner", opt), opt("none", "No owner")];
+      return [opt("@me", "You"), ...peopleOptions("owner", opt), opt("none", "No assignee")];
     case "delegate":
       return [
         opt("agent", "Agent"),

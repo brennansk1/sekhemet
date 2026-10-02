@@ -847,6 +847,20 @@ export class EventLog {
     return this.db.prepare("SELECT 1 AS x FROM events WHERE id = ?").get(id) !== undefined;
   }
 
+  /**
+   * The workspace's id (rule 38a, K-N12-1): `ws_` and the first 12 hex of the
+   * first event's hash, so a ledger written before DEC-57 is adopted with
+   * nothing appended or rewritten, and a backup restored elsewhere keeps the
+   * id. Undefined on an empty ledger. A read: it appends nothing.
+   */
+  public workspaceId(): string | undefined {
+    const row = this.db.prepare("SELECT hash FROM events ORDER BY seq ASC LIMIT 1").get() as
+      | { hash: string }
+      | undefined;
+    const hex = row?.hash.replace(/[^0-9a-f]/g, "").slice(0, 12);
+    return hex && hex.length === 12 ? `ws_${hex}` : undefined;
+  }
+
   /** The last seq, 0 on an empty ledger. */
   public lastSeq(): number {
     return (this.db.prepare("SELECT COALESCE(MAX(seq), 0) AS s FROM events").get() as { s: number })

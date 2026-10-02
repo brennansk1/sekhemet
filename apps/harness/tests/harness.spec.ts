@@ -32,7 +32,7 @@ describe("@sekhemet/harness CLI", () => {
     // Every specified probe must actually run.
     const names = report.checks.map((c) => c.name);
     expect(names).toContain("Unified memory");
-    expect(names).toContain("Local inference socket");
+    expect(names).toContain("Model server");
     expect(names).toContain("Git worktree isolation");
     expect(names).toContain("Sandbox confinement");
     expect(names).toContain("Node runtime");

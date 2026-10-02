@@ -25,7 +25,7 @@ describe("integrationGroups", () => {
   it("groups the API's entries by the API's tier, in the API's order", () => {
     const g = integrationGroups(
       [
-        { id: "slack", name: "Slack for the PM", tier: "now", connected: true },
+        { id: "slack", name: "Slack for Seshat", tier: "now", connected: true },
         { id: "github", name: "GitHub", tier: "now", connected: false },
         { id: "sentry", name: "Sentry", tier: "next", connected: false },
         { id: "notion", name: "Notion publishing", tier: "later", connected: false },

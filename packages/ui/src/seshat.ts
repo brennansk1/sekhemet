@@ -10,6 +10,7 @@
  * The browser loads the compiled module as `/app/lib/seshat.js`.
  */
 import type { NavItem } from "./nav.js";
+import { START_ROUTE } from "./start.js";
 import { STATUS_COPY } from "./status.js";
 
 export const SESHAT_NAME = "Seshat";
@@ -178,10 +179,12 @@ export function nonDeveloperWalk(
     reachable: true,
     steps: [
       toStatus,
-      { where: status.label, press: STATUS_COPY.startProject, route: seshat },
-      { where: SESHAT_NAME, press: SESHAT_COPY.send, route: seshat },
-      { where: SESHAT_NAME, press: SESHAT_COPY.reviewPlan, route: seshat },
-      { where: SESHAT_COPY.reviewPlan, press: SESHAT_COPY.createProject, route: seshat },
+      // design-stage §2.11 (NEW-design-stage-7): a project starts on its own
+      // page, the conversation beside the live draft, not in Seshat's panel.
+      { where: status.label, press: STATUS_COPY.startProject, route: START_ROUTE },
+      { where: SESHAT_NAME, press: SESHAT_COPY.send, route: START_ROUTE },
+      { where: SESHAT_NAME, press: SESHAT_COPY.reviewPlan, route: START_ROUTE },
+      { where: SESHAT_COPY.reviewPlan, press: SESHAT_COPY.createProject, route: START_ROUTE },
       toStatus,
       { where: status.label, press: STATUS_COPY.ask, route: seshat },
     ],

@@ -4,30 +4,157 @@
    issue header's Watch toggle and a comment's invite question. Tokens only.
    Below 768 px a row's actions wrap under it. */
 
-.ib-view,
+/* VIS-03: My issues fills the main area, never a column and an empty strip. */
 .mi {
-  max-width: 960px;
   gap: 20px;
 }
-.ib-tabs {
+/* NEW-dashboard-19 (DEC-51; TEAM-03): the grouped list and a reading pane from
+   1100 px, filling the main area (VIS-03); below, one list, and the pane in
+   its place with Back to Inbox. */
+.ib-view {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+.ib-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+.ib-list,
+.ib-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+.ib-list {
   display: flex;
-  gap: 4px;
+  flex-direction: column;
+  gap: 20px;
+  padding: 16px 24px 24px;
+}
+.ib-pane {
+  display: none;
+  background: var(--bg-surface);
+}
+.ib-split.reading .ib-list {
+  display: none;
+}
+.ib-split.reading .ib-pane {
+  display: block;
+}
+.ib-back {
+  margin-left: -8px;
+}
+@media (min-width: 1100px) {
+  .ib-split {
+    grid-template-columns: minmax(360px, 2fr) minmax(0, 3fr);
+  }
+  .ib-list {
+    border-right: 1px solid var(--border-subtle);
+  }
+  .ib-pane,
+  .ib-split.reading .ib-pane {
+    display: block;
+  }
+  .ib-split.reading .ib-list {
+    display: flex;
+  }
+  .ib-back {
+    display: none;
+  }
+}
+.ib-pane-empty {
+  height: 100%;
+  min-height: 240px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+}
+.ib-pane-h {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 12px 24px;
   border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
 }
-.ib-tabs button {
-  appearance: none;
-  background: none;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  padding: 8px 12px;
-  color: var(--text-secondary);
-  font: inherit;
+.ib-crumb {
   font-size: var(--text-sm);
-  cursor: pointer;
 }
-.ib-tabs button[aria-selected="true"] {
+.ib-pane-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+.ib-pane-b {
+  display: grid;
+  gap: 12px;
+  padding: 24px;
+  max-width: 760px;
+}
+.ib-pane-t {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+.ib-facts {
+  font-size: var(--text-sm);
+}
+.ib-quote {
+  margin: 0;
+  padding: 12px 16px;
+  border-left: 2px solid var(--border-strong);
+  background: var(--bg-raised);
+  border-radius: var(--radius-control);
+  display: grid;
+  gap: 4px;
+}
+.ib-quote-h {
+  font-size: var(--text-sm);
+}
+.ib-reply {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+}
+.ib-reply textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 72px;
+  padding: 8px;
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
   color: var(--text-primary);
-  border-bottom-color: var(--text-primary);
+  font: inherit;
+}
+.ib-reply-f {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ib-reply-f > .sec {
+  flex: 1;
+  font-size: var(--text-xs);
+}
+.ib-row.selected {
+  background: var(--bg-overlay);
+}
+.ib-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  flex-basis: 100%;
+  align-items: baseline;
 }
 .ib-group h2 {
   font-size: var(--text-sm);
@@ -70,7 +197,7 @@
   align-self: center;
 }
 .ib-row.unread .ib-dot {
-  background: var(--accent);
+  background: var(--state-running);
 }
 .ib-main {
   flex: 1;
@@ -103,7 +230,6 @@
   flex: none;
 }
 .ib-what {
-  flex-basis: 100%;
   font-size: var(--text-sm);
 }
 .ib-ai {
@@ -200,9 +326,16 @@
 }
 
 @media (max-width: 767px) {
-  .ib-view,
   .mi {
     padding: 16px;
+  }
+  .ib-list {
+    padding: 12px 16px 16px;
+  }
+  .ib-pane-h,
+  .ib-pane-b {
+    padding-left: 16px;
+    padding-right: 16px;
   }
   .ib-line {
     flex-wrap: wrap;

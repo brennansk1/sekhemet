@@ -11,7 +11,7 @@ import {
 } from "@sekhemet/models";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CombinationDeps, qualificationCombination } from "../src/qualify.js";
-import { type Kernel, runWave2Command } from "../src/wave2.js";
+import { type RepoContext, runDevCommand } from "../src/wave2.js";
 
 // NEW-models-10: `sekhemet models assign|restore`. Nothing here loads a model.
 
@@ -35,7 +35,7 @@ function setup() {
   const db = new DatabaseSync(join(repoPath, "events.db"));
   initSchema(db);
   const log = new EventLog(db);
-  const k: Kernel = { repoPath, log, cardStore: new CardStore(db, log) };
+  const k: RepoContext = { repoPath, log, cardStore: new CardStore(db, log) };
   const out: string[] = [];
   const io = {
     print: (l: string) => out.push(l),
@@ -59,8 +59,8 @@ describe("sekhemet models assign and restore (NEW-models-10)", () => {
     const { k, io, out, log, qualify } = setup();
     qualify("apodex", "researcher");
     qualify("spark-x", "researcher");
-    expect(await runWave2Command("models", ["assign", "researcher", "apodex"], k, io)).toBe(0);
-    expect(await runWave2Command("models", ["assign", "researcher", "spark-x"], k, io)).toBe(0);
+    expect(await runDevCommand("models", ["assign", "researcher", "apodex"], k, io)).toBe(0);
+    expect(await runDevCommand("models", ["assign", "researcher", "spark-x"], k, io)).toBe(0);
     const reg = () => new ModelRegistry(process.env.SEKHEMET_MODEL_REGISTRY);
     expect(currentAssignment(reg(), "host-a", "researcher")?.model).toBe("spark-x");
     const events = (await log.getEvents()).filter((e) => e.type === "models/assigned");
@@ -75,7 +75,7 @@ describe("sekhemet models assign and restore (NEW-models-10)", () => {
     // The baseline is untouched by a person's own choice.
     expect(currentAssignment(reg(), "host-a", "researcher", "baseline")).toBeUndefined();
 
-    expect(await runWave2Command("models", ["restore", "researcher"], k, io)).toBe(0);
+    expect(await runDevCommand("models", ["restore", "researcher"], k, io)).toBe(0);
     expect(currentAssignment(reg(), "host-a", "researcher")?.model).toBe("apodex");
     expect(out.at(-1)).toMatch(/researcher: restored apodex \(replacing spark-x\)/);
     expect((await log.getEvents()).some((e) => e.type === "models/restored")).toBe(true);
@@ -83,20 +83,20 @@ describe("sekhemet models assign and restore (NEW-models-10)", () => {
 
   it("MD-N10-3: refuses an unqualified model, naming the missing qualification", async () => {
     const { k, io, out } = setup();
-    expect(await runWave2Command("models", ["assign", "reviewer", "gemma-x"], k, io)).toBe(1);
+    expect(await runDevCommand("models", ["assign", "reviewer", "gemma-x"], k, io)).toBe(1);
     expect(out.at(-1)).toMatch(/gemma-x is not verified on this machine for the Review model/);
   });
 
   it("CX-N6-4: a model verified as the Coding model is not thereby verified for another role", async () => {
     const { k, io, out, qualify } = setup();
     qualify("gemma-x", "worker");
-    expect(await runWave2Command("models", ["assign", "reviewer", "gemma-x"], k, io)).toBe(1);
+    expect(await runDevCommand("models", ["assign", "reviewer", "gemma-x"], k, io)).toBe(1);
     expect(out.at(-1)).toMatch(
       /gemma-x is not verified on this machine for the Review model \(missing\)\. Verify it first: sekhemet qualify --models gemma-x --role reviewer/,
     );
     qualify("gemma-x", "reviewer");
-    expect(await runWave2Command("models", ["assign", "reviewer", "gemma-x"], k, io)).toBe(0);
-    expect(await runWave2Command("models", ["assign", "worker", "gemma-x"], k, io)).toBe(0);
+    expect(await runDevCommand("models", ["assign", "reviewer", "gemma-x"], k, io)).toBe(0);
+    expect(await runDevCommand("models", ["assign", "worker", "gemma-x"], k, io)).toBe(0);
   });
 
   /** A recorded benchmark of qwen-next as the Worker on host-a, as the kernel registry requires it. */
@@ -122,7 +122,7 @@ describe("sekhemet models assign and restore (NEW-models-10)", () => {
     const { k, io, out, log, qualify } = setup();
     qualify("qwen-next");
     expect(
-      await runWave2Command("models", ["assign", "worker", "qwen-next", "--baseline"], k, io),
+      await runDevCommand("models", ["assign", "worker", "qwen-next", "--baseline"], k, io),
     ).toBe(1);
     expect(out.at(-1)).toMatch(/requires a recorded bake-off on this host/);
     const quick = await log.append({
@@ -131,7 +131,7 @@ describe("sekhemet models assign and restore (NEW-models-10)", () => {
       payload: benchmarked("quick"),
     });
     expect(
-      await runWave2Command(
+      await runDevCommand(
         "models",
         ["assign", "worker", "qwen-next", "--baseline", "--bake-off", quick.id],
         k,
@@ -145,7 +145,7 @@ describe("sekhemet models assign and restore (NEW-models-10)", () => {
       payload: benchmarked("overnight"),
     });
     expect(
-      await runWave2Command(
+      await runDevCommand(
         "models",
         ["assign", "worker", "qwen-next", "--baseline", "--bake-off", night.id],
         k,

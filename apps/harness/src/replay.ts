@@ -1,4 +1,5 @@
 import type { CardStore, EventRecord } from "@sekhemet/kernel";
+import { plural } from "@sekhemet/ui";
 
 /**
  * `sekhemet replay` (H8): an attempt's trajectory, rebuilt from the ledger,
@@ -89,7 +90,7 @@ const signature = (s: TrajectoryStep) =>
   s.calls.map((c) => `${c.name}(${c.target ?? ""})`).join(" ");
 
 export function formatTrajectory(t: Trajectory): string {
-  const head = `Attempt ${t.attemptNumber} (${t.attemptId}) on ${t.modelId}${t.forkedFrom ? `, forked from ${t.forkedFrom.attemptId} at step ${t.forkedFrom.step}` : ""}: ${t.outcome}, ${t.steps.length} step(s), ${t.steps.reduce((n, s) => n + s.tokens, 0)} tokens`;
+  const head = `Attempt ${t.attemptNumber} (${t.attemptId}) on ${t.modelId}${t.forkedFrom ? `, forked from ${t.forkedFrom.attemptId} at step ${t.forkedFrom.step}` : ""}: ${t.outcome}, ${plural(t.steps.length, "step")}, ${t.steps.reduce((n, s) => n + s.tokens, 0)} tokens`;
   const rows = t.steps.map((s) => {
     const gate = s.gate
       ? ` | checks ${s.gate.passed ? "pass" : `FAIL ${s.gate.failed.join(",")}`}`
@@ -158,7 +159,7 @@ export function formatDiff(a: Trajectory, b: Trajectory, d: TrajectoryDiff): str
     `  outcome: ${d.a.outcome} vs ${d.b.outcome}; steps ${d.a.steps} vs ${d.b.steps}; tokens ${d.a.tokens} vs ${d.b.tokens}`,
     d.firstDivergence === undefined
       ? "  The same tool choices at every step."
-      : `  Same choices for ${d.sameChoicesUntil} step(s); they diverge at step ${d.firstDivergence}:\n    ${a.steps[d.firstDivergence - 1] ? signature(a.steps[d.firstDivergence - 1] as TrajectoryStep) : "(ended)"}\n    ${b.steps[d.firstDivergence - 1] ? signature(b.steps[d.firstDivergence - 1] as TrajectoryStep) : "(ended)"}`,
+      : `  Same choices for ${plural(d.sameChoicesUntil, "step")}; they diverge at step ${d.firstDivergence}:\n    ${a.steps[d.firstDivergence - 1] ? signature(a.steps[d.firstDivergence - 1] as TrajectoryStep) : "(ended)"}\n    ${b.steps[d.firstDivergence - 1] ? signature(b.steps[d.firstDivergence - 1] as TrajectoryStep) : "(ended)"}`,
     d.reproChanged.length
       ? `  What changed between them: ${d.reproChanged.join(", ")}.`
       : "  Their reproducibility records match.",

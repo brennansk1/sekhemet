@@ -15,7 +15,7 @@ import { runResearchCommand } from "../src/research/cli.js";
 import type { ResearchQuery } from "../src/research/reuse.js";
 import { type ReuseQueriesMeasurement, measureReuseQueries } from "../src/research/reuse_eval.js";
 import type { LabelledNeed } from "../src/research/reuse_set.js";
-import { type Kernel, planCommand } from "../src/wave2.js";
+import { type RepoContext, planCommand } from "../src/wave2.js";
 
 /**
  * Design-stage DS-S8-3 as the owner amended it on 2026-09-28: queries the
@@ -235,7 +235,7 @@ describe("the measurement: keyword queries against the Planning model's, on the 
     expect(code).toBe(1);
     expect(missing).toBe(1);
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(out.join("\n")).toMatch(/no-such-model-xyz.*not in the model registry/);
+    expect(out.join("\n")).toMatch(/no-such-model-xyz.*not in Sekhemet's model list/);
     expect(await log.getEventsByTypes([REUSE_QUERIES_MEASURED])).toEqual([]);
   });
 });
@@ -246,7 +246,7 @@ describe("plan sends the Planning model's queries only once its admission is rec
     while (dirs.length) rmSync(dirs.pop() as string, { recursive: true, force: true });
   });
 
-  function kernel(): Kernel {
+  function kernel(): RepoContext {
     const repoPath = mkdtempSync(join(tmpdir(), "sek-reuse-admit-plan-"));
     dirs.push(repoPath);
     mkdirSync(join(repoPath, "src"), { recursive: true });
@@ -279,7 +279,7 @@ describe("plan sends the Planning model's queries only once its admission is rec
     },
   });
 
-  async function planWith(k: Kernel) {
+  async function planWith(k: RepoContext) {
     const sent: string[] = [];
     const recorded: ResearchQuery[] = [];
     await planCommand(k, "a service that charges customers every month", {

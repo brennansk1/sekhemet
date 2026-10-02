@@ -44,7 +44,7 @@ describe("Seshat while the Worker runs (rule 20f)", () => {
     expect(ledgerQuestion("How long until you can answer?")).toBe("wait");
     expect(ledgerQuestion("Should we split the ledger card?")).toBeUndefined();
     expect(waitInWords({ waitMs: 4 * MIN, stepMs: MIN, switchMs: 3 * MIN })).toBe(
-      "I'll answer in about 4 minutes: the agent is finishing a step, and switching takes about 3.",
+      "I'll answer in about 4 minutes: the Agent is finishing a step, and switching takes about 3.",
     );
   });
 

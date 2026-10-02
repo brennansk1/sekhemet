@@ -80,7 +80,7 @@ export const approveRule = (r, reach = "project") =>
     done:
       reach === "global"
         ? "Approved for all projects. Every repository on this machine uses it from the next matching issue."
-        : "Approved. The rule is given to the agent from the next matching issue.",
+        : "Approved. The rule is given to the Agent from the next matching issue.",
     failed: "Couldn't approve the rule.",
   });
 
@@ -91,7 +91,7 @@ export const retireRule = (r) =>
     kind: "rules",
     id: r.id,
     patch: { status: "retired" },
-    done: "Retired. The rule is no longer given to the agent.",
+    done: "Retired. The rule is no longer given to the Agent.",
     failed: "Couldn't retire the rule.",
   });
 

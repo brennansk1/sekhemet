@@ -239,7 +239,7 @@ export const DESIGN_COPY = {
     internal:
       "Something to use yourselves: working, reliable, secure and maintainable are marked Must have, and weak tests block an issue.",
     regulatedNote:
-      "The regulated profile selects stricter checks and more of your approval. It claims no compliance with any standard or regulation.",
+      "The Regulated Type selects stricter checks and more of your approval. It claims no compliance with any standard or regulation.",
   },
 
   /** Each quality-checklist row as a requirement with an acceptance criterion (DS-P14-2). */
@@ -359,19 +359,19 @@ export const DESIGN_COPY = {
   },
 
   offer: {
-    proposed: (profile: string, reason: string) => `Proposed depth: ${profile}. ${reason}`,
+    proposed: (profile: string, reason: string) => `Proposed Type: ${profile}. ${reason}`,
     until: (profile: string) =>
       `Until you choose, issues plan as an internal tool. Choose with: sekhemet depth ${profile}`,
     ask: (profile: string) =>
       `Plan this as ${profile}? Press Enter for yes, or name another (prototype, internal tool, production, regulated): `,
     chosen: (profile: string, rows: number) =>
-      `Depth: ${profile}, chosen.${rows > 0 ? ` Added ${rows} quality check${rows === 1 ? "" : "s"} as Must have.` : ""}`,
+      `Type: ${profile}, chosen.${rows > 0 ? ` Added ${rows} quality check${rows === 1 ? "" : "s"} as Must have.` : ""}`,
     inForce: (profile: string, recorded: boolean) =>
       recorded
-        ? `Depth: ${profile}, chosen.`
-        : `Depth: ${profile} — nobody has chosen one, so the default applies. Choose with: sekhemet depth <prototype|internal tool|production|regulated>`,
+        ? `Type: ${profile}, chosen.`
+        : `Type: ${profile} · nobody has chosen one, so the default applies. Choose with: sekhemet depth <prototype|internal tool|production|regulated>`,
     unknown: (name: string) =>
-      `No depth profile "${name}": one of prototype, internal tool, production, regulated.`,
+      `No project Type "${name}": one of prototype, internal tool, production, regulated.`,
   },
 } as const;
 

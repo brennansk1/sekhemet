@@ -507,6 +507,23 @@ async function agentState(
   if (question) {
     return { who: "agent", state: "needs you", waitingFor: "answer", waitsOn: name(card.owner) };
   }
+  // FINDINGS ISS-02: a run a person stopped is paused, never "working" or
+  // "checking", until someone resumes it — once the stop is recorded after
+  // the issue's latest move (the stored reason outlives the run).
+  if (
+    (card.status === "in_progress" || card.status === "verify") &&
+    card.stopReason === "human_abort"
+  ) {
+    const moved =
+      (await deps.cardStore.cardEvents(card.id, ["card/status_changed"])).at(-1)?.seq ?? 0;
+    const stoppedAt = (await deps.cardStore.cardEvents(card.id, ["card/updated"]))
+      .filter(
+        (e) =>
+          (e.payload as { patch?: { stopReason?: string } }).patch?.stopReason === "human_abort",
+      )
+      .at(-1)?.seq;
+    if ((stoppedAt ?? 0) > moved) return { who: "agent", state: "paused", stopped: true };
+  }
   switch (card.status) {
     case "ready": {
       const mine = (await deps.standing?.().catch(() => []))?.find((s) => s.cardId === card.id);

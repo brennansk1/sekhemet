@@ -47,6 +47,8 @@ export const ICONS = {
   memory: '<path d="M3 8h18v8H3zM7 8v8M11 8v8M15 8v8M6 16v3M18 16v3"/>',
   pencil: '<path d="M4 20l4-1 11-11-3-3L5 16z"/>',
   undo: '<path d="M8 5 4 9l4 4"/><path d="M4 9h11a5 5 0 0 1 0 10H9"/>',
+  // The Inbox's *Back to Inbox* (DB-N19-9): a chevron pointing back.
+  back: '<path d="M15 5l-7 7 7 7"/>',
   external:
     '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
   more: '<path d="M6 12h.01M12 12h.01M18 12h.01"/>',
@@ -106,8 +108,11 @@ export function icon(name: IconName, size = 16, className = "ic"): string {
  * them, on the 24 grid. Filled, not a line icon: it replaced the 1.5 px line
  * glyph drawn in accent.
  */
-const PYLONS = ["M2.5 21 4.5 6H9.5V21z", "M21.5 21 19.5 6H14.5V21z"] as const;
-const DISC = { cx: 12, cy: 10, r: 2.1 } as const;
+// The approved Logo board's geometry (DEC-51, VIS-02): each pylon runs from the
+// horizon at y 6.5 to the base at y 21, its outer edge tapering and its inner
+// edge upright; the disc sits on that horizon between them, never in the gate.
+const PYLONS = ["M2.2 21 4.4 6.5H9.3V21z", "M21.8 21 19.6 6.5H14.7V21z"] as const;
+const DISC = { cx: 12, cy: 6.5, r: 2.4 } as const;
 
 /** The mark is never drawn smaller than this, nor the lockup narrower than 80 px. */
 export const BRAND_MARK_MIN_PX = 16;

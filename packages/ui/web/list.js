@@ -236,7 +236,7 @@ function render() {
   // DB-N9-17: the cells' edits carry their note quietly; the sentence is written once, here.
   const gate = levelSentence(["issue.edit", "priority.change"], s.project?.id);
   const note = gate ? `<p class="level-note list-level-note">${esc(gate)}</p>` : "";
-  const html = `${note}<div class="tbl-wrap list-wrap"><table class="tbl ltbl" aria-label="Issues" aria-multiselectable="true">${head}<tbody>${body}</tbody></table>${empty}</div>`;
+  const html = `${note}<div class="tbl-wrap list-wrap" tabindex="0"><table class="tbl ltbl" aria-label="Issues" aria-multiselectable="true">${head}<tbody>${body}</tbody></table>${empty}</div>`;
   if (html === ui.last) return;
   const activeId = document.activeElement?.closest?.("tr[data-id]")?.dataset.id;
   const scroller = $(".list-wrap", ui.root);

@@ -1,6 +1,11 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { CARD_STOP_REASONS, type CardRecord, STOP_REASONS } from "@sekhemet/kernel";
+import {
+  CARD_STOP_REASONS,
+  type CardRecord,
+  PAYLOAD_SCHEMAS,
+  STOP_REASONS,
+} from "@sekhemet/kernel";
 import { describe, expect, it } from "vitest";
 import {
   BOARD_COLUMN_ORDER,
@@ -29,6 +34,7 @@ import {
   summarizeRun,
   vocabularyTables,
 } from "../src/vocabulary.js";
+import { retiredIn } from "./copy_scan.js";
 
 const root = join(__dirname, "..", "..", "..");
 
@@ -136,12 +142,13 @@ describe("stopReasonLabel", () => {
       oscillation_detected: ["Looping", "fail"],
       no_progress: ["Stalled", "fail"],
       repair_exhausted: ["Couldn't fix", "fail"],
-      error: ["Harness error", "fail"],
+      error: ["Sekhemet error", "fail"],
       memory_pressure: ["Paused for memory", "parked"],
       quota_suspended: ["Paused for quota", "parked"],
       scope_violation: ["Out of scope", "fail"],
       capability_ceiling: ["Too hard for this model", "fail"],
-      human_abort: ["Stopped by you", "neutral"],
+      // ISS-03: no fixed "you": the stop names no viewer.
+      human_abort: ["Stopped", "neutral"],
     };
     for (const [reason, [short, tone]] of Object.entries(expected)) {
       const label = stopReasonLabel(reason);
@@ -372,8 +379,9 @@ describe("statusLine and describeCard", () => {
         { evidence: { ...hasherEvidence, stopReason: "memory_pressure", turnsUsed: 11 } },
       ).text,
     ).toBe("Paused for memory at step 11");
+    // ISS-03: every viewer reads the tile, so it never says "your".
     expect(line({ status: "ready" }, { statusReason: "returned: fix it" }).text).toBe(
-      "Sent back with your note",
+      "Changes requested, with a note",
     );
     expect(line({ status: "ready" }, { evidence: hasherEvidence }).text).toBe(
       "Types failed · 3 errors · will retry",
@@ -453,7 +461,12 @@ describe("Phase 3 and 4 language", () => {
       },
       title,
     );
-    expect(back).toMatchObject({ actor: "You", verb: "sent back", quote: "Sort the keys" });
+    expect(back).toMatchObject({
+      actor: "You",
+      verb: "requested changes on",
+      rest: "· back in To do",
+      quote: "Sort the keys",
+    });
     const parked = eventSentence(
       {
         type: "card/status_changed",
@@ -463,7 +476,7 @@ describe("Phase 3 and 4 language", () => {
       },
       title,
     );
-    expect(parked).toMatchObject({ verb: "parked", quote: "Not now", tone: "parked" });
+    expect(parked).toMatchObject({ verb: "put on hold", quote: "Not now", tone: "parked" });
     expect(
       eventSentence(
         { type: "card/accepted", actor: "human", cardId: "c", payload: { sha: "ba1338e43b" } },
@@ -596,11 +609,9 @@ describe("Phase 3 and 4 language", () => {
   });
 
   it("offers a fix for every failing health check it knows", () => {
-    expect(checkFixHint("Skills registry", "warn")).toBe(
-      "Create .sekhemet/skills/ to load skills.",
-    );
-    expect(checkFixHint("Local inference socket", "fail")).toMatch(/Start Ollama/);
-    expect(checkFixHint("Skills registry", "pass")).toBeUndefined();
+    expect(checkFixHint("Skills", "warn")).toBe("Create .sekhemet/skills/ to load skills.");
+    expect(checkFixHint("Model server", "fail")).toMatch(/Start Ollama/);
+    expect(checkFixHint("Skills", "pass")).toBeUndefined();
   });
 });
 
@@ -632,7 +643,7 @@ describe("ledger sentences for Seshat, research, reproducibility and compute", (
     );
     expect(reply).toMatchObject({
       actor: "Seshat",
-      verb: "answered from the ledger",
+      verb: "answered from the Activity log",
       quote: "The hasher is next.",
     });
   });
@@ -649,7 +660,7 @@ describe("ledger sentences for Seshat, research, reproducibility and compute", (
     ).toMatchObject({
       actor: "Research model",
       verb: "researched",
-      rest: "· grounded, confidence 0.60 · 2 source(s)",
+      rest: "· grounded, confidence 0.60 · 2 sources",
       tone: "pass",
     });
     // The question is private (it can carry a card's spec and a gate's
@@ -681,7 +692,9 @@ describe("isolationLabel (SEC-21)", () => {
   it("marks a card that ran unconfined as a warning", async () => {
     const { isolationLabel } = await import("../src/vocabulary.js");
     expect(isolationLabel("none")).toMatchObject({ short: "Unconfined", tone: "parked" });
-    expect(isolationLabel("none").sentence).toMatch(/SEKHEMET_ALLOW_UNCONFINED/);
+    expect(isolationLabel("none").sentence).toBe(
+      "Ran with no sandbox because Sekhemet was started with confinement turned off. Its commands could reach the whole machine.",
+    );
   });
 
   it("names the mechanism a card ran under", async () => {
@@ -720,5 +733,81 @@ describe("PM-P1-10: the board's kind tag comes from the card's stored kind", () 
     });
     expect(d.kinds).toEqual(["rule"]);
     expect(d.title).toBe("Check totals");
+  });
+});
+
+describe("NEW-dashboard-23, DB-N23-3: the Activity log's sentence for every event says no retired word", () => {
+  // Every registered event type, and those a real workspace records that the
+  // registry does not list yet (the C1 audit fixture's ledger).
+  const types = [
+    ...Object.keys(PAYLOAD_SCHEMAS),
+    "gate/result",
+    "card/budget_set",
+    "card/send_back",
+    "cycle/created",
+    "step/recorded",
+    "step/checkpointed",
+    "attempt/started",
+    "attempt/finished",
+    "evidence/recorded",
+    "competence/recorded",
+    "learn/profile",
+  ];
+  const line = (e: Parameters<typeof eventSentence>[0]) => {
+    const s = eventSentence(e, (id) => (id.startsWith("card_") ? "Export the week" : undefined));
+    return [s.actor, s.verb, s.title, s.rest].filter(Boolean).join(" ");
+  };
+
+  it("names no card, cycle, slice, gate, appetite or depth profile, whatever the type", () => {
+    const found = types.flatMap((type) => {
+      const l = line({ type, actor: "human", cardId: "card_x", payload: {}, seq: 1 } as never);
+      return retiredIn(l).map((h) => `${type}: ${h} :: ${l}`);
+    });
+    expect(found).toEqual([]);
+  });
+
+  it("says what changed in the issue's own words: fields, the delegate, the budget, a check", () => {
+    const at = { actor: "human", cardId: "card_x", seq: 1 };
+    expect(
+      line({
+        ...at,
+        type: "card/updated",
+        payload: { id: "card_x", patch: { epicId: "e", cycleId: "c", priority: 2, estimate: 3 } },
+      } as never),
+    ).toBe("You updated Export the week (epic, sprint, priority, points)");
+    expect(
+      line({
+        ...at,
+        type: "card/delegated",
+        payload: { id: "card_x", to: { kind: "worker" } },
+      } as never),
+    ).toBe("You delegated Export the week to the Agent");
+    expect(
+      line({ ...at, type: "card/budget_set", payload: { id: "card_x", from: 6, to: 5 } } as never),
+    ).toBe("You set the step budget of Export the week to 5");
+    expect(
+      line({
+        ...at,
+        actor: "executor",
+        type: "gate/result",
+        payload: { cardId: "card_x", gate: "unit", passed: false },
+      } as never),
+    ).toMatch(/^\w+ ran a check on Export the week · .+ failed$/);
+    expect(
+      line({
+        actor: "human",
+        seq: 1,
+        type: "cycle/created",
+        payload: { id: "cycle_9ca6e3c4", name: "Sprint 4" },
+      } as never),
+    ).toBe("You created the sprint Sprint 4");
+    expect(
+      line({
+        actor: "human",
+        seq: 1,
+        type: "slice/created",
+        payload: { sliceId: "SLICE-1" },
+      } as never),
+    ).toBe("You created a release");
   });
 });

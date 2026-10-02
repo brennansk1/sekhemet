@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { HttpInferenceAdapter } from "./http_adapter.js";
 import { ManagedLlamaServerAdapter } from "./llama_server.js";
 import type { WorkerOverride } from "./registry.js";
-import type { LocalInferenceAdapter, ToolArm } from "./types.js";
+import type { LocalInferenceAdapter, ToolCallFormat } from "./types.js";
 
 /**
  * Per-repo bake-off records (M23, design "Per-repo bake-off"): every result
@@ -18,7 +18,7 @@ export interface CandidateSettings {
   modelId: string;
   quant: string;
   engine: "llama.cpp" | "ollama" | "openai-compatible" | "mlx" | (string & {});
-  toolArm: ToolArm;
+  toolArm: ToolCallFormat;
   /** False while the registry has pinned no arm for the model: arm A, unmeasured (MD-N5-2). */
   toolArmMeasured: boolean;
   contextTokens: number | undefined;
@@ -85,9 +85,9 @@ export function candidateSettings(
     engine,
     toolArm: adapter.preferredToolArm ?? "arm_a_flat",
     toolArmMeasured:
-      (adapter as { registry?: { armFor(id: string): ToolArm | undefined } }).registry?.armFor(
-        adapter.modelId,
-      ) !== undefined,
+      (
+        adapter as { registry?: { armFor(id: string): ToolCallFormat | undefined } }
+      ).registry?.armFor(adapter.modelId) !== undefined,
     contextTokens: adapter.contextWindow?.contextTokens,
     ...(kvType ? { kvType } : {}),
     ...(mtp !== undefined ? { mtp } : {}),

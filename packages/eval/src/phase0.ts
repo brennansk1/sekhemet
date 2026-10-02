@@ -1,4 +1,4 @@
-import type { LocalInferenceAdapter, ModelRegistry, ToolArm } from "@sekhemet/models";
+import type { LocalInferenceAdapter, ModelRegistry, ToolCallFormat } from "@sekhemet/models";
 import { type QualificationResult, checkExecutionHeadroom, qualifyModel } from "@sekhemet/models";
 
 /**
@@ -40,13 +40,13 @@ export const PHASE0_REWORK = 0.7;
 export interface Phase0Result {
   modelId: string;
   /** The arm that scored highest; the verdict belongs to this arm alone. */
-  arm: ToolArm;
+  arm: ToolCallFormat;
   verdict: Phase0Verdict;
   /** Valid-and-correct rate on the winning arm, in [0, 1]. */
   rate: number;
   byCategory: Record<string, number>;
   /** Every arm tried, best first, so a close second is visible. */
-  arms: { arm: ToolArm; rate: number }[];
+  arms: { arm: ToolCallFormat; rate: number }[];
   /** What the verdict means for the build, in one sentence. */
   consequence: string;
   cases: number;
@@ -76,7 +76,7 @@ const CONSEQUENCE: Record<Phase0Verdict, string> = {
  */
 export async function runPhase0(
   adapter: LocalInferenceAdapter,
-  options: { registry?: ModelRegistry; arms?: ToolArm[]; force?: boolean } = {},
+  options: { registry?: ModelRegistry; arms?: ToolCallFormat[]; force?: boolean } = {},
 ): Promise<Phase0Result> {
   // Phase 0 loads a model and holds it for the whole suite. On a machine
   // already under pressure that is how a measurement takes the host with it,

@@ -88,6 +88,7 @@ import {
 } from "@sekhemet/planner";
 import { type ProcessSandbox, runConfined, runTrusted } from "@sekhemet/sandbox";
 import { gitEnvFor, planRelease, publishRelease, runActGate } from "@sekhemet/sync";
+import { plural } from "@sekhemet/ui";
 import { airgapSkillApproval, approveVerifiedSkill } from "./airgap.js";
 import { afterDoneCardZero } from "./card_zero.js";
 import { effectiveConfig, queueDefaults } from "./config_apply.js";
@@ -147,7 +148,7 @@ import { loadRepoSkills, skillsLockPath } from "./workspace_trust.js";
  * `goal`, `decide`, `m0`, `qualify`, `improve`, `skills`, `release`, `ci`.
  * Kept in one module so the large CLI entry file only grows by call sites.
  */
-export interface Kernel {
+export interface RepoContext {
   repoPath: string;
   cardStore: CardStore;
   log: EventLog;
@@ -155,7 +156,7 @@ export interface Kernel {
   boardService?: Pick<BoardService, "transitionCard">;
 }
 
-const ledgerOf = (k: Kernel): PlannerLedger => ({
+const ledgerOf = (k: RepoContext): PlannerLedger => ({
   store: k.cardStore,
   log: k.log,
   ...(k.boardService ? { board: k.boardService } : {}),
@@ -173,7 +174,7 @@ function readConfigToml(repoPath: string) {
 
 /** A planner grounded in this repository and its calibration history (P1, P15). */
 export async function repoPlanner(
-  k: Kernel,
+  k: RepoContext,
   adapter?: LocalInferenceAdapter,
 ): Promise<SpidrFeaturePlanner> {
   return new SpidrFeaturePlanner({
@@ -282,7 +283,7 @@ function tryGateIds(repoPath: string): string[] {
  * its whole contract, INVEST enforced, the batched decision parked.
  */
 export async function planCommand(
-  k: Kernel,
+  k: RepoContext,
   spec: string,
   options: {
     sketcher?: LocalInferenceAdapter;
@@ -527,7 +528,7 @@ async function deepQuestion(
  * Returns the Ready cards in the order to run them.
  */
 export async function queuePrelude(
-  k: Kernel,
+  k: RepoContext,
   ready: CardRecord[],
   options: {
     workerModelId?: string;
@@ -567,7 +568,7 @@ export async function queuePrelude(
     say(
       d.state === "default_applied"
         ? `Decision ${d.id}: no answer by the deadline, the safe default was applied.`
-        : `Decision ${d.id}: deadline passed, the issue stays parked (default_deny).`,
+        : `Decision ${d.id}: deadline passed, the issue stays on hold (default_deny).`,
     );
   }
 
@@ -630,7 +631,7 @@ export async function queuePrelude(
 
   // Y16, INT-12b: advance open Sekhemet PRs (ready once checks pass, the
   // code owners asked to review, auto-merge by policy), on either transport.
-  const { advanceOpenPullRequests } = await import("./wave2_github.js");
+  const { advanceOpenPullRequests } = await import("./github_sync.js");
   for (const p of await advanceOpenPullRequests(k.repoPath, k.cardStore, k.log).catch((err) => {
     say(`PRs not advanced: ${err instanceof Error ? err.message : String(err)}`);
     return [];
@@ -728,7 +729,7 @@ export function modelRegistry(): ModelRegistry {
 
 // ------------------------------------------------------------------ commands
 
-export type Wave2Command =
+export type DevCommand =
   | "airgap"
   | "onboard"
   | "drift"
@@ -751,7 +752,7 @@ export type Wave2Command =
   | "approve"
   | "depth"
   | "upgrade";
-export const WAVE2_COMMANDS: readonly Wave2Command[] = [
+export const DEV_COMMANDS: readonly DevCommand[] = [
   "airgap",
   "onboard",
   "drift",
@@ -790,10 +791,10 @@ function flag(args: string[], name: string): string | undefined {
 }
 
 /** Run a wave-2 command; returns the exit code. */
-export async function runWave2Command(
-  command: Wave2Command,
+export async function runDevCommand(
+  command: DevCommand,
   args: string[],
-  k: Kernel,
+  k: RepoContext,
   io: CommandIO = { print: (l) => console.log(l) },
 ): Promise<number> {
   const { print } = io;
@@ -862,7 +863,7 @@ export async function runWave2Command(
         const problems = checkRegisters(k.repoPath);
         for (const p of problems) print(`problem: ${p}`);
         return done(
-          problems.length ? `${problems.length} problem(s).` : "Registers are valid.",
+          problems.length ? `${plural(problems.length, "problem")}.` : "Registers are valid.",
           problems.length ? 1 : 0,
         );
       }
@@ -895,7 +896,7 @@ export async function runWave2Command(
       for (const v of bad)
         print(`${v.sha.slice(0, 10)} ${v.subject}: missing ${v.missing.join(", ")}`);
       return bad.length
-        ? done(`${bad.length} commit(s) without the attribution trailers.`, 1)
+        ? done(`${plural(bad.length, "commit")} without the attribution trailers.`, 1)
         : done("Every commit carries the attribution trailers.", 0);
     }
     case "fixture": {
@@ -1150,7 +1151,7 @@ export async function runWave2Command(
             )
           : undefined;
         return done(
-          `The Research model's default changes only as a research golden-set run's adoption verdict allows (MD-N11-2): sekhemet research-bakeoff --adopt-from ${run?.id ?? "<run event id>"}`,
+          `The Research model's default changes only as a research golden-set run's adoption verdict allows: sekhemet research-bakeoff --adopt-from ${run?.id ?? "<run event id>"}`,
           1,
         );
       }
@@ -1170,7 +1171,8 @@ export async function runWave2Command(
           (e) => e.id === bakeOffId,
         );
         const p = found?.payload as { tier?: string; host?: string } | undefined;
-        if (!found || !p) return done(`No recorded benchmark ${bakeOffId} on this ledger.`, 1);
+        if (!found || !p)
+          return done(`No recorded benchmark ${bakeOffId} in this Activity log.`, 1);
         // A finished overnight role on its full set is the evidence; anything
         // else (a quick screen, a partial night) is refused by assignRole.
         bakeOff = bakeOffEvidence(found, role) ?? {
@@ -1387,7 +1389,7 @@ export async function runWave2Command(
             reason: "qualified for this combination on this host",
           });
         print(
-          `${a.modelId}: ${(best.passRate * 100).toFixed(1)}% on ${best.arm} ${look.status === "qualified" ? "VERIFIED on this machine" : "not verified on this machine"}${roleWords} for ${describeCombination(combination)} (${Object.entries(
+          `${a.modelId}: ${(best.passRate * 100).toFixed(1)}% on ${best.arm} ${look.status === "qualified" ? "verified on this machine" : "not verified on this machine"}${roleWords} for ${describeCombination(combination)} (${Object.entries(
             best.byCategory,
           )
             .map(([c, v]) => `${c} ${(v * 100).toFixed(0)}%`)
@@ -1526,7 +1528,7 @@ export async function runWave2Command(
  * nothing becomes live without approval, and the learning guard's state is
  * reported.
  */
-async function improveCommand(k: Kernel, args: string[], io: CommandIO): Promise<number> {
+async function improveCommand(k: RepoContext, args: string[], io: CommandIO): Promise<number> {
   const { print } = io;
   if (args.includes("--mutants")) {
     // E16: `sekhemet improve --mutants [--limit 3] [--max-mutants 8]`, loop 10.
@@ -1580,7 +1582,7 @@ async function improveCommand(k: Kernel, args: string[], io: CommandIO): Promise
     for (const p of v.perSuite)
       print(`${p.suite}: ${p.baseline} -> ${p.candidate} (${p.delta >= 0 ? "+" : ""}${p.delta})`);
     print(
-      `Diagnostic only: ${v.accepted ? "no fixture lost an issue" : "a fixture lost issues"} (${v.reason}). A project rule is admitted by a person's approval; the frozen suite never admits one (DEC-28).`,
+      `Diagnostic only: ${v.accepted ? "no fixture lost an issue" : "a fixture lost issues"} (${v.reason}). A project rule is admitted by a person's approval; the frozen suite never admits one.`,
     );
     return v.accepted ? 0 : 1;
   }
@@ -1774,7 +1776,7 @@ export async function recordBakeOff(
  * its diff are posted in Seshat's thread.
  */
 export async function replanOnRung3(
-  k: Kernel,
+  k: RepoContext,
   card: CardRecord,
   reason: string,
   options: { setup?: Setup } = {},
@@ -1896,7 +1898,7 @@ export interface RuleGateVerdict {
  * enforced.
  */
 export async function gateRuleOnFixtures(
-  k: Kernel,
+  k: RepoContext,
   ruleId: string,
   options: {
     fixtures: string[];
@@ -2087,7 +2089,7 @@ export function overnightPlanLine(
   if (r.state === "user_time")
     return `Declared hours: the machine is yours until ${r.resumesAt?.toISOString() ?? "later"}.`;
   const s = r.schedule;
-  return `Plan: ${s.batches.map((b) => `${b.modelId}/${b.project} x${b.items.length}`).join(", ")}; ${s.swaps} model load(s)${s.deferred.length ? `, ${s.deferred.length} issue(s) deferred past the window` : ""}.`;
+  return `Plan: ${s.batches.map((b) => `${b.modelId}/${b.project} x${b.items.length}`).join(", ")}; ${plural(s.swaps, "model load")}${s.deferred.length ? `, ${plural(s.deferred.length, "issue")} deferred past the window` : ""}.`;
 }
 
 // ---------------------------------------------- --validate-tools (item 4a)

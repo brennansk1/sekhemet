@@ -6,6 +6,7 @@ import { agentQueueLine, agentStatusLine, bottomBar, navNameOf, visibleNav } fro
 import { stopReasonLabel } from "./lib/vocabulary.js";
 import { getSession } from "./session.js";
 import { ledgerAltered, store } from "./store.js";
+import { openProjectSwitcher, projectSwitcherHtml } from "./switcher.js";
 
 // The views the page mounts, by nav name (app.js); a view not built is never linked.
 let mounted = new Set();
@@ -93,9 +94,10 @@ export function setActiveNav(name) {
 }
 
 /** The topbar belongs to the view: title, a quiet crumb, filters. Search is always on the right. */
-export function setTopbar({ title, crumb = "", filters = "" }) {
+export function setTopbar({ title, crumb = "", filters = "", actions = "" }) {
   const top = document.getElementById("top");
-  const html = `<h1 id="view-title">${esc(title)}</h1>${crumb ? `<span class="crumb">${esc(crumb)}</span>` : ""}${filters}<div class="right">${tipsToggleHtml()}<button class="search" type="button" data-palette aria-label="Search or run a command" aria-keyshortcuts="${MOD === "⌘" ? "Meta+K" : "Control+K"}" title="Search or run a command (${MOD}K)">${icon("search", 14, "ic s14")}<span class="lbl">Search or run a command</span>${kbd(`${MOD}K`)}</button></div>`;
+  // `actions`: a view's own primary controls, before Search (BRD-09: the board's New issue).
+  const html = `<h1 id="view-title">${esc(title)}</h1>${crumb ? `<span class="crumb">${esc(crumb)}</span>` : ""}${filters}<div class="right">${tipsToggleHtml()}${actions}<button class="search" type="button" data-palette aria-label="Search or run a command" aria-keyshortcuts="${MOD === "⌘" ? "Meta+K" : "Control+K"}" title="Search or run a command (${MOD}K)">${icon("search", 14, "ic s14")}<span class="lbl">Search or run a command</span>${kbd(`${MOD}K`)}</button></div>`;
   if (top.dataset.html !== html) {
     top.innerHTML = html;
     top.dataset.html = html;
@@ -117,7 +119,7 @@ function firstTryText(queue) {
 export function machineStatus(doctor, live) {
   const checks = doctor?.checks ?? [];
   const mem = checks.find((c) => c.name === "Unified memory");
-  const inf = checks.find((c) => c.name === "Local inference socket");
+  const inf = checks.find((c) => c.name === "Model server");
   const pct = mem ? Number(/(\d+)% used/.exec(mem.detail)?.[1]) : Number.NaN;
   const level = mem ? (/used, (\w+)\)/.exec(mem.detail)?.[1] ?? "") : "";
   let model = "";
@@ -214,25 +216,28 @@ function renderSide() {
       .filter((i) => i.group === g)
       .map(link)
       .join("");
-  const project = s.meta?.project ?? "";
+  // DB-N25-1, SHL-01: the project switcher heads the Project group — the
+  // project's badge and name, never the repository's path (its tooltip has it).
+  const switcher = projectSwitcherHtml();
+  const project = switcher ? "" : (s.meta?.project ?? "");
   const more = group("more");
   const moreActive = shown.some((i) => i.group === "more" && i.name === active);
   const open = moreOpen ?? moreActive;
-  const nav = `<div class="nav-group">${group("workspace")}</div><div class="nav-group">${project ? `<div class="nav-project"><span class="name">${esc(project)}</span>${s.meta?.repoPath ? `<span class="path mono">${esc(s.meta.repoPath)}</span>` : ""}</div>` : ""}${group("project")}</div>${more ? `<details class="nav-more" data-nav-more${open ? " open" : ""}><summary>${icon("chevron-right", 14, "ic s14")}More</summary><div class="nav-group">${more}</div></details>` : ""}`;
+  const nav = `<div class="nav-group">${group("workspace")}</div><div class="nav-group">${switcher}${project ? `<div class="nav-project"><span class="name">${esc(project)}</span></div>` : ""}${group("project")}</div>${more ? `<details class="nav-more" data-nav-more${open ? " open" : ""}><summary>${icon("chevron-right", 14, "ic s14")}More</summary><div class="nav-group">${more}</div></details>` : ""}`;
   const bottom = `<div class="nav-group">${group("bottom")}</div>`;
   renderTabs(shown);
 
   const v = s.verification;
   let live;
   if (v && v.valid === false) {
-    live = `<a class="row alert" href="#/ledger">${icon("alert", 14, "ic s14")}<span class="lbl">Ledger altered at entry #${esc(v.corruptedSeq ?? "?")}</span></a>`;
+    live = `<a class="row alert" href="#/ledger">${icon("alert", 14, "ic s14")}<span class="lbl">Activity log altered at entry #${esc(v.corruptedSeq ?? "?")}</span></a>`;
   } else if (s.connection === "offline") {
     live = `<div class="row"><span class="dot fail"></span><span class="lbl">Offline since ${esc(clock(s.offlineSince || Date.now()))}</span></div>`;
   } else if (s.connection === "reconnecting" || s.connection === "connecting") {
     live = `<div class="row"><span class="dot warn"></span><span class="lbl">${s.connection === "connecting" ? "Connecting…" : "Reconnecting…"}</span></div>`;
   } else {
     // The whole line is visible text; the title repeats it for when it is cut.
-    const text = `Live · ledger intact${v ? ` · ${v.totalEvents} ${v.totalEvents === 1 ? "entry" : "entries"}` : ""}`;
+    const text = `Live · Activity log intact${v ? ` · ${v.totalEvents} ${v.totalEvents === 1 ? "entry" : "entries"}` : ""}`;
     live = `<div class="row" title="${esc(text)}"><span class="dot"></span><span class="lbl">${esc(text)}</span></div>`;
   }
 
@@ -242,7 +247,7 @@ function renderSide() {
     m.memoryPercent !== undefined
       ? // The run guard acts on the pressure level, not the raw percentage (which
         // counts reclaimable cache), so the sidebar says the level, as Machine does.
-        `<a class="row" href="#/machine" ${tip(`Memory pressure ${m.memoryLevel || "normal"}. ${m.memoryPercent}% used, including cache the system can reclaim.`)}><span class="dot${memCls}" aria-hidden="true"></span><span class="lbl">Memory ${esc(m.memoryLevel || "normal")}</span><span class="lbl sec tnum mem-pct">${m.memoryPercent}% used</span></a>`
+        `<a class="row" href="#/machine" ${tip(`Memory pressure ${m.memoryLevel || "normal"}. ${m.memoryPercent}% used, including cache the system can reclaim.`)}><span class="dot${memCls}" aria-hidden="true"></span><span class="lbl">Memory ${esc(m.memoryLevel || "normal")}</span></a>`
       : `<div class="row">${icon("memory", 14, "ic s14")}<span class="lbl">Memory: checking…</span></div>`;
   // The Agent status line (§2.2.3, DB-N9-10): the Agent's state in one line,
   // with the Coding model it uses under it in secondary text.
@@ -258,11 +263,15 @@ function renderSide() {
     running,
     ...(paused ? { pausedForSeshat: { step: s.pm.step } } : {}),
   });
-  // The Coding model from Sekhemet's roster; the served-model probe is the fallback.
-  const worker = (s.roster ?? s.machine?.roster ?? []).find((r) => r.role === "worker");
-  const modelName = worker?.model
-    ? `Coding model ${worker.model}`
-    : m.model || (m.inferenceUp === false ? "No model server" : "Model: checking…");
+  // SHL-04: one source for model status, Configuration's roles (`modelSetup`):
+  // the sidebar never names a model Configuration says is not configured.
+  const setup = s.modelSetup;
+  const workerModel = setup?.workerModel;
+  const modelName = !setup
+    ? "Model: checking…"
+    : workerModel
+      ? `Coding model ${workerModel}`
+      : "No Coding model set up";
   const dot = agent.state === "working" ? "run" : agent.state === "paused" ? "warn" : "idle";
   // Teams item 31: in the Team setup, where the person's own issue stands in the queue.
   const queueText = agentQueueLine(s.agentQueue, (id) => {
@@ -272,7 +281,7 @@ function renderSide() {
   const queueRow = queueText
     ? `<div class="row sub agent-queue" title="${esc(queueText)}"><span class="lbl">${esc(queueText)}</span></div>`
     : "";
-  const model = `<div class="row agent-line" title="${esc(agent.text)}"><span class="dot ${dot}"></span><span class="lbl">${esc(agent.text)}</span></div>${queueRow}<div class="row sub" title="${esc(modelName)}"><span class="lbl sec${m.model || worker?.model ? " mono" : ""}">${esc(modelName)}</span></div>`;
+  const model = `<div class="row agent-line" title="${esc(agent.text)}"><span class="dot ${dot}"></span><span class="lbl">${esc(agent.text)}</span></div>${queueRow}<div class="row sub" title="${esc(modelName)}"><span class="lbl sec${workerModel ? " mono" : ""}">${esc(modelName)}</span></div>`;
   // Theme and Keys live in the account menu (§2.2.6); the account closes the sidebar.
   const head = accountHeader(getSession());
   const account = `<button class="account-btn" type="button" data-account aria-haspopup="menu"><span class="avatar" aria-hidden="true">${esc(initials(head.name))}</span><span class="lbl">${esc(head.name)}</span><span class="sr-only">, ${esc(ACCOUNT_COPY.account)}</span></button>`;
@@ -322,7 +331,7 @@ function renderBar() {
   const pausedCard = memoryPausedCard(s);
   const lastQueue = s.queue?.entries?.at?.(-1);
   if (ledgerAltered(s)) {
-    html = `<div class="bar fail" role="alert">${icon("alert")}<span><b>Ledger altered at entry #${esc(v.corruptedSeq ?? "?")}.</b> <span class="sec">An entry no longer matches its hash. Stop and inspect before accepting anything.</span></span><a class="link-btn" href="#/ledger">Open ledger</a></div>`;
+    html = `<div class="bar fail" role="alert">${icon("alert")}<span><b>Activity log altered at entry #${esc(v.corruptedSeq ?? "?")}.</b> <span class="sec">An entry no longer matches its hash. Stop and inspect before accepting anything.</span></span><a class="link-btn" href="#/ledger">Open the Activity log</a></div>`;
   } else if (s.connection === "offline") {
     html = `<div class="bar offline" role="status">${icon("alert")}<span><b>Offline since ${esc(clock(s.offlineSince || Date.now()))}.</b> <span class="sec">Showing the last known state. Actions are disabled.</span></span><button class="link-btn" type="button" data-retry>Retry</button></div>`;
   } else if (
@@ -333,7 +342,7 @@ function renderBar() {
   ) {
     const sentence = pausedCard
       ? `Sekhemet stopped “${pausedCard.display.title}” safely${pausedCard.stepsUsed ? ` at step ${pausedCard.stepsUsed}` : ""}. It can resume below 85% memory.`
-      : "Sekhemet stopped the agent safely before the system would swap. Work resumes below 85%.";
+      : "Sekhemet stopped the Agent safely before the system would swap. Work resumes below 85%.";
     const head = m.memoryPercent
       ? `Paused for memory: ${m.memoryPercent}% used.`
       : pausedCard
@@ -350,7 +359,7 @@ function renderBar() {
     const head = `Agent paused${step ? ` after step ${step}` : ""} while Seshat replies.`;
     const tail =
       s.pm.status.phase === "resuming_worker"
-        ? "Reloading the agent now."
+        ? "Reloading the Agent now."
         : `It continues from ${step ? `step ${step + 1}` : "its next step"} when the reply is in.`;
     html = `<div class="bar run" role="status">${icon("pause")}<span><b>${esc(head)}</b> <span class="sec">${esc(tail)}</span></span>${s.route?.name === "pm" ? "" : '<button class="link-btn" type="button" data-open-pm>Open Seshat</button>'}</div>`;
   }
@@ -383,7 +392,9 @@ export function initShell() {
   document.addEventListener("click", (e) => {
     const t = e.target instanceof Element ? e.target : null;
     if (!t) return;
-    if (t.closest("[data-retry]") && !t.closest(".pm-thread"))
+    const sw = t.closest("[data-project-switch]");
+    if (sw) openProjectSwitcher(sw);
+    else if (t.closest("[data-retry]") && !t.closest(".pm-thread"))
       window.dispatchEvent(new CustomEvent("sekhemet:retry"));
     else if (t.closest("[data-open-pm]")) window.dispatchEvent(new CustomEvent("sekhemet:open-pm"));
   });

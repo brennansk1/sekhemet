@@ -8,6 +8,7 @@ import { askMerit } from "./pm_panel.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
 import { mutationsBlocked } from "./triage.js";
+import { toastWithUndo } from "./undo.js";
 
 let node = null;
 let last = "";
@@ -22,7 +23,7 @@ function html(list) {
   const pts = on ? sumPoints(list.map((id) => store.card(id))) : 0;
   const btn = (field, label, key) =>
     `<button class="btn ghost sm" type="button" data-bulk="${field}">${esc(label)}${key ? ` ${kbd(key)}` : ""}</button>`;
-  return `<span class="n tnum"><b>${list.length} selected</b>${pts ? ` · ${pts} pts` : ""}</span><span class="sep"></span>${btn("priority", "Priority", "⇧P")}${on ? btn("estimate", "Points", "⇧E") : ""}${btn("cycleId", "Sprint", "⇧C")}${btn("labels", "Labels", "⇧L")}${btn("assignee", "Assignee", "⇧A")}<span class="sep"></span><button class="btn ghost sm" type="button" data-bulk-park>${icon("park", 12, "ic s12")}Park</button><button class="btn ghost sm" type="button" data-bulk-ask>${icon("chat", 12, "ic s12")}Ask Seshat</button><button class="icon-btn" type="button" data-bulk-clear aria-label="Clear selection (Esc)" title="Clear selection (Esc)">${icon("x", 14, "ic s14")}</button>`;
+  return `<span class="n tnum"><b>${list.length} selected</b>${pts ? ` · ${pts} pts` : ""}</span><span class="sep"></span>${btn("priority", "Priority", "⇧P")}${on ? btn("estimate", "Points", "⇧E") : ""}${btn("cycleId", "Sprint", "⇧C")}${btn("labels", "Labels", "⇧L")}${btn("assignee", "Assignee", "⇧A")}<span class="sep"></span><button class="btn ghost sm" type="button" data-bulk-park>${icon("park", 12, "ic s12")}Put on hold</button><button class="btn ghost sm" type="button" data-bulk-ask>${icon("chat", 12, "ic s12")}Ask Seshat</button><button class="icon-btn" type="button" data-bulk-clear aria-label="Clear selection (Esc)" title="Clear selection (Esc)">${icon("x", 14, "ic s14")}</button>`;
 }
 
 function render() {
@@ -53,16 +54,16 @@ function parkAll(list, anchor) {
   if (mutationsBlocked()) {
     toast({
       tone: "parked",
-      text: "Parking is disabled.",
+      text: "Putting on hold is disabled.",
       detail: "The server is read-only or offline.",
     });
     return;
   }
   openPrompt(anchor, {
-    heading: `Park ${list.length} issues: why?`,
+    heading: `Put ${list.length} issues on hold: why?`,
     placeholder: "Not now",
     value: "Not now",
-    submit: "Park",
+    submit: "Put on hold",
     onSubmit: async (reason) => {
       // One park per card, each its own ledger event.
       const failed = [];
@@ -70,17 +71,21 @@ function parkAll(list, anchor) {
         const r = await postJSON(`/api/cards/${encodeURIComponent(id)}/park`, { reason });
         if (!r.ok) failed.push([id, r]);
       }
+      const held = list.filter((id) => !failed.some(([f]) => f === id));
       if (failed.length === 0) {
-        toast({
-          tone: "parked",
-          iconName: "park",
-          text: `Parked ${list.length} issues. Nothing runs until you unpark them.`,
-        });
+        toastWithUndo(
+          {
+            tone: "parked",
+            iconName: "park",
+            text: `Put ${list.length} issues on hold. Nothing runs until you take them off hold.`,
+          },
+          () => unholdAll(held),
+        );
       } else {
         const [id, r] = failed[0];
         toast({
           tone: "fail",
-          text: `Parked ${list.length - failed.length} of ${list.length}.`,
+          text: `Put ${list.length - failed.length} of ${list.length} on hold.`,
           detail: `${store.card(id)?.display?.shortId ?? id}: ${r.data?.error ?? `the server returned ${r.status}`}`,
         });
       }
@@ -88,6 +93,32 @@ function parkAll(list, anchor) {
       window.dispatchEvent(new CustomEvent("sekhemet:refresh"));
     },
   });
+}
+
+/**
+ * Undo a hold (§2.4.23): each issue goes back where it was put on hold from,
+ * as a new recorded move, unless it has left On hold since.
+ */
+async function unholdAll(ids) {
+  let back = 0;
+  const left = [];
+  for (const id of ids) {
+    const name = store.card(id)?.display?.shortId ?? id;
+    if (store.card(id)?.status !== "parked") {
+      left.push(`${name} has left On hold since, so it was left.`);
+      continue;
+    }
+    const r = await postJSON(`/api/cards/${encodeURIComponent(id)}/unpark`, {});
+    if (r.ok) back++;
+    else left.push(`${name}: ${r.data?.error ?? `the server returned ${r.status}`}`);
+  }
+  window.dispatchEvent(new CustomEvent("sekhemet:refresh"));
+  return {
+    text: back
+      ? `Taken off hold: ${back} ${back === 1 ? "issue" : "issues"}.`
+      : "Nothing was taken off hold.",
+    detail: left.join(" "),
+  };
 }
 
 function onClick(e) {

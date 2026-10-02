@@ -1,4 +1,10 @@
-import type { ChatTurn, LocalInferenceAdapter, ToolCall, ToolDefinition } from "@sekhemet/models";
+import {
+  type ChatTurn,
+  type LocalInferenceAdapter,
+  type ToolCall,
+  type ToolDefinition,
+  stripReasoning,
+} from "@sekhemet/models";
 import {
   coordinatorPrompt,
   extractInfo,
@@ -7,7 +13,6 @@ import {
   recencyFromTbs,
   researchAgentPrompt,
   splitSiteOperators,
-  stripThinking,
   subagentPrompt,
   truncateMiddle,
 } from "./apodex.js";
@@ -677,7 +682,7 @@ export async function apodexLoop(
       purpose: "planning",
       slot: 0,
     });
-    const text = stripThinking(res.text);
+    const text = stripReasoning(res.text);
     const end = res.toolCalls.find((c) => c.name === terminal.name);
     if (end) {
       const content = String(end.arguments?.content ?? "").trim();
@@ -934,7 +939,7 @@ export async function apodexTeam(
       slot: 0,
     });
     if (res.toolCalls.length === 0) {
-      const text = stripThinking(res.text);
+      const text = stripReasoning(res.text);
       if (pending.length > 0 && !last) {
         turns.push({ role: "assistant", content: res.text });
         turns.push({

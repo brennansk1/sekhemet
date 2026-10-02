@@ -10,10 +10,10 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { DecisionStore } from "@sekhemet/planner";
 import { GitHubClient, staticToken } from "@sekhemet/sync";
 import { afterEach, describe, expect, it } from "vitest";
+import { githubAppFromEnv } from "../src/github_routes.js";
+import { advancePullRequests, openPullRequestViaApp } from "../src/github_sync.js";
 import { syncGithub } from "../src/integrations.js";
 import { runPackageGates } from "../src/wave2.js";
-import { advancePullRequests, openPullRequestViaApp } from "../src/wave2_github.js";
-import { githubAppFromEnv } from "../src/wave2_server.js";
 
 const closers: (() => Promise<void>)[] = [];
 const dirs: string[] = [];

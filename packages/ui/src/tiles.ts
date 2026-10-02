@@ -49,7 +49,7 @@ export interface TileContext {
   now: number;
   /** The board's epics (`/api/board`'s `epics`), for the epic chip. */
   epics?: readonly { id: string; title: string }[];
-  /** The agent waits at a step boundary while Seshat replies (PM_DESIGN §2.5). */
+  /** The Agent waits at a step boundary while Seshat replies (PM_DESIGN §2.5). */
   pmPaused?: boolean;
   /** Preferences → Estimation, the project's (DB-N7-2): points only with story points. */
   estimation?: Estimation;
@@ -73,7 +73,7 @@ export interface TileModel {
   points?: string;
   /** A person's avatar: a monogram, with the name as its words. */
   owner?: { initials: string; name: string };
-  /** Who builds it, as a text chip; the agent never has an avatar (DB-P3-5). */
+  /** Who builds it, as a text chip; the Agent never has an avatar (DB-P3-5). */
   delegate?: { text: string; worker: boolean };
   title: string;
   /** 0 is *No priority*: no glyph. */

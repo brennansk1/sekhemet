@@ -222,6 +222,8 @@ function tick(root) {
 export function currentContext() {
   const s = store.state;
   const r = s.route ?? { name: "", params: [] };
+  // The start page is a conversation page, like #/pm (design-stage §2.11).
+  if (r.name === "projects" && r.params[0] === "new") return { view: "pm" };
   let cardId;
   if ((r.name === "card" || r.name === "review") && r.params[0]) cardId = r.params[0];
   else if (r.name === "board" && s.focusedId && document.getElementById(`tile-${s.focusedId}`))
@@ -239,7 +241,7 @@ const VIEW_LABEL = {
   review: "Review",
   card: "Issue",
   runs: "Runs",
-  ledger: "Ledger",
+  ledger: "Activity log",
   playbook: "Playbook",
   machine: "Machine",
   insights: "Insights",
@@ -328,11 +330,21 @@ function matchCards(q) {
 /* ---------- Mount ---------- */
 
 /**
- * Mount the thread into `host`. `variant` is "panel" or "full".
+ * Mount the thread into `host`. `variant` is "panel" or "full". The start
+ * page (design-stage §2.11) gives its own `intro` and `placeholder`, and no
+ * `starters`: it is where a project starts.
  * Returns { focus(), prefill(text), destroy() }.
  */
-export function mountThread(host, { variant = "panel" } = {}) {
-  host.innerHTML = `<div class="pm-thread ${variant}"><div class="pm-log" role="log" aria-live="off" aria-label="Conversation with ${PM_NAME}" tabindex="0"></div><div class="pm-compose"><div class="starters" data-starters></div><div data-ctx></div><div class="docs" data-docs hidden></div><div class="box"><textarea rows="1" aria-label="Message ${PM_NAME}" placeholder="Ask ${PM_NAME} about the board, an issue or a run… (/ for commands)"></textarea><button class="send" type="button" data-send aria-label="Send (Enter)">${icon("send", 14, "ic s14")}</button><div class="picker" role="listbox" hidden></div></div><p class="hint" data-hint hidden></p><p class="cost" data-cost></p></div></div>`;
+export function mountThread(
+  host,
+  {
+    variant = "panel",
+    intro: introText,
+    starters: withStarters = true,
+    placeholder = `Ask ${PM_NAME} about the board, an issue or a run… (/ for commands)`,
+  } = {},
+) {
+  host.innerHTML = `<div class="pm-thread ${variant}"><div class="pm-log" role="log" aria-live="off" aria-label="Conversation with ${PM_NAME}" tabindex="0"></div><div class="pm-compose"><div class="starters" data-starters></div><div data-ctx></div><div class="docs" data-docs hidden></div><div class="box"><textarea rows="1" aria-label="Message ${PM_NAME}" placeholder="${esc(placeholder)}"></textarea><button class="send" type="button" data-send aria-label="Send (Enter)">${icon("send", 14, "ic s14")}</button><div class="picker" role="listbox" hidden></div></div><p class="hint" data-hint hidden></p><p class="cost" data-cost></p></div></div>`;
   const log = $(".pm-log", host);
   const ta = $("textarea", host);
   const picker = $(".picker", host);
@@ -358,7 +370,7 @@ export function mountThread(host, { variant = "panel" } = {}) {
     const pm = store.state.pm;
     let html = "";
     if (pm.available === false) {
-      html = `<div class="pm-empty">${avatar()}<b>${PM_NAME} isn't on this server yet.</b><span>This Sekhemet server has no project-manager endpoints (<code>GET /api/pm/thread</code> returned 404). Update Sekhemet and restart <code>sekhemet serve</code>.</span></div>`;
+      html = `<div class="pm-empty">${avatar()}<b>${PM_NAME} isn't available on this server.</b><span>Update Sekhemet and restart it.</span></div>`;
     } else if (pm.error && !pm.messages.length) {
       html = `<div class="pm-empty">${icon("alert", 24, "ic s24")}<b>Couldn't load the conversation.</b><span>${esc(pm.error.status ? `The server returned ${pm.error.status}.` : pm.error.message || "Sekhemet is not reachable.")}</span><button class="btn sm" type="button" data-reload>Retry</button></div>`;
     } else if (pm.available === null) {
@@ -366,7 +378,10 @@ export function mountThread(host, { variant = "panel" } = {}) {
         '<div class="pm-skel"><div class="sk sk-line"></div><div class="sk sk-line"></div><div class="sk sk-line" style="width:60%"></div></div>';
     } else {
       const project = store.state.meta?.project ?? "this project";
-      const intro = `<article class="msg pm intro">${avatar()}<div><header>${teammateName(PM_NAME, "seshat")}<span class="sec">Project manager</span></header><div class="md"><p>I'm ${PM_NAME}, the project manager for ${esc(project)}. I read the board, the runs and the ledger, and I propose changes you approve. I never change the board myself.</p></div></div></article>`;
+      const words =
+        introText ??
+        `I'm ${PM_NAME}, the project manager for ${project}. I read the board, the runs and the Activity log, and I propose changes you approve. I never change the board myself.`;
+      const intro = `<article class="msg pm intro">${avatar()}<div><header>${teammateName(PM_NAME, "seshat")}<span class="sec">Project manager</span></header><div class="md"><p>${esc(words)}</p></div></div></article>`;
       const pending = pendingMessage(pm.messages);
       const parts = pm.messages.map((m) => messageHtml(m) + (m === pending ? pendingHtml(m) : ""));
       html = (pm.messages.length ? "" : intro) + parts.join("");
@@ -399,7 +414,7 @@ export function mountThread(host, { variant = "panel" } = {}) {
     const idle = !last || Date.now() - Date.parse(last.createdAt) > IDLE_STARTERS_MS;
     const st = $("[data-starters]", host);
     const sHtml =
-      idle && pm.available === true
+      withStarters && idle && pm.available === true
         ? starters()
             .map(
               (t) =>

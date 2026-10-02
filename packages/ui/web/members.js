@@ -7,14 +7,28 @@
 // else reads the table, with the Admin's controls disabled and the level
 // that can use them written beside (DB-N9-17). Team only (DB-N9-12). Every
 // word is `/app/lib/team_admin.js`'s.
-import { $, announce, copyText, esc, getJSON, icon, sendJSON } from "./dom.js";
+//
+// C2a (NEW-dashboard-19, DEC-51; FINDINGS TEAM-04): the approved mockup's
+// parts — tabs Members, Invites (an Admin only) and Sign-in, an Audit log link
+// for an Admin; the table's columns Name, Access, Labels, Projects and *Can
+// accept in*; under it the AI teammates, and beside it the Access levels from
+// the table the server checks. Invites lists each outstanding invite with
+// Revoke; Sign-in the sign-in settings in force and where each is changed.
+import { $, aiBadge, announce, copyText, esc, getJSON, icon, sendJSON } from "./dom.js";
 import { refusalMessage } from "./lib/account.js";
 import {
   MEMBERS_COPY as C,
+  MEMBERS_PARTS_COPY as P,
   PROFILE_LABELS,
+  accessLevelLines,
   accessLevelWord,
+  aiTeammateLines,
+  inviteRows,
   levelNote,
   memberRows,
+  membersTab,
+  membersTabs,
+  signInLines,
 } from "./lib/team_admin.js";
 import { openMenu } from "./overlay.js";
 import { getSession } from "./session.js";
@@ -36,6 +50,12 @@ const ui = {
   shown: null,
   error: "",
   last: "",
+  /** The tab shown: members, invites (an Admin's) or signin (DB-N19-3). */
+  tab: "members",
+  /** The workspace's parts from `GET /api/members`: levels, ai, signIn. */
+  facts: {},
+  /** Outstanding invites (DB-N19-4): undefined until read, or `{error}`. */
+  invites: undefined,
 };
 
 async function load() {
@@ -45,8 +65,17 @@ async function load() {
   ]);
   ui.members = m.ok ? (m.data?.members ?? []) : { error: m.status || "no response" };
   ui.canManage = m.ok && m.data?.canManage === true;
+  ui.facts = m.ok ? { levels: m.data?.levels ?? [], ai: m.data?.ai, signIn: m.data?.signIn } : {};
   ui.projects = p.ok ? (p.data?.projects ?? []).filter((x) => x.status !== "archived") : [];
+  ui.tab = membersTab(ui.tab, ui.canManage);
+  if (ui.tab === "invites") await loadInvites();
   render();
+}
+
+/** DB-N19-4: the outstanding invites, an Admin's read. */
+async function loadInvites() {
+  const r = await getJSON("/api/invites").catch(() => ({ ok: false, status: 0 }));
+  ui.invites = r.ok ? (r.data?.invites ?? []) : { error: r.status || "no response" };
 }
 
 const projectNames = () => Object.fromEntries(ui.projects.map((p) => [p.id, p.name]));
@@ -86,7 +115,7 @@ function editorHtml(row) {
     fields = `<div class="auth-field"><label for="${id}-project">${esc(C.overrideProject)}</label><select id="${id}-project" name="project">${projectOptions(false)}</select></div><div class="auth-field"><label for="${id}-level">${esc(C.overrideLevel)}</label><select id="${id}-level" name="level">${levelOptions(row.level)}</select></div>`;
   else if (e.kind === "label")
     fields = `<div class="auth-field"><label for="${id}-label">${esc(C.label)}</label><input id="${id}-label" name="label" type="text" maxlength="80" list="mb-labels" value="${esc(row.label)}" autocomplete="off"><datalist id="mb-labels">${PROFILE_LABELS.map((l) => `<option value="${esc(l)}"></option>`).join("")}</datalist></div>`;
-  return `<tr class="mb-edit"><td colspan="6"><form class="mb-form" data-mb-edit="${esc(e.kind)}" data-principal="${esc(row.principal)}" aria-label="${esc(`${e.kind === "level" ? C.changeLevel : e.kind === "override" ? C.override : C.changeLabel}: ${row.name}`)}">${fields}<button class="btn primary" type="submit">${esc(C.save)}</button><button class="btn ghost" type="button" data-mb-cancel>${esc(C.cancel)}</button></form></td></tr>`;
+  return `<tr class="mb-edit"><td colspan="7"><form class="mb-form" data-mb-edit="${esc(e.kind)}" data-principal="${esc(row.principal)}" aria-label="${esc(`${e.kind === "level" ? C.changeLevel : e.kind === "override" ? C.override : C.changeLabel}: ${row.name}`)}">${fields}<button class="btn primary" type="submit">${esc(C.save)}</button><button class="btn ghost" type="button" data-mb-cancel>${esc(C.cancel)}</button></form></td></tr>`;
 }
 
 function rowHtml(row) {
@@ -108,7 +137,12 @@ function rowHtml(row) {
       ? `<button class="btn sm" type="button" data-mb-act="approve" data-principal="${esc(row.principal)}">${esc(C.approve)}</button> <button class="btn sm ghost" type="button" data-mb-act="decline" data-principal="${esc(row.principal)}">${esc(C.decline)}</button>`
       : `<button class="btn sm ghost" type="button" data-mb-menu="${esc(row.principal)}" aria-haspopup="menu" aria-label="${esc(`${C.actions}: ${row.name}`)}">${icon("more", 14, "ic s14")}</button>`
     : "";
-  return `<tr data-principal="${esc(row.principal)}"><td data-col="person"><span class="pj-lbl">${esc(C.person)}</span><span class="mb-person"><span class="avatar" aria-hidden="true">${esc(row.initials)}</span>${dot}<span><b>${esc(row.name)}</b>${row.you ? ` <span class="sec">(${esc(C.you)})</span>` : ""}${row.email ? `<span class="sec mb-email">${esc(row.email)}</span>` : ""}${state}</span></span></td><td data-col="level"><span class="pj-lbl">${esc(C.level)}</span>${esc(row.levelWord)}</td><td data-col="overrides"><span class="pj-lbl">${esc(C.overrides)}</span>${overrides}</td><td data-col="label"><span class="pj-lbl">${esc(C.label)}</span>${row.label ? esc(row.label) : `<span class="sec">${esc(C.noLabel)}</span>`}</td><td data-col="active"><span class="pj-lbl">${esc(C.lastActive)}</span><span class="tnum">${esc(row.lastActive)}</span></td><td data-col="actions">${actions}</td></tr>${editorHtml(row)}`;
+  const k = P.columns;
+  const projects = `${ui.projects.length ? esc(P.allProjects(ui.projects.length)) : `<span class="sec">${esc(P.noProjects)}</span>`}${row.overrides.length ? overrides : ""}`;
+  const accepts = row.acceptIn.length
+    ? esc(row.acceptIn.join(", "))
+    : `<span class="sec" aria-label="${esc(C.none)}">—</span>`;
+  return `<tr data-principal="${esc(row.principal)}"><td data-col="person"><span class="pj-lbl">${esc(k.name)}</span><span class="mb-person"><span class="avatar" aria-hidden="true">${esc(row.initials)}</span>${dot}<span><b>${esc(row.name)}</b>${row.you ? ` <span class="sec">(${esc(C.you)})</span>` : ""}${row.email ? `<span class="sec mb-email">${esc(row.email)}</span>` : ""}${state}</span></span></td><td data-col="level"><span class="pj-lbl">${esc(k.access)}</span>${esc(row.levelWord)}</td><td data-col="label"><span class="pj-lbl">${esc(k.labels)}</span>${row.label ? `<span class="mb-chip">${esc(row.label)}</span>` : `<span class="sec">${esc(C.noLabel)}</span>`}</td><td data-col="projects"><span class="pj-lbl">${esc(k.projects)}</span>${projects}</td><td data-col="accept"><span class="pj-lbl">${esc(k.acceptIn)}</span>${accepts}</td><td data-col="active"><span class="pj-lbl">${esc(k.lastActive)}</span><span class="tnum">${esc(row.lastActive)}</span></td><td data-col="actions">${actions}</td></tr>${editorHtml(row)}`;
 }
 
 function render() {
@@ -127,11 +161,23 @@ function render() {
       now: Date.now(),
     });
     const note = ui.canManage ? undefined : levelNote(s, "members.manage");
-    const invite = `<div class="mb-bar"><button class="btn primary" type="button" data-mb-invite-open${note ? ' disabled aria-describedby="mb-why"' : ""}>${icon("plus", 14, "ic s14")}${esc(C.invite)}</button>${note ? `<span class="sec level-note" id="mb-why">${esc(note)}</span>` : ""}</div>`;
-    const table = rows.length
-      ? `<div class="tbl-wrap"><table class="tbl pj-tbl mb-tbl"><caption class="sr-only">${esc(C.title)}</caption><thead><tr><th scope="col">${esc(C.person)}</th><th scope="col">${esc(C.level)}</th><th scope="col">${esc(C.overrides)}</th><th scope="col">${esc(C.label)}</th><th scope="col">${esc(C.lastActive)}</th><th scope="col"><span class="sr-only">${esc(C.actions)}</span></th></tr></thead><tbody>${rows.map(rowHtml).join("")}</tbody></table></div>`
-      : `<div class="ib-empty">${icon("user", 24, "ic s24")}<b>${esc(C.empty)}</b></div>`;
-    body = `<p class="sec">${esc(C.lead)}</p>${invite}${ui.inviting && ui.canManage ? inviteForm() : ""}${ui.error ? `<p class="auth-error" role="alert">${esc(ui.error)}</p>` : ""}${shownHtml()}${table}`;
+    const tabs = `<nav class="tabs ptabs" aria-label="${esc(P.tabsLabel)}">${membersTabs(
+      ui.canManage,
+    )
+      .map(
+        (t) =>
+          `<a class="tab" href="#/members${t.id === "members" ? "" : `/${t.id}`}"${t.id === ui.tab ? ' aria-current="page"' : ""}>${esc(t.label)}${t.id === "members" ? ` <span class="c tnum">${rows.length}</span>` : t.id === "invites" && Array.isArray(ui.invites) ? ` <span class="c tnum">${ui.invites.length}</span>` : ""}</a>`,
+      )
+      .join("")}</nav>`;
+    const audit = ui.canManage ? `<a class="btn" href="#/audit">${esc(P.auditLog)}</a>` : "";
+    const invite = `<button class="btn primary" type="button" data-mb-invite-open${note ? ' disabled aria-describedby="mb-why"' : ""}>${icon("plus", 14, "ic s14")}${esc(P.invitePeople)}</button>${note ? `<span class="sec level-note" id="mb-why">${esc(note)}</span>` : ""}`;
+    const bar = `<div class="mb-bar">${tabs}<span class="mb-acts">${audit}${invite}</span></div>`;
+    const flash = `${ui.inviting && ui.canManage ? inviteForm() : ""}${ui.error ? `<p class="auth-error" role="alert">${esc(ui.error)}</p>` : ""}${shownHtml()}`;
+    let part;
+    if (ui.tab === "invites") part = invitesHtml();
+    else if (ui.tab === "signin") part = signInHtml();
+    else part = membersPartHtml(rows);
+    body = `${bar}${flash}${part}`;
   }
   setTopbar({
     title: C.title,
@@ -140,6 +186,66 @@ function render() {
   if (body === ui.last) return;
   ui.last = body;
   $(".sc", ui.root).innerHTML = body;
+}
+
+const k = () => P.columns;
+
+/** The Members tab: the table and the AI teammates, the Access levels beside (DB-N19-3). */
+function membersPartHtml(rows) {
+  const c = k();
+  const table = rows.length
+    ? `<div class="tbl-wrap" tabindex="0"><table class="tbl pj-tbl mb-tbl"><caption class="sr-only">${esc(C.title)}</caption><thead><tr><th scope="col">${esc(c.name)}</th><th scope="col">${esc(c.access)}</th><th scope="col">${esc(c.labels)}</th><th scope="col">${esc(c.projects)}</th><th scope="col">${esc(c.acceptIn)}</th><th scope="col">${esc(c.lastActive)}</th><th scope="col"><span class="sr-only">${esc(C.actions)}</span></th></tr></thead><tbody>${rows.map(rowHtml).join("")}</tbody></table></div>`
+    : `<div class="ib-empty">${icon("user", 24, "ic s24")}<b>${esc(C.empty)}</b></div>`;
+  const ai = ui.facts.ai
+    ? `<section class="mb-card" aria-labelledby="mb-ai-h"><h2 id="mb-ai-h">${esc(P.aiTitle)} <span class="sec">${esc(P.aiNote)}</span></h2><ul class="mb-ai">${aiTeammateLines(
+        ui.facts.ai,
+      )
+        .map(
+          (a) =>
+            `<li><span class="mb-ai-mark" aria-hidden="true">${a.who === "seshat" ? "S" : icon("machine", 14, "ic s14")}</span><span><span class="mb-ai-who"><b>${esc(a.name)}</b>${aiBadge()}<span class="sec">${esc(a.role)}</span></span><span class="sec">${esc(a.does)}</span></span></li>`,
+        )
+        .join("")}</ul></section>`
+    : "";
+  const levels = accessLevelLines(ui.facts.levels ?? []);
+  const side = levels.length
+    ? `<aside class="mb-side"><section class="mb-card" aria-labelledby="mb-lv-h"><h2 id="mb-lv-h">${esc(P.levelsTitle)}</h2><dl class="mb-levels">${levels
+        .map((l) => `<div><dt>${esc(l.word)}</dt><dd class="sec">${esc(l.allows)}</dd></div>`)
+        .join("")}</dl><p class="sec mb-note">${esc(P.levelsNote)}</p></section></aside>`
+    : "";
+  return `<div class="mb-grid"><div class="mb-main"><section class="mb-card mb-table" aria-label="${esc(C.title)}">${table}</section>${ai}</div>${side}</div>`;
+}
+
+/** DB-N19-4: each outstanding invite with Revoke; an Admin's tab only. */
+function invitesHtml() {
+  const v = ui.invites;
+  if (v === undefined) return '<div class="sk" style="height:120px"></div>';
+  if (!Array.isArray(v))
+    return `<p class="stp-notice" role="status"><b>Couldn't load the invites.</b> <span class="sec">The server returned ${esc(v.error)}.</span></p>`;
+  const c = P.inviteColumns;
+  const rows = inviteRows(v, Date.now());
+  const table = rows.length
+    ? `<div class="tbl-wrap" tabindex="0"><table class="tbl pj-tbl mb-tbl"><caption class="sr-only">${esc(P.invitesTitle)}</caption><thead><tr><th scope="col">${esc(c.email)}</th><th scope="col">${esc(c.access)}</th><th scope="col">${esc(c.project)}</th><th scope="col">${esc(c.by)}</th><th scope="col">${esc(c.expires)}</th><th scope="col"><span class="sr-only">${esc(P.revoke)}</span></th></tr></thead><tbody>${rows
+        .map(
+          (r) =>
+            `<tr data-invite="${esc(r.ref)}"><td data-col="email"><span class="pj-lbl">${esc(c.email)}</span>${esc(r.email)}</td><td data-col="level"><span class="pj-lbl">${esc(c.access)}</span>${esc(r.levelWord)}</td><td data-col="project"><span class="pj-lbl">${esc(c.project)}</span>${esc(r.project)}</td><td data-col="by"><span class="pj-lbl">${esc(c.by)}</span>${esc(r.by)}</td><td data-col="expires"><span class="pj-lbl">${esc(c.expires)}</span><span class="tnum">${esc(r.expires)}</span></td><td data-col="actions"><button class="btn sm" type="button" data-mb-revoke="${esc(r.ref)}" data-who="${esc(r.email)}" aria-label="${esc(`${P.revoke}: ${r.email}`)}">${esc(P.revoke)}</button></td></tr>`,
+        )
+        .join("")}</tbody></table></div>`
+    : `<div class="ib-empty">${icon("user", 24, "ic s24")}<b>${esc(P.invitesEmpty)}</b></div>`;
+  return `<section class="mb-card" aria-labelledby="mb-inv-h"><h2 id="mb-inv-h">${esc(P.invitesTitle)}</h2><p class="sec">${esc(P.invitesLead)}</p>${table}</section>`;
+}
+
+/** The sign-in settings in force, each with where it is changed (DB-N19-3). */
+function signInHtml() {
+  const s = ui.facts.signIn;
+  if (!s) return "";
+  return `<section class="mb-card" aria-labelledby="mb-si-h"><h2 id="mb-si-h">${esc(P.signInTitle)}</h2><p class="sec">${esc(P.signInLead)}</p><dl class="mb-signin">${signInLines(
+    s,
+  )
+    .map(
+      (l) =>
+        `<div><dt>${esc(l.label)}</dt><dd><span>${esc(l.value)}</span><span class="sec mb-where">${esc(P.where)} <code class="mono">${esc(l.where)}</code></span></dd></div>`,
+    )
+    .join("")}</dl></section>`;
 }
 
 async function act(method, path, body, done) {
@@ -248,7 +354,28 @@ async function submitInvite(form) {
   ui.root?.querySelector("[data-mb-link]")?.scrollIntoView({ block: "nearest" });
 }
 
-export function mount(view) {
+async function revoke(ref, who) {
+  if (!window.confirm(P.revokeConfirm(who))) return;
+  if (await act("DELETE", `/api/invites/${encodeURIComponent(ref)}`, undefined, P.revoked)) {
+    await loadInvites();
+    render();
+  }
+}
+
+async function showTab(params) {
+  ui.tab = params?.[0] ?? "members";
+  // Until the members are read, the tab asked for stands; `load` then checks it.
+  if (ui.members === undefined) return;
+  ui.tab = membersTab(ui.tab, ui.canManage);
+  if (ui.tab === "invites") {
+    ui.invites = undefined;
+    render();
+    await loadInvites();
+  }
+  render();
+}
+
+export function mount(view, route) {
   const root = document.createElement("div");
   root.className = "view-host";
   root.innerHTML = `<section class="sc mb" aria-label="${esc(C.title)}"></section>`;
@@ -260,6 +387,8 @@ export function mount(view) {
   ui.inviting = false;
   ui.shown = null;
   ui.error = "";
+  ui.invites = undefined;
+  ui.tab = route?.params?.[0] ?? "members";
   // Solo has no Members (DB-N9-12): its one person is the whole workspace.
   if (getSession().mode !== "team") {
     location.replace("#/");
@@ -295,6 +424,8 @@ export function mount(view) {
         toast({ tone: "pass", text: C.copied });
       return;
     }
+    const rv = t.closest("[data-mb-revoke]");
+    if (rv) return revoke(rv.getAttribute("data-mb-revoke"), rv.getAttribute("data-who"));
     const a = t.closest("[data-mb-act]");
     if (a) {
       const principal = a.getAttribute("data-principal");
@@ -309,6 +440,9 @@ export function mount(view) {
   render();
   void load();
   return {
+    setParams(params) {
+      void showTab(params);
+    },
     unmount() {
       root.remove();
       ui.root = null;

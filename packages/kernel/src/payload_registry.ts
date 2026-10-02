@@ -384,6 +384,8 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     project: s(ID, true),
     email: priv("personal", TEXT),
   },
+  // dashboard DB-N19-4: an Admin revoked an outstanding invite; its link stops working.
+  "member/invite_revoked": { invite: s(ID) },
   "member/joined": {
     principal: s(PRINCIPAL),
     level: s(LEVEL),

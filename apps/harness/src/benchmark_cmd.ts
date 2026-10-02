@@ -711,8 +711,8 @@ export function defaultBenchmarkEnv(o: {
             })),
           },
           planner,
-          reviewer: { state: "not_built", runs: 1, cards: [], reason: "built in B4.8" },
-          researcher: { state: "not_built", runs: 1, cards: [], reason: "built in B4.4" },
+          reviewer: { state: "not_built", runs: 1, cards: [], reason: "not measured yet" },
+          researcher: { state: "not_built", runs: 1, cards: [], reason: "not measured yet" },
         },
       };
     },

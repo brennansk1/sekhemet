@@ -62,7 +62,7 @@ describe("DS-TO-13, INT-42 to INT-44: inherited issues", () => {
       tracker,
       say: () => undefined,
     });
-    expect(report.recon.issues).toBe("5 open issue(s) read from github");
+    expect(report.recon.issues).toBe("5 open issues read from github");
     const rec = report.plan?.reconciliation;
     expect(rec?.id).toBe("REC-1");
     const by = new Map(rec?.issues.map((i) => [i.issue.id.split("#")[1], i]));

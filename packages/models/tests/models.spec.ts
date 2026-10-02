@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { MockInferenceAdapter } from "../src/mock_adapter.js";
 import {
   looksLikeToolCallAttempt,
-  parseArmCTextPatches,
+  parseSearchReplaceBlocks,
   parseToolCallsFromText,
 } from "../src/parser.js";
-import type { ToolArm } from "../src/types.js";
+import type { ToolCallFormat } from "../src/types.js";
 
 describe("@sekhemet/models", () => {
   it("MockInferenceAdapter returns configured responses and tracks calls", async () => {
@@ -86,7 +86,7 @@ function add(a: number, b: number): number {
 }
 >>>>>>>
 `;
-    const patches = parseArmCTextPatches(patchText);
+    const patches = parseSearchReplaceBlocks(patchText);
     expect(patches.length).toBe(1);
     expect(patches[0]?.search.trim()).toBe(
       "function add(a: number, b: number): number {\n  return a - b;\n}",

@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import type { CardRecord } from "@sekhemet/kernel";
 import { groupByIntent } from "@sekhemet/sync";
+import { plural } from "@sekhemet/ui";
 
 /**
  * The evidence summary (review-git §2.5.7, RG-S5-18): the spec, *Done when*,
@@ -41,7 +42,7 @@ export function evidenceSummary(
       : "",
     `### Checks\n${gates || "_No check results were recorded._"}`,
     `### Tests added\n${tests.length ? tests.map((t) => `- ${t}`).join("\n") : "_None._"}`,
-    `### Diff\n${files.length} file(s), +${ev.linesAdded ?? 0} −${ev.linesRemoved ?? 0}`,
+    `### Diff\n${plural(files.length, "file")}, +${ev.linesAdded ?? 0} −${ev.linesRemoved ?? 0}`,
     `### Coverage\n${
       ev.coverage && Object.keys(ev.coverage).length
         ? Object.entries(ev.coverage)

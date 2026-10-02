@@ -1,7 +1,7 @@
 import type { CardRecord } from "@sekhemet/kernel";
 import { describe, expect, it } from "vitest";
 import { evidenceSummary } from "../src/evidence_summary.js";
-import { prBody } from "../src/wave2_github.js";
+import { prBody } from "../src/github_sync.js";
 
 /** review-git §2.5.7, RG-S5-18: the pull request's body is the evidence summary. */
 describe("the evidence summary (RG-S5-18)", () => {
@@ -43,7 +43,7 @@ describe("the evidence summary (RG-S5-18)", () => {
     expect(body).toContain("- skipped visual");
     expect(body).toMatch(/### Tests added\n- tests\/total\.test\.ts/);
     expect(body).not.toMatch(/### Tests added\n[^#]*src\/total\.ts/);
-    expect(body).toContain("2 file(s), +24 −3");
+    expect(body).toContain("2 files, +24 −3");
     expect(body).toContain("- attempt 1: repair_exhausted");
     expect(body).toContain("[total.png](.sekhemet/evidence/visual/c1/total.png)");
   });

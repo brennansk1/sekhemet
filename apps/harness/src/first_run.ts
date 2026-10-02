@@ -239,7 +239,7 @@ function paragraph(plan: FirstRunPlan): string[] {
       `${plan.chip}, ${plan.memoryGb} GB. No models found yet — recommended: ${worker?.label} ${worker?.model}, ${planner?.label} ${planner?.model}.`,
     );
   } else {
-    lines.push(`${plan.chip}, ${plan.memoryGb} GB, tier ${plan.roster.tier}.`);
+    lines.push(`${plan.chip}, ${plan.memoryGb} GB, class ${plan.roster.tier}.`);
   }
   for (const w of plan.weights) {
     lines.push(
@@ -338,7 +338,7 @@ export async function runFirstRun(
   if (!plan.nodeOk) {
     // SUR-46: named with the version required, before anything is written.
     say(
-      `This is Node.js ${plan.nodeVersion}; Sekhemet needs Node.js ${NODE_FLOOR} or newer (its ledger is node:sqlite). Nothing was written.`,
+      `This is Node.js ${plan.nodeVersion}; Sekhemet needs Node.js ${NODE_FLOOR} or newer (its Activity log needs the built-in SQLite). Nothing was written.`,
     );
     return { code: 1, wrote: [], openBrowser: false };
   }

@@ -58,6 +58,8 @@ export function loadDetail(id, attempt) {
         desk: dk.ok ? dk.data : null,
         // Teams item 19: the AI teammates' state as the harness set it.
         ai: c.ok ? (c.data.ai ?? []) : [],
+        // §2.6 properties rail (ISS-01): the issue's branch, once a run made one.
+        ...(c.ok && c.data.branch ? { branch: c.data.branch } : {}),
       };
       if (!e.ok && e.status !== 404) out.error = { status: e.status, message: e.data?.error ?? "" };
       if (!c.ok && c.status !== 404) out.error = { status: c.status, message: c.data?.error ?? "" };

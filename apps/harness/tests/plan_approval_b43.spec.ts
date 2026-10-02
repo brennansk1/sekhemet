@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { afterEach, describe, expect, it } from "vitest";
-import { type Kernel, planCommand, runWave2Command } from "../src/wave2.js";
+import { type RepoContext, planCommand, runDevCommand } from "../src/wave2.js";
 
 // B4.3 part 3 wiring in the product (planner-pm §2.16, §2.17; NEW-planner-pm-3,
 // -6, -7), with a real git repository and an on-disk ledger:
@@ -20,7 +20,7 @@ afterEach(() => {
   while (dirs.length) rmSync(dirs.pop() as string, { recursive: true, force: true });
 });
 
-function kernel(): Kernel & { boardService: BoardServiceImpl } {
+function kernel(): RepoContext & { boardService: BoardServiceImpl } {
   const repoPath = mkdtempSync(join(tmpdir(), "sek-approve-b43-"));
   dirs.push(repoPath);
   const w = (rel: string, text: string) => {
@@ -64,7 +64,7 @@ describe("PM-N7-5 in the product: sekhemet plan, then sekhemet approve", () => {
 
     const shown: string[] = [];
     expect(
-      await runWave2Command("approve", [r.epicId, "--show"], k, { print: (l) => shown.push(l) }),
+      await runDevCommand("approve", [r.epicId, "--show"], k, { print: (l) => shown.push(l) }),
     ).toBe(0);
     expect(shown.join("\n")).toContain(`${planned[0]?.id}.c1`);
     expect(
@@ -72,8 +72,8 @@ describe("PM-N7-5 in the product: sekhemet plan, then sekhemet approve", () => {
     ).toBe(true);
 
     const said: string[] = [];
-    expect(await runWave2Command("approve", [r.epicId], k, { print: (l) => said.push(l) })).toBe(0);
-    expect(said.join("\n")).toMatch(/Approved \d+ issue\(s\) under the internal tool profile/);
+    expect(await runDevCommand("approve", [r.epicId], k, { print: (l) => said.push(l) })).toBe(0);
+    expect(said.join("\n")).toMatch(/Approved \d+ issues? under the internal tool profile/);
     for (const c of await k.cardStore.listCards({ parentId: r.epicId })) {
       expect(k.cardStore.stagedTests.criteriaApproval(c.id).approved).toBe(true);
       // Out of Planning unless something else holds it, and then it says what.
@@ -120,7 +120,7 @@ describe("PM-N6-4 in the product: sekhemet upgrade", () => {
     );
     const out: string[] = [];
     expect(
-      await runWave2Command(
+      await runDevCommand(
         "upgrade",
         ["left-pad", "1.0.0", "1.1.0", "--changelog", "CHANGELOG.left-pad.md"],
         k,
@@ -147,7 +147,7 @@ describe("PM-N6-4 in the product: sekhemet upgrade", () => {
       failures: [{ gate: "unit", location: { file: "src/pad.ts" }, errorExcerpt: "x" }],
     });
     const fixes: string[] = [];
-    await runWave2Command("upgrade", ["fixes", card?.id as string], k, {
+    await runDevCommand("upgrade", ["fixes", card?.id as string], k, {
       print: (l) => fixes.push(l),
     });
     const child = (await k.cardStore.listCards({ parentId: card?.id as string }))[0];

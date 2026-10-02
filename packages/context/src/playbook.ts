@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { type TomlTable, type TomlValue, escapeTomlString, parseToml } from "@sekhemet/kernel";
 import { factKeysOf, keysCovered } from "./facts.js";
 import { estimateTokens } from "./tokens.js";
-import { type TomlTable, type TomlValue, escapeTomlString, parseToml } from "./toml.js";
 
 export interface PlaybookRule {
   id: string;

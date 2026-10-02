@@ -3,15 +3,15 @@
  * state's text in one pure module the page renders (`playbook.js`,
  * `learning_view.js`), so each is asserted from a fixture. The browser
  * imports the compiled module as `/app/lib/playbook.js`: no runtime imports.
- * DEC-31's words: the Worker is "the agent", gates are "checks".
+ * DEC-31's words: the Worker is "the Agent", gates are "checks".
  */
 
 export const PLAYBOOK_COPY = {
-  lede: "Learned from check results and what you do, never from a model grading itself. Everything stays on this machine and is recorded on the ledger. A rule takes effect only after you approve it, and you can edit or retire any of them.",
+  lede: "Learned from check results and what you do, never from a model grading itself. Everything stays on this machine and is recorded in the Activity log. A rule takes effect only after you approve it, and you can edit or retire any of them.",
   headings: { candidates: "Needs your approval", active: "Active", retired: "Retired" },
   empty: {
     candidates:
-      "Nothing awaiting approval. New rules come from fixes that took the agent several tries, your send-back notes, and Seshat's review at the end of a run.",
+      "Nothing awaiting approval. New rules come from fixes that took the Agent several tries, your notes when you request changes, and Seshat's notes at the end of a run.",
     active: "No active rules.",
     retired: "None retired.",
   },
@@ -25,10 +25,10 @@ export const PLAYBOOK_COPY = {
       "All-projects rules live in ~/.config/sekhemet and apply to every repository on this machine.",
   },
   profile: {
-    heading: "What Seshat has learned about you",
-    lock: "These stay on this machine, in the project's ledger. Edit a statement to correct it; dismiss it and Seshat stops using it.",
+    heading: "Project rules Seshat follows",
+    lock: "These stay on this machine, in the project's Activity log. Edit a statement to correct it; dismiss it and Seshat stops using it.",
     empty:
-      "Nothing yet. Seshat learns from your send-back notes, the proposals you apply or discard, and the fields you change after it sets them. Statements appear here after a run.",
+      "Nothing yet. Seshat learns from your notes when you request changes, the proposals you apply or discard, and the fields you change after it sets them. Statements appear here after a run.",
     dismissed: (n: number) => `${n} dismissed`,
   },
   retired: (n: number) => `${n} retired`,
@@ -37,7 +37,7 @@ export const PLAYBOOK_COPY = {
 
 /** Who a rule is given to. */
 export function ruleRoleLabel(role: string): string {
-  return role === "manager" ? "For Seshat" : "For the agent";
+  return role === "manager" ? "For Seshat" : "For the Agent";
 }
 
 /** A rule's reach chip and its tooltip. */
@@ -70,7 +70,7 @@ export function playbookSectionNotes(g: Groups): {
   const n = g.candidate.length;
   return {
     candidates: `${n} ${n === 1 ? "candidate" : "candidates"}`,
-    active: `${g.active.length} · given to the agent or Seshat when their scope matches · value rises with each helpful use and decays over time`,
+    active: `${g.active.length} · given to the Agent or Seshat when their scope matches · value rises with each helpful use and decays over time`,
     retired: PLAYBOOK_COPY.retired(g.retired.length),
   };
 }
@@ -98,9 +98,8 @@ export function learningMissing(status: number): {
   if (status === 404) {
     return {
       title: "Learning isn't on this server yet.",
-      endpoint: "GET /api/learning",
       detail:
-        "returned 404. Below are the seeded rules and your send-back suggestions; approvals, counts and what Seshat has learned about you arrive with an updated Sekhemet.",
+        "Update Sekhemet and restart it. Below are the seeded rules and the suggestions from your notes; approvals, counts and the project rules Seshat follows arrive with the update.",
     };
   }
   return {

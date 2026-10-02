@@ -7,7 +7,7 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { DecisionStore, acceptBrief, designStage } from "@sekhemet/planner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { planThroughPipeline } from "../src/pm/pipeline.js";
-import { type Kernel, planCommand } from "../src/wave2.js";
+import { type RepoContext, planCommand } from "../src/wave2.js";
 
 // B4.4 wiring of planner-pm §2.9-2.10 in `sekhemet plan` and `/plan`:
 // - PM-P2-6: a design question the brief, a decision or the playbook already
@@ -24,7 +24,7 @@ afterEach(() => {
   while (dirs.length) rmSync(dirs.pop() as string, { recursive: true, force: true });
 });
 
-function kernel(): Kernel {
+function kernel(): RepoContext {
   const repoPath = mkdtempSync(join(tmpdir(), "sek-plan-b44-"));
   dirs.push(repoPath);
   vi.stubEnv("SEKHEMET_USER_CONFIG", join(repoPath, "user-config.toml"));
@@ -44,7 +44,7 @@ function kernel(): Kernel {
 const SPEC = "Keep notes in a database and sync them between laptops";
 
 /** A person accepts a brief whose baseline states `text` (the ledger's brief, PM-P13-1). */
-async function accepted(k: Kernel, text: string): Promise<void> {
+async function accepted(k: RepoContext, text: string): Promise<void> {
   const project = await k.cardStore.ensureProject({ rootPath: k.repoPath, name: "notes" });
   await acceptBrief(
     { store: k.cardStore, log: k.log },

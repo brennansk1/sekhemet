@@ -12,6 +12,7 @@ import {
 import { defaultSlotCacheDir, sweepErasedSlots } from "@sekhemet/models";
 import { reapOrphanedGroups, runTrusted } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter, gitEnvFor } from "@sekhemet/sync";
+import { plural } from "@sekhemet/ui";
 import { Tracer } from "./tracing.js";
 
 /**
@@ -196,7 +197,7 @@ export function describeSupervisorStart(start: SupervisorStart): string[] {
   const lines: string[] = [];
   if (start.reapedProcesses.length > 0) {
     lines.push(
-      `Reaped ${start.reapedProcesses.length} process group(s) a killed runner left: ${start.reapedProcesses.join(", ")}.`,
+      `Reaped ${plural(start.reapedProcesses.length, "process group")} a killed runner left: ${start.reapedProcesses.join(", ")}.`,
     );
   }
   for (const c of start.crashed) {
@@ -208,7 +209,7 @@ export function describeSupervisorStart(start: SupervisorStart): string[] {
   if (r?.skipped) lines.push(`Retention: ${r.skipped}.`);
   if (r && r.pruned.length > 0) {
     lines.push(
-      `Retention: pruned ${r.removed.packs} pack(s), ${r.removed.observations} observation(s), ${r.removed.transcripts} transcript(s) of ${r.closedCards.length} closed issue(s), recorded as ledger/erased seq ${r.erasedBySeq}.`,
+      `Retention: pruned ${plural(r.removed.packs, "pack")}, ${plural(r.removed.observations, "observation")}, ${plural(r.removed.transcripts, "transcript")} of ${plural(r.closedCards.length, "closed issue")}, recorded as ledger/erased seq ${r.erasedBySeq}.`,
     );
     for (const item of r.pruned) {
       lines.push(`   ${item.cardId ?? "(no issue)"}: ${item.kind} ${item.id}`);
@@ -216,11 +217,11 @@ export function describeSupervisorStart(start: SupervisorStart): string[] {
   }
   if (start.slotsErased.length > 0) {
     lines.push(
-      `Erasure: ${start.slotsErased.length} saved model slot(s) holding erased text deleted.`,
+      `Erasure: ${plural(start.slotsErased.length, "saved model slot")} holding erased text deleted.`,
     );
   }
   if (start.spansDeleted > 0) {
-    lines.push(`Retention: ${start.spansDeleted} span(s) older than 30 days deleted.`);
+    lines.push(`Retention: ${plural(start.spansDeleted, "span")} older than 30 days deleted.`);
   }
   return lines;
 }

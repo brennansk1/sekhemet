@@ -267,9 +267,13 @@ function footHtml(opts) {
   const action = planAction(opts);
   const approval = opts.approval;
   const who = (text) => `<p class="sec" id="rp-who">${esc(text)}</p>`;
-  const foot = (inner) => `<div class="rp-foot">${inner}</div>`;
+  // Opened from the start page, Keep talking returns to the conversation (design-stage §2.11 item 2).
+  const back = opts.keepTalking
+    ? '<button type="button" class="btn ghost" data-keep-talking>Keep talking</button>'
+    : "";
+  const foot = (inner) => `<div class="rp-foot">${back}${inner}</div>`;
   if (action === "waiting") {
-    return `${who(`Sent to ${approval.approverName ?? approval.approver} for approval. Nothing is created until they approve it.`)}`;
+    return `${who(`Sent to ${approval.approverName ?? approval.approver} for approval. Nothing is created until they approve it.`)}${back ? foot("") : ""}`;
   }
   if (action === "approve") {
     return `${who(`${approval.requestedByName ?? approval.requestedBy} sent this plan for your approval. Change it here if it needs it; approving creates the project and accepts its brief, and you own its issues, which can be reassigned later.`)}${foot('<button type="button" class="btn primary" data-approve aria-describedby="rp-count rp-who">Approve</button>')}`;

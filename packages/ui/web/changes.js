@@ -2,7 +2,7 @@
 // card, then the diff grouped by role, with comments on diff lines. Selecting
 // a line in the diff fills in its file and line; the form alone reaches every
 // line from the keyboard. Send back carries the comments (`triage.js`), each
-// an instruction to the agent's next attempt (worker-loop WL-N10-4).
+// an instruction to the Agent's next attempt (worker-loop WL-N10-4).
 import { parseUnifiedDiff } from "./diff_parse.js";
 import { esc, icon } from "./dom.js";
 import { filesTableHtml } from "./files.js";

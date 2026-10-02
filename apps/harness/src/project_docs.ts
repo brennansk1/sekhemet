@@ -194,7 +194,7 @@ const STATUS_WORDS: Record<RequirementView["state"], string> = {
   unplanned: "unplanned",
   planned: "planned",
   failing: "failing",
-  passing_strength_unmet: "passing with strength unmet",
+  passing_strength_unmet: "tests too weak",
   proven: "done",
 };
 
@@ -295,7 +295,7 @@ async function renderBrief(
       .filter(Boolean)
       .join(", ");
     lines.push("", `### ${s.id} — ${s.title ?? "(untitled)"}`, "");
-    lines.push(`Appetite: ${appetite || "none"} · accepted: ${s.accepted ? "yes" : "no"}`, "");
+    lines.push(`Size limit: ${appetite || "none"} · accepted: ${s.accepted ? "yes" : "no"}`, "");
     for (const id of s.requirementIds) {
       const r = titles.get(id);
       lines.push(`- ${id} — ${r?.title ?? ""}${r ? ` (${moscowOf(r)})` : ""}`);
@@ -385,7 +385,7 @@ async function renderDecision(
     "## Decision Drivers",
     "",
     `* Recommended: ${recommended?.label ?? "none"}, because ${req.recommendation.rationale.replace(/\.$/, "")}.`,
-    `* ${req.policy === "safe_default" ? "Without an answer by the deadline, the safe default applies" : "Without an answer, the issue stays parked"}.`,
+    `* ${req.policy === "safe_default" ? "Without an answer by the deadline, the safe default applies" : "Without an answer, the issue stays on hold"}.`,
     "",
     "## Considered Options",
     "",
@@ -777,7 +777,7 @@ export async function exportProjectDocuments(
       if (!docs.lastExport(doc.path)) {
         await tellOnce(
           ctx,
-          `${doc.path} has no generated header, so it is yours: it was left as it is. The ${doc.kind} generated from the ledger is shown with \`sekhemet release docs\`; copy what you want from it, or remove your file to let Sekhemet keep it.`,
+          `${doc.path} has no generated header, so it is yours: it was left as it is. The ${doc.kind} generated from the Activity log is shown with \`sekhemet release docs\`; copy what you want from it, or remove your file to let Sekhemet keep it.`,
         );
       }
       continue;
@@ -816,8 +816,8 @@ export async function exportProjectDocuments(
       branch,
       expectedOld: head,
       files: writes.map((d) => ({ path: d.path, text: d.text })),
-      subject: `docs(product): ${options.release ? `release ${options.release.version} notes and changelog; ` : ""}project documents from ledger seq ${seq}`,
-      body: `Generated from the ledger: ${writes.map((d) => d.path).join(", ")}.`,
+      subject: `docs(product): ${options.release ? `release ${options.release.version} notes and changelog; ` : ""}project documents from Activity log entry ${seq}`,
+      body: `Generated from the Activity log: ${writes.map((d) => d.path).join(", ")}.`,
       trailers: {
         Card: options.card ?? options.release?.sliceId ?? "docs",
         "Agent-Model": "none",

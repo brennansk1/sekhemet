@@ -26,6 +26,12 @@ export interface Audience {
   /** The workspace's people now (approved, not removed); the Team setup's only. */
   people?(): string[];
   /**
+   * The people who may accept on a project (teams item 7, DEC-42): its
+   * Accept rule's, else its lead, else the Admins. Undefined in Solo, whose
+   * one person accepts (FINDINGS STA-02).
+   */
+  acceptHolders?(project: string | undefined): string[] | undefined;
+  /**
    * The Admin whose auto-apply rule applies Seshat's suggestion of this kind
    * on this project (planner-pm PM-N9-2, teams TEAM-41); undefined, or
    * absent, when no rule is on and a person applies it.
@@ -65,12 +71,13 @@ export function audienceFromAccess(access: () => Access, db: DatabaseSync): Audi
         .filter((m) => !m.pending && !m.removed)
         .map((m) => m.principal),
     autoApplier: (project, kind) => access().autoApplier(project, kind),
+    acceptHolders: (project) => access().acceptHolders(project),
   };
 }
 
 /** How a person is named in Seshat's text: their name, else "you" for the asker, else their id. */
 export function nameFor(audience: Audience, principal: string | undefined, asker?: string): string {
-  if (!principal) return "the issue's owner";
+  if (!principal) return "the issue's assignee";
   if (asker && principal === asker) return "you";
   return audience.nameOf(principal) ?? (audience.setup === "solo" ? "you" : principal);
 }

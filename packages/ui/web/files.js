@@ -5,7 +5,7 @@ import { fileRole, parseUnifiedDiff } from "./diff_parse.js";
 import { esc, icon } from "./dom.js";
 
 const ROLE_LABEL = {
-  implementation: "May edit",
+  implementation: "In scope",
   acceptance: "Protected test",
   outside: "Outside scope",
   other: "Generated",
@@ -94,5 +94,5 @@ export function filesTableHtml(card, detail) {
       return `<tr tabindex="0" data-file="${esc(r.path)}"><td><span class="fpath">${lead}<span class="mono">${esc(r.path)}</span></span></td><td>${esc(ROLE_LABEL[r.role])}</td><td class="r mono">${change}</td><td class="r">${fails}</td></tr>`;
     })
     .join("");
-  return `<details class="files-rel"><summary>Files <span class="sec">${rows.length} relevant to this issue · select one to see its diff</span></summary><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Path</th><th>Role</th><th class="r">Change</th><th class="r">Check failures</th></tr></thead><tbody>${body}</tbody></table></div></details>`;
+  return `<details class="files-rel"><summary>Files <span class="sec">${rows.length} relevant to this issue · select one to see its diff</span></summary><div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr><th>Path</th><th>Role</th><th class="r">Change</th><th class="r">Check failures</th></tr></thead><tbody>${body}</tbody></table></div></details>`;
 }

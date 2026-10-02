@@ -263,7 +263,7 @@ describe("NEW-runtime-4: retention is a recorded erasure, through `queue`", () =
     k.db.close();
 
     const out = await queue(repo);
-    expect(out).toMatch(/Retention: pruned 1 pack\(s\), 1 observation\(s\), 1 transcript\(s\)/);
+    expect(out).toMatch(/Retention: pruned 1 pack, 1 observation, 1 transcript/);
     expect(out).toContain(`card_old: pack ${pack}`);
 
     const dot = join(repo, ".sekhemet");
@@ -324,7 +324,7 @@ describe("NEW-runtime-4: retention is a recorded erasure, through `queue`", () =
     });
     tracer.close();
     const out = await queue(repo);
-    expect(out).toContain("Retention: 1 span(s) older than 30 days deleted");
+    expect(out).toContain("Retention: 1 span older than 30 days deleted");
     const again = Tracer.forRepo(repo);
     expect(again.spans().map((s) => s.spanId)).toEqual(["2".repeat(16)]);
     again.close();

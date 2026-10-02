@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline";
 import type { CardStore } from "@sekhemet/kernel";
 import type { ModelHold } from "@sekhemet/models";
+import { plural } from "@sekhemet/ui";
 import { appendPersonMessage } from "./pm/documents.js";
 import { answerQueued } from "./pm/service.js";
 import type { PmStore } from "./pm/store.js";
@@ -176,7 +177,7 @@ export class AcpAgent {
               sessionUpdate: "agent_message_chunk",
               content: {
                 type: "text",
-                text: `\n\n${r.proposals?.length} proposed change(s) are waiting in the dashboard (Seshat panel) to apply or discard.`,
+                text: `\n\n${plural(r.proposals?.length ?? 0, "proposed change")} ${(r.proposals?.length ?? 0) === 1 ? "is" : "are"} waiting in the dashboard (Seshat panel) to apply or discard.`,
               },
             });
           }

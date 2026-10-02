@@ -28,11 +28,12 @@ import {
 } from "@sekhemet/eval";
 import { type CardRecord, measuresModel } from "@sekhemet/kernel";
 import { TOOL_CATALOG, cardClassFor, toolsForClass } from "@sekhemet/loop";
+import { plural } from "@sekhemet/ui";
 import { effectiveConfig } from "./config_apply.js";
 import { abVerdictLine, contextVersionGate } from "./context_gate.js";
 import { fullContextVersion } from "./prompt_versions.js";
 import { ROLE_EVAL_SUBCOMMANDS, type RoleEvalDeps, runRoleEvalCommand } from "./role_eval_cmd.js";
-import type { Kernel } from "./wave2.js";
+import type { RepoContext } from "./wave2.js";
 
 /**
  * Measurement commands (measurement rules 9a, 16b, 16c):
@@ -168,7 +169,7 @@ export function autoAcceptRefusal(
   // review-git §2.5.6, RG-S5-9 (DEC-35): never in the Team setup — no marker
   // or setting enables it there.
   if (teamMode === "team") {
-    return "--auto-accept is not available in the Team setup: on a team every issue is accepted by a person (DEC-35).";
+    return "--auto-accept is not available in the Team setup: on a team every issue is accepted by a person.";
   }
   if (readMeasurementMarker(repoPath)) return undefined;
   return "--auto-accept merges issues no person accepted, so it runs only in a repository a measured run prepared (the frozen suite, m0), which carries .sekhemet/measurement.json. Here a person accepts each issue: the human is the rate limiter.";
@@ -220,14 +221,14 @@ function sourceLines(root: string): number {
 const FOOTPRINT_CARD: CardRecord = {
   id: "card_footprint",
   tier: "task",
-  title: "Ledger store",
+  title: "Activity log store",
   status: "in_progress",
   scopeFiles: ["src/ledger.ts"],
   stepBudget: 40,
   stepsUsed: 0,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
-  spec: "Store ledger entries in order and list them back.",
+  spec: "Store Activity log entries in order and list them back.",
   acceptanceCriteria: ["append adds one entry", "list returns the entries in order"],
   acceptanceTests: ["ledger.spec.ts"],
 };
@@ -301,7 +302,7 @@ const readRuns = (list: string | undefined): SuiteRunResult[] =>
  * `advisory`, and says why in its spec.
  */
 export async function demoteGeneratedTests(
-  k: Kernel,
+  k: RepoContext,
   changeId: string,
   reason: string,
 ): Promise<string[]> {
@@ -340,7 +341,7 @@ interface AdoptedChange {
 }
 
 /** Adopted harness changes still being watched (not rolled back, not kept at the last look). */
-async function adoptedChanges(k: Kernel): Promise<AdoptedChange[]> {
+async function adoptedChanges(k: RepoContext): Promise<AdoptedChange[]> {
   const rolled = new Set(
     (await k.log.getEventsByTypes(["measure/rolled_back"])).map(
       (e) => (e.payload as { changeId: string }).changeId,
@@ -420,7 +421,7 @@ const sha256File = (p: string): string =>
  * for a person to revert, and demote the generated tests it promoted.
  */
 async function actOnWatch(
-  k: Kernel,
+  k: RepoContext,
   v: ReturnType<typeof watchAdmittedChange>,
   kind: "budget" | "harness",
 ): Promise<string> {
@@ -432,7 +433,7 @@ async function actOnWatch(
 }
 
 async function rollBack(
-  k: Kernel,
+  k: RepoContext,
   changeId: string,
   reason: string,
   kind: "budget" | "harness",
@@ -455,13 +456,13 @@ async function rollBack(
     type: "measure/rolled_back",
     payload: { ...verdict, changeId, reason, kind, action, demoted },
   });
-  return `${reason}; ${action}${demoted.length ? `; ${demoted.length} generated test(s) demoted to advisory` : ""}`;
+  return `${reason}; ${action}${demoted.length ? `; ${plural(demoted.length, "generated test")} demoted to advisory` : ""}`;
 }
 
 /** `sekhemet measure …`; returns the exit code. */
 export async function runMeasureCommand(
   args: string[],
-  k: Kernel,
+  k: RepoContext,
   print: (line: string) => void = (l) => console.log(l),
   /** The role evaluations' model and asset root, when a caller supplies them (tests). */
   evalDeps: Partial<Pick<RoleEvalDeps, "acquire" | "harnessRoot" | "registry" | "now">> = {},
@@ -618,8 +619,8 @@ export async function runMeasureCommand(
       const r = rescoreSuiteResult(resultPath, work, ...(outFlag ? [outFlag] : []));
       print(
         r.profileMismatch.length
-          ? `${r.profileMismatch.length} of ${r.cards} issue(s) ran with a different profile: ${r.profileMismatch.map((c) => `${c} (${(r.differences[c] ?? []).join(", ")})`).join("; ")}`
-          : `all ${r.cards} issue(s) ran with the run's settings plus their repository's configuration`,
+          ? `${r.profileMismatch.length} of ${plural(r.cards, "issue")} ran with a different profile: ${r.profileMismatch.map((c) => `${c} (${(r.differences[c] ?? []).join(", ")})`).join("; ")}`
+          : `all ${plural(r.cards, "issue")} ran with the run's settings plus their repository's configuration`,
       );
       print(`was ${r.previous.length} named; rescored result in ${r.out}`);
       return 0;
@@ -646,7 +647,7 @@ export async function runMeasureCommand(
         // cannot be matched with later runs: said once, then left.
         if (!c.baselineProfileHash) {
           if (!toldNotWatchable.has(c.version)) {
-            const why = "admitted before B2.4's profile record; re-admit to watch";
+            const why = "admitted before profiles were recorded; re-admit to watch";
             await k.log.append({
               actor: "harness",
               type: "measure/not_watchable",
@@ -756,7 +757,7 @@ export async function runMeasureCommand(
       const c = ruleCredit(records, ruleId);
       await k.log.append({ actor: "harness", type: "learning/credit", payload: c });
       print(
-        `${ruleId}: credit ${c.credit} over ${c.pairs} pair(s) (${c.helpful} helpful, ${c.harmful} harmful) — ${c.status}${c.retiredAt ? ` at ${c.retiredAt.look} pairs, P = ${c.retiredAt.p.toFixed(4)}` : ""}`,
+        `${ruleId}: credit ${c.credit} over ${plural(c.pairs, "pair")} (${c.helpful} helpful, ${c.harmful} harmful) — ${c.status}${c.retiredAt ? ` at ${c.retiredAt.look} pairs, P = ${c.retiredAt.p.toFixed(4)}` : ""}`,
       );
       return 0;
     }

@@ -37,6 +37,8 @@ export interface Citation {
 export interface FindingRow {
   id: string;
   verdict: FindingVerdict;
+  /** What kind of finding it is, for the ones not about a criterion (FINDINGS_C1 R-38). */
+  chip?: string;
   text: string;
   citations: Citation[];
   /** Unmet or unclear: Accept waits for its acknowledgement. */
@@ -70,9 +72,9 @@ export const REVIEW_DESK_COPY = {
     `${n} ${n === 1 ? "file" : "files"} not yet shown: ${names}`,
   andMore: (n: number) => ` and ${n} more`,
   whoMay: (names: string[]) =>
-    `Who may accept: ${names.length ? names.join(", ") : "no other Accept-holder yet"}.`,
+    `Who may accept: ${names.length ? names.join(", ") : "no one else on the Accept rule yet"}.`,
   notIndependent: (because: "built" | "delegated") =>
-    `You ${because === "built" ? "built this issue" : "delegated this issue to the agent"}; on a team another Accept-holder accepts it.`,
+    `You ${because === "built" ? "built this issue" : "delegated this issue to the Agent"}; on a team, another person on the Accept rule accepts it.`,
   notPermitted: "You do not hold the Accept permission on this project.",
   notCodeOwner: "This project needs a code owner's accept, and you own none of this issue's files.",
   noCodeOwner: "no code owner is named in CODEOWNERS for these files",
@@ -256,6 +258,31 @@ export function citationsOf(text: string): Citation[] {
 }
 
 /**
+ * The stored finding's machine prefix (`no test: …`, `outside: <file>`, which
+ * the Agent's dossier keeps) as a chip a person reads, and its text without
+ * the prefix or the trailing `(file:line)` its citation chip already shows
+ * (FINDINGS_C1 R-38, WRD-24).
+ */
+const FINDING_CHIPS: readonly [RegExp, string][] = [
+  [/^no test:\s*/i, "No test checks this"],
+  [/^outside:\s*/i, "Outside the criteria"],
+];
+
+function findingWords(text: string, cited: boolean): { chip?: string; text: string } {
+  let t = String(text ?? "").trim();
+  let chip: string | undefined;
+  for (const [re, label] of FINDING_CHIPS) {
+    if (re.test(t)) {
+      chip = label;
+      t = t.replace(re, "");
+      break;
+    }
+  }
+  if (cited) t = t.replace(/\s*\((?:[\w@.-]+\/)*[\w@.-]+\.[A-Za-z0-9]+:\d+(?:[-–]\d+)?\)$/, "");
+  return { ...(chip ? { chip } : {}), text: t };
+}
+
+/**
  * The Reviewer's findings as Review lists them (§2.5.3 4a): unmet first, then
  * unclear, then met; entries without one of those verdicts (Seshat's
  * preference notes) are not Reviewer findings and are left out. `open` is
@@ -270,11 +297,12 @@ export function reviewerFindings(
     for (const e of entries) {
       if (verdictOf(e.verdict) !== verdict) continue;
       const needsAck = verdict !== "met";
+      const citations = citationsOf(e.text);
       rows.push({
         id: e.id,
         verdict,
-        text: e.text,
-        citations: citationsOf(e.text),
+        ...findingWords(e.text, citations.length > 0),
+        citations,
         needsAck,
         acknowledged: acknowledged.has(e.id),
       });
@@ -471,7 +499,7 @@ export function acceptVerdict(
   if (ctx.ledger && ctx.ledger.valid === false) {
     return {
       ok: false,
-      reason: `Ledger altered at entry #${ctx.ledger.corruptedSeq ?? "?"}. Inspect before accepting.`,
+      reason: `Activity log altered at entry #${ctx.ledger.corruptedSeq ?? "?"}. Inspect before accepting.`,
     };
   }
   if (ctx.triage === false) return { ok: false, reason: "Read-only." };
@@ -552,4 +580,64 @@ export function testApprovalRows(
         ? { path: a.path, state: "again" as const, label: REVIEW_DESK_COPY.needsApprovalAgain }
         : { path: a.path, state: "needs" as const, label: REVIEW_DESK_COPY.needsApproval },
   );
+}
+
+/** What a line of Accept's checklist is about, so a page can link it to where it is met. */
+export type ChecklistKind =
+  | "findings"
+  | "files"
+  | "thread"
+  | "conversation"
+  | "who"
+  | "checks"
+  | "refused"
+  | "other";
+
+export interface ChecklistItem {
+  kind: ChecklistKind;
+  text: string;
+  /** False for a line that informs and keeps nothing disabled (an open conversation). */
+  blocking: boolean;
+}
+
+/** "1 open conversation": the review threads still open (FINDINGS REV-03). */
+export function openConversations(desk: ThreadDesk | null | undefined): string {
+  const n = (desk?.threads ?? []).filter((t) => !t.resolved).length;
+  return n ? `${n} open ${n === 1 ? "conversation" : "conversations"}` : "";
+}
+
+/**
+ * Accept's conditions as a checklist above the triage bar — GitHub's merge
+ * box (FINDINGS REV-02; dashboard §2.5.9): one line per thing that keeps
+ * Accept disabled, each with its kind so a page links it to where it is met
+ * (dashboard §8 question 7), then the open conversations, which inform and
+ * do not block unless the project requires resolved threads (REV-03). A
+ * refusal from the server leads, where it happened (§A Error messages).
+ */
+export function acceptChecklist(
+  reason: string,
+  desk?: ThreadDesk | null,
+  refused?: string,
+): ChecklistItem[] {
+  const kindOf = (t: string): ChecklistKind =>
+    / to acknowledge$/.test(t)
+      ? "findings"
+      : / not yet shown/.test(t)
+        ? "files"
+        : /review thread/.test(t)
+          ? "thread"
+          : /accept|Accept-holder|code owner/i.test(t) && !/^Accept needs/.test(t)
+            ? "who"
+            : /check/i.test(t)
+              ? "checks"
+              : "other";
+  const items: ChecklistItem[] = [];
+  if (refused) items.push({ kind: "refused", text: refused, blocking: true });
+  for (const part of reason ? reason.split(" · ") : []) {
+    items.push({ kind: kindOf(part), text: part, blocking: true });
+  }
+  const open = openConversations(desk);
+  if (open && !items.some((i) => i.kind === "thread"))
+    items.push({ kind: "conversation", text: open, blocking: false });
+  return items;
 }

@@ -24,12 +24,12 @@
   background: var(--bg-raised);
   font-size: var(--text-sm);
   border-bottom: 1px solid var(--border-subtle);
-  border-radius: 5px 5px 0 0;
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
   min-width: 0;
 }
 .group.collapsed .g-h {
   border-bottom: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-card);
 }
 .g-h .tog {
   display: inline-flex;

@@ -110,7 +110,7 @@ export function cardVision(
   return {
     visionNotRun:
       visionModels.length === 0
-        ? `no vision model in the registry is verified on this machine on checklist ${VISION_CHECKLIST_VERSION}`
+        ? `no vision model in Sekhemet's model list is verified on this machine on checklist ${VISION_CHECKLIST_VERSION}`
         : `no vision model is verified on this machine on checklist ${VISION_CHECKLIST_VERSION} (${tried.join("; ")})`,
   };
 }

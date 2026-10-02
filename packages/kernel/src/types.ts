@@ -562,7 +562,7 @@ export type RepairRung = 1 | 2 | 3 | 4;
  * than assuming it: an arm that helps a frontier model can cost a small one
  * the card, and only rows tagged with the arm that produced them can say so.
  */
-export type ToolArm = "A" | "B" | "C";
+export type ToolCallFormatCode = "A" | "B" | "C";
 
 export interface AttemptRecord {
   id: string;
@@ -571,7 +571,7 @@ export interface AttemptRecord {
   /** Which repair rung produced this attempt; 1 is the first, unrepaired try. */
   rung: RepairRung;
   modelId: string;
-  toolArm: ToolArm;
+  toolArm: ToolCallFormatCode;
   status: AttemptStatus;
   stopReason?: CardStopReason;
   tokensUsed: number;
@@ -594,7 +594,7 @@ export interface StartAttemptInput {
   /** Defaults to 1: a caller that does not run a ladder is always on its first rung. */
   rung?: RepairRung;
   /** Defaults to "A", the roster's baseline vocabulary. */
-  toolArm?: ToolArm;
+  toolArm?: ToolCallFormatCode;
   forkedFrom?: { attemptId: string; step: number };
   resumedFromStep?: number;
   /** Who builds it (K-N6-4); the Worker running `modelId` when omitted. */
@@ -623,7 +623,7 @@ export interface FinishAttemptInput {
   /** The highest rung the attempt reached; the started rung when omitted. */
   rung?: RepairRung;
   /** The arm the steps were sent in; the started arm when omitted. */
-  toolArm?: ToolArm;
+  toolArm?: ToolCallFormatCode;
   /** Defaults to `worker`. */
   role?: AttemptRole;
   /** Playbook rules that reached the attempt's prompt. */
@@ -657,7 +657,7 @@ export interface AttemptOutcome {
   cardId: string;
   attemptNumber: number;
   rung: RepairRung;
-  toolArm: ToolArm;
+  toolArm: ToolCallFormatCode;
   role: AttemptRole;
   modelId: string;
   status: Exclude<AttemptStatus, "running">;

@@ -21,16 +21,6 @@
 
 import { type LocalInferenceAdapter, stripReasoning } from "@sekhemet/models";
 
-/**
- * The visible answer without reasoning. Qwen3.5-family templates open
- * `<think>` inside the prompt, so the output may carry only the closing tag:
- * everything up to the last `</think>` is reasoning.
- */
-export function stripThinking(text: string): string {
-  // MD-N4-8: the one implementation, which the adapter already applied.
-  return stripReasoning(text);
-}
-
 /** web_search results, byte-for-byte the reference plaintext format. */
 export function formatSearchResults(
   hits: { title: string; url: string; snippet?: string; date?: string }[],
@@ -97,7 +87,7 @@ export async function extractInfo(
       // Its own server slot, so the research conversation's cached prefix survives.
       slot: 1,
     });
-    const text = stripThinking(r.text);
+    const text = stripReasoning(r.text);
     return text || body.slice(0, 12_000);
   } catch {
     return body.slice(0, 12_000);

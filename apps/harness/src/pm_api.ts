@@ -13,11 +13,12 @@ import {
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { readKernelPressureLevel } from "@sekhemet/models";
 import { resolvePlannerModel } from "@sekhemet/planner";
-import { quickCreateRequest } from "@sekhemet/ui";
+import { type Reproduction, issueSpec, quickCreateRequest } from "@sekhemet/ui";
 import { effectiveConfig } from "./config_apply.js";
 import { recommendRoster } from "./init.js";
 import { handleIntegrationsApi } from "./integrations.js";
 import { readSettings } from "./integrations.js";
+import { readIssueForms } from "./issue_forms.js";
 import { learnFromProposalChoices } from "./learning/reflect.js";
 import { LearningStore } from "./learning/store.js";
 import { sharedModelAccess } from "./model_access.js";
@@ -55,6 +56,7 @@ import {
 import { PM_EVENTS, type PmContext, type PmMessage, type PmStatus } from "./pm/types.js";
 import { draftWeeklyUpdate, postWeeklyUpdate } from "./pm/weekly.js";
 import { seshatWait } from "./pm/while_worker.js";
+import { releaseTags } from "./project_done.js";
 import { oneShotResearcher } from "./research/service.js";
 import { quickAnswererFor } from "./smart_swap.js";
 import { statusFacts } from "./status_api.js";
@@ -86,6 +88,8 @@ export interface PmApiContext {
   isTrustedMutation: (req: IncomingMessage) => boolean;
   /** The person a request is for (teams §2.3, kernel rule 19); the server's one resolver. */
   principalOf?: (req: IncomingMessage) => string;
+  /** A principal's recorded name (DB-N16-2: Undo names who changed a field since). */
+  nameOf?: (principal: string) => string | undefined;
   /**
    * Who is asked and what each person can see (planner-pm §2.8.5, §2.18;
    * teams items 6, 19a, 20). A Solo install's one person when omitted.
@@ -120,6 +124,36 @@ const PATCHABLE: Record<string, (v: unknown) => unknown> = {
   gateChecks: (v) =>
     v === null || (typeof v === "object" && v !== null && !Array.isArray(v)) ? v : undefined,
 };
+
+/** Two field values alike: absent and null, and label lists in any order (DB-N16-2). */
+function sameValue(a: unknown, b: unknown): boolean {
+  const norm = (v: unknown) =>
+    v === undefined || v === null || (Array.isArray(v) && v.length === 0)
+      ? null
+      : Array.isArray(v)
+        ? [...v].map(String).sort()
+        : v;
+  return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+}
+
+/** The principal who last changed `field` on a card (DB-N16-2: Undo names them). */
+async function lastChangedBy(
+  log: EventLog,
+  cardId: string,
+  field: string,
+): Promise<string | undefined> {
+  const types =
+    field === "assignee"
+      ? ["card/updated", "card/delegated", "card/owner_changed"]
+      : ["card/updated"];
+  const events = await log.getEventsByCardAndTypes(cardId, types);
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i] as { type: string; principal?: string; payload?: unknown };
+    const patch = (e.payload as { patch?: Record<string, unknown> } | undefined)?.patch;
+    if (e.type !== "card/updated" || (patch && field in patch)) return e.principal;
+  }
+  return undefined;
+}
 
 /**
  * Routes for the PM conversation, proposals, cycles, inline edits, flow
@@ -268,7 +302,7 @@ export function createPmApi(ctx: PmApiContext) {
       // The queue answers after the Worker's current step.
       await pmStore.setStatus({
         phase: "waiting_for_step",
-        detail: "Pausing the agent after its current step",
+        detail: "Pausing the Agent after its current step",
         model: lease.pmModel ?? pmModel,
         workerPaused: false,
       });
@@ -360,6 +394,20 @@ export function createPmApi(ctx: PmApiContext) {
       return true;
     }
 
+    // NEW-dashboard-15 (DB-N15-3): the repository's issue forms, by type.
+    if (url === "/api/issue-forms" && req.method === "GET") {
+      ctx.json(res, 200, { forms: readIssueForms(ctx.repoPath) });
+      return true;
+    }
+
+    // NEW-dashboard-15: a Bug's *Release* offers the repository's tagged
+    // releases, newest first (repository text, shown as a list, never sent on).
+    if (url === "/api/releases/tags" && req.method === "GET") {
+      const tags = releaseTags(ctx.repoPath);
+      ctx.json(res, 200, { tags });
+      return true;
+    }
+
     // --- Quick create from the board (dashboard DB-P3-12) ---------------------
     // A create proposal in Seshat's thread: applied, it goes through the one
     // planner pipeline (PM-P1-1) like any card Seshat drafts.
@@ -371,12 +419,23 @@ export function createPmApi(ctx: PmApiContext) {
         ...(typeof b.description === "string" ? { description: b.description } : {}),
         ...(typeof b.epicId === "string" ? { epicId: b.epicId } : {}),
         ...(typeof b.projectId === "string" ? { projectId: b.projectId } : {}),
+        // NEW-dashboard-15: the type and properties, and a Bug's reproduction.
+        ...(typeof b.type === "string" ? { type: b.type } : {}),
+        ...(b.priority !== undefined ? { priority: b.priority as number } : {}),
+        ...(Array.isArray(b.labels) ? { labels: b.labels as string[] } : {}),
+        ...(typeof b.cycleId === "string" ? { cycleId: b.cycleId } : {}),
+        ...(typeof b.assignee === "string" ? { assignee: b.assignee } : {}),
+        ...(b.reproduction && typeof b.reproduction === "object"
+          ? { reproduction: b.reproduction as Reproduction }
+          : {}),
       });
       if (!asked.ok) {
         ctx.json(res, 400, { error: asked.error });
         return true;
       }
-      const { title, description, epicId, projectId } = asked.body;
+      const { title, description, epicId, projectId, reproduction } = asked.body;
+      const spec = issueSpec(description, reproduction);
+      const { type, priority, labels, cycleId, assignee } = asked.body;
       const epic = epicId && ctx.cardStore ? await ctx.cardStore.getCard(epicId) : null;
       const underEpic = epic && epic.tier === "epic" ? epic : null;
       const reply = await pmStore.appendReply({
@@ -388,10 +447,15 @@ export function createPmApi(ctx: PmApiContext) {
             cards: [
               {
                 title,
-                ...(description ? { spec: description } : {}),
+                ...(spec ? { spec } : {}),
                 // Under the epic, the card is in the epic's project; else in
                 // the project the board is scoped to (the one checked).
                 ...(underEpic ? { epicId: underEpic.id } : projectId ? { projectId } : {}),
+                ...(type ? { type } : {}),
+                ...(priority !== undefined ? { priority } : {}),
+                ...(labels ? { labels } : {}),
+                ...(cycleId ? { cycleId } : {}),
+                ...(assignee ? { assignee } : {}),
               },
             ],
             summary: `Create ${title}`,
@@ -887,6 +951,7 @@ export function createPmApi(ctx: PmApiContext) {
       const patch: Record<string, unknown> = {};
       const rejected: string[] = [];
       for (const [k, v] of Object.entries(b)) {
+        if (k === "ifUnchanged") continue;
         const parse = PATCHABLE[k];
         const value = parse ? parse(v) : undefined;
         if (value === undefined) rejected.push(k);
@@ -895,6 +960,28 @@ export function createPmApi(ctx: PmApiContext) {
       if (Object.keys(patch).length === 0) {
         ctx.json(res, 400, { error: `Nothing editable in ${rejected.join(", ") || "the body"}` });
         return true;
+      }
+      // NEW-dashboard-16 (DB-N16-2): an Undo restores a field only while it
+      // still holds the value the edit set; one another person changed since
+      // is left as it is, and the refusal names them.
+      if (b.ifUnchanged && typeof b.ifUnchanged === "object" && !Array.isArray(b.ifUnchanged)) {
+        const current = (await cardStore.getCard(id)) as unknown as Record<string, unknown>;
+        const changed: { field: string; by?: string }[] = [];
+        for (const [field, expected] of Object.entries(b.ifUnchanged as Record<string, unknown>)) {
+          const parse = PATCHABLE[field];
+          if (!parse || !(field in patch)) continue;
+          if (sameValue(current[field], parse(expected))) continue;
+          const by = await lastChangedBy(ctx.log, id, field);
+          const name = by ? (ctx.nameOf?.(by) ?? undefined) : undefined;
+          changed.push({ field, ...(name ? { by: name } : {}) });
+        }
+        if (changed.length > 0) {
+          ctx.json(res, 409, {
+            error: `${changed.map((c) => c.field).join(", ")} changed since${changed[0]?.by ? ` (by ${changed[0].by})` : ""}, so it was left.`,
+            changed,
+          });
+          return true;
+        }
       }
       const principal = ctx.principalOf?.(req);
       const card = await cardStore.updateCard(

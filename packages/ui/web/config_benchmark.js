@@ -25,13 +25,13 @@ const two = (x) => (Math.round(x * 100) / 100).toFixed(2);
 /** DB-N6-9: *Run quick* with its minutes from the roles not cached, each over its target named. */
 export function estimateLabel(e) {
   if (!e) return "Run quick";
-  if (!e.totalMinutes) return "Run quick — everything is cached";
+  if (!e.totalMinutes) return "Run quick · everything is cached";
   const over = (e.roles || []).filter((r) => r.overTarget).map((r) => ROLE_NAMES[r.role] || r.role);
   if (e.endToEnd?.overTarget) over.push("end-to-end check");
   const tail = over.length
     ? ` (${over.join(", ")} over ${over.length > 1 ? "their targets" : "its target"})`
     : "";
-  return `Run quick — about ${Math.round(e.totalMinutes)} min${tail}${e.overTarget && !over.length ? " (over the 45-minute target)" : ""}`;
+  return `Run quick · about ${Math.round(e.totalMinutes)} min${tail}${e.overTarget && !over.length ? " (over the 45-minute target)" : ""}`;
 }
 
 /** DB-N6-9, MS-N5-5: a role's picker offers only models that fit; the others say what they need. */
@@ -43,7 +43,7 @@ export function pickerOptions(models, role) {
       const gb = /(\d+(?:\.\d+)?)\s*GB/.exec(why)?.[1];
       return {
         value: m.id,
-        label: `${m.name} — ${gb ? `Needs ${gb} GB` : "Does not fit"}`,
+        label: `${m.name} · ${gb ? `Needs ${gb} GB` : "Does not fit"}`,
         disabled: true,
       };
     }
@@ -57,7 +57,7 @@ export function pickerOptions(models, role) {
  */
 export function roleScoreText(s) {
   if (!s || s.state === "not_measured" || !s.score)
-    return s?.state === "partial" ? "Partial — not scored" : "Not measured yet";
+    return s?.state === "partial" ? "Partial · not scored" : "Not measured yet";
   const sc = s.score;
   if (sc.kind === "rate")
     return `${pct(sc.value)}${sc.low !== undefined ? ` (95% CI ${pct(sc.low)}–${pct(sc.high ?? 1)})` : ""}`;
@@ -83,15 +83,15 @@ export function comparisonLabel(c) {
 /** DB-N6-10: a run's state and progress; a stopped run keeps its results, marked partial. */
 export function runStateText(run) {
   if (run.state === "running")
-    return run.progress ? `Running — ${run.progress.done} of ${run.progress.total}` : "Running";
+    return run.progress ? `Running · ${run.progress.done} of ${run.progress.total}` : "Running";
   if (run.state === "stopped")
-    return `Stopped — results so far kept${run.partial ? " (partial)" : ""}`;
+    return `Stopped · results so far kept${run.partial ? " (partial)" : ""}`;
   if (run.state === "done") return "Done";
-  if (run.state === "failed") return "Failed — results so far kept";
+  if (run.state === "failed") return "Failed · results so far kept";
   const s = run.schedule;
   if (run.tier === "overnight" && s) {
     const n = run.combinations.length;
-    return `Queued — Tonight ${s.window.start}–${s.window.end}: ${s.fitsTonight} of ${n} combination${n === 1 ? "" : "s"} ${s.fitsTonight === 1 ? "fits" : "fit"}`;
+    return `Queued · Tonight ${s.window.start}–${s.window.end}: ${s.fitsTonight} of ${n} combination${n === 1 ? "" : "s"} ${s.fitsTonight === 1 ? "fits" : "fit"}`;
   }
   return "Queued";
 }
@@ -159,11 +159,11 @@ function resultHtml(r) {
     ? `<p>End-to-end check: ${esc(`${r.endToEnd.passed}/${r.endToEnd.total}`)} issues passed (beside the scores)</p>`
     : "";
   const tied = r.indistinguishableFrom?.length
-    ? `<p>No clear difference from ${esc(r.indistinguishableFrom.length)} other combination(s) on the ${esc(r.tier)} benchmark</p>`
+    ? `<p>No clear difference from ${esc(r.indistinguishableFrom.length)} other ${r.indistinguishableFrom.length === 1 ? "combination" : "combinations"} on the ${esc(r.tier)} benchmark</p>`
     : "";
   const action = assignAction(qualifiedFor(r.combination));
   return `<article class="bench-result" data-id="${esc(r.combinationId)}">
-    <h4>${esc(r.tier === "quick" ? "Quick" : "Overnight")} — ${esc(
+    <h4>${esc(r.tier === "quick" ? "Quick" : "Overnight")} · ${esc(
       ROLES.filter((x) => r.combination[x])
         .map((x) => `${ROLE_NAMES[x]} ${r.combination[x]}`)
         .join(" · "),
@@ -188,7 +188,7 @@ function render() {
     <div class="bench-builder">${ROLES.map(pickerHtml).join("")}</div>
     <p>${
       ui.confirming
-        ? `<button class="btn" type="button" data-confirm>Start — ${esc(estimateLabel(ui.estimate).replace(/^Run quick — /, ""))}</button> <button class="btn" type="button" data-cancel>Cancel</button>`
+        ? `<button class="btn" type="button" data-confirm>Start · ${esc(estimateLabel(ui.estimate).replace(/^Run quick · /, ""))}</button> <button class="btn" type="button" data-cancel>Cancel</button>`
         : `<button class="btn" type="button" data-quick${ready ? "" : " disabled"}>${esc(estimateLabel(ui.estimate))}</button>`
     } <button class="btn" type="button" data-overnight>Schedule overnight comparison</button></p>
     ${ui.overnight ? `<p class="bench-overnight">${esc(ui.overnight)}</p>` : ""}

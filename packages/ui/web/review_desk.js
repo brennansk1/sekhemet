@@ -6,6 +6,7 @@
 // (acknowledgements, files shown) and writes the markup.
 import { diffOnScreen, parseUnifiedDiff, shownFiles } from "./diff_parse.js";
 import { $, $$, esc, icon, postJSON } from "./dom.js";
+import { noteFor } from "./level_gate.js";
 import {
   REVIEW_DESK_COPY as C,
   acceptBlockers,
@@ -123,7 +124,7 @@ export function reviewerHtml(card, detail) {
     const cites = r.citations.length
       ? `<span class="cites">${r.citations.map(citeHtml).join(" ")}</span>`
       : "";
-    return `<li class="rf ${tone}" data-finding="${esc(r.id)}" tabindex="-1"><span class="rf-ic">${ic}</span><div><b>${esc(C.verdict[r.verdict])}</b><span>${esc(r.text)}</span>${cites}</div>${act}</li>`;
+    return `<li class="rf ${tone}" data-finding="${esc(r.id)}" tabindex="-1"><span class="rf-ic">${ic}</span><div><b>${esc(C.verdict[r.verdict])}</b>${r.chip ? `<span class="chip rf-chip">${esc(r.chip)}</span>` : ""}<span>${esc(r.text)}</span>${cites}</div>${act}</li>`;
   };
   const open = m.rows
     .filter((r) => r.verdict !== "met")
@@ -210,6 +211,9 @@ export function recordShown(card, detail, pane, root, onMore) {
   if (!card || !ev || card.status !== "review") return;
   const s = store.state;
   if ((s.meta && s.meta.triage === false) || s.connection === "offline") return;
+  // SEC-01: a level that may not review records nothing it was shown (the server
+  // would refuse it, and the refusal would fill Audit with what nobody asked for).
+  if (noteFor("review", card.projectId)) return;
   if (root) watchShown(card, detail, pane, root, onMore);
   const files = shownFiles(ev, {
     card: detail.card ?? card,
@@ -219,7 +223,7 @@ export function recordShown(card, detail, pane, root, onMore) {
     full: pane.full,
     seen: onScreen.get(key(card, detail)) ?? new Set(),
   });
-  reportOpened(card.id, ev.id, files, postJSON);
+  reportOpened(card.id, ev.id, files, (path, body) => postJSON(path, body, { background: true }));
 }
 
 function markSeen(root, path) {

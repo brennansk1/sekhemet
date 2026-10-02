@@ -14,13 +14,15 @@
  * The browser loads the compiled module as `/app/lib/learn.js`: runtime
  * imports stay relative to the other published lib modules.
  */
-import type { ReviewLimitFacts } from "./columns.js";
+import { type ReviewLimitFacts, reviewBasis } from "./columns.js";
 import { formatHours } from "./pm.js";
 import {
   BOARD_COLUMNS,
+  type GateSummary,
   ISSUE_TYPE_LABELS,
   WONT_DO_COLUMN,
   boardColumnOf,
+  checksVerdict,
   columnLabel,
   issueTypeOf,
   plural,
@@ -33,8 +35,12 @@ import {
 export const TIPS_KEY = "sekhemet-tips";
 export const ROLE_KEY = "sekhemet-role";
 
-/** The first-run answers; `later` is *Not now*: asked, no answer given. */
-export type FirstRunRole = "code" | "manage" | "learn";
+/**
+ * The first-run answers; `later` is *Not now*: asked, no answer given.
+ * `seshat` is *I'll just talk to Seshat* (FINDINGS SHL-03; product
+ * direction: a non-developer just talks to Seshat).
+ */
+export type FirstRunRole = "code" | "manage" | "learn" | "seshat";
 export type StoredRole = FirstRunRole | "later";
 
 interface StorageLike {
@@ -44,6 +50,13 @@ interface StorageLike {
 
 /** The one question the first visit asks (§2.2.5). */
 export const FIRST_RUN = {
+  /** SHL-03: the one-screen welcome above the question. */
+  welcome: "Welcome to Sekhemet.",
+  lede: "It plans your project as issues on a board, has a local model build each one against checks, and asks a person to accept the result.",
+  modelStep: "First, set up a model: nothing is built until a Coding model fits this computer.",
+  modelStepAdmin:
+    "An Admin sets up the models; until then you can plan with Seshat and read every page.",
+  setUpModels: "Set up models",
   question: "How will you use Sekhemet?",
   choices: [
     {
@@ -56,6 +69,11 @@ export const FIRST_RUN = {
       role: "learn" as const,
       label: "I'm learning",
       detail: "Opens on the Board, with Tips that explain each part.",
+    },
+    {
+      role: "seshat" as const,
+      label: "I'll just talk to Seshat",
+      detail: "Opens Seshat, the project manager: say what you need in your own words.",
     },
   ],
   later: "Not now",
@@ -80,7 +98,9 @@ function write(storage: StorageLike | undefined, key: string, value: string): vo
 
 export function readRole(storage: StorageLike | undefined): StoredRole | null {
   const r = read(storage, ROLE_KEY);
-  return r === "code" || r === "manage" || r === "learn" || r === "later" ? r : null;
+  return r === "code" || r === "manage" || r === "learn" || r === "seshat" || r === "later"
+    ? r
+    : null;
 }
 
 /** Tips as a person last set them; with no setting, on only for *I'm learning*. Off by default. */
@@ -97,7 +117,13 @@ export function writeTips(storage: StorageLike | undefined, on: boolean): void {
 
 /** Preferences' first-run role: the role alone, Tips left as they are. An unknown value is ignored. */
 export function writeRole(storage: StorageLike | undefined, role: string): void {
-  if (role === "code" || role === "manage" || role === "learn" || role === "later")
+  if (
+    role === "code" ||
+    role === "manage" ||
+    role === "learn" ||
+    role === "seshat" ||
+    role === "later"
+  )
     write(storage, ROLE_KEY, role);
 }
 
@@ -107,9 +133,13 @@ export function answerFirstRun(storage: StorageLike | undefined, role: StoredRol
   writeTips(storage, role === "learn");
 }
 
-/** The question shows once, and only once a model is set up (§2.2.5, DB-N6-2). */
-export function firstRunDue(storage: StorageLike | undefined, f: { noModel: boolean }): boolean {
-  return !f.noModel && readRole(storage) === null;
+/**
+ * The question shows once, until answered or set aside (§2.2.5). With no
+ * model yet it comes with the welcome's model step rather than waiting for
+ * one (FINDINGS SHL-03): a Stakeholder or a Viewer never sets a model up.
+ */
+export function firstRunDue(storage: StorageLike | undefined, _f: { noModel: boolean }): boolean {
+  return readRole(storage) === null;
 }
 
 export interface RouteFacts {
@@ -123,25 +153,51 @@ export interface RouteFacts {
   everAccepted: boolean;
   /** No role's weights in any model folder (DB-N6-2). */
   noModel?: boolean;
+  /** Team: the person's workspace level; only an Admin sets up models (SHL-03). */
+  level?: string;
+}
+
+/**
+ * Whether this person manages the work rather than writing code
+ * (NEW-dashboard-17): the first-run answer *I manage the work* in Solo, the
+ * profile label Product owner or Stakeholder in the Team setup.
+ */
+export function managesWork(f: Pick<RouteFacts, "role" | "team" | "profileLabel">): boolean {
+  if (f.team) {
+    const label = (f.profileLabel ?? "").trim().toLowerCase();
+    return label === "product owner" || label === "stakeholder";
+  }
+  return f.role === "manage";
+}
+
+/** Where *Review it* opens (DB-N17-1): the criteria view for who manages the work, else Review. */
+export function reviewItHref(cardId: string, manages: boolean): string {
+  return manages ? `#/card/${encodeURIComponent(cardId)}/criteria` : `#/review/${cardId}`;
 }
 
 /**
  * The page the dashboard opens on (§2.2.5): Configuration › Models while no
- * model is set up; in the Team setup the profile label decides (a Product
- * owner or a Stakeholder on Status, anyone else as *I write code*); in Solo
- * the first-run answer; with none, Status for a person who has never
- * accepted an issue.
+ * model is set up, for who can set one up — Solo's person or a Team Admin;
+ * anyone else lands on their own page, where the *No Coding model* bar says
+ * an Admin sets models up (FINDINGS SHL-03). In the Team setup the profile
+ * label decides (a Product owner or a Stakeholder on Status, anyone else as
+ * *I write code*), and with no label a Stakeholder or Viewer level opens
+ * Status; in Solo the first-run answer (*I'll just talk to Seshat* opens
+ * Seshat); with none, Status for a person who has never accepted an issue.
  */
 export function defaultRouteFor(f: RouteFacts): string {
-  if (f.noModel) return "#/configuration/models";
+  if (f.noModel && (!f.team || f.level === "admin")) return "#/configuration/models";
   const dev = f.reviewWaiting ? "#/review" : "#/board";
   if (f.team) {
     const label = (f.profileLabel ?? "").trim().toLowerCase();
-    return label === "product owner" || label === "stakeholder" ? "#/status" : dev;
+    if (label === "product owner" || label === "stakeholder") return "#/status";
+    if (!label && (f.level === "stakeholder" || f.level === "viewer")) return "#/status";
+    return dev;
   }
   if (f.role === "code") return dev;
   if (f.role === "manage") return "#/status";
   if (f.role === "learn") return "#/board";
+  if (f.role === "seshat") return "#/pm";
   return f.everAccepted ? dev : "#/status";
 }
 
@@ -301,10 +357,7 @@ function reviewLimitLine(r: ReviewLimitFacts, count: number | undefined): string
   if (r.fixed)
     return `In review holds at most ${r.limit}, a limit set in the project configuration.${now}`;
   if (r.minutesPerDay !== undefined && r.minutesPerCard !== undefined) {
-    const basis =
-      (r.reviews ?? 0) > 0
-        ? `the median of ${plural(r.reviews ?? 0, "review")}`
-        : "a starting estimate until you review an issue";
+    const basis = reviewBasis(r.reviews ?? 0, "a");
     return `In review holds at most ${r.limit} because you review about ${r.minutesPerDay} minutes a day and a review takes about ${Math.round(r.minutesPerCard)} minutes (${basis}).${now}`;
   }
   return `In review holds at most ${r.limit}.${now}`;
@@ -347,7 +400,7 @@ const LESSONS: Record<string, Lesson> = {
   "column:in_review": {
     term: "In review",
     concept:
-      "Finished work waiting for a person to accept or send back. Review is usually the slowest step, so it has a limit and the Agent holds new work while it is full.",
+      "Finished work waiting for a person to accept or request changes on. Review is usually the slowest step, so it has a limit and the Agent holds new work while it is full.",
     source: KANBAN,
     yours: (f) => (f.reviewLimit ? reviewLimitLine(f.reviewLimit, f.count) : holds(f, "In review")),
   },
@@ -381,13 +434,12 @@ const LESSONS: Record<string, Lesson> = {
     concept:
       "Checks are the commands that decide whether work is finished: they build, type-check, test and measure the change. The Agent never marks its own work done; an issue is done when every check passes and a person accepts it.",
     source: CI,
+    // REV-01: the verdict every view gives (`checksVerdict`), so the tip never counts differently.
     yours: (f) => {
-      const list = f.checks ?? [];
-      const ran = list.filter((c) => c.state === "pass" || c.state === "fail");
-      if (!ran.length) return "No checks have run on this issue yet.";
-      const passed = ran.filter((c) => c.state === "pass").length;
-      const failed = list.filter((c) => c.state === "fail").map((c) => c.label);
-      return `On this issue ${passed} of ${plural(ran.length, "check")} passed${failed.length ? `; ${failed.join(", ")} failed` : ""}.`;
+      const list = (f.checks ?? []).map((c) => ({ ...c, failures: 0 }));
+      if (!list.some((c) => c.state === "pass" || c.state === "fail"))
+        return "No checks have run on this issue yet.";
+      return `On this issue: ${checksVerdict(list as GateSummary[]).text}.`;
     },
   },
   "check:static": {
@@ -657,7 +709,7 @@ export function kindTip(card: {
     return {
       id: "type",
       term: "Enabler",
-      label: "About Enabler",
+      label: "About enablers",
       concept:
         "An enabler fixes the shape other issues build on, such as types, an API or a schema, before they are built. It adds no behaviour a person uses by itself, which is why it is planned before the stories that need it.",
       yours: "Other issues on this board build on what this one fixes.",

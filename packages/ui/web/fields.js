@@ -1,6 +1,7 @@
 // Inline and bulk field edits (PM_DESIGN §3.3–3.4): one menu per field, an
 // optimistic change, then PATCH /api/cards/:id per card. On failure the value
-// reverts and the toast says why, verbatim.
+// reverts and the toast says why, verbatim. One toast reports the outcome and
+// offers Undo (`z`) for what was applied (§2.4.23, NEW-dashboard-16).
 import { aiBadge, esc, icon, sendJSON } from "./dom.js";
 import { noteFor } from "./level_gate.js";
 import {
@@ -20,6 +21,7 @@ import { openPicker } from "./picker.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
 import { mutationsBlocked } from "./triage.js";
+import { toastWithUndo } from "./undo.js";
 
 /** Uppercase keys, so they never collide with the triage verbs a / r / p. */
 export const FIELD_KEYS = {
@@ -61,7 +63,59 @@ function shortName(id) {
  * Set `field` to `value` on every card in `ids`. Optimistic: the store changes
  * first; each failed card reverts. One toast reports the outcome.
  */
-export async function setField(ids, field, value) {
+export function setField(ids, field, value) {
+  return setFieldEach(new Map(ids.map((id) => [id, value])), field, { value });
+}
+
+/** "TS-9's priority was changed by Priya since, so it was left." (DB-N16-2) */
+function leftSentence(id, label, r) {
+  const by = r.data?.changed?.[0]?.by;
+  return `${shortName(id)}'s ${label} was changed${by ? ` by ${by}` : ""} since, so it was left.`;
+}
+
+/**
+ * Undo an applied edit (DB-N16-2): each card gets its previous value back as a
+ * new edit, only while it still holds the value this edit set.
+ */
+async function undoEdits(field, applied, label) {
+  const results = await Promise.all(
+    applied.map(async ({ id, was, set }) => [
+      id,
+      await patchJSON(`/api/cards/${encodeURIComponent(id)}`, {
+        [field]: was ?? null,
+        ifUnchanged: { [field]: set ?? null },
+      }),
+      was,
+    ]),
+  );
+  const restored = results.filter(([, r]) => r.ok);
+  for (const [id, , was] of restored) {
+    const c = store.card(id);
+    if (!c) continue;
+    if (was === undefined || was === null) delete c[field];
+    else c[field] = was;
+  }
+  if (restored.length) store.set({ cards: [...store.state.cards] });
+  const left = results.filter(([, r]) => r.status === 409);
+  const failed = results.filter(([, r]) => !r.ok && r.status !== 409);
+  const Label = label.charAt(0).toUpperCase() + label.slice(1);
+  const text = restored.length
+    ? `${Label} restored on ${restored.length === 1 ? shortName(restored[0][0]) : `${restored.length} issues`}.`
+    : `${Label} not restored.`;
+  const detail = [
+    ...left.map(([id, r]) => leftSentence(id, label, r)),
+    ...failed.slice(0, 1).map(([id, r]) => `${shortName(id)}: ${why(r)}`),
+  ].join(" ");
+  return { text, detail, tone: failed.length ? "fail" : "info" };
+}
+
+/**
+ * Set `field` on each card in `values` (id → its new value): one request per
+ * issue, each its own recorded edit, and one toast for them all (BRD-12).
+ * `opts.value` is the one value every card gets, when there is one.
+ */
+export async function setFieldEach(values, field, opts = {}) {
+  const ids = [...values.keys()];
   const blocked = mutationsBlocked();
   if (blocked) {
     toast({
@@ -78,6 +132,7 @@ export async function setField(ids, field, value) {
   for (const id of ids) {
     const c = store.card(id);
     if (!c) continue;
+    const value = values.get(id);
     before.set(id, c[field]);
     if (value === null || value === undefined) delete c[field];
     else c[field] = value;
@@ -86,7 +141,9 @@ export async function setField(ids, field, value) {
   const results = await Promise.all(
     [...before.keys()].map(async (id) => [
       id,
-      await patchJSON(`/api/cards/${encodeURIComponent(id)}`, { [field]: value ?? null }),
+      await patchJSON(`/api/cards/${encodeURIComponent(id)}`, {
+        [field]: values.get(id) ?? null,
+      }),
     ]),
   );
   const failed = results.filter(([, r]) => !r.ok);
@@ -99,20 +156,30 @@ export async function setField(ids, field, value) {
   }
   if (failed.length) store.set({ cards: [...store.state.cards] });
   const label = EDITABLE.find((f) => f.field === field)?.label.toLowerCase() ?? field;
-  const shown = formatFieldValue(field, value, {
-    cycles: store.state.cycles,
-    epics: store.state.epics,
-    cards: store.state.cards,
-  });
+  const shown =
+    "value" in opts
+      ? formatFieldValue(field, opts.value, {
+          cycles: store.state.cycles,
+          epics: store.state.epics,
+          cards: store.state.cards,
+        })
+      : "";
   const n = before.size;
+  // What was applied, so Undo can give each card its previous value back.
+  const failedIds = new Set(failed.map(([id]) => id));
+  const applied = [...before.entries()]
+    .filter(([id]) => !failedIds.has(id))
+    .map(([id, was]) => ({ id, was, set: values.get(id) }));
+  const undo = () => undoEdits(field, applied, label);
   if (failed.length === 0) {
-    toast({
-      tone: "pass",
-      text:
-        n === 1
-          ? `Set ${label} to ${shown} on ${shortName(ids[0])}`
-          : `Set ${label} to ${shown} on ${n} issues`,
-    });
+    const on = n === 1 ? shortName(ids[0]) : `${n} issues`;
+    toastWithUndo(
+      {
+        tone: "pass",
+        text: shown ? `Set ${label} to ${shown} on ${on}` : `Changed ${label} on ${on}`,
+      },
+      undo,
+    );
   } else if (failed.length === n) {
     toast({
       tone: "fail",
@@ -123,10 +190,13 @@ export async function setField(ids, field, value) {
       detail: why(failed[0][1]),
     });
   } else {
-    toast({
-      tone: "fail",
-      text: `Set on ${n - failed.length} of ${n}. ${shortName(failed[0][0])}: ${why(failed[0][1])}`,
-    });
+    toastWithUndo(
+      {
+        tone: "fail",
+        text: `Set on ${n - failed.length} of ${n}. ${shortName(failed[0][0])}: ${why(failed[0][1])}`,
+      },
+      undo,
+    );
   }
 }
 
@@ -180,7 +250,7 @@ export function editField(field, cardIds, anchor) {
       if (!cycles.length) {
         toast({
           text: "No sprints yet.",
-          detail: "Ask Seshat to plan one, or create one with POST /api/cycles.",
+          detail: "Plan a sprint with Seshat.",
         });
         return;
       }
@@ -251,17 +321,16 @@ export function editField(field, cardIds, anchor) {
       const apply = () => {
         if (ids.length === 1) setField(ids, "labels", [...chosen].sort());
         else {
-          // Bulk: add or remove only the toggled label, keep each card's others.
+          // Bulk: add or remove only the toggled label, keep each card's
+          // others; one toast for the selection (BRD-12).
+          const next = new Map();
           for (const id of ids) {
-            const c = store.card(id);
-            const next = new Set(c?.labels ?? []);
-            for (const l of all) if (!chosen.has(l) && has(l)) next.delete(l);
-            for (const l of chosen) next.add(l);
-            if (c) c._nextLabels = [...next].sort();
+            const labels = new Set(store.card(id)?.labels ?? []);
+            for (const l of all) if (!chosen.has(l) && has(l)) labels.delete(l);
+            for (const l of chosen) labels.add(l);
+            next.set(id, [...labels].sort());
           }
-          Promise.all(
-            ids.map((id) => setField([id], "labels", store.card(id)?._nextLabels ?? [])),
-          ).catch(() => {});
+          void setFieldEach(next, "labels");
         }
       };
       let timer = 0;

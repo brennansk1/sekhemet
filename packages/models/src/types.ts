@@ -1,6 +1,6 @@
 import type { Engine, LoadOptions } from "./load_mechanics.js";
 
-export type ToolArm = "arm_a_flat" | "arm_b_json" | "arm_c_sketch";
+export type ToolCallFormat = "arm_a_flat" | "arm_b_json" | "arm_c_sketch";
 
 /**
  * The harness consults a model in four roles (models rule 21, MD-N4-1): the
@@ -79,7 +79,7 @@ export interface InferenceRequest {
    */
   messages?: ChatTurn[];
   tools?: ToolDefinition[];
-  toolArm: ToolArm;
+  toolArm: ToolCallFormat;
   temperature?: number;
   maxTokens?: number;
   /**
@@ -208,7 +208,7 @@ export interface AdapterHealth {
 
 export interface LocalInferenceAdapter {
   readonly modelId: string;
-  readonly supportedArms: ToolArm[];
+  readonly supportedArms: ToolCallFormat[];
   /** Context size and reserved output tokens, when known; used to budget prompts. */
   readonly contextWindow?: { contextTokens: number; maxTokens: number } | undefined;
   /**
@@ -221,7 +221,7 @@ export interface LocalInferenceAdapter {
    * The tool arm measured best for this model (M9), from the registry's
    * qualification record. Callers use it instead of a hard-coded arm.
    */
-  readonly preferredToolArm?: ToolArm | undefined;
+  readonly preferredToolArm?: ToolCallFormat | undefined;
   /**
    * True when the adapter's server is not on this machine (a base URL that
    * is not a loopback address): text that must stay local — a card's spec,

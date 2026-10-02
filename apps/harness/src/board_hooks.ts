@@ -1,4 +1,5 @@
 import type { CardStore, EventLog, EventRecord, LifecycleHookEvent } from "@sekhemet/kernel";
+import { PR_EVENT } from "./github_sync.js";
 import {
   BOARD_EVENTS,
   type UserHook,
@@ -7,7 +8,6 @@ import {
   loadPersonHooks,
   loadUserHooks,
 } from "./user_hooks.js";
-import { PR_EVENT } from "./wave2_github.js";
 
 /**
  * Board-lifecycle hooks (extensibility rules 4 and 7, NEW-extensibility-1): a

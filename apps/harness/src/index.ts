@@ -60,6 +60,7 @@ import {
   rememberRepoAsGiven,
   resolvedPath,
 } from "@sekhemet/sync";
+import { plural } from "@sekhemet/ui";
 import {
   checkoutNotice,
   enableAutoAccept,
@@ -80,6 +81,13 @@ import {
   lastToolApplied,
   verifyCardWorktree,
 } from "./card_gates.js";
+import {
+  COMMANDS,
+  type FrontDoorRoute,
+  PRIMARY_COMMANDS,
+  routeFrontDoor,
+  runExitCode,
+} from "./cli_commands.js";
 import { handBack, postCardMessage, requestPause, takeOver } from "./collaborate.js";
 import { resolveConfig, userConfigPath } from "./config.js";
 import {
@@ -117,13 +125,7 @@ import {
 } from "./execute.js";
 import { externalReviewerFor, reviewPosterFromEnv, runExternalReviews } from "./external_review.js";
 import { homeDestination, roleWeightsFinder, runFirstRun } from "./first_run.js";
-import {
-  COMMANDS,
-  FRONT_DOOR,
-  type FrontDoorRoute,
-  routeFrontDoor,
-  runExitCode,
-} from "./front_door.js";
+import { runDependencyVerifications } from "./github_sync.js";
 import { deriveGates, runInit } from "./init.js";
 import { notifySlack } from "./integrations.js";
 import { readSettings } from "./integrations.js";
@@ -243,8 +245,8 @@ import { hookEngineFor } from "./user_hooks.js";
 import { approveBaseline, describeCandidate, visualCandidates } from "./visual_baseline.js";
 import { PressureControls, createCardWatchdog, workerFloorRefusal } from "./watchdog_actions.js";
 import {
-  WAVE2_COMMANDS,
-  type Wave2Command,
+  DEV_COMMANDS,
+  type DevCommand,
   appliedStepBudget,
   applyTunedPolicy,
   childSettings,
@@ -255,9 +257,8 @@ import {
   recordBakeOff,
   replanOnRung3,
   roleForCard,
-  runWave2Command,
+  runDevCommand,
 } from "./wave2.js";
-import { runDependencyVerifications } from "./wave2_github.js";
 import {
   agentConfigFiles,
   approveAgentConfig,
@@ -374,7 +375,7 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
   let command: CliConfig["command"] = "help";
   let targetArg: string | undefined;
 
-  // One list for the parser and the front door (front_door.ts).
+  // One list for the parser and the front door (cli_commands.ts).
   const validCommands = COMMANDS;
 
   for (let i = 0; i < argv.length; i++) {
@@ -548,7 +549,7 @@ export async function printEventLog(log: EventLog): Promise<boolean> {
     "\n=========================================================================================",
   );
   console.log(
-    "                      SEKHEMET CRYPTOGRAPHIC EVENT LOG & WAL                             ",
+    "                      Sekhemet Activity log: hash chain and write-ahead log              ",
   );
   console.log(
     ` SHA-256 Chain Verification: ${verification.valid ? "VALID (100% Intact)" : `CORRUPTED at seq ${verification.corruptedSeq}`}`,
@@ -591,7 +592,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     return;
   }
   hardenGitForProcess();
-  if (route.kind === "help") return printFrontDoorHelp();
+  if (route.kind === "help") return printHelp();
   if (route.kind === "dev-help") return printDevHelp();
   if (route.kind === "unknown") {
     console.error(
@@ -792,7 +793,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       await new CardStore(db, exploreLog).listCards(),
     );
     console.log(
-      `\n${found.length} constraint(s) found; ${r.proposed} new rule(s), ${r.activated} activated.${r.activated === 0 && r.proposed > 0 ? " Approve them in Playbook, or rerun with --activate." : ""}`,
+      `\n${plural(found.length, "constraint")} found; ${plural(r.proposed, "new rule")}, ${r.activated} activated.${r.activated === 0 && r.proposed > 0 ? " Approve them in Playbook, or rerun with --activate." : ""}`,
     );
     return;
   }
@@ -940,11 +941,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     return;
   }
 
-  if ((WAVE2_COMMANDS as readonly string[]).includes(config.command)) {
+  if ((DEV_COMMANDS as readonly string[]).includes(config.command)) {
     // goal, decide, m0, qualify, improve, skills, release, ci (wave2.ts).
-    const cmd = config.command as Wave2Command;
+    const cmd = config.command as DevCommand;
     const wave2Registry = modelRegistry();
-    process.exitCode = await runWave2Command(
+    process.exitCode = await runDevCommand(
       cmd,
       argv
         .slice(argv.indexOf(cmd) + 1)
@@ -1133,7 +1134,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       payload: { principal, files: trusted },
     });
     console.log(
-      `Trusted${workspace ? "" : " this repository and"} ${files.length} file(s) as they are now; any change to one untrusts it again.`,
+      `Trusted${workspace ? "" : " this repository and"} ${plural(files.length, "file")} as they are now; any change to one untrusts it again.`,
     );
     return;
   }
@@ -1323,27 +1324,27 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const anchor = checkLedgerAnchor(config.repoPath, db);
     if (anchor.status === "truncated") {
       console.log(
-        ` Ledger TRUNCATED: git's newest Ledger-Head names seq ${anchor.seq}, and the ledger ends at seq ${anchor.lastSeq}.`,
+        ` Activity log truncated: git's newest Ledger-Head trailer names entry ${anchor.seq}, and the Activity log ends at entry ${anchor.lastSeq}.`,
       );
       process.exitCode = 1;
     } else if (anchor.status === "mismatch") {
       console.log(
-        ` Ledger REWRITTEN: seq ${anchor.seq} no longer has the hash git's Ledger-Head recorded.`,
+        ` Activity log rewritten: entry ${anchor.seq} no longer has the hash git's Ledger-Head trailer recorded.`,
       );
       process.exitCode = 1;
     } else if (anchor.status === "ok") {
-      console.log(` Ledger-Head anchor at seq ${anchor.seq} matches.`);
+      console.log(` The Ledger-Head trailer at entry ${anchor.seq} matches.`);
     }
     // K8: the projections must be exactly what the ledger derives.
     const verdict = await cardStore.verifyProjections();
     console.log(
       verdict.identical
         ? ` Projections: rebuilt from ${verdict.eventsApplied} events, byte-identical.`
-        : ` Projections DRIFTED from the ledger: ${verdict.mismatched.join(", ")}.${argv.includes("--rebuild") ? "" : " Run `sekhemet log --rebuild` to rebuild them from the ledger."}`,
+        : ` Projections differ from the Activity log: ${verdict.mismatched.join(", ")}.${argv.includes("--rebuild") ? "" : " Run `sekhemet log --rebuild` to rebuild them from the Activity log."}`,
     );
     if (!verdict.identical && argv.includes("--rebuild")) {
       await cardStore.rebuildProjections();
-      console.log(" Projections rebuilt from the ledger.");
+      console.log(" Projections rebuilt from the Activity log.");
     }
     if (!verdict.identical && !argv.includes("--rebuild")) process.exitCode = 1;
     return;
@@ -1412,7 +1413,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     });
     if (!plannerName && named !== "none" && configured !== "none") {
       console.error(
-        `Planning model: ${DEFAULT_PM_MODEL}, Seshat's model, is not in the model registry; planning without a model.`,
+        `Planning model: ${DEFAULT_PM_MODEL}, Seshat's model, is not in Sekhemet's model list; planning without a model.`,
       );
     }
     // MD-N9-4: the Planner's model through the scheduler, loaded when first asked.
@@ -1917,7 +1918,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         }),
       harnessRoot,
     );
-    console.log(`Matrix: ${recorded.matrix} (${recorded.recorded} record(s))`);
+    console.log(`Matrix: ${recorded.matrix} (${plural(recorded.recorded, "record")})`);
     for (const m of recorded.inadmissible) console.log(`   inadmissible: ${m}`);
     return;
   }
@@ -2640,7 +2641,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const collectAnswers = async (): Promise<void> => {
       if (workerQuestions.size === 0) return;
       const filed = await workerQuestions.fileAnswers(await pmStore.thread(), cardStore);
-      if (filed > 0) console.log(`   filed ${filed} answer(s) from Seshat in the issues' dossiers`);
+      if (filed > 0)
+        console.log(`   filed ${plural(filed, "answer")} from Seshat in the issues' dossiers`);
     };
 
     /**
@@ -2661,7 +2663,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       // the next manager batch instead of forcing a swap each.
       if (!batch && queuedNow.every(isWorkerQuestion)) return;
       console.log(
-        `   PM: pausing the agent${step !== undefined ? ` after step ${step}` : ""} to answer`,
+        `   Seshat: pausing the Agent${step !== undefined ? ` after step ${step}` : ""} to answer`,
       );
       const workerWasActive = router.activeRole === "worker";
       // Models rule 20e: the answer is a queued request — interactive when a
@@ -2756,7 +2758,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         // barrier until every running step reaches its boundary, and no card
         // starts a step until the Worker is back (`beginStep`).
         await answerPm(turn.turnIndex).catch((err) =>
-          console.log(`   PM: could not answer (${err instanceof Error ? err.message : err})`),
+          console.log(`   Seshat: could not answer (${err instanceof Error ? err.message : err})`),
         );
       },
     };
@@ -2837,7 +2839,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       // Constraints read from the project's own config are facts, so they are
       // activated directly; heuristic rules still wait for a human.
       const r = await applyExploration(ctx.learning, config.repoPath, true, ready);
-      console.log(`Explored the project: ${r.activated} constraint rule(s) active.`);
+      console.log(`Explored the project: ${plural(r.activated, "constraint rule")} active.`);
     }
     const maxTurnsIdx = argv.indexOf("--max-turns");
     // Without --max-turns, the budget `tune --apply` set (E8), if any.
@@ -3142,7 +3144,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
             });
           if (r)
             console.log(
-              `   ${r.passed ? "cited note ready for review" : "parked: not settled"}: ${r.notePath}`,
+              `   ${r.passed ? "cited note ready for review" : "on hold: not settled"}: ${r.notePath}`,
             );
           continue;
         }
@@ -3171,7 +3173,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // designed, recording its protocol before the first load and checking
     // DEC-42's host limits before each; it unloads everything at its end.
     let calibration: { end: () => Promise<{ hostRefusals: string[] }> } | undefined;
-    const queueBody = async (): Promise<void> => {
+    const runQueuePass = async (): Promise<void> => {
       try {
         if (swapMode.mode === "calibration") {
           const night = await beginCalibrationNight(router, {
@@ -3336,7 +3338,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
               const research = researched.get(card.id);
               if (research) {
                 console.log(
-                  `   researched first: ${research.sources.length} source(s), on the issue's dossier`,
+                  `   researched first: ${plural(research.sources.length, "source")}, on the issue's dossier`,
                 );
               }
               // A rung-3 re-plan request carries the Worker's own account of the
@@ -3395,11 +3397,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
               () => 0,
             );
             if (learned > 0)
-              console.log(`\n--- Seshat proposed ${learned} rule(s) from this run ---`);
+              console.log(`\n--- Seshat proposed ${plural(learned, "rule")} from this run ---`);
             const c = await consolidateWithManager(manager, ctx.learning).catch(() => undefined);
             if (c && c.merged + c.contradictions + c.duplicates > 0) {
               console.log(
-                `--- Seshat consolidated rules: ${c.merged} merged, ${c.contradictions} contradiction(s) flagged, ${c.duplicates} duplicate(s) retired ---`,
+                `--- Seshat consolidated rules: ${c.merged} merged, ${plural(c.contradictions, "contradiction")} flagged, ${plural(c.duplicates, "duplicate")} retired ---`,
               );
             }
           } finally {
@@ -3433,7 +3435,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     };
     // Rule 20b: a measurement run (the frozen suite, a bake-off) bypasses C9
     // and C10 and unloads its models when it ends, even when it fails.
-    await (swapMode.mode === "measurement" ? router.measurementRun(queueBody) : queueBody());
+    await (swapMode.mode === "measurement" ? router.measurementRun(runQueuePass) : runQueuePass());
 
     const cardIds = [...new Set(entries.map((e) => e.cardId))];
     const firstTry = entries.filter((e) => e.attempt === 1 && e.passed).length;
@@ -3462,7 +3464,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const path = await recordQueueReport(log, config.repoPath, report);
 
     console.log(
-      `\nScorecard: Pass@1 ${firstTry}/${cardIds.length} (${(report.passAt1 * 100).toFixed(0)}%), after escalation ${eventually}/${cardIds.length}, ${router.swapCount} model swap(s), ${(report.totalDurationMs / 60000).toFixed(1)} min`,
+      `\nScorecard: Pass@1 ${firstTry}/${cardIds.length} (${(report.passAt1 * 100).toFixed(0)}%), after escalation ${eventually}/${cardIds.length}, ${plural(router.swapCount, "model swap")}, ${(report.totalDurationMs / 60000).toFixed(1)} min`,
     );
     console.log(`Report: ${path}`);
     // The run report goes to Slack when the user connected it; a no-op otherwise.
@@ -3489,16 +3491,16 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     return;
   }
 
-  printFrontDoorHelp();
+  printHelp();
 }
 
 /** The eight commands a user meets (design: "The command surface"). */
-function printFrontDoorHelp(): void {
-  const width = Math.max(...FRONT_DOOR.map((c) => c.usage.length)) + 2;
+function printHelp(): void {
+  const width = Math.max(...PRIMARY_COMMANDS.map((c) => c.usage.length)) + 2;
   console.log(
     "Sekhemet — a local coding harness that builds projects one checked issue at a time.\n",
   );
-  for (const c of FRONT_DOOR) console.log(`  ${c.usage.padEnd(width)}${c.what}`);
+  for (const c of PRIMARY_COMMANDS) console.log(`  ${c.usage.padEnd(width)}${c.what}`);
   console.log("\nEverything else: sekhemet dev --help");
 }
 
@@ -3527,21 +3529,24 @@ function printDevHelp(): void {
     ["replay <issue>", "Replay an issue's trajectory from the log"],
     ["abort <issue>", "Stop a running issue before its next step"],
     ["rewind <issue> <n> / fork <issue> <n>", "Back to, or branch from, step n"],
-    ["log", "The event log and its hash chain"],
-    ["backup <path> / restore <path>", "Back the ledger up; restore it, re-applying erasures"],
-    ["export --ledger [--no-private]", "The ledger as NDJSON a verifier checks alone"],
+    ["log", "The Activity log and its hash chain"],
+    [
+      "backup <path> / restore <path>",
+      "Back the Activity log up; restore it, re-applying erasures",
+    ],
+    ["export --ledger [--no-private]", "The Activity log as NDJSON a verifier checks alone"],
     ["erase --secret --rotated", "Erase a secret found after the fact (stdin or --secret-file)"],
     ['research "<q>" [--deep]', "Ask the Research model directly"],
     [
       "research-bakeoff [--models a,b] [--pipelines native,tool-loop] [--adopt] | --adopt-from <run>",
-      "Compare Research models on the research golden set; adopt one only as MD-N11-2 allows",
+      "Compare Research models on the research golden set; adopt one only when the comparison allows it",
     ],
     ["overnight [--until 07:00]", "Queue rounds while the machine is free"],
     ["bake-off --workers a,b", "Compare Coding models on a release's checks"],
     ["serve / ui", "The web dashboard server"],
     ["mcp / acp", "Stdio servers for editors"],
     ["calibrate / tune / explore / daemon / traces / init", "Machine and runtime tooling"],
-    [`${WAVE2_COMMANDS.join(" / ")}`, "Planning model, evaluation and sync tooling"],
+    [`${DEV_COMMANDS.join(" / ")}`, "Planning model, evaluation and sync tooling"],
   ];
   console.log("sekhemet dev <command> — harness development. These also run without `dev`.\n");
   for (const [u, w] of lines) console.log(`  ${u}\n      ${w}`);
@@ -3624,7 +3629,7 @@ async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
         }
       }
       console.log(
-        `\n  sekhemet accept ${card.id}\n  sekhemet send-back ${card.id} "<what to change>"\n  sekhemet park ${card.id}`,
+        `\n  sekhemet accept ${card.id}\n  sekhemet request-changes ${card.id} "<what to change>"\n  sekhemet park ${card.id}`,
       );
       return;
     }
@@ -3637,16 +3642,16 @@ async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
     if (route.kind === "send-back") {
       if (!route.reason.trim()) {
         console.error(
-          `sekhemet: a send-back needs a reason — it is what the agent is told next.\n  sekhemet send-back ${card.id} "<what to change>"`,
+          `sekhemet: requesting changes needs a reason — it is what the Agent is told next.\n  sekhemet request-changes ${card.id} "<what to change>"`,
         );
         process.exitCode = 2;
         return;
       }
       await sendBack(ctx, card, route.reason);
-      console.log(`${card.id} is back in Ready. Its next attempt is told: ${route.reason}`);
+      console.log(`${card.id} is back in To do. Its next attempt is told: ${route.reason}`);
     } else if (route.kind === "park") {
       await park(ctx, card, route.reason);
-      console.log(`${card.id} is parked. Undo: sekhemet unpark ${card.id}`);
+      console.log(`${card.id} is on hold. Undo: sekhemet unpark ${card.id}`);
     } else if (route.kind === "reopen") {
       await reopen(ctx, card, route.reason);
       console.log(`${card.id} is back in Ready.`);

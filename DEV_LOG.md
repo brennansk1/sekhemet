@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 68 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 69 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,75 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 69 — 2026-10-02 (C2a: the core surfaces. The board at every width, the issue page's properties rail, Review, Status, the shell with the project and workspace switchers, Inbox, Members, Configuration, the Start page, and the professional words)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. One workflow, launched at 18:17 MDT after the owner's 5-hour reset: 13 agents, 4.12M tokens, none failed. Six builders ran one at a time, followed by three reviews in parallel, a fixer, a blocker re-check, a sweep and a gate. Then the lead fixed four gate failures, and one more fixer took the two browser timeouts.
+
+- **The board (BRD-01, severity 4):**
+  - **The cause:** a CSS class collision. Review's `.queue` rule (296 px; 100% on a phone) leaked onto the board's queue columns. It is now `col-queue`, and the sticky pinning is removed.
+  - **One pure rule lays the columns out** (`boardFit`, `openColumn`): all six fit at 1440 px; where they cannot, In review and On hold sit in their own pane and the board opens on In progress; on a phone, one column with a column switcher.
+  - **Also on the board:**
+    - six or more checks become one summary pip with words (BRD-02);
+    - the Review WIP median counts only from five reviews, per review-git (BRD-04, RG-S6-9; the audit's limit of 3600 now reads 4);
+    - a click opens the peek;
+    - **Ask Seshat** and **New issue** are in the top bar;
+    - New issue offers Story, Bug, Task and Spike, a Bug asks for its reproduction, and the repository's GitHub issue forms are read (NEW-dashboard-15);
+    - every field, bulk edit, move and hold can be undone for 10 s, refused with 409 naming the person when someone changed the field since (NEW-dashboard-16).
+- **The issue page and Review:**
+  - the properties rail from the Issue mockup, read-only for a level that cannot edit (ISS-01, NEW-dashboard-19);
+  - a stopped run reads as one state, and "Stopped by you" only to that person (ISS-02, ISS-03);
+  - skipped checks are not failures, and there is one answer to "did it pass?" (REV-01);
+  - the action bar fits at 400 px (REV-02);
+  - accepting from the acceptance criteria without reading a diff (NEW-dashboard-17).
+- **Status, the shell and the states:**
+  - Status agrees with the board and `/status`;
+  - the project switcher and the workspace switcher replace the path (SHL-01, DEC-57);
+  - a person's name instead of `p_…`;
+  - first run starts with a welcome;
+  - a server error never shows "No issues yet", and offline views say so;
+  - Viewers and Stakeholders get no blaming 403 toast (SEC-01);
+  - the Status grid and the readable Definition of done (NEW-dashboard-18, -14).
+- **Inbox, Members, Configuration and the look:**
+  - the Inbox in two panes from 1100 px, and one list below;
+  - Members' Invites and Access;
+  - Configuration's cards;
+  - primary buttons in ink in both themes, and the brand mark as drawn;
+  - A11Y-01 (Skip to content keeps the route) and A11Y-02 to A11Y-06.
+- **The Start page and the server:**
+  - starting a project as a page with a live draft, with nothing written before approval (NEW-design-stage-7);
+  - the `/api/cards/:id` routes moved into one module with one routing style, behind tests (NAM-03, strangler).
+- **The words (DEC-52):** the rename pass over product text: card → issue, cycle → sprint, *Request changes*, *Activity log*, *Put on hold*, *Acceptance criteria*, and no spec ids or API paths on screen. Old CLI commands are kept as aliases.
+- **Review:**
+  - 1 blocker: the Inbox pane read the legacy `assignee` field and could print a principal id. Fixed, with a real-server test, and confirmed by the re-check.
+  - 12 majors, all fixed. For example, the Accept toast no longer promises a revert before NEW-dashboard-21 ships.
+- **Gate failures fixed by the lead:**
+  - a flag-list test flagged `git tag --list --sort` in `pm_api.ts`. They are git's flags, so they are added to the test's existing tool-flag list;
+  - the Start page's on-screen brief headings sat in a constant named `BRIEF`, which the prompt-literal scanner treats as model-facing. It is renamed `BRIEF_SECTION_LABELS`; the strings never reach a model;
+  - one file needed formatting.
+  - **SEC-18** caught C2a's new tags endpoint running a bare `git tag` from `pm_api.ts`, outside the hardened git environment. It now calls `releaseTags` in `project_done.ts`, which is already allowlisted for the harness's own release-tag git and runs it with `gitEnvFor`. `pm_api.ts` no longer imports `child_process` (`release_tags.spec.ts`, written first).
+- **The two browser timeouts were test faults, not product faults** (one fixer; the product matched the spec):
+  - the take-over test still expected *Start a project* to open Seshat, but C2a correctly opens the start page (DS-N7-1). The test now checks that route, and still checks that Take over opens Seshat and posts the take-over;
+  - the Inbox test's sign-in helper raced the app's boot redirect. It now waits for the first page to mount, and A11Y-01 reloads on its route.
+  - Both files passed 10 and 5 runs in a row; the 36 board, Inbox and take-over test files pass 438 of 438. No assertion was weakened and no timeout raised.
+- **Modules renamed or split (C1's NAM findings, NAM-03):**
+  - **Eleven source files removed:** `dashboard_models.ts`, `front_door.ts`, `rest_extra.ts`, `wave2_github.ts` and `wave2_server.ts` (apps/harness); `repo_map.ts` and `toml.ts` (context); `parser.ts` (gates); `glob.ts` (loop); `decision.ts` and `decisions.ts` (planner).
+  - **Their code now lives in new modules with plain names**, among them `card_routes.ts`, `run_routes.ts`, `github_routes.ts`, `github_sync.ts`, `cli_commands.ts`, `config_model_actions.ts`, `symbol_outline.ts`, `fallback_parser.ts`, `decision_request.ts` and `decision_store.ts`.
+  - **Every importer resolves:** `tsc -b` is clean, and plain `.mjs` scripts and the browser code were checked for stale paths.
+- **Left, with reasons (in the specs' rows):**
+  - **BRD-03:** issue keys (`TS-101`) are kernel work K-P3-1..3, not yet built.
+  - **ISS-04** (Reopen, Revert, Won't do) and the Start page's folder and repository adoption are C2b's.
+  - **SEC-02 and SEC-03** are C2c's.
+  - **ERR-02 and the remaining "The server returned" copy** are recorded as not built.
+  - **VIS-01** (211 off-scale spacing values) is the token-lint sweep.
+  - **Seshat's model-facing words** (asking a Bug's fields, MCP tool descriptions) wait for PROMPT_STANDARD rule 35's measured admission.
+  - **Not reached (severity 2):** ERR-07 to ERR-11, STA-09, STA-11, STA-12, SHL-05, SHL-06, SHL-08 and SHL-09.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1618 files), vitest 702 files, 5,625 passed, 54 skipped.
+- **Where the cards stop:**
+  - C2a is done.
+  - **Next:**
+    - **C2b**, the team process: multi-project hosting (DEC-57), sprints, intake, search, Reopen and Revert. Ask the owner's 5-hour use first.
+    - **Stream 1:** the injection re-run.
 
 ### Entry 68 — 2026-10-01 (D2: a server is a workspace with many projects, DEC-57)
 

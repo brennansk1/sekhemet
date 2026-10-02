@@ -143,8 +143,8 @@ export const COLUMN_EMPTY: Record<CardStatus, string> = {
   verify: "Nothing being checked.",
   review: "Nothing waiting for you.",
   done: "Accepted issues appear here.",
-  parked: "Nothing parked.",
-  rejected: "Nothing rejected.",
+  parked: "Nothing on hold.",
+  rejected: "Nothing marked Won't do.",
 };
 
 export function columnLabel(status: string): string {
@@ -236,7 +236,7 @@ export const BOARD_COLUMNS: readonly BoardColumnDef[] = [
     id: "on_hold",
     label: "On hold",
     states: ["parked"],
-    empty: "Nothing parked.",
+    empty: "Nothing on hold.",
     queue: true,
     onlyWithCards: true,
   },
@@ -247,7 +247,7 @@ export const WONT_DO_COLUMN: BoardColumnDef = {
   id: "wont_do",
   label: "Won't do",
   states: ["rejected"],
-  empty: "Nothing rejected.",
+  empty: "Nothing marked Won't do.",
   queue: false,
   onlyWithCards: true,
 };
@@ -297,6 +297,7 @@ const ACTOR_LABELS: Record<string, string> = {
   human: "You",
   harness: "Sekhemet",
   system: "Sekhemet",
+  gate: "Checks",
 };
 
 export function actorLabel(actor: string): string {
@@ -428,14 +429,14 @@ export function isolationLabel(isolation: string | undefined): {
     case "srt":
       return {
         short: "sandbox-runtime",
-        sentence: "Ran under Anthropic's sandbox-runtime (DEC-39).",
+        sentence: "Ran under Anthropic's sandbox-runtime.",
         tone: "neutral",
       };
     case "none":
       return {
         short: "Unconfined",
         sentence:
-          "Ran with no sandbox because SEKHEMET_ALLOW_UNCONFINED=1 was set. Its commands could reach the whole machine.",
+          "Ran with no sandbox because Sekhemet was started with confinement turned off. Its commands could reach the whole machine.",
         tone: "parked",
       };
     default:
@@ -498,8 +499,8 @@ export function stopReasonLabel(
       };
     case "error":
       return {
-        short: "Harness error",
-        sentence: "Sekhemet failed, not the agent. See the issue's Activity.",
+        short: "Sekhemet error",
+        sentence: "Sekhemet failed, not the Agent. See the issue's Activity.",
         tone: "fail",
       };
     case "scope_violation":
@@ -514,18 +515,25 @@ export function stopReasonLabel(
         sentence: "Needs a split or a stronger model.",
         tone: "fail",
       };
+    // Every viewer reads these words, so they name no one (FINDINGS ISS-03):
+    // the issue page names the person from the ledger.
     case "human_abort":
-      return { short: "Stopped by you", sentence: "You stopped this attempt.", tone: "neutral" };
+      return {
+        short: "Stopped",
+        sentence:
+          "A person stopped this attempt. Its work is kept; it resumes from its last checkpoint.",
+        tone: "neutral",
+      };
     case "paused":
       return {
-        short: "Paused by you",
+        short: "Paused by a person",
         sentence: "Paused at a step boundary; hand it back with a note to resume, or take it over.",
         tone: "parked",
       };
     case "done_pending_gates":
       return {
         short: "Done, checks not run",
-        sentence: "The agent finished, but the checks could not run to confirm it.",
+        sentence: "The Agent finished, but the checks could not run to confirm it.",
         tone: "blocked",
       };
     case "token_budget_exhausted":
@@ -589,14 +597,14 @@ export function stopReasonLabel(
     case "gate_suspected":
       return {
         short: "Check in question",
-        sentence: "The agent holds that a check, not its work, is wrong. A person decides which.",
+        sentence: "The Agent holds that a check, not its work, is wrong. A person decides which.",
         tone: "blocked",
       };
     case "hook_veto":
       return {
         short: "Stopped by a hook",
         sentence:
-          "A project hook vetoed the next step. Change the hook or the issue, then unpark it.",
+          "A project hook vetoed the next step. Change the hook or the issue, then take it off hold.",
         tone: "blocked",
       };
     case "crashed":
@@ -790,6 +798,80 @@ export function joinWords(words: string[]): string {
   return `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
 }
 
+/** One answer to "did it pass?", for every place that counts checks (FINDINGS REV-01). */
+export interface ChecksVerdict {
+  /** `pass` when nothing failed, `fail` when a check failed, `neutral` before any ran. */
+  tone: "pass" | "fail" | "neutral" | "running";
+  passed: number;
+  /** Checks that gave a verdict: passed or failed. */
+  ran: number;
+  failed: string[];
+  skipped: string[];
+  unavailable: string[];
+  notRun: string[];
+  /** The sentence: *All 11 checks that ran passed · OSV and Semgrep skipped*. */
+  text: string;
+  /** The queue's few words: *11 passed · 2 skipped*. */
+  short: string;
+}
+
+/**
+ * The verdict of a card's checks, in one sentence every view uses — the
+ * Review queue, the Checks heading, the Checks tip and the facts rail
+ * (FINDINGS REV-01; dashboard §2.5.2–2.5.4). A skipped or unavailable check
+ * gave no verdict: it is never counted as a failure, and never as a pass.
+ */
+export function checksVerdict(gates: readonly GateSummary[]): ChecksVerdict {
+  const named = (state: GateState) => gates.filter((g) => g.state === state).map((g) => g.label);
+  const passed = named("pass").length;
+  const failed = named("fail");
+  const skipped = named("skipped");
+  const unavailable = named("unavailable");
+  const notRun = named("not_run");
+  const running = named("running");
+  const ran = passed + failed.length;
+  const rest = [
+    unavailable.length ? `${joinWords(unavailable)} unavailable` : "",
+    skipped.length ? `${joinWords(skipped)} skipped` : "",
+    notRun.length ? `${joinWords(notRun)} not run` : "",
+  ].filter(Boolean);
+  const restShort = [
+    unavailable.length ? `${unavailable.length} unavailable` : "",
+    skipped.length ? `${skipped.length} skipped` : "",
+    notRun.length ? `${notRun.length} not run` : "",
+  ].filter(Boolean);
+  const base = { passed, ran, failed, skipped, unavailable, notRun };
+  if (running.length) {
+    const text = `${plural(running.length, "check")} running · ${passed} passed so far`;
+    return { ...base, tone: "running", text, short: `${running.length} running` };
+  }
+  if (failed.length) {
+    return {
+      ...base,
+      tone: "fail",
+      text: [`${joinWords(failed)} failed`, `${passed} of ${ran} passed`, ...rest].join(" · "),
+      short: [`${failed.length} failed`, `${passed} passed`, ...restShort].join(" · "),
+    };
+  }
+  if (!ran) {
+    const text = rest.length ? `No check gave a verdict · ${rest.join(" · ")}` : "No checks ran";
+    return { ...base, tone: "neutral", text, short: restShort.join(" · ") || "No checks" };
+  }
+  const head = rest.length
+    ? ran === 1
+      ? "1 check that ran passed"
+      : `All ${ran} checks that ran passed`
+    : ran === 1
+      ? "1 check passed"
+      : `All ${ran} checks passed`;
+  return {
+    ...base,
+    tone: "pass",
+    text: [head, ...rest].join(" · "),
+    short: [`${passed} passed`, ...restShort].join(" · "),
+  };
+}
+
 /**
  * The outcome sentence under a card's title in Review, Peek and Card view.
  * "Passed on step 1 · 1.2s · 1 file, +18 −0" / "Failed Types and Tests · Looping on step 8".
@@ -806,6 +888,14 @@ export function outcomeSentence(evidence: EvidenceLike, gates?: GateSummary[]): 
   const failed = summary.filter((g) => g.state === "fail").map((g) => g.label);
   const down = summary.filter((g) => g.state === "unavailable").map((g) => g.label);
   const stop = stopReasonLabel(evidence.stopReason);
+  // FINDINGS ISS-02: a run a person stopped or paused did not fail.
+  if (
+    !failed.length &&
+    !down.length &&
+    evidence.stopReason &&
+    /^(human_abort|paused)$/.test(evidence.stopReason)
+  )
+    return step ? `${stop.short} on step ${step}` : stop.short;
   const head = [
     failed.length || !down.length ? (failed.length ? `Failed ${joinWords(failed)}` : "Failed") : "",
     down.length ? `${joinWords(down)} unavailable` : "",
@@ -978,7 +1068,7 @@ export function statusLine(
       return { text: `Backlog · ${budget}`, tone: "neutral", mark: "none", quiet: true };
     case "ready":
       if (/^returned:/.test(ctx.statusReason ?? "")) {
-        return { text: "Sent back with your note", tone: "neutral", mark: "none" };
+        return { text: "Changes requested, with a note", tone: "neutral", mark: "none" };
       }
       if (ev && !ev.passed) return { text: `${failText} · will retry`, tone: "fail", mark: "fail" };
       return { text: `Ready · ${budget}`, tone: "neutral", mark: "none", quiet: true };
@@ -990,7 +1080,7 @@ export function statusLine(
         return { text: `Needs a new plan · ${failText}`, tone: "blocked", mark: "planning" };
       return { text: "Being planned", tone: "neutral", mark: "planning" };
     case "in_progress": {
-      // What the agent is doing now. Its step count is the issue's, never the
+      // What the Agent is doing now. Its step count is the issue's, never the
       // board's (DEC-31, DB-N7-3): `budgetText` carries it to the issue.
       const step = ctx.lastStep;
       if (step) {
@@ -1011,6 +1101,11 @@ export function statusLine(
         return { text: runningCheckText(ctx.runningGate), tone: "running", mark: "running" };
       }
       if (!ev) return { text: "Running checks…", tone: "running", mark: "running" };
+      // FINDINGS ISS-02: a run a person stopped waits, it did not fail.
+      if (!ev.passed && !firstFail && ev.stopReason === "human_abort") {
+        const at = ev.turnsUsed ? ` at step ${ev.turnsUsed}` : "";
+        return { text: `${stop.short}${at}`, tone: "parked", mark: "parked" };
+      }
       if (!ev.passed) return { text: failText, tone: "fail", mark: "pips" };
       return { text: "Holding for review", tone: "neutral", mark: "pips" };
     case "review":
@@ -1039,8 +1134,8 @@ export function statusLine(
         return { text: `${stop.short}${at}`, tone: "parked", mark: "parked" };
       }
       if (ev && !ev.passed)
-        return { text: `${stop.short} · parked`, tone: "parked", mark: "parked" };
-      return { text: note ?? "Parked", tone: "parked", mark: "parked" };
+        return { text: `${stop.short} · on hold`, tone: "parked", mark: "parked" };
+      return { text: note ?? "On hold", tone: "parked", mark: "parked" };
     }
     case "rejected":
       return { text: "Rejected", tone: "neutral", mark: "none" };
@@ -1153,14 +1248,14 @@ export function eventSentence(
       if (reason.startsWith("returned")) {
         return {
           ...base,
-          verb: "sent back",
-          rest: "to Ready",
+          verb: "requested changes on",
+          rest: "· back in To do",
           ...(note ? { quote: note } : {}),
           tone: "neutral",
         };
       }
       if (to === "parked") {
-        return { ...base, verb: "parked", ...(note ? { quote: note } : {}), tone: "parked" };
+        return { ...base, verb: "put on hold", ...(note ? { quote: note } : {}), tone: "parked" };
       }
       return {
         ...base,
@@ -1183,7 +1278,7 @@ export function eventSentence(
       return {
         ...base,
         verb: "updated",
-        rest: keys.length ? `(${keys.map((k) => humanize(k).toLowerCase()).join(", ")})` : "",
+        rest: keys.length ? `(${keys.map(fieldWords).join(", ")})` : "",
         tone: "neutral",
       };
     }
@@ -1230,7 +1325,7 @@ export function eventSentence(
       return {
         ...base,
         actor: "Seshat",
-        verb: fromLedger ? "answered from the ledger" : "replied",
+        verb: fromLedger ? "answered from the Activity log" : "replied",
         ...(text ? { quote: (text.split("\n").find((l) => l.trim()) ?? text).slice(0, 160) } : {}),
         tone: p.error ? "fail" : "neutral",
       };
@@ -1254,7 +1349,7 @@ export function eventSentence(
         ...(typeof asked === "string" && asked.trim()
           ? { quote: (asked.trim().split("\n")[0] ?? "").slice(0, 160) }
           : {}),
-        rest: `· ${p.grounded ? `grounded, confidence ${Number(p.confidence ?? 0).toFixed(2)}` : "not grounded"} · ${(p.sources as unknown[] | undefined)?.length ?? 0} source(s)`,
+        rest: `· ${p.grounded ? `grounded, confidence ${Number(p.confidence ?? 0).toFixed(2)}` : "not grounded"} · ${plural((p.sources as unknown[] | undefined)?.length ?? 0, "source")}`,
         tone: p.grounded ? "pass" : "fail",
       };
     }
@@ -1282,6 +1377,18 @@ export function eventSentence(
         ...(typeof p.reason === "string" ? { quote: p.reason } : {}),
         tone: "fail",
       };
+    case "card/review":
+      // NAMING R-35: never the event's type (FINDINGS ISS-06).
+      return {
+        ...base,
+        verb:
+          p.verdict === "met" || p.verdict === "unmet" || p.verdict === "unclear"
+            ? `found a criterion ${p.verdict}`
+            : "reviewed the change",
+        tone: p.verdict === "unmet" ? "fail" : "neutral",
+      };
+    case "card/abort_requested":
+      return { ...base, verb: "stopped the run", tone: "parked" };
     case "checkpoint/recorded":
       return {
         ...base,
@@ -1290,13 +1397,113 @@ export function eventSentence(
         rest: typeof p.step === "number" ? `at step ${p.step}` : "",
         tone: "neutral",
       };
-    default:
+    case "card/delegated": {
+      const to = p.to as { kind?: string } | null | undefined;
+      if (!to) return { ...base, verb: "removed the delegate from", tone: "neutral" };
       return {
         ...base,
-        verb: humanize(event.type.replace(/\//g, " ")).toLowerCase(),
+        verb: "delegated",
+        rest: to.kind === "worker" ? "to the Agent" : "to a teammate",
         tone: "neutral",
       };
+    }
+    case "card/owner_changed":
+      return {
+        ...base,
+        verb: p.to ? "changed the assignee of" : "removed the assignee from",
+        tone: "neutral",
+      };
+    case "card/budget_set":
+      return {
+        ...base,
+        verb: "set the step budget of",
+        rest: typeof p.to === "number" ? `to ${p.to}` : "",
+        tone: "neutral",
+      };
+    case "card/send_back":
+      return {
+        ...base,
+        verb: "requested changes on",
+        ...(typeof p.text === "string" ? { quote: p.text } : {}),
+        tone: "neutral",
+      };
+    case "gate/result": {
+      const name = typeof p.gate === "string" ? gateLabel(p.gate) : "A check";
+      return {
+        ...base,
+        verb: "ran a check on",
+        rest: `· ${name} ${p.passed ? "passed" : "failed"}`,
+        tone: p.passed ? "pass" : "fail",
+      };
+    }
+    case "cycle/created": {
+      const name = typeof p.name === "string" && p.name.trim() ? p.name.trim() : undefined;
+      return {
+        actor,
+        verb: name ? "created the sprint" : "created a sprint",
+        ...(name ? { title: name } : {}),
+        tone: "neutral",
+      };
+    }
+    case "slice/created":
+      return { actor, verb: "created a release", tone: "neutral" };
+    default:
+      // NAMING's words for whatever the type names (DB-N23-3): never *card*,
+      // *cycle*, *slice*, *gate* or *appetite* on the Activity log.
+      return { ...base, verb: plainEventWords(event.type), tone: "neutral" };
   }
+}
+
+/** NAMING's word for each part of an event's type or a field's name (DEC-31, DEC-52). */
+const EVENT_WORDS: Record<string, string> = {
+  card: "issue",
+  cards: "issues",
+  cycle: "sprint",
+  cycles: "sprints",
+  slice: "release",
+  slices: "releases",
+  gate: "check",
+  gates: "checks",
+  appetite: "size limit",
+  worker: "Agent",
+  planner: "planning model",
+  ledger: "activity log",
+  principal: "person",
+  pm: "Seshat",
+  park: "put on hold",
+  parked: "put on hold",
+  unparked: "taken off hold",
+  pr: "pull request",
+  kano: "priority class",
+};
+
+/** A patched field in the issue's own words (the list's column names). */
+const FIELD_WORDS: Record<string, string> = {
+  epicId: "epic",
+  cycleId: "sprint",
+  sliceId: "release",
+  estimate: "points",
+  dueDate: "due date",
+  owner: "assignee",
+  assignee: "assignee",
+  scopeFiles: "files in scope",
+  acceptanceCriteria: "acceptance criteria",
+  stepBudget: "step budget",
+  spec: "description",
+  dependsOn: "blocked by",
+};
+
+function plainEventWords(text: string): string {
+  return humanize(text)
+    .split(/[\s/]+/)
+    .filter(Boolean)
+    .map((w) => EVENT_WORDS[w.toLowerCase()] ?? w.toLowerCase())
+    .join(" ")
+    .replace(/\bdepth profile\b/g, "type");
+}
+
+function fieldWords(key: string): string {
+  return FIELD_WORDS[key] ?? plainEventWords(key);
 }
 
 // ---------------------------------------------------------------------------
@@ -1445,12 +1652,12 @@ export function loopRange(
 export function checkFixHint(name: string, status: string, detail = ""): string | undefined {
   if (status === "pass") return undefined;
   switch (name) {
-    case "Skills registry":
+    case "Skills":
       return "Create .sekhemet/skills/ to load skills.";
-    case "Local inference socket":
+    case "Model server":
       return status === "fail"
         ? "Start Ollama or llama-server, then re-run the checks."
-        : "Pull or load a Coding model so the agent has one to use.";
+        : "Pull or load a Coding model so the Agent has one to use.";
     case "Sandbox confinement":
       return /WROTE OUTSIDE/.test(detail)
         ? "Stop: the sandbox let a command write outside its worktree. Do not run issues until this passes."

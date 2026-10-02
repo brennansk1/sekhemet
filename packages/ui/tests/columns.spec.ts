@@ -419,7 +419,7 @@ describe("DB-P3-4, 5: the tile's anatomy", () => {
     );
   });
 
-  it("says the agent is paused while Seshat replies, with no step count (DB-N7-3)", () => {
+  it("says the Agent is paused while Seshat replies, with no step count (DB-N7-3)", () => {
     expect(tileModel(c, { now: NOW, pmPaused: true }).status?.text).toBe("Paused for Seshat");
   });
 });
@@ -498,7 +498,7 @@ describe("DB-P3-8: no step budget in Backlog or Ready", () => {
     const back = tileModel(boardCard({ status: "ready" }, { statusReason: "returned: fix" }), {
       now: NOW,
     });
-    expect(back.status?.text).toBe("Sent back with your note");
+    expect(back.status?.text).toBe("Changes requested, with a note");
   });
 });
 
@@ -512,17 +512,26 @@ describe("DB-P3-9: headers carry count, limit with its derivation, and points", 
   it("derives the limit in words from measured reviews, whatever its size", () => {
     expect(
       reviewLimitText(
-        { limit: 3, minutesPerDay: 60, minutesPerCard: 20, reviews: 4, fixed: false },
+        { limit: 3, minutesPerDay: 60, minutesPerCard: 20, reviews: 5, fixed: false },
         { count: 1, held: 0 },
       ),
-    ).toBe("Limit 3, from 60 review minutes a day at ~20 min per issue (the median of 4 reviews).");
+    ).toBe("Limit 3, from 60 review minutes a day at ~20 min per issue (the median of 5 reviews).");
+    // BRD-04: under five reviews the limit still comes from the starting estimate, and says so.
+    expect(
+      reviewLimitText(
+        { limit: 4, minutesPerDay: 60, minutesPerCard: 15, reviews: 2, fixed: false },
+        { count: 1, held: 0 },
+      ),
+    ).toBe(
+      "Limit 4, from 60 review minutes a day at ~15 min per issue (the starting estimate until five reviews are recorded; 2 so far).",
+    );
     expect(
       reviewLimitText(
         { limit: 25, minutesPerDay: 375, minutesPerCard: 15, reviews: 0, fixed: false },
         { count: 25, held: 1 },
       ),
     ).toBe(
-      "Limit 25, from 375 review minutes a day at ~15 min per issue (the starting estimate until you review an issue). Full. The agent holds finished issues until you clear one. An accepted issue waiting on its pull request does not count.",
+      "Limit 25, from 375 review minutes a day at ~15 min per issue (the starting estimate until you review an issue). Full. The Agent holds finished issues until you clear one. An accepted issue waiting on its pull request does not count.",
     );
     expect(reviewLimitText({ limit: 2, fixed: true }, { count: 3, held: 0 })).toBe(
       "Limit 2, set by [review] wip in the project configuration. Over the limit.",
@@ -543,7 +552,7 @@ describe("DB-P3-9: headers carry count, limit with its derivation, and points", 
       cards,
       now: NOW,
       wipLimits: { review: 2, backlog: 500 },
-      reviewLimit: { limit: 2, minutesPerDay: 60, minutesPerCard: 30, reviews: 3, fixed: false },
+      reviewLimit: { limit: 2, minutesPerDay: 60, minutesPerCard: 30, reviews: 5, fixed: false },
       estimation: "points",
     });
     const byId = Object.fromEntries(m.columns.map((c) => [c.id, c]));
@@ -553,7 +562,7 @@ describe("DB-P3-9: headers carry count, limit with its derivation, and points", 
       state: "over",
       text: "3 / 2",
       derivation:
-        "Limit 2, from 60 review minutes a day at ~30 min per issue (the median of 3 reviews). Over the limit. An accepted issue waiting on its pull request does not count.",
+        "Limit 2, from 60 review minutes a day at ~30 min per issue (the median of 5 reviews). Over the limit. An accepted issue waiting on its pull request does not count.",
     });
     expect(byId.in_review?.pointsText).toBe("8 pts");
     expect(byId.backlog?.pointsText).toBe("1 pt");

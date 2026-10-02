@@ -11,6 +11,7 @@ import {
   initSchema,
   restoreBackup,
 } from "@sekhemet/kernel";
+import { plural } from "@sekhemet/ui";
 import { userSetup } from "./config.js";
 import { backupCredentials, identityDir, restoreCredentials } from "./team/credential_store.js";
 
@@ -180,7 +181,7 @@ export async function ledgerCommand(
         return 2;
       }
       const { path, seq } = await log.backup(resolve(target), { principal: log.localPrincipal() });
-      console.log(`Backed up the ledger through seq ${seq} to ${path} (verified).`);
+      console.log(`Backed up the Activity log through entry ${seq} to ${path} (verified).`);
       // security item 35a: the Team setup's credential store goes with every backup, at 0600.
       const credentials = backupCredentials(identityDir(), path);
       if (credentials) console.log(`The credential store is backed up beside it (${credentials}).`);
@@ -224,10 +225,10 @@ async function restoreCommand(argv: readonly string[], repoPath: string): Promis
       blobs: new BlobStore(repoPath),
     });
     console.log(
-      `Restored the ledger through seq ${report.backupSeq}; re-applied ${report.reapplied.length} erasure(s) from the register before anything read it.`,
+      `Restored the Activity log through entry ${report.backupSeq}; re-applied ${plural(report.reapplied.length, "erasure")} from the register before anything read it.`,
     );
     if (report.previousKeptAt)
-      console.log(`The ledger it replaced is kept at ${report.previousKeptAt}.`);
+      console.log(`The Activity log it replaced is kept at ${report.previousKeptAt}.`);
     if (restoreCredentials(identityDir(), resolve(backup)))
       console.log("The credential store was restored with it.");
     return 0;
@@ -265,7 +266,7 @@ async function eraseCommand(
       principal,
     });
     console.log(
-      `Erased the private parts of ${report.eventIds.length} event(s) (ledger/erased seq ${report.erasedBySeq}).`,
+      `Erased the private parts of ${plural(report.eventIds.length, "event")} (ledger/erased seq ${report.erasedBySeq}).`,
     );
     console.log(report.outsideReach);
     return 0;
@@ -313,10 +314,12 @@ async function eraseCommand(
   const report = await log.erase({ eventIds: events, blobIds, blobs, reason: "secret", principal });
   const chain = await log.verifyHashChain({ full: true });
   console.log(
-    `Erased the secret from ${report.eventIds.length} event(s) and ${report.blobIds.length} blob(s) (ledger/erased seq ${report.erasedBySeq}). Chain: ${chain.valid ? "valid" : `INVALID at seq ${chain.corruptedSeq}`}.`,
+    `Erased the secret from ${plural(report.eventIds.length, "event")} and ${plural(report.blobIds.length, "blob")} (ledger/erased seq ${report.erasedBySeq}). Chain: ${chain.valid ? "valid" : `INVALID at seq ${chain.corruptedSeq}`}.`,
   );
   reportStructural();
   console.log(report.outsideReach);
-  console.log("Git history is outside the ledger: if the secret was committed, it is still there.");
+  console.log(
+    "Git history is outside the Activity log: if the secret was committed, it is still there.",
+  );
   return chain.valid && structural.length === 0 ? 0 : 1;
 }

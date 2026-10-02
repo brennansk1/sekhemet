@@ -23,10 +23,10 @@ import {
   verifyGatesConfig,
 } from "./config.js";
 import { gateCopy } from "./copy.js";
+import { parseErrorToGateFailure } from "./fallback_parser.js";
 import { missingScriptIn, packageScriptPresent, scriptOf } from "./gate_start.js";
 import { createSourceIndex } from "./index/source_index.js";
 import { type JUnitCase, parseJUnit } from "./junit.js";
-import { parseErrorToGateFailure } from "./parser.js";
 import { type ParseContext, defaultParserRegistry, readInFull } from "./parsers.js";
 import { FAILURES_SHOWN, completeFailures, rankFailures } from "./rank.js";
 import { acceptanceCommand } from "./test_strength.js";

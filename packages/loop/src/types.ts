@@ -5,8 +5,8 @@ import type {
   FinishReason,
   LocalInferenceAdapter,
   TokenUsage,
-  ToolArm,
   ToolCall,
+  ToolCallFormat,
   ToolDefinition,
 } from "@sekhemet/models";
 import type { ProcessSandbox } from "@sekhemet/sandbox";
@@ -132,7 +132,7 @@ export interface PromptRecord {
   reasoning?: string | undefined;
   /** The rest of the request, so its context pack is exactly what was sent (kernel rule 17). */
   toolDefinitions?: ToolDefinition[] | undefined;
-  toolArm?: ToolArm | undefined;
+  toolArm?: ToolCallFormat | undefined;
   reasoningBudgetTokens?: number | undefined;
   maxTokens?: number | undefined;
   temperature?: number | undefined;
@@ -164,7 +164,7 @@ export interface SessionOptions {
   scopeFiles?: string[] | undefined;
   agentRole?: string | undefined;
 
-  toolArm?: ToolArm | undefined;
+  toolArm?: ToolCallFormat | undefined;
   temperature?: number | undefined;
   maxTokens?: number | undefined;
 

@@ -135,7 +135,7 @@ export function renderSteps(host, ctx) {
     const d = state.data;
     const card = ctx.card();
     if (!d || d.attempts === 0) {
-      host.innerHTML = `<div class="ev-empty">${icon("runs", 24, "ic s24")}<b>No steps yet.</b><span>The agent hasn't started this issue.</span></div>`;
+      host.innerHTML = `<div class="ev-empty">${icon("runs", 24, "ic s24")}<b>No steps yet.</b><span>The Agent hasn't started this issue.</span></div>`;
       return;
     }
     const loop = d.live ? null : loopRange(d.steps);
@@ -159,7 +159,7 @@ export function renderSteps(host, ctx) {
         ? `<select class="att" data-steps-attempt aria-label="Attempt">${Array.from({ length: d.attempts }, (_, i) => `<option value="${i + 1}"${i + 1 === d.attempt ? " selected" : ""}>attempt ${i + 1} of ${d.attempts}</option>`).join("")}</select>`
         : `<span class="att">attempt ${esc(d.attempt)} of ${esc(d.attempts)}</span>`;
     const source = d.live
-      ? "live from the ledger"
+      ? "live from the Activity log"
       : d.file
         ? `transcript <span class="mono">${esc(d.file)}</span>`
         : "";
@@ -263,7 +263,7 @@ export function renderSteps(host, ctx) {
     onEvents(fresh) {
       for (const e of fresh ?? []) state.live = onStepEvent(state.live, e);
       if (ctx.card()?.status !== "in_progress") state.live = null;
-      // A step, a move, or the agent paused or taken over: the last row changes.
+      // A step, a move, or the Agent paused or taken over: the last row changes.
       const redraw = ["card/step", "card/status_changed", "card/updated", "card/taken_over"];
       if ((fresh ?? []).some((e) => redraw.includes(e.type))) {
         if (!state.attempt) fetchSteps({ appendOnly: true });

@@ -206,6 +206,15 @@ describe("Projects (DB-N9-9, DB-N9-21)", () => {
     });
   });
 
+  it("DB-N17-1: Review it opens the criteria view for a person who manages the work", () => {
+    const hrefs = (managesWork: boolean) =>
+      projectsModel({ now: NOW, overview: overview(), managesWork })
+        .waiting?.items.filter((i) => i.action === "Review it")
+        .map((i) => i.href);
+    expect(hrefs(true)).toEqual(["#/card/card_ledger/criteria"]);
+    expect(hrefs(false)).toEqual(["#/review/card_ledger"]);
+  });
+
   it("DB-N9-21: with no projects shows only Start your first project", () => {
     const v = projectsModel({
       now: NOW,

@@ -1,6 +1,6 @@
 import type { CardStatus, DecisionRequestRecord } from "@sekhemet/kernel";
 import { sameWord } from "./criteria.js";
-import { buildDecisionRequest, resolveDecisionAtDeadline } from "./decision.js";
+import { buildDecisionRequest, resolveDecisionAtDeadline } from "./decision_request.js";
 import { DESIGN_COPY } from "./design_copy.js";
 import type { DesignQuestion } from "./design_stage.js";
 import { type PlannerLedger, appendPlannerEvent, moveCard, plannerEvents } from "./ledger.js";

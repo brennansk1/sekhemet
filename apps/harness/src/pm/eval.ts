@@ -15,6 +15,7 @@ import {
   containsLineByLineDictation,
   lintCriterion,
 } from "@sekhemet/planner";
+import { plural } from "@sekhemet/ui";
 import { type PmSnapshot, answer } from "./agent.js";
 import {
   type FailureFacts,
@@ -461,7 +462,7 @@ export function scoreReply(
     add(
       "zero_questions",
       questionCount(text) === 0 && planned,
-      questionCount(text) ? `asks ${questionCount(text)} question(s)` : "plans nothing",
+      questionCount(text) ? `asks ${plural(questionCount(text), "question")}` : "plans nothing",
     );
   }
   if (e.brief) {

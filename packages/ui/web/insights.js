@@ -98,7 +98,7 @@ function figure(title, question, caption, svg, table, metric = "") {
 }
 
 function tableHtml(head, rows) {
-  return `<div class="tbl-wrap"><table class="tbl"><thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows
+  return `<div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows
     .map((r) => `<tr>${r.map((c) => `<td class="tnum">${esc(c)}</td>`).join("")}</tr>`)
     .join("")}</tbody></table></div>`;
 }
@@ -362,7 +362,7 @@ function capabilityHtml() {
     `<header class="cap-h"><h2>Coding model capability</h2><span class="sec">${esc(sub)}</span></header>`;
   if (!ui.capStatus) return "";
   if (ui.capStatus === 404) {
-    return `<section class="capab">${head("Pass rates by kind of issue and by change size")}<p class="cap-empty">${icon("insights", 14, "ic s14")}<span><b>Coding model capability isn't on this server yet.</b> <code>GET /api/capability</code> returned 404. Once it exists, this shows how often the agent passes each kind of issue and how that falls as changes grow, each with its uncertainty.</span></p></section>`;
+    return `<section class="capab">${head("Pass rates by kind of issue and by change size")}<p class="cap-empty">${icon("insights", 14, "ic s14")}<span><b>Coding model capability isn't on this server yet.</b> Update Sekhemet and restart it. Then this shows how often the Agent passes each kind of issue and how that falls as changes grow, each with its uncertainty.</span></p></section>`;
   }
   if (ui.capStatus !== 200 || !ui.cap) {
     return `<section class="capab">${head("")}<p class="cap-empty">${icon("alert", 14, "ic s14 i-fail")}<span><b>Couldn't load Coding model capability.</b> The server returned ${esc(ui.capStatus > 0 ? ui.capStatus : "no response")}.</span></p></section>`;
@@ -370,7 +370,7 @@ function capabilityHtml() {
   const c = ui.cap;
   const rows = capabilityRows(c.types);
   if (!c.sampleSize || rows.length === 0) {
-    return `<section class="capab">${head("")}<p class="cap-empty">${icon("insights", 14, "ic s14")}<span><b>No finished attempts yet.</b> Pass rates appear once the agent has run some issues.</span></p></section>`;
+    return `<section class="capab">${head("")}<p class="cap-empty">${icon("insights", 14, "ic s14")}<span><b>No finished attempts yet.</b> Pass rates appear once the Agent has run some issues.</span></p></section>`;
   }
   const few = rows.filter((r) => !r.trusted).length;
   const sub = `${c.sampleSize} attempts · bars show the pass rate and its 95% interval`;
@@ -428,7 +428,7 @@ function tuningHtml() {
           ]),
       )}</details>`
     : "";
-  return `<section class="capab tune"><header class="cap-h"><h2>Stopping policy</h2><span class="sec">From replaying recorded runs${esc(when)}</span></header><div class="chart"><p class="tune-head">${esc(sum.headline)}</p>${sum.same ? "" : `<p class="sec">${esc(`Saves ${sum.savedText} on these issues and keeps ${sum.firstTryKept} first-try passes. Nothing changes until you run with the new cap.`)}</p>`}${table}${cmd}<p class="tune-caveat">${icon("alert", 12, "ic s12")}<span>Replay only stops a recorded run earlier than it really stopped. It never credits a pass the agent didn't make, so it can't overstate what a tighter cap keeps. It can't tell you whether a looser cap would have rescued a failure.</span></p>${grid}</div></section>`;
+  return `<section class="capab tune"><header class="cap-h"><h2>Stopping policy</h2><span class="sec">From replaying recorded runs${esc(when)}</span></header><div class="chart"><p class="tune-head">${esc(sum.headline)}</p>${sum.same ? "" : `<p class="sec">${esc(`Saves ${sum.savedText} on these issues and keeps ${sum.firstTryKept} first-try passes. Nothing changes until you run with the new cap.`)}</p>`}${table}${cmd}<p class="tune-caveat">${icon("alert", 12, "ic s12")}<span>Replay only stops a recorded run earlier than it really stopped. It never credits a pass the Agent didn't make, so it can't overstate what a tighter cap keeps. It can't tell you whether a looser cap would have rescued a failure.</span></p>${grid}</div></section>`;
 }
 
 /* ---------- Model use (GET /api/metrics/flow `modelUse`) ---------- */
@@ -440,14 +440,17 @@ function modelUseHtml() {
   const v = modelUseView(ui.data.modelUse, ui.days);
   const head = `<header class="cap-h"><h2>Model use</h2><span class="sec">Tokens by model, this period</span></header>`;
   if (v.empty)
-    return `<section class="capab use">${head}<p class="sec">${esc(v.empty)}</p></section>`;
+    return `<section class="capab model-use">${head}<p class="sec">${esc(v.empty)}</p></section>`;
   const rows = v.lines
     .map(
       (l) =>
-        `<tr><th scope="row">${esc(l.label)}</th><td class="tnum">${esc(l.requests)}</td><td class="tnum">${esc(l.tokensIn)}</td><td class="tnum">${esc(l.reused)}</td><td class="tnum">${esc(l.tokensOut)}</td><td class="tnum">${esc(l.thinking)}</td><td class="tnum">${esc(l.share)}</td></tr>`,
+        `<tr><th scope="row">${esc(l.label)}</th><td class="r">${esc(l.requests)}</td><td class="r">${esc(l.tokensIn)}</td><td class="r">${esc(l.reused)}</td><td class="r">${esc(l.tokensOut)}</td><td class="r">${esc(l.thinking)}</td><td class="r">${esc(l.share)}</td></tr>`,
     )
     .join("");
-  return `<section class="capab use">${head}<div class="chart"><div class="tbl-wrap"><table class="tbl"><caption class="sec">${esc(v.caption)}</caption><thead><tr><th scope="col">Model</th><th scope="col">Requests</th><th scope="col">Tokens in</th><th scope="col">Reused from the cache</th><th scope="col">Tokens out</th><th scope="col">Of which thinking</th><th scope="col">Share</th></tr></thead><tbody>${rows}</tbody></table></div></div></section>`;
+  // STA-05: the section is `model-use` (Steps' `.use` right-aligned and unwrapped it);
+  // the sentence sits above the table, each number's header over it, and the scroller
+  // that holds the table on a phone is a focusable, named region.
+  return `<section class="capab model-use">${head}<div class="chart"><p class="sec mu-caption" id="mu-caption">${esc(v.caption)}</p><div class="tbl-wrap" tabindex="0" role="region" tabindex="0" aria-labelledby="mu-caption"><table class="tbl" aria-describedby="mu-caption"><thead><tr><th scope="col">Model</th><th scope="col" class="r">Requests</th><th scope="col" class="r">Tokens in</th><th scope="col" class="r">Reused from the cache</th><th scope="col" class="r">Tokens out</th><th scope="col" class="r">Of which thinking</th><th scope="col" class="r">Share</th></tr></thead><tbody>${rows}</tbody></table></div></div></section>`;
 }
 
 /* ---------- View ---------- */
@@ -511,7 +514,7 @@ function render() {
   };
   if (ui.status === 404) {
     return paint(
-      `<div class="later ins-later">${icon("insights", 24, "ic s24")}<b>Flow metrics aren't on this server yet.</b><span><code>GET /api/metrics/flow</code> returned 404. Update Sekhemet and restart <code>sekhemet serve</code>. Cycle time, throughput, cumulative flow and aging work appear here.</span></div>`,
+      `<div class="later ins-later">${icon("insights", 24, "ic s24")}<b>Flow metrics aren't on this server yet.</b><span>Update Sekhemet and restart it. Cycle time, throughput, cumulative flow and aging work appear here.</span></div>`,
     );
   }
   if (ui.status && ui.status !== 200) {

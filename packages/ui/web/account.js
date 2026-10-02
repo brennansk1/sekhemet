@@ -18,10 +18,11 @@ import {
 import { openMenu } from "./overlay.js";
 import { getSession, signOutAndLeave } from "./session.js";
 import { currentThemeChoice, setTheme, setTopbar } from "./shell.js";
+import { openWorkspaceSwitcher } from "./switcher.js";
 import { toast } from "./toast.js";
 
 /** Account pages this build has beyond Profile; a page not built is never linked. */
-const PAGES = new Set(["members", "audit"]);
+const PAGES = new Set(["members", "audit", "switch"]);
 
 const THEMES = [
   ["system", T.themeSystem],
@@ -54,6 +55,9 @@ export function openAccountMenu(anchor) {
       items.push("-");
     } else if (item.id === "shortcuts") {
       items.push({ label: item.label, run: () => setTimeout(openCheatsheet, 0) });
+    } else if (item.id === "switch") {
+      // DB-N25-3 (DEC-57): this machine's workspaces, in both setups.
+      items.push({ label: item.label, run: () => setTimeout(openWorkspaceSwitcher, 0) });
     } else if (item.id === "signout") {
       items.push({ label: item.label, run: () => signOutAndLeave() });
     } else if (item.route) {

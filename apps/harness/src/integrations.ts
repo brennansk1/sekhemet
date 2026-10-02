@@ -22,6 +22,12 @@ import {
   openIssues,
 } from "@sekhemet/sync";
 import {
+  type SyncDirection,
+  forgejoFromEnv,
+  mirrorAgentStatuses,
+  syncViaAdapter,
+} from "./github_sync.js";
+import {
   egressRecorder,
   githubEndpoints,
   githubRepoOf,
@@ -44,12 +50,6 @@ import {
   secretStoreStatus,
 } from "./secret_store.js";
 import { userDir } from "./user_dir.js";
-import {
-  type SyncDirection,
-  forgejoFromEnv,
-  mirrorAgentStatuses,
-  syncViaAdapter,
-} from "./wave2_github.js";
 
 const run = promisify(execFile);
 
@@ -286,7 +286,7 @@ const CATALOGUE: Omit<IntegrationEntry, "connected">[] = [
   { id: "github-pr", name: "GitHub pull request on accept", tier: "now", via: "gh-cli" },
   { id: "jira", name: "Jira import and export", tier: "now", via: "csv" },
   { id: "linear", name: "Linear import and export", tier: "now", via: "csv" },
-  { id: "slack", name: "Slack for the PM", tier: "now", via: "webhook" },
+  { id: "slack", name: "Slack for Seshat", tier: "now", via: "webhook" },
   { id: "research-web", name: "Research model web access", tier: "now", via: "api" },
   { id: "push", name: "Push notifications (ntfy or Gotify)", tier: "now", via: "webhook" },
   { id: "email", name: "Email notifications", tier: "now", via: "smtp" },
@@ -294,7 +294,7 @@ const CATALOGUE: Omit<IntegrationEntry, "connected">[] = [
   { id: "linear-sync", name: "Linear live sync", tier: "next", via: "api" },
   { id: "github-actions", name: "GitHub Actions checks mirror", tier: "next", via: "gh-cli" },
   { id: "teams", name: "Microsoft Teams", tier: "next", via: "webhook" },
-  { id: "slack-replies", name: "Reply to the PM from Slack", tier: "next", via: "api" },
+  { id: "slack-replies", name: "Reply to Seshat from Slack", tier: "next", via: "api" },
   { id: "sentry", name: "Sentry errors as proposed issues", tier: "later", via: "api" },
   { id: "datadog", name: "Datadog regressions as proposed issues", tier: "later", via: "api" },
   { id: "pagerduty", name: "PagerDuty follow-ups as proposed issues", tier: "later", via: "api" },
@@ -355,7 +355,7 @@ export async function listIntegrations(repoPath: string): Promise<IntegrationEnt
           connected: Boolean(p),
           detail: p
             ? `${p.kind === "ntfy" ? `ntfy topic ${p.topic}` : "Gotify"} at ${new URL(p.url).host}; ${(p.events ?? ["review", "parked", "budget", "question", "run_report"]).join(", ")}`
-            : "Not connected: a self-hosted ntfy or Gotify server pushes review, park, budget and question alerts to your phone",
+            : "Not connected: a self-hosted ntfy or Gotify server pushes review, on-hold, budget and question alerts to your phone",
         };
       }
       case "email": {
@@ -620,7 +620,7 @@ export async function syncGithub(
     errors: [] as string[],
   };
   if (!eventLog) {
-    out.errors.push("The sync needs the ledger");
+    out.errors.push("The sync needs the Activity log");
     return out;
   }
   const record = egressRecorder(eventLog);
@@ -1107,7 +1107,7 @@ async function integrationsRoutes(
         ctx.repoPath,
         ctx.log,
         "test",
-        `Sekhemet is connected to ${basename(ctx.repoPath)}. The PM will post standups and reviews here.`,
+        `Sekhemet is connected to ${basename(ctx.repoPath)}. Seshat will post standups and reviews here.`,
       ),
     );
     return true;

@@ -11,6 +11,7 @@ import { LearningStore } from "../learning/store.js";
 import { type SwapLedger, sharedQueue } from "../model_access.js";
 import { projectStoryMap } from "../project_done.js";
 import { registrySearch } from "../research/plan_research.js";
+import { forecastSentence } from "../status_api.js";
 import { takeoverPromptContext } from "../takeover_brief.js";
 import {
   type PmSnapshot,
@@ -36,7 +37,6 @@ import {
   snapshotFindings,
   snapshotGoals,
 } from "./knowledge.js";
-import { flowMetrics, monteCarloForecast } from "./metrics.js";
 import { draftProjectGroup } from "./pipeline.js";
 import { type SlashBoard, parseSlash, resolveCard, runSlash } from "./slash.js";
 import { recordStandupGiven, standupCardIds, standupFacts } from "./standup.js";
@@ -158,14 +158,9 @@ export async function buildSnapshot(
   const worker = record
     ? { model: record.model, record: `${record.record} ${measured}` }
     : undefined;
-  const remaining = cards.filter((c) => !["done", "rejected", "parked"].includes(c.status)).length;
   const loose = unenforcedInvariants(join(repoPath, ".sekhemet", "brief.md"));
-  const cfd = (await flowMetrics(pmStore.log, 60)).cfd;
-  const daily = cfd.slice(1).map((d, i) => Math.max(0, d.done - (cfd[i]?.done ?? 0)));
-  const fc = partial ? undefined : monteCarloForecast(daily, remaining);
-  const forecast = fc
-    ? `${remaining} issues left: 50% likely within ${fc.p50Days} day(s), 85% within ${fc.p85Days} (from ${fc.samples} days of history).`
-    : undefined;
+  // STA-01: Status's forecast, in Status's words, over the same issues.
+  const forecast = partial ? undefined : await forecastSentence(cards, pmStore.log);
   const storyMap = partial
     ? undefined
     : await projectStoryMap({ repoPath, cardStore, log: pmStore.log }).catch(() => undefined);
@@ -742,7 +737,7 @@ async function answerFor(
     await deps.pmStore.setStatus({
       phase: "loading_pm",
       model: deps.pmModel,
-      detail: wait && wait.waitMs > 0 ? waitInWords(wait) : `Loading the PM (${deps.pmModel})`,
+      detail: wait && wait.waitMs > 0 ? waitInWords(wait) : "Starting Seshat",
       etaSeconds: wait ? Math.round(wait.waitMs / 1000) : PM_LOAD_ETA_SECONDS,
       ...stepInfo,
     });

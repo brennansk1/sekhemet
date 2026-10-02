@@ -16,6 +16,7 @@ import {
   readKernelPressureLevel,
 } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
+import { plural } from "@sekhemet/ui";
 import { userConfigPath } from "./config.js";
 import { networkConfigs } from "./config_apply.js";
 import { configUpgradeCheck } from "./config_upgrade.js";
@@ -73,10 +74,10 @@ export async function probeInference(endpoints: string[]): Promise<DiagnosticChe
         const ids = (body.data ?? []).map((m) => m.id).filter(Boolean);
         const found = [...names, ...ids];
         return check(
-          "Local inference socket",
+          "Model server",
           found.length > 0 ? "pass" : "warn",
           found.length > 0
-            ? `${base} reachable — ${found.length} model(s): ${found.slice(0, 3).join(", ")}`
+            ? `${base} reachable — ${plural(found.length, "model")}: ${found.slice(0, 3).join(", ")}`
             : `${base} reachable but serving no models`,
         );
       }
@@ -86,7 +87,7 @@ export async function probeInference(endpoints: string[]): Promise<DiagnosticChe
   }
 
   return check(
-    "Local inference socket",
+    "Model server",
     "fail",
     `no inference server reachable at ${endpoints.join(" or ")} — start Ollama or llama-server`,
   );
@@ -119,7 +120,7 @@ function probeWorktrees(repoPath: string): DiagnosticCheck {
       stdio: ["ignore", "pipe", "pipe"],
     });
     const count = out.split("\n").filter((l) => l.startsWith("worktree ")).length;
-    return check("Git worktree isolation", "pass", `${count} worktree(s) registered`);
+    return check("Git worktree isolation", "pass", `${plural(count, "worktree")} registered`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return check("Git worktree isolation", "fail", message.split("\n")[0] ?? message);
@@ -160,7 +161,7 @@ async function probeConfinement(repoPath: string): Promise<DiagnosticCheck> {
     return check(
       "Sandbox confinement",
       "warn",
-      `${sandbox.confinement} in force, escape probe not run: ${base} is not writable (${(err as Error).message})`,
+      `${sandbox.confinement} in force, sandbox test not run: ${base} is not writable (${(err as Error).message})`,
     );
   }
   const target = join(dir, "escaped");
@@ -204,11 +205,11 @@ export function judgeConfinement(
     return check("Sandbox confinement", "fail", `${mode} cannot run a harmless command (${said})`);
   }
   return attempt.wrote || attempt.exitCode === 0
-    ? check("Sandbox confinement", "fail", "escape probe WROTE OUTSIDE the worktree")
+    ? check("Sandbox confinement", "fail", "the sandbox test wrote outside the worktree")
     : check(
         "Sandbox confinement",
         "pass",
-        `${mode} active — escape probe refused (exit ${attempt.exitCode})`,
+        `${mode} active — the sandbox test was refused (exit ${attempt.exitCode})`,
       );
 }
 
@@ -216,14 +217,14 @@ export function judgeConfinement(
 function probeSkills(repoPath: string): DiagnosticCheck {
   const dir = join(repoPath, ".sekhemet", "skills");
   if (!existsSync(dir)) {
-    return check("Skills registry", "warn", `${dir} not present — no skills will load`);
+    return check("Skills", "warn", `${dir} not present — no skills will load`);
   }
   try {
     const entries = execFileSync("ls", ["-1", dir], { encoding: "utf8" }).trim();
     const count = entries ? entries.split("\n").length : 0;
-    return check("Skills registry", count > 0 ? "pass" : "warn", `${count} skill(s) discoverable`);
+    return check("Skills", count > 0 ? "pass" : "warn", `${plural(count, "skill")} discoverable`);
   } catch {
-    return check("Skills registry", "warn", "skills directory unreadable");
+    return check("Skills", "warn", "skills directory unreadable");
   }
 }
 
@@ -290,7 +291,7 @@ export function weightsCheck(
     return check(
       "Model weights",
       "pass",
-      `${report.present} model file(s) present in ${report.modelsDir}`,
+      `${plural(report.present, "model file")} present in ${report.modelsDir}`,
     );
   }
   const detail = report.probes
@@ -363,7 +364,7 @@ export function secretStoreCheck(): DiagnosticCheck {
 export function hooksCheck(repoPath: string): DiagnosticCheck {
   const { errors, count } = hookEngineFor(repoPath);
   if (errors.length) return check("Hooks", "warn", errors.join("; "));
-  return check("Hooks", "pass", count ? `${count} hook(s) loaded` : "none declared");
+  return check("Hooks", "pass", count ? `${plural(count, "hook")} loaded` : "none declared");
 }
 
 /**
@@ -376,7 +377,7 @@ export function userDirCheck(): DiagnosticCheck {
   const move = readMoveRecord();
   if (!move) return check("User directory", "pass", dir);
   const moved = move.moved.length
-    ? `moved ${move.moved.length} item(s) from ${move.from} on ${(move.at ?? "").slice(0, 10)}`
+    ? `moved ${plural(move.moved.length, "item")} from ${move.from} on ${(move.at ?? "").slice(0, 10)}`
     : `nothing moved from ${move.from}`;
   if (move.kept.length) {
     return check(
@@ -445,7 +446,7 @@ export async function researchPipelineCheck(repoPath: string): Promise<Diagnosti
     const lines = await researchDoctorLines(new EventLog(db));
     return lines.length
       ? check("Research pipelines", "warn", lines.join("; "))
-      : check("Research pipelines", "pass", "no pipeline found worse on the research golden set");
+      : check("Research pipelines", "pass", "no pipeline found worse on the Research quality set");
   } catch (err) {
     // A ledger older than the events table has no run to read.
     if (/no such table/i.test(String(err))) {
@@ -464,11 +465,11 @@ export async function researchPipelineCheck(repoPath: string): Promise<Diagnosti
 export function m0PendingCheck(repoPath: string): DiagnosticCheck {
   const pending = pendingM0InRepo(repoPath);
   return pending.length === 0
-    ? check("M0", "pass", "no Coding model owes the M0 protocol")
+    ? check("First-run benchmark", "pass", "no Coding model owes its first-run benchmark")
     : check(
-        "M0",
+        "First-run benchmark",
         "warn",
-        `M0 pending: ${pending.map((p) => `${p.worker} (${p.combination})`).join(", ")}; sekhemet overnight runs it first, or run sekhemet m0 --worker <name>`,
+        `First-run benchmark pending: ${pending.map((p) => `${p.worker} (${p.combination})`).join(", ")}; sekhemet overnight runs it first, or run sekhemet m0 --worker <name>`,
       );
 }
 
@@ -482,7 +483,7 @@ export function modelVerificationCheck(
   registry: ModelRegistry | undefined = hostRegistry(),
   versions: Readonly<Record<ModelRole, string>> = rolePromptVersions(),
 ): DiagnosticCheck {
-  if (!registry) return check("Model verification", "pass", "no model registry on this host");
+  if (!registry) return check("Model verification", "pass", "no model list on this host");
   const owed = MODEL_ROLES.flatMap((role) =>
     registry.requalificationsOwed(versions[role], role).map((o) => ({ ...o, role })),
   );
@@ -507,9 +508,17 @@ export function modelVerificationCheck(
 /** X17, X18: the provenance and research registers, when the repository keeps them. */
 function registersCheck(repoPath: string): DiagnosticCheck {
   if (!existsSync(join(repoPath, "docs", "reference", "PROVENANCE.md")))
-    return { name: "Registers", status: "pass", detail: "no registers kept in this repository" };
+    return {
+      name: "Project records",
+      status: "pass",
+      detail: "no project records kept in this repository",
+    };
   const problems = checkRegisters(repoPath);
   return problems.length === 0
-    ? { name: "Registers", status: "pass", detail: "provenance and research registers are valid" }
-    : { name: "Registers", status: "warn", detail: problems.slice(0, 3).join("; ") };
+    ? {
+        name: "Project records",
+        status: "pass",
+        detail: "the provenance and research records are valid",
+      }
+    : { name: "Project records", status: "warn", detail: problems.slice(0, 3).join("; ") };
 }

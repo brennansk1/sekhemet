@@ -15,6 +15,7 @@ import type {
 } from "@sekhemet/kernel";
 import { DESIGN_COPY } from "@sekhemet/planner";
 import { type ExternalItem, type SyncAdapter, openIssues } from "@sekhemet/sync";
+import { plural } from "@sekhemet/ui";
 import { type CardDraft, type PipelineDeps, createThroughPipeline } from "./pm/pipeline.js";
 import type { TakeoverFinding, TakeoverRun } from "./takeover.js";
 import {
@@ -459,7 +460,7 @@ export async function readInheritedIssues(
   if (!tracker) return { items: [], note: `not read: ${notConnected}` };
   try {
     const items = await openIssues(tracker);
-    return { items, note: `${items.length} open issue(s) read from ${tracker.system}` };
+    return { items, note: `${plural(items.length, "open issue")} read from ${tracker.system}` };
   } catch (err) {
     return {
       items: [],
@@ -729,7 +730,7 @@ export async function approveTakeoverPlan(
   }
   // No card exists before a person's approval is on the ledger.
   if (!store.takeover.isPlanApproved(input.proposalId)) {
-    throw new Error(`${input.proposalId} is not approved: no card is created`);
+    throw new Error(`${input.proposalId} is not approved: no issue is created`);
   }
   // The inherited issues any reconciliation proposed, for a card's `externalRef`.
   const reconciled = new Map<string, ReconciledIssue["issue"]>();

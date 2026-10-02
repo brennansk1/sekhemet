@@ -24,7 +24,7 @@ import {
 } from "../src/research/reuse.js";
 import { ResearchMemory, ResearchService } from "../src/research/service.js";
 import { acquireRunnerLease } from "../src/runner_lease.js";
-import { type Kernel, planCommand } from "../src/wave2.js";
+import { type RepoContext, planCommand } from "../src/wave2.js";
 
 /**
  * Design-stage P7: the survey searches by capability, in the project's own
@@ -62,7 +62,7 @@ function tempDir(prefix: string): string {
 /** A real TypeScript repository with a real ledger file. */
 function kernel(
   files: Record<string, string> = { "src/auth.ts": "export const a = 1;\n" },
-): Kernel {
+): RepoContext {
   const repoPath = tempDir("sek-reuse-cap-");
   for (const [rel, text] of Object.entries(files)) {
     mkdirSync(dirname(join(repoPath, rel)), { recursive: true });
@@ -507,7 +507,7 @@ describe("DS-P7-9: find_library applies the survey's filters, for Seshat and the
 
 describe("DS-P7-10: a brief's Prior art has one cited deep answer, or says why not", () => {
   const BRIEF_SPEC = "a billing service that charges customers monthly";
-  const brief = (k: Kernel) => readFileSync(join(k.repoPath, ".sekhemet", "brief.md"), "utf8");
+  const brief = (k: RepoContext) => readFileSync(join(k.repoPath, ".sekhemet", "brief.md"), "utf8");
   const priorArt = (text: string) => /## Prior art\n([\s\S]*?)\n## /.exec(text)?.[1] ?? "";
 
   it("writes the Researcher's answer with its sources when it may run", async () => {

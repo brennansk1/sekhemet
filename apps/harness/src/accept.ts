@@ -11,6 +11,7 @@ import {
   type EventLog,
 } from "@sekhemet/kernel";
 import { MergeConflictError, NodeGitSyncAdapter, groupByIntent } from "@sekhemet/sync";
+import { boardColumnLabel } from "@sekhemet/ui";
 import { ownersOf } from "./codeowners.js";
 import { effectiveConfig } from "./config_apply.js";
 import { localPersonDetails } from "./ledger_cmds.js";
@@ -250,12 +251,12 @@ export async function accepterCheck(
   if (v.code === "not_permitted") {
     throw new AcceptRefusedError(
       "not_permitted",
-      `${principal} does not hold the Accept permission for this project. Who may accept: ${v.who.join(", ") || "no one yet — name an Accept-holder"}`,
+      `${principal} does not hold the Accept permission for this project. Who may accept: ${v.who.join(", ") || "no one yet — add a person to the Accept rule"}`,
     );
   }
   throw new AcceptRefusedError(
     "not_independent",
-    `${principal} ${v.because} ${cardId}; on a team another Accept-holder accepts it. Who may accept: ${v.who.join(", ") || "no other Accept-holder yet"}`,
+    `${principal} ${v.because} ${cardId}; on a team, another person on the Accept rule accepts it. Who may accept: ${v.who.join(", ") || "no one else on the Accept rule yet"}`,
   );
 }
 
@@ -449,7 +450,7 @@ export async function acceptPreconditions(
   if (!card || card.status !== "review") {
     throw new AcceptRefusedError(
       "not_in_review",
-      `Issue ${cardId} is in '${card?.status ?? "nowhere"}'. Only an issue in Review can be accepted.`,
+      `Issue ${cardId} is ${card ? boardColumnLabel(card.status) : "not on the board"}. Only an issue In review can be accepted.`,
     );
   }
   // A dismissed accept (TEAM-24) waits for a new decision on the same pull request.
@@ -476,7 +477,7 @@ export async function acceptPreconditions(
   if (!ledger.valid) {
     throw new AcceptRefusedError(
       "ledger_invalid",
-      `The ledger does not verify (${ledger.reason ?? "hash chain broken"}); nothing is accepted until it does`,
+      `The Activity log does not verify (${ledger.reason ?? "hash chain broken"}); nothing is accepted until it does`,
     );
   }
   let principal: string;
@@ -498,7 +499,7 @@ export async function acceptPreconditions(
     if (remaining.findings.length > 0 || remaining.files.length > 0) {
       const parts = [
         remaining.findings.length
-          ? `acknowledge the AI review finding(s) ${remaining.findings.join(", ")}`
+          ? `acknowledge the AI review ${remaining.findings.length === 1 ? "finding" : "findings"} ${remaining.findings.join(", ")}`
           : "",
         remaining.files.length ? `look at ${remaining.files.join(", ")}` : "",
       ].filter(Boolean);
@@ -790,16 +791,16 @@ export async function revertAccept(
   const stored = await ctx.cardStore.getCard(card.id);
   if (stored?.status !== "done") {
     throw new Error(
-      `${card.id} is not done (it is ${stored?.status ?? "missing"}); only an accepted issue is reverted`,
+      `${card.id} is not Done (it is ${stored ? boardColumnLabel(stored.status) : "missing"}); only an accepted issue is reverted`,
     );
   }
   const accepted = (await ctx.cardStore.cardEvents(card.id, ["card/accepted"])).at(-1);
   const p = accepted?.payload as { sha?: string; integration?: string } | undefined;
-  if (!p?.sha) throw new Error(`${card.id} has no accepted squash on the ledger to revert`);
+  if (!p?.sha) throw new Error(`${card.id} has no accepted squash in the Activity log to revert`);
   if (rule ? !rule.includes(principal) : !ctx.cardStore.mayAccept(principal)) {
     throw new AcceptRefusedError(
       "not_permitted",
-      `${principal} does not hold the Accept permission; reverting an accept is an Accept-holder's decision`,
+      `${principal} does not hold the Accept permission; reverting an accept is for a person on the Accept rule`,
     );
   }
   const target = p.integration ?? integrationBranch(ctx.repoPath);

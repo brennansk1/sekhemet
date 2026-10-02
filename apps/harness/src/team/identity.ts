@@ -779,6 +779,79 @@ export class Identity {
     return { entry, record, subject };
   }
 
+  /**
+   * `GET /api/invites` (dashboard DB-N19-4, teams item 10): the outstanding
+   * invites — not used, not expired, not revoked — for an Admin, newest
+   * first. Each by its opaque reference: the link is a credential, held only
+   * as a hash, so the list can never carry it.
+   */
+  public listInvites(actor: string):
+    | {
+        ok: true;
+        invites: {
+          ref: string;
+          level: Level;
+          expires: string;
+          project?: string;
+          email?: string;
+          invitedBy?: string;
+        }[];
+      }
+    | Failure {
+    const denied = this.requireAdmin(actor, "see the outstanding invites");
+    if (denied) return denied;
+    const out = [];
+    for (const entry of Object.values(this.store.read().invites)) {
+      const record = this.inviteRecord(entry.ref);
+      if (!record || record.used || Date.parse(record.expires) <= this.now()) continue;
+      const email = (
+        this.db
+          .prepare(
+            `SELECT json_extract(p.body, '$.email') AS email FROM events e
+               JOIN event_private p ON p.event_id = e.id
+              WHERE e.type = 'member/invited' AND json_extract(e.payload, '$.invite') = ?
+              LIMIT 1`,
+          )
+          .get(entry.ref) as { email: string | null } | undefined
+      )?.email;
+      const by = record.by ? personName(this.db, record.by) : undefined;
+      out.push({
+        ref: entry.ref,
+        level: record.level,
+        expires: record.expires,
+        ...(record.project ? { project: record.project } : {}),
+        ...(email ? { email } : {}),
+        ...(by ? { invitedBy: by } : {}),
+      });
+    }
+    out.sort((a, b) => b.expires.localeCompare(a.expires));
+    return { ok: true, invites: out };
+  }
+
+  /**
+   * `DELETE /api/invites/:ref` (DB-N19-4): the link stops working at once —
+   * its hash leaves the credential store, so neither showing nor accepting it
+   * finds anything — and `member/invite_revoked` records who revoked which.
+   */
+  public revokeInvite(actor: string, inviteRef: string): { ok: true } | Failure {
+    const denied = this.requireAdmin(actor, "revoke invites");
+    if (denied) return denied;
+    const removed = this.store.update((f) => {
+      const hit = Object.entries(f.invites).find(([, e]) => e.ref === inviteRef);
+      if (!hit) return false;
+      delete f.invites[hit[0]];
+      return true;
+    });
+    if (!removed) return failure(404, "No such outstanding invite.");
+    this.log.appendNow({
+      actor: "human",
+      type: "member/invite_revoked",
+      payload: { invite: inviteRef },
+      principal: actor,
+    });
+    return { ok: true };
+  }
+
   /** `GET /api/invites/:id` (TEAM-33): shows the invite, consumes nothing. */
   public showInvite(
     id: string,

@@ -16,7 +16,7 @@
     { "file": "packages/kernel/src/card_class.ts", "name": "scopeExtension", "through": "barrel" },
     { "file": "packages/models/src/bakeoff.ts", "name": "quantFromName", "through": "barrel" },
     {
-      "file": "packages/planner/src/decision.ts",
+      "file": "packages/planner/src/decision_request.ts",
       "name": "isDestructiveText",
       "through": "barrel"
     },

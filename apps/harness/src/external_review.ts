@@ -7,7 +7,7 @@ import type { CardRecord, CardStatus, CardStore, EventLog } from "@sekhemet/kern
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { annotationsFromFailures } from "@sekhemet/sync";
-import { REVIEW_DESK_COPY } from "@sekhemet/ui";
+import { REVIEW_DESK_COPY, plural } from "@sekhemet/ui";
 import {
   appClientFromEnv,
   decideEgress,
@@ -359,7 +359,7 @@ export async function runExternalReview(
         discardedEdits: result.discardedEdits,
       },
     });
-    const verdict = `external review of PR #${target.pr}: ${gates.passed ? "all checks passed" : "checks failed"}, ${result.findings.length} finding(s)`;
+    const verdict = `external review of PR #${target.pr}: ${gates.passed ? "all checks passed" : "checks failed"}, ${plural(result.findings.length, "finding")}`;
     try {
       await move("verify", verdict);
       // A review whose gates failed never enters Review (K-S4-4): a person
@@ -470,8 +470,8 @@ export async function runExternalReviews(
     });
     deps.say?.(
       r.error
-        ? `External review ${card.id}: parked (${r.error})`
-        : `External review ${card.id} (PR #${r.pr}): ${r.gatesPassed ? "all checks passed" : "checks failed"}, ${r.findings.length} finding(s)${r.posted ? ", posted" : ""}; evidence ${r.evidencePath}`,
+        ? `External review ${card.id}: on hold (${r.error})`
+        : `External review ${card.id} (PR #${r.pr}): ${r.gatesPassed ? "all checks passed" : "checks failed"}, ${plural(r.findings.length, "finding")}${r.posted ? ", posted" : ""}; evidence ${r.evidencePath}`,
     );
   }
   return ready.filter((c) => !isExternalReview(c));

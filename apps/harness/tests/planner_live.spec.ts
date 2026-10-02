@@ -18,11 +18,11 @@ import { respondToSignals, startGoalTicker } from "../src/planner_live.js";
 import { applyProposal } from "../src/pm/apply.js";
 import { PmStore } from "../src/pm/store.js";
 import {
-  type Kernel,
+  type RepoContext,
   planCommand,
   queuePrelude,
   replanOnRung3,
-  runWave2Command,
+  runDevCommand,
 } from "../src/wave2.js";
 
 const dirs: string[] = [];
@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 /** A real repository and an on-disk ledger where the harness keeps it (DEFINITION_OF_DONE §2A). */
-function kernel(): Kernel & { db: DatabaseSync } {
+function kernel(): RepoContext & { db: DatabaseSync } {
   const repoPath = mkdtempSync(join(tmpdir(), "sek-live-"));
   dirs.push(repoPath);
   const w = (rel: string, text: string) => {
@@ -57,7 +57,7 @@ function kernel(): Kernel & { db: DatabaseSync } {
 const quiet = { print: () => undefined };
 const HOUR = 3_600_000;
 
-async function readyCard(k: Kernel, id: string, extra: Record<string, unknown> = {}) {
+async function readyCard(k: RepoContext, id: string, extra: Record<string, unknown> = {}) {
   await k.cardStore.createCard({
     id,
     tier: "story",
@@ -69,7 +69,7 @@ async function readyCard(k: Kernel, id: string, extra: Record<string, unknown> =
   });
 }
 
-async function failIn(k: Kernel, cardId: string, file: string) {
+async function failIn(k: RepoContext, cardId: string, file: string) {
   const a = await k.cardStore.runs.startAttempt({
     cardId,
     attemptNumber: k.cardStore.runs.nextAttemptNumber(cardId),
@@ -88,7 +88,7 @@ async function failIn(k: Kernel, cardId: string, file: string) {
   });
 }
 
-const suggestionsOn = (k: Kernel & { db: DatabaseSync }, cardId: string) =>
+const suggestionsOn = (k: RepoContext & { db: DatabaseSync }, cardId: string) =>
   (
     k.db
       .prepare("SELECT payload FROM events WHERE type = 'suggestion/proposed' AND card_id = ?")
@@ -368,7 +368,7 @@ describe("PM-P1-8: a rung-3 re-plan keeps the riskiest assumption and the origin
 describe("the goal loop re-evaluates on the right events (NEW-planner-pm-4)", () => {
   const GOAL = "Users can sign in, the test suite passes, and coverage is at least 80%.";
 
-  async function activeGoal(k: Kernel) {
+  async function activeGoal(k: RepoContext) {
     const ledger = { store: k.cardStore, log: k.log };
     const planner = new SpidrFeaturePlanner();
     const intake = await intakeGoal(ledger, planner, GOAL);
@@ -441,7 +441,7 @@ describe("the goal loop re-evaluates on the right events (NEW-planner-pm-4)", ()
     const human = goal.criteria.find((c) => c.kind === "human");
     const out: string[] = [];
     expect(
-      await runWave2Command("goal", ["mark", goal.id, human?.id as string, "met"], k, {
+      await runDevCommand("goal", ["mark", goal.id, human?.id as string, "met"], k, {
         print: (l) => out.push(l),
       }),
     ).toBe(0);

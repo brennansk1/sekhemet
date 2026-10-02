@@ -18,7 +18,13 @@ import {
   stripReasoning,
 } from "@sekhemet/models";
 import { type StoryMap, guardCompletionClaim } from "@sekhemet/planner";
-import { columnLabel, gateLabel, stopReasonLabel } from "@sekhemet/ui";
+import {
+  type StatusSliceLike,
+  columnLabel,
+  gateLabel,
+  requirementsWords,
+  stopReasonLabel,
+} from "@sekhemet/ui";
 import { researchCopy } from "../research/research_copy.js";
 import type { ResearchAnswer } from "../research/researcher.js";
 import { ResearchHostAwaitsYes } from "../research_consent.js";
@@ -49,6 +55,7 @@ import {
   seshatPart,
   seshatReaderPrompt,
   splitSuggestedSummary,
+  sprintProposalSummary,
   startProjectSummary,
 } from "./pm_copy.js";
 import { SESHAT_SKILL_VERSION } from "./seshat_skill.js";
@@ -571,7 +578,7 @@ export function toProposals(calls: ToolCall[], cards: CardRecord[]): ProposalDra
         kind: "create_cycle",
         patch: { name, startsOn, endsOn, ...(goal ? { goal } : {}), cardIds },
         why,
-        summary: `Plan cycle ${name} (${startsOn} to ${endsOn})${cardIds.length ? ` with ${cardIds.length} cards` : ""}${because(why)}`,
+        summary: `${sprintProposalSummary(name, startsOn, endsOn, cardIds.length)}${because(why)}`,
       });
     } else if (call.name === "start_project") {
       const brief = asString(a.brief);
@@ -666,12 +673,6 @@ export function citesFrom(
     if (named(f.evidenceId))
       out.push({ evidenceId: f.evidenceId, cardId: f.cardId, label: `Evidence ${f.evidenceId}` });
   return out;
-}
-
-/** Remove reasoning blocks a model may emit despite being asked not to. */
-export function stripThinking(text: string): string {
-  // MD-N4-8: the one implementation, which the adapter already applied.
-  return stripReasoning(text);
 }
 
 /** Seshat's window when the adapter does not say: the manager profile's 8,192. */
@@ -1048,7 +1049,7 @@ export async function readDocumentInParts(
       // Measurement rule 4a: the read-in-parts pass, counted apart from the answer.
       task: "read_document",
     });
-    notes.push(`Part ${i + 1} of ${parts.length}:\n${stripThinking(res.text).trim()}`);
+    notes.push(`Part ${i + 1} of ${parts.length}:\n${stripReasoning(res.text).trim()}`);
   }
   return { parts: parts.length, notes: notes.join("\n\n"), windowTokens };
 }
@@ -1183,7 +1184,7 @@ export async function answer(
   // PM-P13-6, -14: a claim that the project, a slice or a release is
   // complete or ready changes nothing; while a must-have is unproven the
   // reply states the proven count instead.
-  let text = guardCompletionClaim(stripThinking(res.text), snapshot.storyMap).text;
+  let text = guardCompletionClaim(stripReasoning(res.text), snapshot.storyMap).text;
   if (!text) {
     text =
       proposals.length > 0
@@ -1265,7 +1266,7 @@ export async function summarizeConversation(
     role: "seshat",
     task: "summarize",
   });
-  return stripThinking(res.text).slice(0, 1500);
+  return stripReasoning(res.text).slice(0, 1500);
 }
 
 /** "status", "standup", "where are we?": answerable from the ledger alone. */
@@ -1277,7 +1278,7 @@ export function isStatusQuestion(text: string): boolean {
 
 /** The chat's footer on an answer made from the ledger. */
 export const LEDGER_FOOTER =
-  "\n\n_Answered from the ledger without loading a model. Ask a specific question for my judgement._";
+  "\n\n_Answered from the Activity log without loading a model. Ask a specific question for my judgement._";
 
 /**
  * The standup, built from the board and run data without loading any model
@@ -1293,16 +1294,19 @@ export function ledgerStandup(s: PmSnapshot): string {
 /** The standup's text with no footer: what a channel posts. */
 export function standupBody(s: PmSnapshot): string {
   const extra: string[] = [];
-  // PM-P13-3, -8: the must-haves proven and the unplanned ones, from the ledger.
+  // PM-P13-3, -8: the current release's requirements done — Status's key number,
+  // in its words (FINDINGS STA-01) — and the Must haves not started, by title.
   const map = s.storyMap;
   if (map && map.slices.length > 0) {
+    const done = requirementsWords(map.slices as unknown as StatusSliceLike[]).value;
+    const notStarted = map.unplanned.map((r) => r.title?.trim() || r.id);
     extra.push(
-      `${map.provenLine}.${map.unplanned.length ? ` Unplanned: ${map.unplanned.map((r) => r.id).join(", ")}.` : ""}${map.projectDone ? " The project is done: a person accepted its last release." : ""}`,
+      `Requirements: ${done}.${notStarted.length ? ` Not started: ${notStarted.join(", ")}.` : ""}${map.projectDone ? " The project is done: a person accepted its last release." : ""}`,
     );
     const waiting = map.slices.filter((x) => x.state === "proven");
     if (waiting.length) {
       extra.push(
-        `Requirements done, waiting for your acceptance: ${waiting.map((x) => x.id).join(", ")}.`,
+        `Requirements done, waiting for your acceptance: ${waiting.map((x) => x.title?.trim() || x.id).join(", ")}.`,
       );
     }
   }

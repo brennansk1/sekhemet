@@ -92,11 +92,6 @@
       "text": "Summary so far: ${}\n\n"
     },
     {
-      "file": "apps/harness/src/pm/agent.ts",
-      "hash": "e7387f75a91f1f15",
-      "text": "Plan cycle ${} (${} to ${})${}${}"
-    },
-    {
       "file": "apps/harness/src/research/apodex.ts",
       "hash": "39963ee0a3bb050a",
       "text": "You are an independent verification agent. Your job is to check whether a proposed answer is BOTH co"
@@ -452,8 +447,8 @@
       "text": "Find and read the pages of a library's official documentation most relevant to a question. `library`"
     },
     {
-      "file": "apps/harness/src/rest_extra.ts",
-      "hash": "0add5ea4252ad2ed",
+      "file": "apps/harness/src/run_routes.ts",
+      "hash": "0581502571903c8a",
       "text": "Split ${} into ${} parts"
     },
     {

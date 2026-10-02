@@ -1,5 +1,6 @@
 import type { BoardServiceImpl } from "@sekhemet/board";
 import type { CardRecord, CardStatus, CardStore, EventLog } from "@sekhemet/kernel";
+import { boardColumnLabel } from "@sekhemet/ui";
 import { recordDecision } from "./accept.js";
 import { releaseHeldCards } from "./execute.js";
 import { isPlaybookCandidate, learnFromSendBack } from "./learning/reflect.js";
@@ -82,7 +83,7 @@ export async function sendBack(
   options: { comments?: readonly LineComment[] } = {},
 ): Promise<void> {
   const why = reason.trim().slice(0, 2000);
-  if (!why) throw new Error("A send-back needs a reason: it is what the agent is told next");
+  if (!why) throw new Error("Request changes needs a reason: it is what the Agent is told next");
   const comments = options.comments ?? [];
   for (const c of comments) {
     if (!c.file?.trim() || !Number.isInteger(c.line) || c.line < 1 || !c.text?.trim()) {
@@ -94,12 +95,12 @@ export async function sendBack(
   const stored = (await ctx.cardStore.getCard(card.id)) ?? card;
   if (stored.status === "in_progress" || stored.status === "verify") {
     throw new Error(
-      `${card.id} is ${stored.status === "verify" ? "being verified" : "running"}; stop it with \`sekhemet abort ${card.id}\` first. A send-back is for an issue in Review or Parked.`,
+      `${card.id} is ${stored.status === "verify" ? "being checked" : "running"}; stop it with \`sekhemet abort ${card.id}\` first. Request changes is for an issue In review or On hold.`,
     );
   }
   if (stored.status !== "review" && stored.status !== "parked") {
     throw new Error(
-      `${card.id} is in '${stored.status}'; a send-back is for an issue in Review or Parked`,
+      `${card.id} is ${boardColumnLabel(stored.status)}; request changes on an issue In review or On hold`,
     );
   }
   await decidedInReview(ctx, stored, "send_back");
@@ -173,7 +174,8 @@ export async function unparkTarget(cardStore: CardStore, cardId: string): Promis
 
 /** Put a parked card back where it was parked from, or in Ready. */
 export async function unpark(ctx: TriageContext, card: CardRecord): Promise<CardStatus> {
-  if (card.status !== "parked") throw new Error(`${card.id} is not parked (it is ${card.status})`);
+  if (card.status !== "parked")
+    throw new Error(`${card.id} is not On hold (it is ${boardColumnLabel(card.status)})`);
   const to = await unparkTarget(ctx.cardStore, card.id);
   await ctx.boardService.transitionCard({
     cardId: card.id,
@@ -195,7 +197,7 @@ export async function reject(ctx: TriageContext, card: CardRecord, reason: strin
   const stored = (await ctx.cardStore.getCard(card.id)) ?? card;
   if (!["review", "parked", "ready", "backlog"].includes(stored.status)) {
     throw new Error(
-      `${card.id} is in '${stored.status}'; an issue is rejected from Review, Parked, Ready or Backlog`,
+      `${card.id} is ${boardColumnLabel(stored.status)}; an issue is rejected from In review, On hold, To do or Backlog`,
     );
   }
   await decidedInReview(ctx, stored, "reject");
@@ -212,7 +214,7 @@ export async function reject(ctx: TriageContext, card: CardRecord, reason: strin
 /** Put a rejected card back in Ready (`sekhemet reopen`; kernel rule 25, K-S4-7). */
 export async function reopen(ctx: TriageContext, card: CardRecord, reason = ""): Promise<void> {
   if (card.status !== "rejected") {
-    throw new Error(`${card.id} is not rejected (it is ${card.status})`);
+    throw new Error(`${card.id} is not marked Won't do (it is ${boardColumnLabel(card.status)})`);
   }
   const why = reason.trim().slice(0, 2000);
   await ctx.boardService.transitionCard({

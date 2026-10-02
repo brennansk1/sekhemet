@@ -15,7 +15,7 @@ import {
   reuseQueriesPromptHash,
 } from "../src/research/capability_queries.js";
 import { type ResearchQuery, reuseSurvey } from "../src/research/reuse.js";
-import { type Kernel, planCommand } from "../src/wave2.js";
+import { type RepoContext, planCommand } from "../src/wave2.js";
 
 /**
  * Design-stage §2.5 item 1 (compliance C3; domain08 review §6 item 1): the
@@ -183,7 +183,7 @@ describe("plan hands the Planning model to the survey (wave2 planCommand)", () =
     while (dirs.length) rmSync(dirs.pop() as string, { recursive: true, force: true });
   });
 
-  function kernel(): Kernel {
+  function kernel(): RepoContext {
     const repoPath = mkdtempSync(join(tmpdir(), "sek-cap-queries-"));
     dirs.push(repoPath);
     mkdirSync(dirname(join(repoPath, "src/app.ts")), { recursive: true });

@@ -7,7 +7,7 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { afterEach, describe, expect, it } from "vitest";
 import { checkTrailers, trailerGate, withTrailerGate } from "../src/trailer_gate.js";
-import { runWave2Command } from "../src/wave2.js";
+import { runDevCommand } from "../src/wave2.js";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -92,11 +92,9 @@ describe("X26: commit-trailer enforcement as a harness gate", () => {
     const k = { repoPath: root, log, cardStore: new CardStore(db, log) };
     // The initial commit has no trailers: the range check names it.
     expect(
-      await runWave2Command("trailers", ["HEAD~1..HEAD"], k, { print: (l) => lines.push(l) }),
+      await runDevCommand("trailers", ["HEAD~1..HEAD"], k, { print: (l) => lines.push(l) }),
     ).toBe(0);
-    expect(await runWave2Command("trailers", ["HEAD~1"], k, { print: (l) => lines.push(l) })).toBe(
-      1,
-    );
-    expect(lines.at(-1)).toMatch(/1 commit\(s\) without the attribution trailers/);
+    expect(await runDevCommand("trailers", ["HEAD~1"], k, { print: (l) => lines.push(l) })).toBe(1);
+    expect(lines.at(-1)).toMatch(/1 commit without the attribution trailers/);
   });
 });

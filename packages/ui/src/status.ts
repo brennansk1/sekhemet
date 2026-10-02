@@ -12,7 +12,15 @@
  * code or gate id. No per-person count, rate or ranking (DB-N9-7).
  * `web/status.js` renders this; the browser loads it as `/app/lib/status.js`.
  */
-import { type CycleLike, activeCycle, formatHours, formatShortDate, percentile } from "./pm.js";
+import { reviewItHref } from "./learn.js";
+import {
+  type CycleLike,
+  activeCycle,
+  cycleProgress,
+  formatHours,
+  formatShortDate,
+  percentile,
+} from "./pm.js";
 import { startRequestLine } from "./teammates.js";
 import { formatWait, parseTitle, plural, stopReasonLabel } from "./vocabulary.js";
 
@@ -67,6 +75,14 @@ export interface StatusFacts {
   canPostUpdate: boolean;
   /** The viewer may unpark an issue (the `review` permission, a Member's; always in Solo). */
   canUnpark: boolean;
+  /**
+   * The viewer is one of the people the project's Accept rule names (teams
+   * item 7; FINDINGS STA-02): every issue in review needs them. Always true
+   * in Solo. Absent from an older server: the owner rule decides.
+   */
+  mayAccept?: boolean;
+  /** The names of the people who may accept, for an issue waiting on someone else. */
+  accepters?: string[];
   /** Monte Carlo over issue throughput (planner-pm §2.6 item 3): day counts, never one date. */
   forecast: {
     /** Open issues of the project. */
@@ -147,6 +163,8 @@ export interface StatusInput {
   signals?: SignalLike[] | null;
   /** `GET /api/queue/standing`. */
   standing?: { place: number; estimateSeconds: number }[] | null;
+  /** The viewer manages the work: *Review it* opens the criteria view (NEW-dashboard-17). */
+  managesWork?: boolean;
 }
 
 // --- Output ------------------------------------------------------------------
@@ -236,8 +254,19 @@ export interface StatusView {
   forecast: { band?: { from: string; to: string }; target?: string };
   needsYou: { items: NeedsYouItem[]; empty: string };
   waiting: { items: string[]; empty: string } | null;
+  /**
+   * By release, each with the count its key number uses (FINDINGS STA-01),
+   * and in each release by MoSCoW group.
+   */
   requirements: {
-    groups: { label: string; summary: string; rows: RequirementRow[] }[];
+    releases: {
+      name: string;
+      /** *1 of 3 requirements done*: the release's Must haves, as the key number counts them. */
+      summary: string;
+      /** The release the key number and the burn-up are about. */
+      current: boolean;
+      groups: { label: string; summary: string; rows: RequirementRow[] }[];
+    }[];
     empty?: string;
   };
   risks: { items: RiskItem[]; empty: string };
@@ -302,7 +331,7 @@ export const STATUS_COPY = {
   cancel: "Cancel",
   posted: "Update posted.",
   loadingDraft: "Seshat is drafting the update…",
-  extendLabel: "New appetite, in issues",
+  extendLabel: "New size limit, in issues",
   save: "Save",
   askLabel: "Ask Seshat about this project",
   askPlaceholder: "How is it going? What's at risk?",
@@ -311,8 +340,9 @@ export const STATUS_COPY = {
   notOnServer: "Status isn't on this server yet.",
   notOnServerDetail: "Update Sekhemet and restart it.",
   loadFailed: "Couldn't load the project's facts.",
-  loadFailedDetail:
-    "Health, the update, the forecast and the flow are missing below. Reload the page to try again.",
+  loadFailedDetail: "Health, the update, the forecast and the flow are missing below.",
+  tryAgain: "Try again",
+  askEmpty: "Type a question for Seshat first.",
 } as const;
 
 export const HEALTH_LABELS: Record<HealthValue, { label: string; tone: StatusTone }> = {
@@ -418,8 +448,10 @@ export function allDone(fc: StatusFacts["forecast"] | undefined): boolean {
 
 /**
  * The current release: the first on the story map not done yet (the first
- * when every release is done), with its requirements done out of those not
- * cut. *Tests too weak* is never done. Status and Projects share it.
+ * when every release is done), with its requirements done: its Must have
+ * requirements proven, of those not cut — the planner's count
+ * (`provenLine`, *requirements done*), so Status, Projects and Seshat's
+ * /status say one number (FINDINGS STA-01). *Tests too weak* is never done.
  */
 export function currentRelease(slices: StatusSliceLike[]):
   | {
@@ -439,15 +471,82 @@ export function currentRelease(slices: StatusSliceLike[]):
   const slice = slices[index];
   if (!slice) return undefined;
   const live = slice.requirements.filter((r) => r.state !== "cut");
+  const must = live.filter((r) => r.mustHave);
   return {
     slice,
     name: releaseName(slice, index),
-    done: live.filter((r) => r.state === "proven").length,
-    total: live.length,
+    done: must.filter((r) => r.state === "proven").length,
+    total: must.length,
     live,
-    weak: live.filter((r) => r.state === "passing_strength_unmet").length,
+    weak: must.filter((r) => r.state === "passing_strength_unmet").length,
     suspect: live.filter((r) => r.state === "suspect"),
   };
+}
+
+/** A release's Must haves done, in the planner's words: *1 of 3 requirements done*. */
+function doneLine(done: number, total: number): string {
+  return `${done} of ${plural(total, "requirement")} done`;
+}
+
+/**
+ * The key number *requirements done* (§2.8.2) in words, as Status shows it
+ * and Seshat's /status says it (FINDINGS STA-01): the current release's Must
+ * haves, with those whose tests are too weak and those to re-check named.
+ */
+export function requirementsWords(slices: StatusSliceLike[]): { value: string; detail?: string } {
+  const release = currentRelease(slices);
+  if (!release) return { value: "None yet", detail: "Accept a brief with Seshat to list them." };
+  const others = release.live.length - release.total;
+  const detail = [
+    "Must have requirements.",
+    release.weak ? `${release.weak} with tests too weak, not counted as done.` : "",
+    release.suspect.length
+      ? `To re-check since a change: ${release.suspect.map((r) => r.title?.trim() || "an untitled requirement").join(", ")}.`
+      : "",
+    others > 0 ? "Should and Could have requirements are listed below and not counted." : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return { value: `${release.name} · ${doneLine(release.done, release.total)}`, detail };
+}
+
+/**
+ * The forecast key number in words (§2.8.2, DB-N9-3): a range with the
+ * target, *All issues done*, or *Not enough history yet* — never one date.
+ * Status, Projects and Seshat's /status and /forecast say these words
+ * (FINDINGS STA-01).
+ */
+export function forecastWords(
+  fc: StatusFacts["forecast"] | undefined,
+  now: number,
+  targetDate?: string,
+): { value: string; detail: string } {
+  const targetNote = targetDate ? ` Target ${formatShortDate(targetDate)}.` : "";
+  if (fc && allDone(fc)) {
+    return {
+      value: "All issues done",
+      detail: `${plural(fc.finished, "issue")} finished in the last ${plural(fc.historyDays, "day")}; none left.${targetNote}`,
+    };
+  }
+  const dates = forecastDates(fc, now);
+  if (fc && dates) {
+    const targetWords = targetDate ? `target ${formatShortDate(targetDate)}` : "no target set";
+    return {
+      value: `50% ${formatShortDate(dates.p50)} · 85% ${formatShortDate(dates.p85)} · ${targetWords}`,
+      detail: `From ${plural(fc.historyDays, "day")} of finished issues; ${plural(fc.remaining, "issue")} left.`,
+    };
+  }
+  const have = fc?.historyDays ?? 0;
+  const need = fc?.minimum ?? 5;
+  return {
+    value: "Not enough history yet",
+    detail: `A range needs ${plural(need, "day")} of history with finished issues: ${plural(have, "day")} so far, ${fc?.finished ?? 0} finished.${targetNote}`,
+  };
+}
+
+/** A sprint's whole days left, today included: the board's sprint header's count (`cycleProgress`). */
+export function sprintDaysLeft(cycle: CycleLike, now: number): number {
+  return cycleProgress(cycle, [], now).daysLeft;
 }
 
 // --- Signals as risks (planner-pm §2.12, §2.18) --------------------------------
@@ -571,40 +670,18 @@ export function statusModel(input: StatusInput): StatusView {
   // 2. Key numbers. The forecast is a range or *Not enough history yet*, never one date.
   const fc = facts?.forecast;
   const forecast: StatusView["forecast"] = {};
-  let forecastNumber: KeyNumber;
   const dates = forecastDates(fc, now);
   // The current release's target date, as a person set it (DB-N9-3): the line on the
   // burn-up and the last part of the forecast, never a date the forecast made.
   const targetDate = facts?.target?.date;
   if (targetDate) forecast.target = targetDate;
-  const targetWords = targetDate ? `target ${formatShortDate(targetDate)}` : "no target set";
-  const targetNote = targetDate ? ` Target ${formatShortDate(targetDate)}.` : "";
-  if (fc && allDone(fc)) {
-    forecastNumber = {
-      id: "forecast",
-      label: "Forecast",
-      value: "All issues done",
-      detail: `${plural(fc.finished, "issue")} finished in the last ${plural(fc.historyDays, "day")}; none left.${targetNote}`,
-    };
-  } else if (fc && dates) {
-    const { p50, p85 } = dates;
-    forecast.band = { from: p50, to: p85 };
-    forecastNumber = {
-      id: "forecast",
-      label: "Forecast",
-      value: `50% ${formatShortDate(p50)} · 85% ${formatShortDate(p85)} · ${targetWords}`,
-      detail: `From ${plural(fc.historyDays, "day")} of finished issues; ${plural(fc.remaining, "issue")} left.`,
-    };
-  } else {
-    const have = fc?.historyDays ?? 0;
-    const need = fc?.minimum ?? 5;
-    forecastNumber = {
-      id: "forecast",
-      label: "Forecast",
-      value: "Not enough history yet",
-      detail: `A range needs ${plural(need, "day")} of history with finished issues: ${plural(have, "day")} so far, ${fc?.finished ?? 0} finished.${targetNote}`,
-    };
-  }
+  if (fc && dates) forecast.band = { from: dates.p50, to: dates.p85 };
+  // The words Seshat's /status and /forecast say too (STA-01).
+  const forecastNumber: KeyNumber = {
+    id: "forecast",
+    label: "Forecast",
+    ...forecastWords(fc, now, targetDate),
+  };
 
   // Requirements (§2.8.5), from the requirement graph's story map.
   const blockedCard = (id: string) => {
@@ -620,65 +697,70 @@ export function statusModel(input: StatusInput): StatusView {
         seen.add(r.id);
         reqs.push(r);
       }
-  const groups = (["Must have", "Should have", "Could have"] as const)
-    .map((label) => {
-      const rows: RequirementRow[] = reqs
-        .filter((r) => moscowOf(r) === label)
-        .map((r) => {
-          const state = requirementWord(r, blockedCard);
-          return {
-            id: r.id,
-            title: r.title?.trim() || "Untitled requirement",
-            state,
-            ...REQUIREMENT_WORDS[state],
-          };
-        });
-      const summary = WORD_ORDER.map((w) => [w, rows.filter((r) => r.state === w).length] as const)
-        .filter(([, n]) => n > 0)
-        .map(([w, n]) => `${n} ${REQUIREMENT_WORDS[w].label.toLowerCase()}`)
-        .join(" · ");
-      return { label, summary, rows };
+  const groupsOf = (list: StatusRequirementLike[]) =>
+    (["Must have", "Should have", "Could have"] as const)
+      .map((label) => {
+        const rows: RequirementRow[] = list
+          .filter((r) => moscowOf(r) === label)
+          .map((r) => {
+            const state = requirementWord(r, blockedCard);
+            return {
+              id: r.id,
+              title: r.title?.trim() || "Untitled requirement",
+              state,
+              ...REQUIREMENT_WORDS[state],
+            };
+          });
+        const summary = WORD_ORDER.map(
+          (w) => [w, rows.filter((r) => r.state === w).length] as const,
+        )
+          .filter(([, n]) => n > 0)
+          .map(([w, n]) => `${n} ${REQUIREMENT_WORDS[w].label.toLowerCase()}`)
+          .join(" · ");
+        return { label, summary, rows };
+      })
+      .filter((g) => g.rows.length > 0);
+  // By release, each counted as its key number counts it (STA-01): a requirement
+  // shows under the first release that lists it.
+  const listed = new Set<string>();
+  const currentIndex = Math.max(
+    0,
+    slices.findIndex((x) => x.state !== "done"),
+  );
+  const releases = slices
+    .map((sl, i) => {
+      const live = sl.requirements.filter(
+        (r) => r.state !== "cut" && reqs.includes(r) && !listed.has(r.id),
+      );
+      for (const r of live) listed.add(r.id);
+      const must = live.filter((r) => r.mustHave);
+      return {
+        name: releaseName(sl, i),
+        summary: doneLine(must.filter((r) => r.state === "proven").length, must.length),
+        current: i === currentIndex,
+        groups: groupsOf(live),
+      };
     })
-    .filter((g) => g.rows.length > 0);
+    .filter((r) => r.groups.length > 0);
   const requirements: StatusView["requirements"] =
     input.storyMap && reqs.length > 0
-      ? { groups }
+      ? { releases }
       : {
-          groups: [],
+          releases: [],
           empty:
             "No requirements yet. Seshat lists them when a person accepts the project's brief.",
         };
 
   const release = currentRelease(slices);
-  let requirementsNumber: KeyNumber;
+  const requirementsNumber: KeyNumber = {
+    id: "requirements",
+    label: "Requirements",
+    ...requirementsWords(slices),
+  };
   let appetite: string | undefined;
-  if (release) {
-    const { slice: current, live, weak, suspect } = release;
-    const detail = [
-      weak ? `${weak} with tests too weak, not counted as done.` : "",
-      suspect.length
-        ? `Suspect since a change: ${suspect.map((r) => r.title?.trim() || "an untitled requirement").join(", ")}.`
-        : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
-    requirementsNumber = {
-      id: "requirements",
-      label: "Requirements",
-      value: `${release.name} · ${release.done} of ${plural(release.total, "requirement")} done`,
-      ...(detail ? { detail } : {}),
-    };
-    if (current.appetite?.cards) {
-      const used = new Set(live.flatMap((r) => r.cards.map((c) => c.id))).size;
-      appetite = `Appetite used: ${used} of ${plural(current.appetite.cards, "issue")}.`;
-    }
-  } else {
-    requirementsNumber = {
-      id: "requirements",
-      label: "Requirements",
-      value: "None yet",
-      detail: "Accept a brief with Seshat to list them.",
-    };
+  if (release?.slice.appetite?.cards) {
+    const used = new Set(release.live.flatMap((r) => r.cards.map((c) => c.id))).size;
+    appetite = `Size limit used: ${used} of ${plural(release.slice.appetite.cards, "issue")}.`;
   }
 
   // 4. Needs you, and (Team) Waiting on others.
@@ -687,20 +769,28 @@ export function statusModel(input: StatusInput): StatusView {
   const canUnpark = facts ? facts.canUnpark !== false : true;
   // Who an item waits on: its owner, or the project's lead when it has none.
   const ownerWord = (c: StatusCardLike) =>
-    c.owner ? (c.display?.ownerName ?? "its owner") : "the project lead";
+    c.owner ? (c.display?.ownerName ?? "its assignee") : "the project lead";
   const needs: NeedsYouItem[] = [];
   const waitingItems: string[] = [];
+  // STA-02: an issue in review needs whoever the Accept rule names (DEC-36),
+  // and waits on them, by name, for anyone else.
+  const accepts = (c: StatusCardLike) =>
+    facts?.mayAccept !== undefined ? facts.mayAccept : mine(c);
+  const reviewers = facts?.accepters?.length ? facts.accepters.join(" or ") : "";
   for (const c of work.filter((x) => x.status === "review")) {
-    if (mine(c)) {
+    if (accepts(c)) {
       needs.push({
         kind: "review",
         text: `${titleOf(c.title)} is waiting for your review.`,
-        buttons: [{ label: "Review it", href: `#/review/${c.id}` }],
+        buttons: [{ label: "Review it", href: reviewItHref(c.id, input.managesWork === true) }],
       });
     } else {
-      const who = ownerWord(c);
       const waited = c.updatedAt ? ` · ${formatWait(now - Date.parse(c.updatedAt))}` : "";
-      waitingItems.push(`${titleOf(c.title)} · waiting for ${who}'s review${waited}`);
+      waitingItems.push(
+        reviewers
+          ? `${titleOf(c.title)} · waiting for review by ${reviewers}${waited}`
+          : `${titleOf(c.title)} · waiting for ${ownerWord(c)}'s review${waited}`,
+      );
     }
   }
   // The standup is the workspace's: only this page's issues, and a question
@@ -742,7 +832,7 @@ export function statusModel(input: StatusInput): StatusView {
     needs.push({
       kind: "parked",
       text: `${titleOf(c.title)} is on hold.${why ? ` ${why}` : ""}`,
-      buttons: [{ label: "Unpark", act: "unpark", id: c.id }],
+      buttons: [{ label: "Take off hold", act: "unpark", id: c.id }],
     });
   }
   if (isLead) {
@@ -770,7 +860,7 @@ export function statusModel(input: StatusInput): StatusView {
       if (!buttons.length) buttons.push({ label: "Ask Seshat", href: "#/pm" });
       needs.push({
         kind: "slice",
-        text: `${releaseName(s, i)} reached its appetite with ${
+        text: `${releaseName(s, i)} reached its size limit with ${
           open
             ? `${open} of ${must.length} Must have requirements not done`
             : "every Must have requirement done"
@@ -795,17 +885,31 @@ export function statusModel(input: StatusInput): StatusView {
     ? {
         id: "sprint",
         label: "Sprint",
+        // The board's count, today included (STA-01): its last day reads *ends today*.
         value: (() => {
-          const left = Math.max(0, dayNumber(cycle.endsOn) - dayNumber(isoDay(now)));
-          return `${cycle.name} · ${left === 0 ? "ends today" : `${plural(left, "day")} left`}`;
+          const left = sprintDaysLeft(cycle, now);
+          return `${cycle.name} · ${left <= 1 ? "ends today" : `${plural(left, "day")} left`}`;
         })(),
       }
     : { id: "sprint", label: "Sprint", value: "No sprint running" };
 
+  // The count says what it leaves out, so it reads against the board's tiles (STA-01).
+  const epics = cards.filter((c) => c.tier === "epic" || c.tier === "initiative").length;
+  const wontDo = cards.filter((c) => isWork(c) && c.status === "rejected").length;
+  const left = [
+    epics ? plural(epics, "epic") : "",
+    wontDo ? `${wontDo} won't do ${wontDo === 1 ? "issue" : "issues"}` : "",
+  ].filter(Boolean);
+  const issuesNumber: KeyNumber = {
+    id: "issues",
+    label: "Issues done",
+    value: `${done} of ${work.length}`,
+    ...(left.length ? { detail: `Not counted: ${left.join(" and ")}.` } : {}),
+  };
   const numbers: KeyNumber[] = [
     forecastNumber,
     requirementsNumber,
-    { id: "issues", label: "Issues done", value: `${done} of ${work.length}` },
+    issuesNumber,
     sprintNumber,
     { id: "attention", label: "Needs attention", value: String(needs.length), jump: "needs" },
   ];
@@ -897,7 +1001,11 @@ export function statusModel(input: StatusInput): StatusView {
         value: `${perWeek} ${perWeek === 1 ? "issue" : "issues"} a week`,
         href: INSIGHTS,
       },
-      { label: "Sent back", value: `${facts?.flow.sentBack ?? 0} in ${days} days`, href: INSIGHTS },
+      {
+        label: "Changes requested",
+        value: `${facts?.flow.sentBack ?? 0} in ${days} days`,
+        href: INSIGHTS,
+      },
       {
         label: "Checks passed first time",
         value: ft.total

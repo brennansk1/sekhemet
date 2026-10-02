@@ -9,8 +9,8 @@ import type {
   ChatTurn,
   InferenceResponse,
   LocalInferenceAdapter,
-  ToolArm,
   ToolCall,
+  ToolCallFormat,
   ToolDefinition,
 } from "./types.js";
 
@@ -286,7 +286,7 @@ function toolList(): string {
   ).join("\n");
 }
 
-export function qualificationSystemPrompt(arm: ToolArm): string {
+export function qualificationSystemPrompt(arm: ToolCallFormat): string {
   return [
     qualificationCopy.identity,
     `${qualificationCopy.toolsHeading}\n${toolList()}`,
@@ -331,7 +331,7 @@ export interface CaseResult {
 
 export interface QualificationResult {
   modelId: string;
-  arm: ToolArm;
+  arm: ToolCallFormat;
   suiteVersion: string;
   /** Mean of the case pass rate and the schema-validity rate. */
   passRate: number;
@@ -434,7 +434,7 @@ export function exactInterval(k: number, n: number, alpha = 0.05): { low: number
 export async function runQualification(
   adapter: LocalInferenceAdapter,
   options: {
-    arm?: ToolArm;
+    arm?: ToolCallFormat;
     cases?: QualificationCase[];
     bar?: number;
     /** A measurement arm's sampling; unset, the adapter's own. Only temperature is per request. */
@@ -562,7 +562,7 @@ export async function qualifyModel(
   adapter: LocalInferenceAdapter,
   options: {
     registry?: ModelRegistry;
-    arms?: ToolArm[];
+    arms?: ToolCallFormat[];
     bar?: number;
     kvType?: string;
     cases?: QualificationCase[];

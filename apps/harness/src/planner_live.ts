@@ -28,12 +28,13 @@ import {
   waitingReason,
   workerDegradation,
 } from "@sekhemet/planner";
+import { plural } from "@sekhemet/ui";
 import { resolveConfig } from "./config.js";
 import { ledgerOutcomes } from "./pm/capability.js";
 import { stepBudgetSummary } from "./pm/pm_copy.js";
 import { PmStore } from "./pm/store.js";
 import { type AutoApplyRule, autoApplySuggestion } from "./pm/suggest.js";
-import type { Kernel } from "./wave2.js";
+import type { RepoContext } from "./wave2.js";
 
 /**
  * The planner's live rules carried out on the board (planner-pm §2.11–2.12,
@@ -46,7 +47,7 @@ import type { Kernel } from "./wave2.js";
 
 export type Setup = "solo" | "team";
 
-const ledgerOf = (k: Kernel): PlannerLedger => ({
+const ledgerOf = (k: RepoContext): PlannerLedger => ({
   store: k.cardStore,
   log: k.log,
   ...(k.boardService ? { board: k.boardService } : {}),
@@ -196,7 +197,7 @@ export interface GatedReplanResult extends GoalReplanOutcome {
  * as the Replan session applies it.
  */
 export async function gatedReplan(
-  k: Kernel,
+  k: RepoContext,
   planner: SpidrFeaturePlanner,
   input: GatedReplanInput,
 ): Promise<GatedReplanResult> {
@@ -252,7 +253,7 @@ export async function gatedReplan(
 
 /** A re-plan in Seshat's thread: the reason paragraph, then the diff (PM-N4-5). */
 export async function postReplan(
-  k: Kernel,
+  k: RepoContext,
   reason: string,
   diff: PlanDiff,
   suggested: readonly string[] = [],
@@ -349,7 +350,7 @@ export function environmentChange(before: string | undefined, now: string): stri
  * c8 and nyc write); from the log, `errors` — the gates whose latest
  * result is failing.
  */
-export async function goalMetrics(k: Kernel): Promise<Record<string, number>> {
+export async function goalMetrics(k: RepoContext): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
   try {
     const summary = JSON.parse(
@@ -376,7 +377,7 @@ export async function goalMetrics(k: Kernel): Promise<Record<string, number>> {
  * Seshat's thread (PM-N4-5).
  */
 export async function evaluateGoals(
-  k: Kernel,
+  k: RepoContext,
   options: {
     planner: () => Promise<SpidrFeaturePlanner>;
     setup?: Setup;
@@ -424,7 +425,7 @@ export const GOAL_HOUR_MS = 3_600_000;
  * or when an hour has passed with none.
  */
 export function startGoalTicker(
-  k: Kernel,
+  k: RepoContext,
   options: {
     everyMs?: number;
     hourMs?: number;
@@ -475,13 +476,13 @@ export function startGoalTicker(
 /** A response already made for this key (so a pass does not repeat a proposal). */
 const RESPONDED = "signal/responded";
 
-async function respondedBefore(k: Kernel, key: string): Promise<boolean> {
+async function respondedBefore(k: RepoContext, key: string): Promise<boolean> {
   return (await k.log.getEventsByTypes([RESPONDED])).some(
     (e) => (e.payload as { key?: string }).key === key,
   );
 }
 
-async function markResponded(k: Kernel, signal: string, key: string): Promise<void> {
+async function markResponded(k: RepoContext, signal: string, key: string): Promise<void> {
   await k.log.append({ actor: "planner", type: RESPONDED, payload: { signal, key } });
 }
 
@@ -491,7 +492,7 @@ const keyOf = (ids: readonly string[]) => sha([...ids].sort().join(",")).slice(0
  * Each planned epic's first plan and every story any later version made,
  * from the plan events (scope drift's input, PM-N5-1).
  */
-export async function plannedEpics(k: Kernel): Promise<PlannedEpic[]> {
+export async function plannedEpics(k: RepoContext): Promise<PlannedEpic[]> {
   const byEpic = new Map<string, { original: string[]; planned: string[] }>();
   for (const e of await k.log.getEventsByTypes(["plan/created", "plan/replanned"])) {
     const p = e.payload as { epicId?: string; stories?: { id: string }[] };
@@ -535,7 +536,7 @@ export function degradationRisk(repoPath: string): string | undefined {
  * Returns the cards held this pass.
  */
 export async function respondToSignals(
-  k: Kernel,
+  k: RepoContext,
   fired: readonly SignalReading[],
   options: {
     setup: Setup;
@@ -609,9 +610,9 @@ export async function respondToSignals(
               question: `Has the goal grown? ${s.detail} (${Math.round(s.value * 100)}% over the plan). Held until you answer: ${targets.join(", ")}.`,
               options: [
                 {
-                  label: "Yes, it has grown: release the added cards",
-                  consequence: "The added cards return to Ready and the forecast grows.",
-                  effortDelta: `+${targets.length} cards`,
+                  label: "Yes, it has grown: release the added issues",
+                  consequence: "The added issues return to To do and the forecast grows.",
+                  effortDelta: `+${plural(targets.length, "issue")}`,
                   riskNote: "The plan's date moves.",
                 },
                 {
@@ -671,7 +672,7 @@ export async function respondToSignals(
           }
         }
         options.say(
-          `Scope drift on ${s.epicId}: ${held.size} card(s) held; asked whether the goal has grown.`,
+          `Scope drift on ${s.epicId}: ${plural(held.size, "issue")} held; asked whether the goal has grown.`,
         );
         break;
       }
@@ -690,7 +691,7 @@ export async function respondToSignals(
         if (await respondedBefore(k, key)) break;
         await pm.appendReply({
           replyTo: [],
-          text: `Cycle time is congested (${s.detail}). Suggested: a step budget of ${budget} for ${over.length} Ready card(s). Why: cards that reached Review used at most ${p90} steps (p90); a larger budget lets a stuck card hold a slot far longer than the rest.`,
+          text: `Cycle time is congested (${s.detail}). Suggested: a step budget of ${budget} for ${plural(over.length, "issue")} in To do. Why: issues that reached In review used at most ${p90} steps (p90); a larger budget lets a stuck issue hold a slot far longer than the rest.`,
           proposals: over.map((c) => ({
             kind: "update_card" as const,
             summary: stepBudgetSummary(c.id, c.stepBudget, budget),
@@ -703,7 +704,9 @@ export async function respondToSignals(
           model: "planner",
         });
         await markResponded(k, s.id, key);
-        options.say(`Proposed a step budget of ${budget} for ${over.length} Ready card(s).`);
+        options.say(
+          `Proposed a step budget of ${budget} for ${plural(over.length, "issue")} in To do.`,
+        );
         break;
       }
       case "dispatch_verification_spike": {

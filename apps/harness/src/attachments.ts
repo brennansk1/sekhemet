@@ -8,6 +8,7 @@ import {
   extractJsonObject,
   stripReasoning,
 } from "@sekhemet/models";
+import { plural } from "@sekhemet/ui";
 
 /**
  * Multimodal card input (X3, design "Multimodal input"). Cards accept images
@@ -221,7 +222,7 @@ export async function visionPrePass(
   if (pending.length === 0) return 0;
   if (!deps.modelName) {
     deps.say?.(
-      `${pending.length} issue(s) have images but no vision model is configured ([models] vision, or a registry entry with the vision role): ${pending.map((c) => c.id).join(", ")}`,
+      `${plural(pending.length, "issue")} ${pending.length === 1 ? "has" : "have"} images but no vision model is configured ([models] vision, or a model in Sekhemet's list with the vision role): ${pending.map((c) => c.id).join(", ")}`,
     );
     return 0;
   }
@@ -231,7 +232,7 @@ export async function visionPrePass(
     for (const card of pending) {
       const d = await describeAttachments(repo, store, card, model);
       n += d.length;
-      deps.say?.(`Vision: ${card.id}: ${d.length} image(s) described by ${model.modelId}.`);
+      deps.say?.(`Vision: ${card.id}: ${plural(d.length, "image")} described by ${model.modelId}.`);
     }
   } finally {
     await deps.release?.(model);

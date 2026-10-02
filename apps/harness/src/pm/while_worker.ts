@@ -1,7 +1,7 @@
 import type { CardRecord } from "@sekhemet/kernel";
-import { type LocalInferenceAdapter, plannerCopy } from "@sekhemet/models";
+import { type LocalInferenceAdapter, plannerCopy, stripReasoning } from "@sekhemet/models";
 import { guardCompletionClaim } from "@sekhemet/planner";
-import { type PmSnapshot, isStatusQuestion, ledgerStandup, stripThinking } from "./agent.js";
+import { type PmSnapshot, isStatusQuestion, ledgerStandup } from "./agent.js";
 import { SESHAT_DATA, SESHAT_FACTS, SESHAT_LEDGER_ANSWERS } from "./pm_copy.js";
 import type { PmCite, PmMessage } from "./types.js";
 
@@ -71,7 +71,7 @@ const minutes = (ms: number) => Math.max(1, Math.round(ms / 60_000));
 export function waitInWords(w: SeshatWait): string {
   const n = minutes(w.waitMs);
   const why: string[] = [];
-  if (w.stepMs !== undefined && w.stepMs > 0) why.push("the agent is finishing a step");
+  if (w.stepMs !== undefined && w.stepMs > 0) why.push("the Agent is finishing a step");
   if (w.switchMs !== undefined && w.switchMs > 0)
     why.push(
       w.switchMs < 60_000
@@ -82,7 +82,7 @@ export function waitInWords(w: SeshatWait): string {
   return why.length ? `${head}: ${why.join(", and ")}.` : `${head}.`;
 }
 
-const FROM_LEDGER = "\n\n_Answered from the ledger without loading a model._";
+const FROM_LEDGER = "\n\n_Answered from the Activity log without loading a model._";
 
 const name = (c: CardRecord) => `${c.title} (\`${c.id}\`)`;
 
@@ -188,7 +188,7 @@ export async function quickAnswer(
     task: "quick_answer",
   });
   // PM-P13-6: a quick answer's claim of "complete" counts for no more than a full one's.
-  const text = guardCompletionClaim(stripThinking(res.text).trim(), snapshot.storyMap).text;
+  const text = guardCompletionClaim(stripReasoning(res.text).trim(), snapshot.storyMap).text;
   return `Quick answer (${modelName}), informational only; the full answer follows.\n\n${text}`;
 }
 

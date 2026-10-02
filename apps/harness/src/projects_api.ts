@@ -91,7 +91,9 @@ export async function projectsOverview(deps: {
       since: since(c),
       ...extra,
     });
-    for (const c of own.filter((x) => x.status === "review" && mine(x))) {
+    // STA-02: an issue in review waits on whoever the Accept rule names (Status's rule).
+    const accepts = (c: CardRecord) => facts.mayAccept ?? mine(c);
+    for (const c of own.filter((x) => x.status === "review" && accepts(x))) {
       here.push(item(c, "review"));
     }
     for (const d of pending) {
@@ -125,6 +127,8 @@ export async function projectsOverview(deps: {
     projects.push({
       id: project.id,
       name: project.name,
+      // The project switcher's tooltip (DB-N25-1): the path, never the sidebar's text.
+      rootPath: project.rootPath,
       state: await store.projectRollup(project.id),
       lead: leadId ? nameFor(a, leadId, me) : team ? null : "you",
       health: facts.health ?? null,

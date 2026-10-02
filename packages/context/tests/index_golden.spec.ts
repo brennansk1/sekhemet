@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildRankedRepoMap, outlineFile } from "../src/ranked_repo_map.js";
-import { extractSymbolOutline } from "../src/repo_map.js";
+import { extractSymbolOutline } from "../src/symbol_outline.js";
 
 /**
  * Characterization of the context package's own source readers, recorded

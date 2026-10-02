@@ -308,7 +308,7 @@ function defaultHeadroomProbe(): HeadroomProbe | undefined {
   if (process.platform !== "darwin") return undefined;
   return createDarwinHeadroomProbe({
     watch: [
-      { port: 8098, name: "llama-server (Worker)", ours: true },
+      { port: 8098, name: "llama-server (Coding model)", ours: true },
       { port: 8080, name: "Hermes", ours: false },
     ],
     ollamaUrl: "http://127.0.0.1:11434",
@@ -350,7 +350,7 @@ export function queueSwapMode(
   if (night && !argv.includes("--permit-loads"))
     return {
       refused:
-        "A calibration night loads models as the policy chooses: the owner permits it with --permit-loads (DEC-42; the host limits are still checked before each load).",
+        "A calibration night loads models as the policy chooses: the owner permits it with --permit-loads (the host limits are still checked before each load).",
     };
   if (night) return { mode: "calibration" };
   if (marker) return { mode: "measurement" };
@@ -404,7 +404,7 @@ export async function calibrationLoadModeAbs(
     const cal = scheduler.calibrationAdapter(model);
     const adapter = cal?.adapter;
     if (!cal || !adapter?.load || !adapter.unload || adapter.engine !== "llama.cpp") {
-      skipped.push({ model, reason: "not a llama.cpp model the harness loads" });
+      skipped.push({ model, reason: "not a llama.cpp model Sekhemet loads" });
       continue;
     }
     const source = await adapter.weightsSource?.().catch(() => undefined);
@@ -429,7 +429,7 @@ export async function calibrationLoadModeAbs(
           ...(deps.perMode !== undefined ? { perMode: deps.perMode } : {}),
           load: async (mode) => {
             const verdict = dec42HostCheck(await deps.host());
-            if (!verdict.ok) throw new Error(`DEC-42: not loading ${model}: ${verdict.reason}`);
+            if (!verdict.ok) throw new Error(`Not loading ${model}: ${verdict.reason}`);
             const outcome = await adapter.load?.(undefined, { loadMode: mode });
             ours = outcome === "loaded";
             // A server already running is adopted, not loaded: nothing to time.

@@ -39,7 +39,7 @@ describe("owner: and delegate: queries (DB-N5-5)", () => {
 
   it("assignee: means the owner", () => {
     expect(parseQuery("assignee:@me")).toEqual(parseQuery("owner:@me"));
-    expect(formatQuery(parseQuery("assignee:@me"))).toBe("owner:@me");
+    expect(formatQuery(parseQuery("owner:@me"))).toBe("assignee:@me");
     expect(ids("assignee:@me")).toEqual(["c_mine_worker"]);
   });
 

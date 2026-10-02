@@ -34,7 +34,13 @@ import {
 } from "./registry.js";
 import { type ErasureView, type SlotKey, SlotStore, defaultSlotCacheDir } from "./slot_state.js";
 import { DEFAULT_READ_BYTES_PER_SECOND } from "./swap_cost.js";
-import type { AdapterHealth, InferenceRequest, ModelRole, TokenUsage, ToolArm } from "./types.js";
+import type {
+  AdapterHealth,
+  InferenceRequest,
+  ModelRole,
+  TokenUsage,
+  ToolCallFormat,
+} from "./types.js";
 
 /**
  * The GGUF each managed profile expects, as a name inside the user's models
@@ -101,7 +107,7 @@ export interface LlamaServerProfile {
   /** Grammar-constrained tool calls (M8); see `HttpAdapterOptions`. */
   constrainedToolCalls?: boolean;
   /** Measured tool arm (M9). */
-  preferredToolArm?: ToolArm;
+  preferredToolArm?: ToolCallFormat;
   /**
    * The model registry (M11, M12). Also decides MTP when it holds a
    * speculative-decoding measurement for this model on this host (M19).
@@ -438,7 +444,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     if (!q || this.cacheSettings() === undefined) {
       return {
         enabled: false,
-        reason: `not qualified with ${label} on and prefix caching on for this launch (MD-N8-2)`,
+        reason: `not qualified with ${label} on and prefix caching on for this launch`,
       };
     }
     if (q.status !== "qualified" || q.toolCallChecks === false) {

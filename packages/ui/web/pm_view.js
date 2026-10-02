@@ -44,7 +44,7 @@ function railHtml() {
     ? `${s.verification.totalEvents} entries${s.verification.valid === false ? " · altered" : " · intact"}`
     : "Checking…";
   // The model is named in Configuration, not beside the chat (DB-N6-14).
-  const sees = `<dl class="kv"><div><dt>Board</dt><dd>${s.cards.length} issues · live</dd></div><div><dt>Last run</dt><dd>${esc(runText)}</dd></div><div><dt>Ledger</dt><dd>${esc(ledger)}</dd></div><div><dt>Model</dt><dd><a href="#/configuration/models">In Configuration</a></dd></div></dl>`;
+  const sees = `<dl class="kv"><div><dt>Board</dt><dd>${s.cards.length} issues · live</dd></div><div><dt>Last run</dt><dd>${esc(runText)}</dd></div><div><dt>Activity log</dt><dd>${esc(ledger)}</dd></div><div><dt>Model</dt><dd>${s.pm.available === false ? "Not set up" : "Ready"} · <a href="#/configuration/models">Configuration</a></dd></div></dl>`;
 
   const l = s.learning;
   let learned;
@@ -62,14 +62,14 @@ function railHtml() {
           .join(
             "",
           )}</ul><p class="small"><a href="#/playbook/profile">See all ${top.length} and edit them in Playbook</a></p>`
-      : '<p class="sec">Nothing yet. Seshat learns from your send-back notes, the proposals you apply or discard, and the fields you change.</p>';
+      : '<p class="sec">Nothing yet. Seshat learns from your notes when you request changes, the proposals you apply or discard, and the fields you change.</p>';
     learned += '<p class="sec small">Stays on this machine. You can edit or dismiss any of it.</p>';
   } else if (l.status === 0) {
     learned = '<p class="sec">Checking…</p>';
   } else {
     learned = '<p class="sec">Arrives with an updated Sekhemet.</p>';
   }
-  return `<section><h3>Open proposals <span class="sec tnum">${open.length}</span></h3>${props}</section><section><h3>Agent</h3>${worker}</section><section><h3>What ${PM_NAME} can see</h3>${sees}<p class="sec small">${PM_NAME} reads these and proposes changes. It never edits the board itself.</p></section><section><h3>What ${PM_NAME} has learned about you</h3>${learned}</section>`;
+  return `<section><h3>Open proposals <span class="sec tnum">${open.length}</span></h3>${props}</section><section><h3>Agent</h3>${worker}</section><section><h3>What ${PM_NAME} can see</h3>${sees}<p class="sec small">${PM_NAME} reads these and proposes changes. It never edits the board itself.</p></section><section><h3>Project rules ${PM_NAME} follows</h3>${learned}</section>`;
 }
 
 export function mount(view) {

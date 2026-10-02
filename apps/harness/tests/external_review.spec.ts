@@ -16,8 +16,8 @@ import {
   runExternalReview,
   runExternalReviews,
 } from "../src/external_review.js";
+import { applyWebhookIntent } from "../src/github_routes.js";
 import { ledgerEvidenceSummary } from "../src/ledger_evidence.js";
-import { applyWebhookIntent } from "../src/wave2_server.js";
 
 const dirs: string[] = [];
 afterEach(() => {

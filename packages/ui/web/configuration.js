@@ -14,7 +14,9 @@
 import { esc, getJSON, sendJSON } from "./dom.js";
 import { setTips, storage, tipsOn } from "./learn.js";
 import { FIRST_RUN, readRole, writeRole } from "./lib/learn.js";
+import { machineLine } from "./lib/machine_tier.js";
 import { ESTIMATION_LABELS } from "./lib/pm.js";
+import { definitionOfDone } from "./lib/readiness.js";
 import {
   DENSITY_CHOICES,
   autoApplyView,
@@ -35,7 +37,7 @@ export const SECTIONS = [
   { id: "benchmark", label: "Benchmark" },
   { id: "review", label: "Review capacity" },
   { id: "preferences", label: "Preferences" },
-  { id: "project", label: "Project configuration" },
+  { id: "project", label: "Project" },
 ];
 
 /** The section a route opens (DB-N6-1). */
@@ -56,11 +58,23 @@ function readOnlyReason() {
 
 const ui = { root: null, section: "models", child: null, capacity: null, queueCap: 1 };
 
+/** One underlined tab bar, the issue page's treatment (DB-N19-5; VIS-05, CFG-07). */
 function tabsHtml() {
-  return `<nav class="cfg-tabs" aria-label="Configuration sections">${SECTIONS.map(
+  return `<nav class="tabs ptabs cfg-tabs" aria-label="Configuration sections">${SECTIONS.map(
     (s) =>
-      `<a class="btn sm" href="#/configuration/${s.id}"${s.id === ui.section ? ' aria-current="page"' : ""}>${esc(s.label)}</a>`,
+      `<a class="tab" href="#/configuration/${s.id}"${s.id === ui.section ? ' aria-current="page"' : ""}>${esc(s.label)}</a>`,
   ).join("")}</nav>`;
+}
+
+/** The machine line under the title (DB-N19-5): from `/api/machine`'s `host`. */
+async function renderMachine() {
+  const r = await getJSON("/api/machine").catch(() => ({ ok: false }));
+  const line = r.ok ? machineLine(r.data?.host) : "";
+  const host = ui.root?.querySelector(".cfg-machine");
+  if (host) {
+    host.textContent = line;
+    host.hidden = !line;
+  }
 }
 
 async function mountBenchmark(host) {
@@ -111,7 +125,7 @@ function preferencesHtml() {
     (c) =>
       `<option value="${c.value}"${density === c.value ? " selected" : ""}>${esc(c.label)}</option>`,
   ).join("");
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-preferences"><h3 id="cfg-h-preferences">Preferences</h3><div class="row"><label for="cfg-theme">Theme</label><select id="cfg-theme" data-theme-select>${opt("system", "Match the system")}${opt("dark", "Basalt (dark)")}${opt("light", "Sand (light)")}</select></div><div class="row"><label for="cfg-density">Density</label><select id="cfg-density" data-density-select aria-describedby="cfg-density-why">${dens}</select></div><p class="sec" id="cfg-density-why">Comfortable board cards add the plan's first line and the token and time bars. The theme and density apply to this browser only and need no permission.</p>${tipsHtml()}${estimationHtml()}<div data-auto-apply></div></section>`;
+  return `<section class="cfg-sec" aria-labelledby="cfg-h-preferences"><h3 id="cfg-h-preferences">Preferences</h3><div class="row"><label for="cfg-theme">Theme</label><select id="cfg-theme" data-theme-select>${opt("system", "Match the system")}${opt("dark", "Basalt (dark)")}${opt("light", "Sand (light)")}</select></div><div class="row"><label for="cfg-density">Density</label><select id="cfg-density" data-density-select aria-describedby="cfg-density-why">${dens}</select></div><p class="sec" id="cfg-density-why">Comfortable board cards add the first line of the issue's description. The theme and density apply to this browser only and need no permission.</p>${tipsHtml()}${estimationHtml()}<div data-auto-apply></div></section>`;
 }
 
 /**
@@ -174,13 +188,14 @@ function tipsHtml() {
 function estimationHtml() {
   const project = store.state.project;
   if (!project?.id) {
-    return '<h4 id="cfg-h-estimation">Estimation</h4><p class="sec">Choose a project in the sidebar to set its estimation.</p>';
+    // DB-N25-4: the project's settings are reached through the project switcher.
+    return '<h4 id="cfg-h-estimation">Estimation</h4><p class="sec">Choose a project with the project switcher, at the head of the sidebar\'s project pages, to set its estimation.</p>';
   }
   const current = store.state.estimation === "points" ? "points" : "off";
   const ro = readOnlyReason();
   const opt = (v) =>
     `<option value="${v}"${current === v ? " selected" : ""}>${esc(ESTIMATION_LABELS[v])}</option>`;
-  return `<h4 id="cfg-h-estimation">Estimation</h4><div class="row"><label for="cfg-estimation">Estimation for ${esc(project.name ?? project.id)}</label><select id="cfg-estimation" data-estimation-select aria-describedby="cfg-estimation-why"${ro ? " disabled" : ""}>${opt("off")}${opt("points")}</select></div><p class="sec" id="cfg-estimation-why">Kept for the whole project. Off, no points show on board cards, columns or reports, and work is counted in issues; Story points shows them.${ro ? ` ${esc(ro)}` : ""}</p><p class="why" role="status" data-estimation-note></p>`;
+  return `<h4 id="cfg-h-estimation">Estimation</h4><div class="row"><label for="cfg-estimation">Estimation for ${esc(project.name ?? "this project")}</label><select id="cfg-estimation" data-estimation-select aria-describedby="cfg-estimation-why"${ro ? " disabled" : ""}>${opt("off")}${opt("points")}</select></div><p class="sec" id="cfg-estimation-why">Kept for the whole project. Off, no points show on board cards, columns or reports, and work is counted in issues; Story points shows them.${ro ? ` ${esc(ro)}` : ""}</p><p class="why" role="status" data-estimation-note></p>`;
 }
 
 async function saveEstimation(value) {
@@ -211,7 +226,22 @@ function projectHtml(cfg) {
     )
     .join("");
   const problems = (cfg.problems ?? []).map((p) => `<li>${esc(p)}</li>`).join("");
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-project"><h3 id="cfg-h-project">Project configuration</h3>${queueHtml(cfg)}<h4>Values in force</h4><p class="sec">The values in force, and the file each came from. Edit the files to change them.</p><div class="tbl-wrap"><table class="tbl"><thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">From</th></tr></thead><tbody>${rows}</tbody></table></div>${problems ? `<h4>Problems</h4><ul class="cfg-warn">${problems}</ul>` : ""}</section>`;
+  // DB-N25-1: the project's repository path lives here, never in the sidebar.
+  const where = cfg.project?.rootPath
+    ? `<p class="sec">${esc(cfg.project.name)} · <span class="mono">${esc(cfg.project.rootPath)}</span></p>`
+    : "";
+  return `<section class="cfg-sec" aria-labelledby="cfg-h-project"><h3 id="cfg-h-project">Project configuration</h3>${where}${doneHtml(cfg.definitionOfDone)}${queueHtml(cfg)}<h4>Values in force</h4><p class="sec">The values in force, and the file each came from. Edit the files to change them.</p><div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">From</th></tr></thead><tbody>${rows}</tbody></table></div>${problems ? `<h4>Problems</h4><ul class="cfg-warn">${problems}</ul>` : ""}</section>`;
+}
+
+/**
+ * The Definition of done (NEW-dashboard-14, DB-N14-1), first and read-only:
+ * the checks, the strength rule and the Accept rule, as they are enforced.
+ */
+function doneHtml(facts) {
+  if (!facts) return "";
+  const v = definitionOfDone(facts);
+  const rows = v.rows.map((r) => `<dt>${esc(r.label)}</dt><dd>${esc(r.text)}</dd>`).join("");
+  return `<section class="cfg-dod" aria-labelledby="cfg-h-dod"><h4 id="cfg-h-dod">Definition of done</h4><p class="dod-sentence">${esc(v.sentence)}</p><dl>${rows}</dl><p class="sec">Read-only: it states what the checks, the project's Type and the Accept rule already enforce.</p></section>`;
 }
 
 /**
@@ -224,7 +254,7 @@ function queueHtml(cfg) {
   const v = queueCapView(cfg.config ?? {}, cfg.sources ?? {}, note ? `Read-only. ${note}` : "");
   ui.queueCap = Number(v.value);
   const dis = v.disabled ? " disabled" : "";
-  return `<h4 id="cfg-h-queue">Agent queue</h4><form class="row" data-queue-form aria-labelledby="cfg-h-queue"><label for="cfg-queue-cap">Agent issues per person</label><input id="cfg-queue-cap" type="text" inputmode="numeric" name="cap" value="${esc(v.value)}" aria-describedby="cfg-queue-why"${dis}><button class="btn" type="submit"${dis}>Save</button></form><p class="sec" id="cfg-queue-why">${esc(v.note)} From: ${esc(v.source)} <span class="mono">queue.agent_issues_per_person</span></p><p class="why" role="status" data-queue-note></p>`;
+  return `<h4 id="cfg-h-queue">Agent queue</h4><form class="row" data-queue-form aria-labelledby="cfg-h-queue"><label for="cfg-queue-cap">Agent issues per person</label><input id="cfg-queue-cap" type="text" inputmode="numeric" name="cap" value="${esc(v.value)}" aria-describedby="cfg-queue-why"${dis}><button class="btn" type="submit" aria-describedby="cfg-queue-why"${dis}>Save</button></form><p class="sec" id="cfg-queue-why">${esc(v.note)} From: ${esc(v.source)} <span class="mono">queue.agent_issues_per_person</span></p><p class="why" role="status" data-queue-note></p>`;
 }
 
 async function saveQueueCap(form) {
@@ -257,7 +287,13 @@ async function renderSection() {
   const label = SECTIONS.find((s) => s.id === ui.section)?.label ?? "";
   setTopbar({ title: "Configuration", crumb: label });
   if (ui.section === "models") {
-    const mod = await import("./config_models.js");
+    // ERR-01: a module that fails to load says so, with Try again, never a blank panel.
+    const mod = await import("./config_models.js").catch(() => null);
+    if (!mod) {
+      host.innerHTML = `<p class="stp-notice" role="alert"><b>Couldn't load Models.</b> <span class="sec">Sekhemet can't be reached. Check that it is running, then try again.</span> <button class="btn sm" type="button" data-cfg-retry>Try again</button></p>`;
+      host.querySelector("[data-cfg-retry]")?.addEventListener("click", () => renderSection());
+      return;
+    }
     ui.child = mod.mount(host, { readOnly: readOnlyReason() });
   } else if (ui.section === "benchmark") {
     ui.child = await mountBenchmark(host);
@@ -334,13 +370,14 @@ export function mount(view, parsed = { name: "configuration", params: [] }) {
   const root = document.createElement("div");
   root.className = "view-host";
   root.innerHTML =
-    '<div class="cfg"><p class="cfg-lede">Choose which models do each job, and compare them on this machine. Nothing is downloaded, loaded or run until you press the button.</p><div class="cfg-tabs-host"></div><div class="cfg-body"></div></div>';
+    '<div class="cfg"><p class="cfg-machine" hidden></p><div class="cfg-tabs-host"></div><div class="cfg-body"></div></div>';
   view.append(root);
   ui.root = root;
   ui.section = sectionFor(parsed.name, parsed.params);
   root.addEventListener("submit", onSubmit);
   root.addEventListener("change", onChange);
   renderSection();
+  void renderMachine();
   return {
     setParams(params) {
       const next = sectionFor("configuration", params);

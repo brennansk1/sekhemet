@@ -20,7 +20,7 @@ import {
 /**
  * dashboard NEW-dashboard-8 (DEC-34): the issue page for working with the
  * agent. Its pure half: the tabs, the acceptance criteria with each one's
- * check state, the agent's state and the controls it offers, the Activity
+ * check state, the Agent's state and the controls it offers, the Activity
  * timeline, and the line comments a send-back carries. Exact outputs.
  */
 
@@ -82,7 +82,7 @@ describe("DB-N8-1: acceptance criteria with each one's check state", () => {
     actual: "",
   });
 
-  it("are not checked before the agent's work has run its gates", () => {
+  it("are not checked before the Agent's work has run its gates", () => {
     expect(criteriaChecks(card, null)).toEqual({
       items: [
         {
@@ -107,7 +107,7 @@ describe("DB-N8-1: acceptance criteria with each one's check state", () => {
       passing: 0,
       total: 3,
       summary: "0 / 3",
-      note: "Checked when the agent's work runs its tests.",
+      note: "Checked when the Agent's work runs its tests.",
     });
   });
 
@@ -174,7 +174,7 @@ describe("DB-N8-1: acceptance criteria with each one's check state", () => {
   });
 });
 
-describe("DB-N8-2: the agent's state and the controls it offers", () => {
+describe("DB-N8-2: the Agent's state and the controls it offers", () => {
   const moved = (seq: number, toStatus: string) => ({
     seq,
     type: "card/status_changed",
@@ -182,15 +182,15 @@ describe("DB-N8-2: the agent's state and the controls it offers", () => {
   });
   const base = { status: "in_progress", stepsUsed: 4, stepBudget: 12 };
 
-  it("while it runs: a message box for the agent, Pause and Take over", () => {
+  it("while it runs: a message box for the Agent, Pause and Take over", () => {
     expect(agentPanel(base, [moved(1, "in_progress")])).toEqual({
       state: "working",
       label: "working",
-      sentence: "The agent is working on step 5 of 12.",
+      sentence: "The Agent is working on step 5 of 12.",
       controls: ["pause", "take_over"],
       messageBox: true,
     });
-    expect(ISSUE_COPY.messageLabel).toBe("Message the agent — it reads this at its next step");
+    expect(ISSUE_COPY.messageLabel).toBe("Message the Agent — it reads this at its next step");
   });
 
   it("after Pause is asked and before the step boundary: pausing, still reachable by message", () => {
@@ -263,7 +263,7 @@ describe("DB-N8-2: the agent's state and the controls it offers", () => {
       state: "taken_over",
       label: "paused",
       sentence:
-        "Taken over by a person. Work in the issue's worktree; the agent's work so far is on its branch.",
+        "Taken over by a person. Work in the issue's worktree; the Agent's work so far is on its branch.",
       controls: ["submit", "hand_back"],
       messageBox: false,
     });
@@ -278,30 +278,30 @@ describe("DB-N8-2: the agent's state and the controls it offers", () => {
     expect(agentPanel({ ...base, status: "ready" }, events)).toEqual({
       state: "idle",
       label: "queued",
-      sentence: "Queued: the agent starts this issue when a slot is free.",
+      sentence: "Queued: the Agent starts this issue when a slot is free.",
       controls: [],
       messageBox: false,
     });
   });
 
-  it("offers nothing to steer when the agent is not on the issue", () => {
+  it("offers nothing to steer when the Agent is not on the issue", () => {
     expect(agentPanel({ ...base, status: "verify" }, []).controls).toEqual([]);
     expect(agentPanel({ ...base, status: "verify" }, []).sentence).toBe(
-      "The checks are running on the agent's work.",
+      "The checks are running on the Agent's work.",
     );
     expect(agentPanel({ ...base, status: "review" }, []).label).toBe("needs you");
     expect(agentPanel({ ...base, status: "done" }, []).label).toBe("done");
     expect(agentPanel({ ...base, status: "backlog" }, [])).toEqual({
       state: "idle",
       label: "",
-      sentence: "The agent isn't working on this issue.",
+      sentence: "The Agent isn't working on this issue.",
       controls: [],
       messageBox: false,
     });
   });
 });
 
-describe("DB-N8-1, DB-N8-3: Activity interleaves the agent and the people in time order", () => {
+describe("DB-N8-1, DB-N8-3: Activity interleaves the Agent and the people in time order", () => {
   const at = (m: number) => `2026-09-27T10:${String(m).padStart(2, "0")}:00.000Z`;
   const events = [
     {
@@ -396,15 +396,15 @@ describe("DB-N8-1, DB-N8-3: Activity interleaves the agent and the people in tim
         "message",
         "Brennan Kelley",
         false,
-        "wrote to the agent",
+        "wrote to the Agent",
         "64 zeros. Keep the error format of verify().",
-        "Seen by the agent at step 5",
+        "Seen by the Agent at step 5",
         "neutral",
       ],
     ]);
   });
 
-  it("DB-N8-3: a question shows its options as buttons, its default, and that the agent continues on it", () => {
+  it("DB-N8-3: a question shows its options as buttons, its default, and that the Agent continues on it", () => {
     const [q] = activityItems({ cardId: "card_a", events: [], messages: [], decisions });
     expect(q?.question).toEqual({
       id: "dec_1",
@@ -415,11 +415,11 @@ describe("DB-N8-1, DB-N8-3: Activity interleaves the agent and the people in tim
         { index: 2, label: "null", isDefault: false },
       ],
       continuing: true,
-      line: "Default: 64 zeros. The agent continues with it unless you answer.",
+      line: "Default: 64 zeros. The Agent continues with it unless you answer.",
     });
   });
 
-  it("DB-N8-3: where the default is to stop, the agent waits", () => {
+  it("DB-N8-3: where the default is to stop, the Agent waits", () => {
     const [q] = activityItems({
       cardId: "card_a",
       events: [],
@@ -440,7 +440,7 @@ describe("DB-N8-1, DB-N8-3: Activity interleaves the agent and the people in tim
     expect([q?.text, q?.question?.continuing, q?.question?.line]).toEqual([
       "asked for permission",
       false,
-      "The agent waits for your answer.",
+      "The Agent waits for your answer.",
     ]);
     const [parked] = activityItems({
       cardId: "card_a",
@@ -459,10 +459,10 @@ describe("DB-N8-1, DB-N8-3: Activity interleaves the agent and the people in tim
         },
       ],
     });
-    expect(parked?.question?.line).toBe("Default: Files. The agent waits for your answer.");
+    expect(parked?.question?.line).toBe("Default: Files. The Agent waits for your answer.");
   });
 
-  it("a message the agent has not read yet says when it will, and a hand-back shows its note", () => {
+  it("a message the Agent has not read yet says when it will, and a hand-back shows its note", () => {
     const items = activityItems({
       cardId: "card_a",
       events: [],
@@ -492,16 +492,16 @@ describe("DB-N8-1, DB-N8-3: Activity interleaves the agent and the people in tim
       [
         "message",
         "A person",
-        "wrote to the agent",
+        "wrote to the Agent",
         "Use named exports.",
-        "Not read yet: the agent reads it at its next step",
+        "Not read yet: the Agent reads it at its next step",
       ],
       [
         "hand_back",
         "Ada",
-        "handed the issue back to the agent",
+        "handed the issue back to the Agent",
         "Also export b.",
-        "Seen by the agent at step 3",
+        "Seen by the Agent at step 3",
       ],
     ]);
   });
@@ -520,7 +520,7 @@ describe("DB-N8-1, DB-N8-3: Activity interleaves the agent and the people in tim
     ];
     const brief = activityItems({ cardId: "card_a", events: more, messages: [], decisions: [] });
     expect(brief.map((i) => [i.who, i.text])).toEqual([
-      ["You", "asked the agent to pause at its next step"],
+      ["You", "asked the Agent to pause at its next step"],
       ["You", "took the issue over"],
     ]);
     const all = activityItems({
@@ -531,14 +531,14 @@ describe("DB-N8-1, DB-N8-3: Activity interleaves the agent and the people in tim
       all: true,
     });
     expect(all.map((i) => [i.who, i.text])).toEqual([
-      ["You", "asked the agent to pause at its next step"],
+      ["You", "asked the Agent to pause at its next step"],
       ["You", "took the issue over"],
       ["Sekhemet", "checkpointed at step 2"],
     ]);
   });
 });
 
-describe("DB-N8-4: comments on diff lines, carried by Send back", () => {
+describe("DB-N8-4: comments on diff lines, carried by Request changes", () => {
   it("need a file, a line of 1 or more, and words — the server's own rule", () => {
     expect(lineCommentProblem({ file: "src/a.ts", line: 12, text: "Name it answer." })).toBe(
       undefined,
@@ -589,8 +589,8 @@ describe("DB-N8-4: comments on diff lines, carried by Send back", () => {
       comments: c,
     });
     expect(sendBackBody("Rename it.", [])).toEqual({ reason: "Rename it." });
-    expect(ISSUE_COPY.lineComment.sendBack(2)).toBe("Send back with 2 line comments");
-    expect(ISSUE_COPY.lineComment.carried(1)).toBe("Send back carries 1 line comment.");
+    expect(ISSUE_COPY.lineComment.sendBack(2)).toBe("Request changes with 2 line comments");
+    expect(ISSUE_COPY.lineComment.carried(1)).toBe("Request changes carries 1 line comment.");
   });
 });
 

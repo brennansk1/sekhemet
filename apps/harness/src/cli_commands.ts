@@ -1,4 +1,4 @@
-import { WAVE2_COMMANDS } from "./wave2.js";
+import { DEV_COMMANDS } from "./wave2.js";
 
 /**
  * The front door (design: "The command surface"). Eight commands a user
@@ -7,14 +7,14 @@ import { WAVE2_COMMANDS } from "./wave2.js";
  * the harness's scripts and the author's habits call them — it is simply not
  * listed.
  */
-export const FRONT_DOOR: readonly { usage: string; what: string }[] = [
+export const PRIMARY_COMMANDS: readonly { usage: string; what: string }[] = [
   { usage: "sekhemet", what: "Set up on first run, then open the board" },
   { usage: 'sekhemet "<spec>"', what: "Plan the work and run it" },
   { usage: "sekhemet run [issue]", what: "Run an issue, resume a stopped one, or run the queue" },
   { usage: "sekhemet review", what: "Show the next issue waiting on you" },
   {
     usage: "sekhemet accept <issue>",
-    what: 'Accept and merge. Also: send-back <issue> "<reason>", park / unpark <issue>, reject <issue> "<reason>", reopen <issue>, revert <issue>; sekhemet card message|pause|hand-back|take-over <issue> for a running one',
+    what: 'Accept and merge. Also: request-changes <issue> "<reason>", park / unpark <issue>, reject <issue> "<reason>", reopen <issue>, revert <issue>; sekhemet card message|pause|hand-back|take-over <issue> for a running one',
   },
   // NEW-surface-6 (O23, approved under DEC-42): `ask` in place of `board`,
   // which the bare `sekhemet` opens; `board --terminal` is under `dev`.
@@ -23,7 +23,7 @@ export const FRONT_DOOR: readonly { usage: string; what: string }[] = [
     what: "Ask Seshat from the terminal; the reply prints here",
   },
   { usage: "sekhemet doctor", what: "Check the install, including the model weights" },
-  { usage: "sekhemet dev <command>", what: "Everything for developing the harness itself" },
+  { usage: "sekhemet dev <command>", what: "Everything for developing Sekhemet itself" },
 ];
 
 /**
@@ -73,10 +73,20 @@ export const COMMANDS = [
   "benchmark",
   "export",
   "erase",
-  ...WAVE2_COMMANDS,
+  ...DEV_COMMANDS,
 ] as const;
 
-const TRIAGE = ["review", "send-back", "park", "unpark", "reopen", "reject", "revert"] as const;
+/** The triage verbs; `send-back` is Request changes' old name, kept as its alias (DEC-52). */
+const TRIAGE = [
+  "review",
+  "request-changes",
+  "send-back",
+  "park",
+  "unpark",
+  "reopen",
+  "reject",
+  "revert",
+] as const;
 
 /** Flags that take a value, so the value is not mistaken for a command or spec. */
 const VALUED = new Set([
@@ -396,7 +406,8 @@ export function routeFrontDoor(argv: readonly string[]): FrontDoorRoute {
   }
   if (first === "review") return { kind: "review", ...(cardId ? { cardId } : {}), flags };
   if (
-    (first === "send-back" ||
+    (first === "request-changes" ||
+      first === "send-back" ||
       first === "park" ||
       first === "unpark" ||
       first === "reopen" ||
@@ -406,7 +417,8 @@ export function routeFrontDoor(argv: readonly string[]): FrontDoorRoute {
   ) {
     return { kind: "unknown", word: `${first} needs an issue ID` };
   }
-  if (first === "send-back") return { kind: "send-back", cardId, reason: words.join(" "), flags };
+  if (first === "request-changes" || first === "send-back")
+    return { kind: "send-back", cardId, reason: words.join(" "), flags };
   if (first === "park") return { kind: "park", cardId, reason: words.join(" "), flags };
   if (first === "unpark") return { kind: "unpark", cardId, flags };
   if (first === "reopen") return { kind: "reopen", cardId, reason: words.join(" "), flags };
@@ -418,8 +430,8 @@ export function routeFrontDoor(argv: readonly string[]): FrontDoorRoute {
   // Not a command. A sentence is a request for work; a single word is almost
   // always a typo, and planning a typo writes cards to the board.
   if (/\s/.test(first.trim())) return { kind: "spec", spec: first, flags };
-  const known = [...FRONT_DOOR.map((c) => c.usage.split(" ")[1] ?? ""), ...TRIAGE].filter((c) =>
-    /^[a-z-]+$/.test(c),
+  const known = [...PRIMARY_COMMANDS.map((c) => c.usage.split(" ")[1] ?? ""), ...TRIAGE].filter(
+    (c) => /^[a-z-]+$/.test(c),
   );
   const best = known.map((c) => ({ c, d: distance(first, c) })).sort((a, b) => a.d - b.d)[0];
   return best && best.d <= 2

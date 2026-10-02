@@ -19,6 +19,14 @@ import {
 } from "@sekhemet/sync";
 import { suggestedAccepters } from "./codeowners.js";
 import {
+  DEPENDENCY_LABEL,
+  findLinkedCard,
+  mirrorAgentStatuses,
+  recordDoneBeforeAccept,
+  recordSnapshot,
+  subIssuesLabel,
+} from "./github_sync.js";
+import {
   appClientFromEnv,
   appJwtClientFromEnv,
   egressRecorder,
@@ -26,14 +34,6 @@ import {
   integrationFetch,
 } from "./github_transport.js";
 import { readSettings, syncGithub, writeSettings } from "./integrations.js";
-import {
-  DEPENDENCY_LABEL,
-  findLinkedCard,
-  mirrorAgentStatuses,
-  recordDoneBeforeAccept,
-  recordSnapshot,
-  subIssuesLabel,
-} from "./wave2_github.js";
 
 /**
  * Dashboard routes for the planner and sync wiring (wave 2, Builder C):
@@ -46,7 +46,7 @@ import {
  *   GET  /api/cards/:id/review             review brief (P12) and escalation (P14)
  *   POST /webhooks/github                  signed GitHub App events (Y13)
  */
-export interface Wave2RouteContext {
+export interface GithubRouteContext {
   repoPath: string;
   cardStore?: CardStore;
   log: EventLog;
@@ -265,11 +265,11 @@ export async function applyWebhookIntent(
   }
 }
 
-export async function handleWave2Route(
+export async function handleGithubRoute(
   req: IncomingMessage,
   res: ServerResponse,
   url: string,
-  ctx: Wave2RouteContext,
+  ctx: GithubRouteContext,
 ): Promise<boolean> {
   const { json, cardStore } = ctx;
   if (url === "/webhooks/github" && req.method === "POST") {

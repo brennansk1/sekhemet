@@ -5,7 +5,7 @@ import { createTestWorktree } from "@sekhemet/eval";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { afterEach, describe, expect, it } from "vitest";
 import { mutateAcceptedCards } from "../src/mutation_step.js";
-import { runWave2Command } from "../src/wave2.js";
+import { runDevCommand } from "../src/wave2.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -75,7 +75,7 @@ describe("E16: loop 10, mutants of accepted diffs become test proposals", () => 
   it("`sekhemet improve --mutants` runs the step", async () => {
     const { wt, log, store } = await acceptedRepo();
     const lines: string[] = [];
-    const code = await runWave2Command(
+    const code = await runDevCommand(
       "improve",
       ["--mutants", "--max-mutants", "3"],
       { repoPath: wt.path, log, cardStore: store },

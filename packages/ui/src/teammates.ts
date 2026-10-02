@@ -161,13 +161,19 @@ export interface AiStateFacts {
   of?: number;
   /** Working: the checks are running on its work. */
   checking?: boolean;
+  /** Paused: a person stopped its run (`human_abort`); Resume continues it (FINDINGS ISS-02). */
+  stopped?: boolean;
   /** Failed: why it stopped, as a sentence. */
   reason?: string;
 }
 
 export interface AiStateLine {
   name: "Agent" | "Seshat";
-  label: AiStateWord;
+  /**
+   * The state's word. The Agent's *done* reads *finished* while its work waits
+   * for review: done is a person's Accept, never the Agent's (FINDINGS_C1 R-36).
+   */
+  label: AiStateWord | "finished";
   sentence: string;
 }
 
@@ -186,7 +192,8 @@ export function aiStateLine(f: AiStateFacts): AiStateLine {
   // A name at the start of the sentence may be "you": the sentence starts with a capital.
   const line = (sentence: string): AiStateLine => ({
     name,
-    label: f.state,
+    label:
+      f.who === "agent" && f.state === "done" && f.waitingFor === "review" ? "finished" : f.state,
     sentence: sentence.charAt(0).toUpperCase() + sentence.slice(1),
   });
   switch (f.state) {
@@ -212,6 +219,7 @@ export function aiStateLine(f: AiStateFacts): AiStateLine {
       return line(`Waiting for ${who} to answer a question.`);
     }
     case "paused":
+      if (f.stopped) return line("Stopped by a person. Resume continues from its last checkpoint.");
       return line("Paused by a person. Hand it back to resume.");
     case "done":
       if (f.who === "seshat") return line("Answered.");
