@@ -8,7 +8,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { type BoardServiceImpl, legalPath } from "@sekhemet/board";
 import {
@@ -66,6 +66,7 @@ import { plural } from "@sekhemet/ui";
 import { integrationBranch, ledgerBundle, reviewEntriesSinceEvidence } from "./accept.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { baselineInput, cardGateRunner, gateBaseBranch } from "./card_gates.js";
+import { contextForCard, isolateCard, isolateCheckout } from "./card_root.js";
 import { cardOneTests, cardZeroSteps, withoutCardOneStaging } from "./card_zero.js";
 import {
   lastPauseSeq,
@@ -97,6 +98,7 @@ import { workerWebDocs } from "./research/service.js";
 import { Tracer, toolCallSpan, traced } from "./tracing.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { cardVision } from "./vision_check.js";
+import { workspaceFolderOf } from "./workspace_locator.js";
 import { loadRepoSkills, untrustedFiles } from "./workspace_trust.js";
 
 /** The repo's trace store, or none when it cannot be opened (tracing never blocks a card). */
@@ -126,7 +128,14 @@ export function thinkingPolicy(): "off" | "surgical" | "all" {
 }
 
 export interface ExecutionContext {
+  /** The card's project's root (runtime item 2a); the server's folder before a card is chosen. */
   repoPath: string;
+  /**
+   * The workspace folder, where the ledger and the workspace's state live
+   * (kernel rule 38a): evidence, transcripts, live files, traces. Absent, the
+   * folder `repoPath`'s locator names, else `repoPath`.
+   */
+  workspaceFolder?: string;
   restrictedMode: boolean;
   cardStore: CardStore;
   boardService: BoardServiceImpl;
@@ -281,6 +290,11 @@ export interface ExecuteCardOptions {
   reviewFirst?: (cardId: string) => Promise<string | undefined>;
 }
 
+/** Kernel rule 38a: the workspace's state folder — evidence, transcripts, live files, traces. */
+export function stateRootOf(ctx: { repoPath: string; workspaceFolder?: string }): string {
+  return ctx.workspaceFolder ?? workspaceFolderOf(ctx.repoPath);
+}
+
 /**
  * The repository's project row (K14): every card created without one joins
  * it, and the board scopes to it (B8).
@@ -362,6 +376,26 @@ export async function executeCard(
   managerGuidance?: string,
   options: ExecuteCardOptions = {},
 ): Promise<CardRunResult> {
+  // Runtime item 2a (RUN-79, RUN-80): the card runs in its own project's
+  // root, whatever folder the server or command started in; the workspace's
+  // state stays beside its ledger. Security item 10a: its commands see only
+  // its own project for the run.
+  const cardCtx = contextForCard(ctx, inputCard);
+  const release = isolateCard(cardCtx, inputCard.id);
+  try {
+    return await executeCardIn(cardCtx, inputCard, model, managerGuidance, options);
+  } finally {
+    release();
+  }
+}
+
+async function executeCardIn(
+  ctx: ExecutionContext,
+  inputCard: CardRecord,
+  model: LocalInferenceAdapter,
+  managerGuidance?: string,
+  options: ExecuteCardOptions = {},
+): Promise<CardRunResult> {
   const log = ctx.log ?? ((line: string) => console.log(line));
   // Rule 10: a measured run's fixed sampling seed, on the card's model; set
   // on every card, so a seed never carries over to one that names none, and
@@ -386,12 +420,12 @@ export async function executeCard(
   const attempt =
     options.attempt ??
     Math.max(
-      nextAttemptNumber(ctx.repoPath, card.id),
+      nextAttemptNumber(stateRootOf(ctx), card.id),
       ctx.cardStore.runs.nextAttemptNumber(card.id),
     );
   // Masked and condensed observations persist under the main repository, so
   // recall(ref) still works after a restart and after the worktree is gone (C6).
-  useFileEvidenceStore(ctx.repoPath);
+  useFileEvidenceStore(stateRootOf(ctx));
   // The Planner's repair plan is what attempt 2 runs on; keep it in the ledger
   // so the card's Plan tab can show what the Worker was told.
   if (managerGuidance) {
@@ -511,7 +545,7 @@ export async function executeCard(
     }
   };
   // H22: spans for the card, each turn and each model call (.sekhemet/traces.db).
-  const tracer = openTracer(ctx.repoPath);
+  const tracer = openTracer(stateRootOf(ctx));
   const cardSpan = tracer?.start("card.run", {
     "sekhemet.card.id": card.id,
     "sekhemet.attempt": attempt,
@@ -531,6 +565,8 @@ export async function executeCard(
     },
     card,
     repoRoot: ctx.repoPath,
+    // Kernel rule 38a: evidence, transcripts and blobs beside the workspace's ledger.
+    stateRoot: stateRootOf(ctx),
     ...(options.serverSlot !== undefined ? { serverSlot: options.serverSlot } : {}),
     ...(options.beginStep ? { beginStep: options.beginStep } : {}),
     // RG-S5-14: cut from, rebased onto and diffed against the integration branch.
@@ -889,7 +925,7 @@ async function recordReproducibility(
     ...(ctx.runProfile ? { runProfile: ctx.runProfile } : {}),
     ...(ctx.measurement ? { measurement: ctx.measurement } : {}),
   });
-  const dir = join(ctx.repoPath, ".sekhemet", "evidence");
+  const dir = join(stateRootOf(ctx), ".sekhemet", "evidence");
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, `repro-${cardId}-${attempt}.json`),
@@ -919,7 +955,8 @@ export function runLspPool(): LspPool {
 
 /** Where a running card's decoded tokens are written for the dashboard (M2). */
 export function liveTokenPath(repoPath: string, cardId: string): string {
-  return join(repoPath, ".sekhemet", "live", `${cardId}.txt`);
+  // Runtime item 2: live files are the workspace's, beside its ledger.
+  return join(workspaceFolderOf(repoPath), ".sekhemet", "live", `${cardId}.txt`);
 }
 
 /**
@@ -936,7 +973,7 @@ export function liveTokenWriter(repoPath: string, cardId: string): (delta: strin
     timer = undefined;
     if (!buffer) return;
     try {
-      mkdirSync(join(repoPath, ".sekhemet", "live"), { recursive: true });
+      mkdirSync(dirname(path), { recursive: true });
       appendFileSync(path, buffer);
     } catch {
       // The live view is best effort.
@@ -947,7 +984,7 @@ export function liveTokenWriter(repoPath: string, cardId: string): (delta: strin
     const now = Date.now();
     if (now - last > 2000) {
       try {
-        mkdirSync(join(repoPath, ".sekhemet", "live"), { recursive: true });
+        mkdirSync(dirname(path), { recursive: true });
         writeFileSync(path, "");
       } catch {
         // Best effort.
@@ -1125,7 +1162,8 @@ async function moveCardBack(
   if (card.status === "done") throw new Error(`${cardId} is done; reopen it before a ${kind}`);
   const point = await checkpointAtOrBefore(ctx.cardStore, cardId, step, attemptId);
   if (!point) throw new Error(`${cardId} has no checkpoint at or before step ${step}`);
-  const worktree = join(ctx.repoPath, ".sekhemet", "worktrees", cardId);
+  // Runtime item 2a: the worktree is in the card's own project's root.
+  const worktree = join(contextForCard(ctx, card).repoPath, ".sekhemet", "worktrees", cardId);
   if (!existsSync(worktree)) throw new Error(`${cardId} has no worktree to ${kind}`);
   const git = (...args: string[]) =>
     execFileSync("git", args, { cwd: worktree, encoding: "utf8", timeout: 30_000 }).trim();
@@ -1338,34 +1376,44 @@ export async function pullThroughPlanning(
  * Done by the legal route, failing sends it to Planning with the failures.
  */
 export async function rollupParent(
-  ctx: ExecutionContext,
+  given: ExecutionContext,
   parentId: string,
 ): Promise<{ status: "not_ready" | "passed" | "failed"; children: number; failures?: string[] }> {
+  let ctx = given;
   const parent = await ctx.cardStore.getCard(parentId);
   const children = await ctx.cardStore.listCards({ parentId });
   if (!parent || children.length === 0) return { status: "not_ready", children: children.length };
   if (parent.status === "done" || children.some((c) => c.status !== "done")) {
     return { status: "not_ready", children: children.length };
   }
+  // Runtime item 2a: the parent's integration gate runs in its own project's root.
+  if (parent.projectId) ctx = contextForCard(ctx, parent);
   const gatesConfig = loadGatesConfig(ctx.repoPath);
   const rungs = [...new Set(gatesConfig.gates.filter((g) => g.blocking).map((g) => g.rung))];
   // The integration gate runs on the integration branch as Accept left it,
   // in a scratch checkout: Accept never writes the person's (review-git §2.5.2).
   const result = await new NodeGitSyncAdapter(ctx.repoPath).withScratchCheckout(
     integrationBranch(ctx.repoPath),
-    (cwd) =>
-      // The pinned gates.toml is the project's (read from the repository
-      // root, as the runner reads it); the gates run in the scratch checkout.
-      new DeterministicGateRunner(confinedSandbox(ctx.restrictedMode), {
-        repoRoot: ctx.repoPath,
-        expectedConfigSha256: gatesConfig.sha256,
-      }).runGates(rungs, cwd),
+    async (cwd) => {
+      // Security item 10a: the merged result's checks see only this project.
+      const release = isolateCheckout(ctx, cwd);
+      try {
+        // The pinned gates.toml is the project's (read from the repository
+        // root, as the runner reads it); the gates run in the scratch checkout.
+        return await new DeterministicGateRunner(confinedSandbox(ctx.restrictedMode), {
+          repoRoot: ctx.repoPath,
+          expectedConfigSha256: gatesConfig.sha256,
+        }).runGates(rungs, cwd);
+      } finally {
+        release();
+      }
+    },
   );
   const failures = result.failures.map(
     (f) => `[${f.gate ?? f.rung}] ${f.errorExcerpt.split("\n")[0]}`,
   );
   // The parent's evidence is the integration run (what Review reads).
-  const attempt = nextAttemptNumber(ctx.repoPath, parentId);
+  const attempt = nextAttemptNumber(stateRootOf(ctx), parentId);
   const evidence = compileEvidence({
     cardId: parentId,
     attempt,
@@ -1382,7 +1430,7 @@ export async function rollupParent(
     settings: { modelId: "integration-gate", toolArm: "none" },
     gatesConfigSha256: gatesConfig.sha256,
   });
-  const dir = join(ctx.repoPath, ".sekhemet", "evidence");
+  const dir = join(stateRootOf(ctx), ".sekhemet", "evidence");
   mkdirSync(dir, { recursive: true });
   const body = `${JSON.stringify(evidence, null, 2)}\n`;
   writeFileSync(join(dir, `${evidence.id}.json`), body);
@@ -1472,7 +1520,10 @@ export async function explainCard(ctx: ExecutionContext, cardId: string): Promis
   }
   try {
     const ev = JSON.parse(
-      readFileSync(join(ctx.repoPath, ".sekhemet", "evidence", `latest-${card.id}.json`), "utf8"),
+      readFileSync(
+        join(stateRootOf(ctx), ".sekhemet", "evidence", `latest-${card.id}.json`),
+        "utf8",
+      ),
     ) as { passed?: boolean; failures?: { gate?: string; rung?: string; errorExcerpt?: string }[] };
     const first = ev.failures?.[0];
     if (!ev.passed && first) {
@@ -1533,7 +1584,7 @@ export async function releaseHeldCards(ctx: ExecutionContext): Promise<string[]>
     }
     if (!ok) continue;
     released.push(card.id);
-    if (wanted === "verify" && latestEvidencePassed(ctx.repoPath, card.id)) {
+    if (wanted === "verify" && latestEvidencePassed(stateRootOf(ctx), card.id)) {
       // RG-P8-1 (FINDINGS REV-05): a change no AI review has read waits in
       // Verify for it, as the runner's own pass would have; the queue's next
       // run reviews it, or records why it cannot (`ReviewFlow.resume`).
@@ -1688,18 +1739,26 @@ export async function regateRestackedChild(
   const gatesConfig = loadGatesConfig(ctx.repoPath);
   const rungs = [...new Set(gatesConfig.gates.filter((g) => g.blocking).map((g) => g.rung))];
   const worktree = join(ctx.repoPath, ".sekhemet", "worktrees", child.id);
-  const run = async (cwd: string) =>
-    new DeterministicGateRunner(confinedSandbox(ctx.restrictedMode), {
-      repoRoot: ctx.repoPath,
-      expectedConfigSha256: gatesConfig.sha256,
-    }).runGates(rungs, cwd);
+  const run = async (cwd: string) => {
+    // Security item 10a: the child's run released its isolation when it
+    // stopped; its checks at a restack see only this project again.
+    const release = isolateCheckout(ctx, cwd);
+    try {
+      return await new DeterministicGateRunner(confinedSandbox(ctx.restrictedMode), {
+        repoRoot: ctx.repoPath,
+        expectedConfigSha256: gatesConfig.sha256,
+      }).runGates(rungs, cwd);
+    } finally {
+      release();
+    }
+  };
   const result = existsSync(worktree)
     ? await run(worktree)
     : await gitAdapter.withScratchCheckout(branch, run);
   const failures = result.failures.map(
     (f) => `[${f.gate ?? f.rung}] ${f.errorExcerpt.split("\n")[0]}`,
   );
-  const attempt = nextAttemptNumber(ctx.repoPath, child.id);
+  const attempt = nextAttemptNumber(stateRootOf(ctx), child.id);
   const evidence = {
     ...compileEvidence({
       cardId: child.id,
@@ -1720,7 +1779,7 @@ export async function regateRestackedChild(
     // What the gates ran on: the rebased branch (RG-S5-6 reads it at accept).
     repoState: `${gitAdapter.revParse(`refs/heads/${branch}`)}:${gitAdapter.revParse(`refs/heads/${branch}^{tree}`)}`,
   };
-  const dir = join(ctx.repoPath, ".sekhemet", "evidence");
+  const dir = join(stateRootOf(ctx), ".sekhemet", "evidence");
   mkdirSync(dir, { recursive: true });
   const body = `${JSON.stringify(evidence, null, 2)}\n`;
   writeFileSync(join(dir, `${evidence.id}.json`), body);
@@ -2261,7 +2320,10 @@ export async function openPullRequest(
   if (!ev) {
     try {
       ev = JSON.parse(
-        readFileSync(join(ctx.repoPath, ".sekhemet", "evidence", `latest-${card.id}.json`), "utf8"),
+        readFileSync(
+          join(stateRootOf(ctx), ".sekhemet", "evidence", `latest-${card.id}.json`),
+          "utf8",
+        ),
       ) as Parameters<typeof evidenceSummary>[1];
     } catch {
       // No evidence file: the body says so rather than inventing results.

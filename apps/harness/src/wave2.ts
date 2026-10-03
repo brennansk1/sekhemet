@@ -140,6 +140,7 @@ import {
 } from "./research/reuse.js";
 import { RESEARCH_GOLDEN_RUN } from "./research_bakeoff.js";
 import { workerFloorRefusal } from "./watchdog_actions.js";
+import { realPath } from "./workspace_locator.js";
 import { loadRepoSkills, skillsLockPath } from "./workspace_trust.js";
 
 /**
@@ -357,6 +358,10 @@ export async function planCommand(
     writeFileSync(briefPath, findings ? withPriorArt(brief, priorArtLines(findings)) : brief);
   }
   const epicId = `epic_${Date.now().toString(16)}`;
+  // Kernel rule 38a, K-N12-3: in a workspace of several projects the plan is
+  // the project of the folder the command runs in; its issues inherit it.
+  const here = realPath(k.repoPath);
+  const folderProject = k.cardStore.listProjects().find((p) => realPath(p.rootPath) === here)?.id;
   await k.cardStore.createCard(
     {
       id: epicId,
@@ -365,6 +370,7 @@ export async function planCommand(
       // The person's own words: a re-plan starts from them again (PM-P1-8).
       spec,
       status: "in_progress",
+      ...(folderProject ? { projectId: folderProject } : {}),
     },
     options.actor,
   );

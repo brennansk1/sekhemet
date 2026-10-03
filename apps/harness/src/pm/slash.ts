@@ -1,6 +1,7 @@
 import type { BoardService } from "@sekhemet/board";
 import type { CardRecord, CardStore } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
+import { SLASH_COMMANDS } from "@sekhemet/ui";
 import type { ResearchAnswer } from "../research/researcher.js";
 import { forecastSentence, openIssues } from "../status_api.js";
 import type { Audience } from "./audience.js";
@@ -26,32 +27,8 @@ export interface SlashCommand {
   args: string;
 }
 
-export const SLASH_HELP: { cmd: string; does: string }[] = [
-  { cmd: "/help", does: "This list." },
-  { cmd: "/status", does: "Standup from the Activity log: done, in flight, needs you." },
-  {
-    cmd: "/forecast",
-    does: "When the open work is likely done (Monte Carlo over throughput, 50th and 85th percentile).",
-  },
-  {
-    cmd: "/capability",
-    does: "How often the Coding model finishes each issue type, and the largest change it handles reliably.",
-  },
-  { cmd: "/research <question>", does: "Ask the Research model; the answer comes with sources." },
-  {
-    cmd: "/deep <question>",
-    does: "Deep research: several searches at once, then a check of every source.",
-  },
-  {
-    cmd: "/plan <feature>",
-    does: "The Planning model splits a feature into small issues, each with testable acceptance criteria.",
-  },
-  { cmd: "/update", does: "A draft of this week's project update, for you to edit and post." },
-  { cmd: "/ready <issue>", does: "Move an issue to To do." },
-  { cmd: "/park <issue> [reason]", does: "Put an issue on hold." },
-  { cmd: "/backlog <issue>", does: "Move an issue back to Backlog." },
-  { cmd: "/compact", does: "Fold the conversation into Seshat's summary." },
-];
+/** The commands, from the one list the composer's `/` picker shows too (FINDINGS PM-08). */
+export const SLASH_HELP: { cmd: string; does: string }[] = [...SLASH_COMMANDS];
 
 export function parseSlash(text: string): SlashCommand | undefined {
   const m = /^\s*\/([a-z]+)\b\s*([\s\S]*)$/i.exec(text);

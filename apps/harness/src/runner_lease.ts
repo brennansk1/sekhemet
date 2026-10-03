@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { processStartTime, sameProcess } from "@sekhemet/sandbox";
+import { workspaceFolderOf } from "./workspace_locator.js";
 
 /**
  * The runner lease (runtime.md item 3, NEW-runtime-1): one runner per
@@ -70,7 +71,12 @@ export interface AcquireOptions {
 
 export const LEASE_HEARTBEAT_MS = 3_000;
 
-export const leasePath = (repoPath: string) => join(repoPath, ".sekhemet", "runner.lock");
+/**
+ * One lease per workspace (runtime item 2, DEC-57): a project root's
+ * locator leads to the workspace folder, where the supervisor's files are.
+ */
+export const leasePath = (repoPath: string) =>
+  join(workspaceFolderOf(repoPath), ".sekhemet", "runner.lock");
 
 /** A lease file's contents, or undefined when absent or half-written. */
 export function readLeaseFile<T extends Lease = Lease>(path: string): T | undefined {
@@ -122,7 +128,7 @@ export function acquireRunnerLease(
   repoPath: string,
   options: AcquireOptions = {},
 ): { release: () => void; lease: Lease } | { holder: Lease } {
-  mkdirSync(join(repoPath, ".sekhemet"), { recursive: true });
+  mkdirSync(join(workspaceFolderOf(repoPath), ".sekhemet"), { recursive: true });
   const lease: Lease = {
     ...newLease(),
     ...(options.kind ? { kind: options.kind } : {}),
@@ -146,7 +152,11 @@ export function acquireRunnerLease(
       }
       // Every process group this runner starts is recorded, so a start after
       // a SIGKILL reaps what it left (RUN-12).
-      process.env.SEKHEMET_PROCESS_REGISTRY ??= join(repoPath, ".sekhemet", "processes");
+      process.env.SEKHEMET_PROCESS_REGISTRY ??= join(
+        workspaceFolderOf(repoPath),
+        ".sekhemet",
+        "processes",
+      );
       return {
         lease,
         release: startLeaseHeartbeat(

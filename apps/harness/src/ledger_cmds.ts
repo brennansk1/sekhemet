@@ -14,6 +14,7 @@ import {
 import { plural } from "@sekhemet/ui";
 import { userSetup } from "./config.js";
 import { backupCredentials, identityDir, restoreCredentials } from "./team/credential_store.js";
+import { workspaceFolderOf } from "./workspace_locator.js";
 
 /**
  * The ledger's own commands (kernel NEW-kernel-1/2/7, security.md
@@ -26,11 +27,15 @@ import { backupCredentials, identityDir, restoreCredentials } from "./team/crede
 export const LEDGER_COMMANDS = ["backup", "restore", "export", "erase"] as const;
 export type LedgerCommand = (typeof LEDGER_COMMANDS)[number];
 
-const dbPathOf = (repoPath: string) => join(repoPath, ".sekhemet", "events.db");
+/**
+ * The workspace's ledger (kernel rule 38a): in the folder itself, or in the
+ * workspace folder a project root's locator names (surface item 8a).
+ */
+const dbPathOf = (repoPath: string) => join(workspaceFolderOf(repoPath), ".sekhemet", "events.db");
 
 /** The erasure register: beside the backups, outside the backup set (kernel rule 35). */
 export function erasureRegisterPath(repoPath: string): string {
-  return join(repoPath, ".sekhemet", "backups", "erasure-register.ndjson");
+  return join(workspaceFolderOf(repoPath), ".sekhemet", "backups", "erasure-register.ndjson");
 }
 
 /**
@@ -60,7 +65,10 @@ export function localPersonDetails(repoPath: string): { email?: string; name?: s
  * (RUN-57).
  */
 export function openLocalLedger(repoPath: string): { db: DatabaseSync; log: EventLog } {
-  mkdirSync(join(repoPath, ".sekhemet"), { recursive: true });
+  // Kernel rule 38a: a project root with a locator opens its workspace's one
+  // ledger, and the workspace's blobs and run files are beside it.
+  const workspace = workspaceFolderOf(repoPath);
+  mkdirSync(join(workspace, ".sekhemet"), { recursive: true });
   const db = new DatabaseSync(dbPathOf(repoPath));
   const person = localPersonDetails(repoPath);
   try {
@@ -80,9 +88,9 @@ export function openLocalLedger(repoPath: string): { db: DatabaseSync; log: Even
   }
   const log = new EventLog(db, { erasureRegister: erasureRegisterPath(repoPath), setup });
   log.ensureLocalPerson(person);
-  log.retryBlobErasures(new BlobStore(repoPath));
+  log.retryBlobErasures(new BlobStore(workspace));
   // RUN-57: likewise any run file (transcript, observation) an erasure named.
-  log.retryFileErasures(join(repoPath, ".sekhemet"));
+  log.retryFileErasures(join(workspace, ".sekhemet"));
   return { db, log };
 }
 
@@ -141,6 +149,30 @@ export function checkLedgerAnchor(repoPath: string, db: DatabaseSync): AnchorChe
     | { hash: string }
     | undefined;
   return row?.hash === match[2] ? { status: "ok", seq } : { status: "mismatch", seq };
+}
+
+/**
+ * The `Ledger-Head` trailers in a repository's recent history, newest first
+ * (kernel rule 12): a repository with any belongs to a Sekhemet workspace
+ * (surface item 8a, SUR-79). None when it has no history or no git.
+ */
+export function ledgerHeadTrailers(repoPath: string): { seq: number; hash: string }[] {
+  let text: string;
+  try {
+    text = execFileSync(
+      "git",
+      ["log", "--format=%(trailers:key=Ledger-Head,valueonly,separator=%x2C)%x1e", "-n", "200"],
+      { cwd: repoPath, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    );
+  } catch {
+    return [];
+  }
+  return text
+    .split("\x1e")
+    .flatMap((s) => s.split(","))
+    .map((s) => s.trim().match(/^(\d+):([0-9a-f]{64})$/))
+    .filter((m): m is RegExpMatchArray => m !== null)
+    .map((m) => ({ seq: Number(m[1]), hash: m[2] as string }));
 }
 
 function flagValue(argv: readonly string[], flag: string): string | undefined {
@@ -222,7 +254,7 @@ async function restoreCommand(argv: readonly string[], repoPath: string): Promis
       backupPath: resolve(backup),
       targetPath: dbPathOf(repoPath),
       registerPath: erasureRegisterPath(repoPath),
-      blobs: new BlobStore(repoPath),
+      blobs: new BlobStore(workspaceFolderOf(repoPath)),
     });
     console.log(
       `Restored the Activity log through entry ${report.backupSeq}; re-applied ${plural(report.reapplied.length, "erasure")} from the register before anything read it.`,
@@ -286,7 +318,7 @@ async function eraseCommand(
     );
     return 2;
   }
-  const blobs = new BlobStore(repoPath);
+  const blobs = new BlobStore(workspaceFolderOf(repoPath));
   const events = log.findPrivate(secret).map((e) => e.id);
   const blobIds = blobs.findContaining(secret);
   // SEC-50: a structural payload the chain covers cannot be erased; name it.

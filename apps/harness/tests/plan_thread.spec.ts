@@ -20,7 +20,8 @@ import { pageWriteHeaders } from "./page_headers.js";
  * the plan to both, and the question waits in the sender's Inbox under
  * *Needs you* until they answer. Nothing is created by a question. A real
  * git repository, an on-disk ledger and the real Team-configured HTTP server
- * with five people at four levels (DEFINITION_OF_DONE §2A); no model is loaded.
+ * with five people at four levels (the approver one who may create a project, an
+ * Admin, since TEAM-57) (DEFINITION_OF_DONE §2A); no model is loaded.
  */
 
 const cleanup: (() => Promise<void> | void)[] = [];
@@ -30,7 +31,7 @@ afterEach(async () => {
 
 const PEOPLE = [
   ["p_admin", "admin", "Ada Admin"],
-  ["p_member", "member", "Mo Member"],
+  ["p_mo", "admin", "Mo Admin"],
   ["p_member2", "member", "Mia Member"],
   ["p_stake", "stakeholder", "Sam Stakeholder"],
   ["p_viewer", "viewer", "Vic Viewer"],
@@ -157,21 +158,21 @@ describe("design-stage §2.9 item 7: the approver asks a question in the plan's 
     const s = await setup();
     // Not sent yet: there is no thread.
     expect((await ask(s, "p_stake", "Anything?")).status).toBe(409);
-    expect((await s.send("p_stake", { approver: "p_member" })).status).toBe(200);
+    expect((await s.send("p_stake", { approver: "p_mo" })).status).toBe(200);
 
-    const q = await ask(s, "p_member", "Why is search in the first release?");
+    const q = await ask(s, "p_mo", "Why is search in the first release?");
     expect(q.status).toBe(200);
     const body = (await q.json()) as { proposal: { approval: { thread: Thread } } };
     expect(body.proposal.approval.thread).toEqual([
       expect.objectContaining({
-        by: "p_member",
-        byName: "Mo Member",
+        by: "p_mo",
+        byName: "Mo Admin",
         text: "Why is search in the first release?",
       }),
     ]);
     // The words are private: the hashed payload names the plan and the message only.
     const [recorded] = await s.log.getEventsByTypes(["plan/commented"]);
-    expect(recorded?.principal).toBe("p_member");
+    expect(recorded?.principal).toBe("p_mo");
     expect(recorded?.actor).toBe("human");
     expect(recorded?.payload).toEqual({
       proposalId: s.proposalId,
@@ -181,7 +182,7 @@ describe("design-stage §2.9 item 7: the approver asks a question in the plan's 
 
     // The sender reads it with the plan, and it waits in their Inbox until they answer.
     expect((await s.threadProposal("p_stake"))?.approval?.thread).toMatchObject([
-      { byName: "Mo Member", text: "Why is search in the first release?" },
+      { byName: "Mo Admin", text: "Why is search in the first release?" },
     ]);
     const inbox = async (who: string) =>
       (
@@ -191,19 +192,19 @@ describe("design-stage §2.9 item 7: the approver asks a question in the plan's 
       ).items;
     expect((await inbox("p_stake")).find((i) => i.kind === "plan_question")).toMatchObject({
       reason: "needs_you",
-      by: "Mo Member",
+      by: "Mo Admin",
     });
 
     const a = await ask(s, "p_stake", "Customers asked for it first.");
     expect(a.status).toBe(200);
-    const thread = (await s.threadProposal("p_member"))?.approval?.thread as Thread;
+    const thread = (await s.threadProposal("p_mo"))?.approval?.thread as Thread;
     expect(thread.map((m) => [m.by, m.text])).toEqual([
-      ["p_member", "Why is search in the first release?"],
+      ["p_mo", "Why is search in the first release?"],
       ["p_stake", "Customers asked for it first."],
     ]);
     // Answered: it leaves the sender's Needs you; the approver's item says it was answered.
     expect((await inbox("p_stake")).some((i) => i.kind === "plan_question")).toBe(false);
-    expect((await inbox("p_member")).find((i) => i.kind === "plan_approval")).toMatchObject({
+    expect((await inbox("p_mo")).find((i) => i.kind === "plan_approval")).toMatchObject({
       answered: true,
       by: "Sam Stakeholder",
     });
@@ -213,20 +214,20 @@ describe("design-stage §2.9 item 7: the approver asks a question in the plan's 
 
   it("is the approver's and the sender's alone, needs words, and closes once approved", async () => {
     const s = await setup();
-    expect((await s.send("p_stake", { approver: "p_member" })).status).toBe(200);
+    expect((await s.send("p_stake", { approver: "p_mo" })).status).toBe(200);
     for (const who of ["p_member2", "p_admin", "p_viewer"]) {
       const r = await ask(s, who, "Me too?");
       expect(r.status).toBe(403);
       expect(((await r.json()) as { error: string }).error).toBe(
-        "Only Mo Member and Sam Stakeholder write in this plan's thread.",
+        "Only Mo Admin and Sam Stakeholder write in this plan's thread.",
       );
     }
     for (const text of ["", "   ", 42, undefined]) {
-      expect((await ask(s, "p_member", text)).status).toBe(400);
+      expect((await ask(s, "p_mo", text)).status).toBe(400);
     }
     expect(await s.log.getEventsByTypes(["plan/commented"])).toEqual([]);
-    expect((await s.approve("p_member")).status).toBe(200);
-    const closed = await ask(s, "p_member", "One more thing");
+    expect((await s.approve("p_mo")).status).toBe(200);
+    const closed = await ask(s, "p_mo", "One more thing");
     expect(closed.status).toBe(409);
     expect(((await closed.json()) as { error: string }).error).toBe(
       "This plan is already approved.",

@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -345,19 +353,27 @@ describe("DS-P2-5: the five greenfield specs, started by a scripted non-develope
   }
 });
 
-describe("PM-P2-2: a new project's group is applied only in a folder that holds no project yet", () => {
-  it("refuses over a project that already has an accepted brief, writing nothing", async () => {
+describe("PM-P2-2 with DEC-57: a new project's group is applied only in a folder that holds no project", () => {
+  it("DEC-57 (DS-N8-1): over a project that already has an accepted brief, the next is a new project in a new folder, its brief and issues untouched", async () => {
     const s = setup();
     const first = await stored(s, await propose(s, "build me a calculator"));
     await applyProposal(first, ctx(s));
-    const briefsBefore = (await s.log.getEventsByTypes(["brief/accepted"])).length;
-    const cardsBefore = (await s.cardStore.listCards()).length;
+    const project = s.cardStore.listProjects()[0];
+    const brief = readFileSync(join(s.repoPath, ".sekhemet", "brief.md"), "utf8");
+    const cardsBefore = await s.cardStore.listCards();
     const second = await stored(s, await propose(s, "a Python script that renames photos"));
-    const before = eventCount(s);
-    await expect(applyProposal(second, ctx(s))).rejects.toMatchObject({ status: 409 });
-    expect(eventCount(s)).toBe(before);
-    expect((await s.log.getEventsByTypes(["brief/accepted"])).length).toBe(briefsBefore);
-    expect((await s.cardStore.listCards()).length).toBe(cardsBefore);
+    const parent = mkdtempSync(join(tmpdir(), "sek-start-next-"));
+    dirs.push(parent);
+    const folder = join(parent, "photos");
+    await applyProposal(second, { ...ctx(s), choices: { folder } });
+    // The first project's brief and issues are as they were; the second is its own.
+    expect(readFileSync(join(s.repoPath, ".sekhemet", "brief.md"), "utf8")).toBe(brief);
+    const now = await s.cardStore.listCards();
+    for (const c of cardsBefore)
+      expect(now.find((x) => x.id === c.id)?.projectId).toBe(project?.id);
+    const next = s.cardStore.listProjects().find((p) => p.id !== project?.id);
+    expect(next?.rootPath).toBe(realpathSync(folder));
+    expect(now.filter((c) => c.projectId === next?.id).length).toBeGreaterThan(2);
   });
 
   it("refuses a ledger that already holds cards, even with no project recorded for the folder", async () => {

@@ -4,6 +4,7 @@ import {
   START_COPY,
   START_ROUTE,
   type StartGroup,
+  startConversationOf,
   startDraftOf,
   startDraftView,
 } from "../src/start.js";
@@ -88,6 +89,32 @@ describe("the start page's live draft (NEW-design-stage-7)", () => {
     expect(startDraftOf([{ role: "pm", proposals: [proposal("p5", "discarded", g1)] }])).toBe(null);
     expect(startDraftOf([])).toBe(null);
     expect(startDraftOf(undefined)).toBe(null);
+  });
+
+  it("DS-N7-1: the start page's own conversation: since it opened or since its open draft, and only drafts as proposals", () => {
+    const g1 = group({ sentence: "first" });
+    const at = (min: number) => `2026-10-02T10:${String(min).padStart(2, "0")}:00.000Z`;
+    const opened = Date.parse(at(30));
+    const project = {
+      role: "pm",
+      createdAt: at(1),
+      proposals: [proposal("x1", "open", {}, "create_card")],
+    };
+    // A workspace that already holds a project: its conversation is not the start page's.
+    expect(startConversationOf([project], opened)).toEqual([]);
+    const asked = { role: "user", createdAt: at(31), text: "A rota app" };
+    const reply = {
+      role: "pm",
+      createdAt: at(32),
+      proposals: [proposal("p1", "open", g1), proposal("x2", "open", {}, "create_card")],
+    };
+    const shown = startConversationOf([project, asked, reply], opened);
+    expect(shown.map((m) => m.createdAt)).toEqual([at(31), at(32)]);
+    // Only the draft is a proposal here: nothing on this page applies to another project.
+    expect(shown[1]?.proposals?.map((p) => p.id)).toEqual(["p1"]);
+    // Opened again while a draft is open: the conversation from the person's words that led to it.
+    const again = startConversationOf([project, asked, reply], Date.parse(at(50)));
+    expect(again.map((m) => m.createdAt)).toEqual([at(31), at(32)]);
   });
 
   it("DS-N7-1: before Seshat drafts anything, no part is shown and Review plan says why it waits", () => {

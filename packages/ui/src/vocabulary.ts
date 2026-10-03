@@ -1445,6 +1445,26 @@ export function eventSentence(
         tone: "neutral",
       };
     }
+    // planner-pm PM-N13-1, -2: a person started or completed a sprint.
+    case "cycle/started": {
+      const n = Array.isArray(p.issues) ? p.issues.length : 0;
+      return {
+        actor,
+        verb: "started a sprint",
+        rest: `· ${plural(n, "issue")} committed`,
+        tone: "neutral",
+      };
+    }
+    case "cycle/completed": {
+      const done = Array.isArray(p.done) ? p.done.length : 0;
+      const carried = Array.isArray(p.carried) ? p.carried.length : 0;
+      return {
+        actor,
+        verb: "completed a sprint",
+        rest: `· ${done} done, ${carried} carried over`,
+        tone: "neutral",
+      };
+    }
     case "slice/created":
       return { actor, verb: "created a release", tone: "neutral" };
     default:

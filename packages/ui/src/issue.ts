@@ -509,7 +509,18 @@ const BRIEF = new Set([
   // teams TEAM-39: a request to start the Agent, and a Member's answer.
   "agent/start_requested",
   "agent/start_answered",
+  // review-git NEW-review-git-7 (RG-N7-3): the push after this issue's Accept.
+  "remote/pushed",
 ]);
+
+/** Why a push failed, from its code (RG-N7-3); the remote's own words stay private. */
+const PUSH_REFUSAL: Record<string, string> = {
+  behind: "the remote holds commits this branch does not have",
+  exists: "the remote already has a different tag of that name",
+  policy: "the network policy does not allow the remote's host",
+  no_remote: "this repository has no such remote",
+  other: "the remote refused it",
+};
 
 /** A suggestion's property as Activity names it (PM-N9-1): never its id. */
 const SUGGESTION_PROPERTY: Record<string, string> = {
@@ -751,6 +762,25 @@ export function activityItems(input: {
               ? "started the Agent"
               : "declined to start the Agent",
         tone: "neutral",
+      });
+      continue;
+    }
+    if (e.type === "remote/pushed") {
+      const ref = String(p.ref ?? "");
+      const what = ref.startsWith("refs/tags/")
+        ? `the tag ${ref.slice("refs/tags/".length)}`
+        : ref.replace(/^refs\/heads\//, "");
+      const ok = p.result === "pushed";
+      push({
+        key,
+        at,
+        kind: "event",
+        who: "Sekhemet",
+        ai: false,
+        text: ok
+          ? `pushed ${what} to ${String(p.remote ?? "the remote")}`
+          : `could not push ${what} to ${String(p.remote ?? "the remote")}: ${PUSH_REFUSAL[String(p.code ?? "other")] ?? PUSH_REFUSAL.other}. It is pushed again at the next Accept or tag`,
+        tone: ok ? "pass" : "fail",
       });
       continue;
     }

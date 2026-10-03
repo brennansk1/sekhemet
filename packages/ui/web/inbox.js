@@ -25,7 +25,10 @@ import {
   readingFacts,
   snoozeUntil,
 } from "./lib/inbox.js";
+import { TRIAGE_COPY } from "./lib/intake.js";
 import { parseTitle, shortId } from "./lib/vocabulary.js";
+import { noticeInbox } from "./notify.js";
+import { crossProject, followProject } from "./project_filter.js";
 import { getSession } from "./session.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
@@ -34,6 +37,8 @@ import { toast } from "./toast.js";
 const ui = {
   root: null,
   filter: "inbox",
+  /** The project filter (DB-N26-2): "" for every project this person can see. */
+  project: "",
   data: null,
   picked: new Map(),
   confirm: new Set(),
@@ -81,6 +86,8 @@ export async function refreshInbox() {
   }
   // The badge counts what is unread in the Inbox tab, whichever tab is open.
   if (main.ok) store.set({ inbox: { unread: main.data?.unread ?? 0, at: Date.now() } });
+  // NEW-dashboard-22: in the Team setup, work reaching Needs you or Review requested.
+  if (main.ok) noticeInbox(main.data?.items ?? []);
   else render();
 }
 
@@ -158,10 +165,26 @@ function plannerRowHtml(d, i) {
 }
 
 /** Every row the list shows, in its order: the items, and the planner's questions under Needs you. */
+/** The items of the chosen project, or of every project this person can see (DB-N26-2). */
+function projectItems(items) {
+  const xp = crossProject(
+    items.map((it) => ({ ...it, projectId: it.project?.id })),
+    ui.project,
+  );
+  // An item with no project (a workspace's own) is kept unless a project is chosen.
+  if (!xp.filters.length) return { items, control: "" };
+  const chosen = xp.filters.find((f) => f.selected)?.id ?? "";
+  const kept = new Set(xp.rows.map((r) => r.item.id));
+  return {
+    items: items.filter((it) => kept.has(it.id) || (!chosen && !it.project)),
+    control: xp.control,
+  };
+}
+
 function listEntries() {
   const data = ui.data;
   if (!data || data.error !== undefined) return [];
-  const items = data.items ?? [];
+  const items = projectItems(data.items ?? []).items;
   const extra = ui.filter === "inbox" ? plannerDecisions(items) : [];
   const out = [];
   const groups = inboxGroups(items);
@@ -186,7 +209,8 @@ function listHtml() {
   else if (data.error !== undefined)
     body = `<p class="stp-notice" role="status"><b>Couldn't load the Inbox.</b> <span class="sec">The server returned ${esc(data.error)}.</span></p>`;
   else {
-    const items = data.items ?? [];
+    const scoped = projectItems(data.items ?? []);
+    const items = scoped.items;
     const extra = ui.filter === "inbox" ? plannerDecisions(items) : [];
     const groups = inboxGroups(items);
     let i = 0;
@@ -205,9 +229,11 @@ function listHtml() {
     ui.focus = Math.min(ui.focus, Math.max(0, i - 1));
     const empty =
       ui.filter === "saved" ? C.emptySaved : ui.filter === "done" ? C.emptyDone : C.empty;
-    body = sections.length
-      ? sections.join("")
-      : `<div class="ib-empty">${icon("inbox", 24, "ic s24")}<b>${esc(empty)}</b>${ui.filter === "inbox" ? `<span>${esc(C.emptyHint)}</span>` : ""}</div>`;
+    body = `${scoped.control ? `<div class="xp-bar">${scoped.control}</div>` : ""}${
+      sections.length
+        ? sections.join("")
+        : `<div class="ib-empty">${icon("inbox", 24, "ic s24")}<b>${esc(empty)}</b>${ui.filter === "inbox" ? `<span>${esc(C.emptyHint)}</span>` : ""}</div>`
+    }`;
   }
   return `${tabs}${body}`;
 }
@@ -261,7 +287,7 @@ function paneHtml() {
   const inReview = item.kind === "plan_approval" || item.reason === "review_requested";
   const href = paneOpenHref(item, viewerManagesWork());
   const open = href
-    ? `<a class="btn sm" href="${esc(href)}" data-open-issue="${esc(item.id)}">${esc(inReview ? PC.reviewIt : PC.openIssue)}</a>`
+    ? `<a class="btn sm" href="${esc(href)}" data-open-issue="${esc(item.id)}">${esc(item.kind === "triage" ? TRIAGE_COPY.open : item.kind === "accept_rule" ? "Edit the Accept rule" : inReview ? PC.reviewIt : PC.openIssue)}</a>`
     : "";
   const reply = item.cardId
     ? `<form class="ib-reply" data-reply="${esc(item.cardId)}"><label class="sr-only" for="ib-reply-text">${esc(PC.replyLabel)}</label><textarea id="ib-reply-text" name="text" rows="3" placeholder="${esc(PC.replyPlaceholder)}"></textarea><div class="ib-reply-f"><span class="sec">${esc(PC.replyPlaceholder)}</span>${open}<button class="btn sm primary" type="submit">${esc(PC.reply)}</button></div></form>`
@@ -521,10 +547,22 @@ export function mount(view) {
   ui.lastPane = "";
   ui.data = null;
   ui.filter = "inbox";
+  ui.project = "";
   ui.selected = "";
   ui.reading = false;
   ui.pane = { id: "" };
   root.addEventListener("change", (e) => {
+    const select = e.target instanceof HTMLSelectElement ? e.target : null;
+    if (select?.matches("[data-project-filter]")) {
+      ui.project = select.value;
+      ui.focus = 0;
+      ui.selected = "";
+      ui.reading = false;
+      ui.last = "";
+      render();
+      $("[data-project-filter]", ui.root)?.focus();
+      return;
+    }
     const input = e.target instanceof HTMLInputElement ? e.target : null;
     const art = input?.closest("[data-decision]");
     if (input?.dataset.opt !== undefined && art)
@@ -588,6 +626,12 @@ export function mount(view) {
       );
       return;
     }
+    // DB-N26-2: opening an issue of another project makes that project current.
+    const opens = t.closest("[data-open-issue]");
+    if (opens) {
+      const it = listEntries().find((x) => x.id === opens.dataset.openIssue)?.item;
+      followProject(it?.project?.id);
+    }
     const o = t.closest("[data-open]");
     if (o) {
       // A plain click selects; a modified click opens the issue as a link does.
@@ -598,7 +642,8 @@ export function mount(view) {
     }
   });
   const unsub = store.on((_s, patch) => {
-    if ("inbox" in patch || "decisions" in patch || "now" in patch) render();
+    if ("project" in patch) ui.last = "";
+    if ("inbox" in patch || "decisions" in patch || "now" in patch || "project" in patch) render();
   });
   // Crossing 1100 px changes the layout: one list, or two panes.
   const mq = window.matchMedia(`(min-width: ${INBOX_SPLIT_PX}px)`);

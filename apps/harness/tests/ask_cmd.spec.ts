@@ -109,7 +109,9 @@ describe("SUR-51: sekhemet ask", () => {
       say: (l) => lines.push(l),
     });
     expect(code).toBe(1);
-    expect(lines.join("\n")).toMatch(/no weights for dirk-27b/);
+    // PM-01: the worded cause; the exception's own text goes to stderr only.
+    expect(lines.join("\n")).toMatch(/No model is answering for Seshat/);
+    expect(lines.join("\n")).not.toMatch(/no weights for dirk-27b/);
   });
 
   it("refuses an empty question with a usage error", async () => {

@@ -190,18 +190,34 @@ async function runningByPerson(
   return out;
 }
 
-/** One fair pick among `remaining`, persons at the cap last (TEAM-30). */
+/**
+ * Runtime item 4b, RUN-81 (DEC-57): the project whose turn it is among the
+ * pool's — the one this run has served least, ties to the first in the
+ * pool's order — so no project with a Ready issue waits for more than one
+ * card of each other project. One project, or none recorded, is the pool.
+ */
+function projectTurn(pool: CardRecord[], served: Map<string, number>): CardRecord[] {
+  const projectOf = (c: CardRecord) => c.projectId ?? "";
+  const projects = [...new Set(pool.map(projectOf))];
+  if (projects.length < 2) return pool;
+  let turn = projects[0] as string;
+  for (const p of projects) if ((served.get(p) ?? 0) < (served.get(turn) ?? 0)) turn = p;
+  return pool.filter((c) => projectOf(c) === turn);
+}
+
+/** One fair pick among `remaining`, persons at the cap last (TEAM-30), projects in turn (RUN-81). */
 async function pickNext(
   remaining: CardRecord[],
   options: FairOrderOptions,
   started: number,
+  served: Map<string, number> = new Map(),
 ): Promise<CardRecord | undefined> {
   const store = options.cardStore;
   const persons = new Map(remaining.map((c) => [c.id, personOf(store, c)]));
   const running = await runningByPerson(store, new Set(remaining.map((c) => c.id)));
   const atCap = (p: string) => (running.get(p) ?? 0) >= options.cap;
   const free = remaining.filter((c) => !atCap(persons.get(c.id) as string));
-  const pool = free.length > 0 ? free : remaining;
+  const pool = projectTurn(free.length > 0 ? free : remaining, served);
   const scheduler = new FairScheduler({
     maxWaitS: options.maxWaitS,
     ...(options.fairShare !== undefined ? { fairShare: options.fairShare } : {}),
@@ -225,9 +241,10 @@ async function pickNext(
 }
 
 /**
- * The queue runner's order (RUN-34, TEAM-30): one card at a time, each
- * picked when the previous one is done, so the tokens it spent count before
- * the next pick. The input order (the planner's WSJF order) breaks ties.
+ * The queue runner's order (RUN-34, TEAM-30, RUN-81): one card at a time,
+ * each picked when the previous one is done, so the tokens it spent count
+ * before the next pick; projects take turns. The input order (the planner's
+ * WSJF order) breaks ties.
  */
 export async function* fairOrder(
   cards: readonly CardRecord[],
@@ -235,10 +252,13 @@ export async function* fairOrder(
 ): AsyncGenerator<CardRecord> {
   const remaining = [...cards];
   const started = (options.now ?? Date.now)();
+  // Cards started per project this run (RUN-81).
+  const served = new Map<string, number>();
   while (remaining.length > 0) {
-    const next = (await pickNext(remaining, options, started)) ?? remaining[0];
+    const next = (await pickNext(remaining, options, started, served)) ?? remaining[0];
     if (!next) return;
     remaining.splice(remaining.indexOf(next), 1);
+    served.set(next.projectId ?? "", (served.get(next.projectId ?? "") ?? 0) + 1);
     yield next;
   }
 }

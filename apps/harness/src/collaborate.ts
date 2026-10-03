@@ -4,8 +4,10 @@ import { DeterministicGateRunner, compileEvidence, loadGatesConfig } from "@sekh
 import type { CardStore, EventRecord } from "@sekhemet/kernel";
 import { confinedSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
+import { contextForCard, isolateCard } from "./card_root.js";
 import type { ExecutionContext } from "./execute.js";
 import { recordLedgerRun } from "./ledger_evidence.js";
+import { workspaceFolderOf } from "./workspace_locator.js";
 
 /**
  * Collaborating on a running issue (worker-loop NEW-worker-loop-10, DEC-34).
@@ -230,13 +232,15 @@ export async function takeOver(
   if (card.status === "done" || card.status === "rejected") {
     throw new Error(`${cardId} is ${card.status}; reopen it before taking it over`);
   }
-  const adapter = new NodeGitSyncAdapter(ctx.repoPath);
-  let worktreePath = join(ctx.repoPath, ".sekhemet", "worktrees", cardId);
+  // Runtime item 2a: the worktree is in the card's own project's root.
+  const place = contextForCard(ctx, card);
+  const adapter = new NodeGitSyncAdapter(place.repoPath);
+  let worktreePath = join(place.repoPath, ".sekhemet", "worktrees", cardId);
   if (!existsSync(worktreePath)) {
     const { integrationBranch } = await import("./accept.js");
     worktreePath = await adapter.createWorktree(
       cardId,
-      integrationBranch(ctx.repoPath),
+      integrationBranch(place.repoPath),
       card.title,
       card.parentId ?? null,
     );
@@ -278,9 +282,11 @@ export async function submitTakenOver(
   if (card.status !== "in_progress") {
     throw new Error(`${cardId} is ${card.status}, not in progress`);
   }
-  const worktree = join(ctx.repoPath, ".sekhemet", "worktrees", cardId);
+  // Runtime item 2a: the card's own project's root; the workspace's evidence.
+  const place = contextForCard(ctx, card);
+  const worktree = join(place.repoPath, ".sekhemet", "worktrees", cardId);
   if (!existsSync(worktree)) throw new Error(`${cardId} has no worktree`);
-  const adapter = new NodeGitSyncAdapter(ctx.repoPath);
+  const adapter = new NodeGitSyncAdapter(place.repoPath);
   const attempt = ctx.cardStore.runs.nextAttemptNumber(cardId);
   // The person's work as a checkpoint: no model named, none co-authoring.
   const sha = await adapter.commitCheckpoint({
@@ -293,12 +299,16 @@ export async function submitTakenOver(
     coAuthors: [],
     message: `checkpoint: ${cardId}, the work of the person who took it over`,
   });
-  const gatesConfig = loadGatesConfig(ctx.repoPath);
+  const gatesConfig = loadGatesConfig(place.repoPath);
   const rungs = [...new Set(gatesConfig.gates.filter((g) => g.blocking).map((g) => g.rung))];
+  // Security item 10a: the person's checks see only this project too.
+  const release = isolateCard(place, cardId);
   const result = await new DeterministicGateRunner(confinedSandbox(ctx.restrictedMode), {
-    repoRoot: ctx.repoPath,
+    repoRoot: place.repoPath,
     expectedConfigSha256: gatesConfig.sha256,
-  }).runGates(rungs, worktree);
+  })
+    .runGates(rungs, worktree)
+    .finally(release);
   const failures = result.failures.map(
     (f) => `[${f.gate ?? f.rung}] ${f.errorExcerpt.split("\n")[0]}`,
   );
@@ -325,7 +335,11 @@ export async function submitTakenOver(
     builtBy: { kind: "person" as const, id: principal },
     ...(repoState ? { repoState } : {}),
   };
-  const dir = join(ctx.repoPath, ".sekhemet", "evidence");
+  const dir = join(
+    place.workspaceFolder ?? workspaceFolderOf(place.repoPath),
+    ".sekhemet",
+    "evidence",
+  );
   mkdirSync(dir, { recursive: true });
   const body = `${JSON.stringify(evidence, null, 2)}\n`;
   writeFileSync(join(dir, `${evidence.id}.json`), body);

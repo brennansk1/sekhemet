@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { type EvidenceSummary, evidenceSummaryOf, withExternalResults } from "@sekhemet/board";
 import type { CardStopReason, CardStore, EvidenceBundleRecord } from "@sekhemet/kernel";
+import { workspaceFolderOf } from "./workspace_locator.js";
 
 /**
  * Events after which a card's earlier evidence no longer counts for Review
@@ -54,7 +55,8 @@ export async function ledgerEvidenceSummary(
   let body: string;
   try {
     body = readFileSync(
-      isAbsolute(record.path) ? record.path : join(repoPath, record.path),
+      // Kernel rule 38a: evidence is beside the workspace's ledger.
+      isAbsolute(record.path) ? record.path : join(workspaceFolderOf(repoPath), record.path),
       "utf8",
     );
   } catch {

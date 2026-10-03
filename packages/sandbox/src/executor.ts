@@ -4,6 +4,7 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { BWRAP_CANDIDATES, bubblewrapArgv, bubblewrapUnavailableReason } from "./bubblewrap.js";
+import { withCardIsolation } from "./isolation.js";
 import { signalGroup, trackGroup, untrackGroup } from "./process_registry.js";
 import { generateSeatbeltProfile } from "./seatbelt.js";
 import { hostSeccompArch, seccompProgram } from "./seccomp.js";
@@ -278,9 +279,11 @@ export class ProcessSandbox implements ExecutionSandbox {
   private wrap(
     command: string,
     args: string[],
-    options: SandboxOptions,
+    given: SandboxOptions,
     mode: ConfinementMode = this.mode,
   ): { file: string; argv: string[] } {
+    // Item 10a: the card whose worktree the command runs in sees only its project.
+    const options = withCardIsolation(given);
     if (mode === "bubblewrap" && this.bwrap) {
       // The seccomp program travels on fd 3 (see `execute`).
       const seccomp = hostSeccompArch() !== undefined ? 3 : undefined;
@@ -388,7 +391,7 @@ export class ProcessSandbox implements ExecutionSandbox {
   ): Promise<{ file: string; argv: string[] } | { refusal: ExecutionResult }> {
     if (this.mode !== "srt") return this.wrap(command, args, options);
     try {
-      return await srtWrap(command, args, options);
+      return await srtWrap(command, args, withCardIsolation(options));
     } catch (err) {
       if (this.requiresConfinement) {
         return { refusal: this.refusal(`srt failed: ${(err as Error).message}`) };

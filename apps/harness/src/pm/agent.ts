@@ -1276,6 +1276,21 @@ export function isStatusQuestion(text: string): boolean {
   );
 }
 
+/**
+ * PM-02: the everyday ways of asking how it is going, as a whole sentence —
+ * answered from the Activity log, as `/status` is, when no model can answer;
+ * with a model, Seshat answers them. A question about one thing ("how is it
+ * going with the export?") is not one.
+ */
+export function isStatusShaped(text: string): boolean {
+  return (
+    isStatusQuestion(text) ||
+    /^\s*(any updates?|where do (we|things) stand|how(?:'s|’s| is) it going|how are things( going)?|how(?:'s|’s| is) the (project|work) (going|doing)|how are we getting on|what(?:'s|’s| is) the latest)\s*[?.!]*\s*$/i.test(
+      text,
+    )
+  );
+}
+
 /** The chat's footer on an answer made from the ledger. */
 export const LEDGER_FOOTER =
   "\n\n_Answered from the Activity log without loading a model. Ask a specific question for my judgement._";

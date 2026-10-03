@@ -2,7 +2,9 @@
 // with a note, Park with a reason. Every mutation carries the CSRF header.
 import { errorCode, isAcceptanceTest, matchesAny } from "./diff_parse.js";
 import { MOD, actionHeaders, announce, copyText, esc, icon, kbd, postJSON } from "./dom.js";
+import { practiceTip } from "./learn.js";
 import { ISSUE_COPY, lineCommentLabel, sendBackBody } from "./lib/issue.js";
+import { ISSUE_ACTION_COPY } from "./lib/issue_actions.js";
 import { THREAD_COPY, acceptChecklist, acceptVerdict, dismissalNote } from "./lib/review_desk.js";
 import { gateLabel } from "./lib/vocabulary.js";
 import { placeUnder, pushOverlay } from "./overlay.js";
@@ -152,12 +154,18 @@ export function accept(card, evidence, { onMerged, onChange, detail } = {}) {
     if (res.ok) {
       const sha = String(res.data?.sha ?? "");
       // REV-04: the merge in one line — never the server's path or a git
-      // command; a Solo person learns their checkout is behind. The line
-      // naming Revert waits for Revert on the issue page (NEW-dashboard-21).
+      // command; a Solo person learns their checkout is behind. The issue
+      // page offers Revert (NEW-dashboard-21), so the toast says so (§2.5.10).
       const behind = res.data?.notice && getSession().mode !== "team";
       t.update({
         text: `Merged to main as ${sha.slice(0, 7)}`,
-        detail: behind ? "Your checkout of main is now behind it." : undefined,
+        detail: [
+          behind ? "Your checkout of main is now behind it." : "",
+          // Only a merge is reverted; a pull request opened on Accept is not merged yet.
+          res.data?.status === "done" ? ISSUE_ACTION_COPY.canRevert : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
         tone: "pass",
         iconName: "merge",
         action: sha ? { label: "Copy", run: () => copyText(sha) } : undefined,
@@ -245,7 +253,7 @@ export function composerHtml(notes, { comments = [] } = {}) {
   const chips = notes
     .map((n) => `<button type="button" class="chip" data-chip title="${esc(n)}">${esc(n)}</button>`)
     .join("");
-  return `<form class="composer" data-composer aria-label="Request changes"><label class="lbl" for="sb-note">What should the Agent do differently?</label><textarea id="sb-note" name="note" placeholder="Your note is the first thing the Agent reads on its next attempt." aria-describedby="sb-err"></textarea><div class="err" id="sb-err" role="alert" hidden>Add a note for the Agent. It's what it reads next.</div>${chips ? `<div class="chips"><span class="sec" style="font-size:var(--text-xs)">Quick notes</span>${chips}</div>` : ""}${carriedHtml(comments)}<div class="row"><label class="cbx"><input type="checkbox" checked disabled> Suggest as a playbook rule <small>· your note becomes a candidate rule in Playbook</small></label><span class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("send-back")}Request changes ${kbd(`${MOD}↵`)}</button></span></div></form>`;
+  return `<form class="composer" data-composer aria-label="Request changes"><label class="lbl" for="sb-note">What should the Agent do differently?</label>${practiceTip("practice:request_changes", "Request changes")}<textarea id="sb-note" name="note" placeholder="Your note is the first thing the Agent reads on its next attempt." aria-describedby="sb-err"></textarea><div class="err" id="sb-err" role="alert" hidden>Add a note for the Agent. It's what it reads next.</div>${chips ? `<div class="chips"><span class="sec" style="font-size:var(--text-xs)">Quick notes</span>${chips}</div>` : ""}${carriedHtml(comments)}<div class="row"><label class="cbx"><input type="checkbox" checked disabled> Suggest as a playbook rule <small>· your note becomes a candidate rule in Playbook</small></label><span class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("send-back")}Request changes ${kbd(`${MOD}↵`)}</button></span></div></form>`;
 }
 
 /**

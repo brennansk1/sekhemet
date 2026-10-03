@@ -1,7 +1,14 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import type { EventLog } from "@sekhemet/kernel";
-import { AUDIT_CATEGORIES, AUDIT_TYPES, type AuditEntry, auditCsv, auditEntry } from "@sekhemet/ui";
+import {
+  AUDIT_CATEGORIES,
+  AUDIT_TYPES,
+  type AuditEntry,
+  auditCsv,
+  auditEntry,
+  collapseAuditRuns,
+} from "@sekhemet/ui";
 import { type Access, type Level, refuse } from "./access.js";
 import { personName } from "./members.js";
 
@@ -196,7 +203,8 @@ async function respond(
   };
   const page = auditEntries(deps.db, q, names);
   if (!exporting) {
-    deps.json(res, 200, page);
+    // TEAM-06: identical entries in a row read as one, with their count.
+    deps.json(res, 200, { ...page, entries: collapseAuditRuns(page.entries) });
     return;
   }
   const day = new Date().toISOString().slice(0, 10);

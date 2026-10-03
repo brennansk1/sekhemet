@@ -50,6 +50,8 @@ import {
   secretStoreStatus,
 } from "./secret_store.js";
 import { userDir } from "./user_dir.js";
+import { realPath, workspaceFolderOf } from "./workspace_locator.js";
+import { trustWorkspace } from "./workspace_trust.js";
 
 const run = promisify(execFile);
 
@@ -863,6 +865,15 @@ export interface IntegrationsContext {
   recordConfigWrite?: <T>(principal: string, write: () => T) => T;
 }
 
+/** The repository the latest take-over inventory is of (TEAM-56), from its private part. */
+async function takeoverRoot(store: CardStore): Promise<string | undefined> {
+  const latest = (await store.eventsOfType(["takeover/inventory"])).at(-1) as
+    | { private?: Record<string, unknown> }
+    | undefined;
+  const root = latest?.private?.root;
+  return typeof root === "string" && root ? root : undefined;
+}
+
 /**
  * The integrations routes. A secret no store kept and the person has not
  * chosen a file for (SEC-27c) is refused with 409 and `needs:
@@ -1149,11 +1160,44 @@ async function integrationsRoutes(
       ctx.json(res, 409, { error: "A take-over is already running" });
       return true;
     }
+    const b = await ctx.readJsonBody(req);
+    const principal = ctx.principalOf?.(req) ?? cardStore.localPrincipal();
+    // TEAM-56, DS-N8-2 (DEC-57): *Add an existing repository* names a path on
+    // the server; without one, the take-over is of the server's own folder.
+    let root = ctx.repoPath;
+    if (typeof b.path === "string" && b.path.trim()) {
+      const { checkAdoptFolder } = await import("./pm/new_project.js");
+      const verdict = checkAdoptFolder(workspaceFolderOf(ctx.repoPath), cardStore, b.path.trim());
+      if (!verdict.ok) {
+        ctx.json(res, 409, {
+          error: verdict.reason,
+          refusal: {
+            kind: verdict.kind,
+            reason: verdict.reason,
+            ...(verdict.project ? { project: verdict.project } : {}),
+          },
+        });
+        return true;
+      }
+      root = verdict.folder;
+      // Trust first, which only an Admin grants in the Team setup (item 6).
+      if (b.trust === true) {
+        const audience = ctx.audience?.() ?? soloAudience();
+        try {
+          trustWorkspace(root, principal, {
+            team: audience.setup === "team",
+            admin: audience.setup !== "team" || audience.levelOf(principal) === "admin",
+          });
+        } catch (err) {
+          ctx.json(res, 403, { error: err instanceof Error ? err.message : String(err) });
+          return true;
+        }
+      }
+    }
     takeoverRunning = true;
     try {
       const { runTakeover } = await import("./takeover.js");
-      const principal = ctx.principalOf?.(req) ?? cardStore.localPrincipal();
-      const report = await runTakeover(ctx.repoPath, {
+      const report = await runTakeover(root, {
         store: cardStore,
         log: ctx.log,
         principal,
@@ -1163,6 +1207,7 @@ async function integrationsRoutes(
       ctx.json(res, 200, {
         trusted: report.trusted,
         wouldRun: report.wouldRun,
+        path: root,
         ...(await takeoverState(cardStore)),
       });
     } catch (err) {
@@ -1181,9 +1226,20 @@ async function integrationsRoutes(
     const proposalId = typeof b.proposalId === "string" ? b.proposalId : "";
     const { approveTakeoverPlan } = await import("./takeover_backlog.js");
     try {
+      // TEAM-56: a take-over of a repository other than the server's folder
+      // is recorded as the workspace's project when its plan is approved.
+      const root = await takeoverRoot(cardStore);
+      const adopt =
+        root && realPath(root) !== realPath(ctx.repoPath)
+          ? { workspaceFolder: workspaceFolderOf(ctx.repoPath), root, name: basename(root) }
+          : undefined;
       const r = await approveTakeoverPlan(
         { repoPath: ctx.repoPath, cardStore, log: ctx.log },
-        { proposalId, ...(typeof b.projectId === "string" ? { projectId: b.projectId } : {}) },
+        {
+          proposalId,
+          ...(typeof b.projectId === "string" ? { projectId: b.projectId } : {}),
+          ...(adopt ? { adopt } : {}),
+        },
         ctx.principalOf?.(req) ?? cardStore.localPrincipal(),
       );
       ctx.json(res, 200, { ...r, cards: r.cards.map((c) => c.id) });

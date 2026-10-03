@@ -363,3 +363,26 @@ describe("B4.11 T6: health in Solo is optional (TEAM-45, teams item 28)", () => 
     expect(JSON.stringify(v)).not.toMatch(/No health set|Update missing/);
   });
 });
+
+describe("a project added while the active-project cap is reached (DB-N26-3, RUN-82)", () => {
+  it("shows it paused with the reason, and offers Resume", () => {
+    const paused: ProjectFacts = {
+      ...storefront,
+      id: "proj_ledger",
+      name: "Ledger",
+      state: "paused",
+      paused: { reason: "Added while 3 projects were active, the most that run at once." },
+    };
+    const v = projectsModel({
+      now: NOW,
+      overview: overview({ projects: [chronicle, paused] }),
+    });
+    const row = v.rows.find((r) => r.id === "proj_ledger");
+    expect(row?.state).toBe("Paused");
+    expect(row?.paused).toEqual({
+      reason: "Added while 3 projects were active, the most that run at once.",
+      resume: PROJECTS_COPY.resume,
+    });
+    expect(v.rows.find((r) => r.id === "proj_chronicle")?.paused).toBeUndefined();
+  });
+});

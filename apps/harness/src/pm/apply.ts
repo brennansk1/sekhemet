@@ -11,6 +11,7 @@ import {
   projectGroupOf,
   splitThroughPipeline,
 } from "./pipeline.js";
+import { CARRY_TO, type CarryTo, SprintRefusal, completeSprint, onlyProjectOf } from "./sprints.js";
 import type { PmStore } from "./store.js";
 import type { PmProposal } from "./types.js";
 
@@ -229,18 +230,67 @@ export async function applyProposal(
     }
     case "create_cycle": {
       const p = proposal.patch ?? {};
+      // DEC-57: the sprint is its issues' project's, else the workspace's
+      // only project's; one that would span projects, or name none in a
+      // workspace of many, is refused before anything is recorded.
+      const issues = [];
+      for (const id of (p.cardIds as string[] | undefined) ?? []) {
+        const c = await ctx.cardStore.getCard(id);
+        if (c) issues.push(c);
+      }
+      const named = typeof p.projectId === "string" && p.projectId ? [p.projectId] : [];
+      const projects = [
+        ...new Set([...named, ...issues.map((c) => c.projectId).filter((x): x is string => !!x)]),
+      ];
+      if (projects.length > 1) {
+        throw new ProposalError(
+          "A sprint is one project's, and these issues are in more than one.",
+          409,
+        );
+      }
+      const projectId = projects[0] ?? onlyProjectOf(ctx.cardStore);
+      if (!projectId && ctx.cardStore.listProjects().length > 1) {
+        throw new ProposalError(
+          "A sprint is one project's: plan it from that project's board, or ask Seshat with its issues.",
+          409,
+        );
+      }
       const cycle = await ctx.pmStore.createCycle(
         {
           name: String(p.name),
           startsOn: String(p.startsOn),
           endsOn: String(p.endsOn),
           ...(typeof p.goal === "string" ? { goal: p.goal } : {}),
+          ...(projectId ? { projectId } : {}),
         },
         actor,
       );
       for (const id of (p.cardIds as string[] | undefined) ?? []) {
         const c = await ctx.cardStore.getCard(id);
         if (c) touched.push(await ctx.cardStore.updateCard(id, { cycleId: cycle.id }, actor, who));
+      }
+      break;
+    }
+    case "close_cycle": {
+      // PM-N13-5 (DEC-36): Seshat proposed the close; the person applying it
+      // completes the sprint through Complete sprint's own path, as its actor.
+      const cycleId = proposal.patch?.cycleId;
+      const carryTo = proposal.patch?.carryTo;
+      if (typeof cycleId !== "string" || !CARRY_TO.includes(carryTo as CarryTo)) {
+        throw new ProposalError("A sprint's close names the sprint and where its issues go.", 400);
+      }
+      try {
+        await completeSprint(
+          { log: ctx.pmStore.log, cardStore: ctx.cardStore, pmStore: ctx.pmStore },
+          cycleId,
+          carryTo as CarryTo,
+          { actor, ...(ctx.principal ? { principal: ctx.principal } : {}) },
+        );
+      } catch (err) {
+        if (!(err instanceof SprintRefusal)) throw err;
+        if (err.status === 409 || err.status === 404)
+          await ctx.pmStore.setProposalState(proposal.id, "stale");
+        throw new ProposalError(err.message, err.status === 404 ? 409 : err.status);
       }
       break;
     }

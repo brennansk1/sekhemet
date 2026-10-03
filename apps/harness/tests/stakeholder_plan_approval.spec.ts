@@ -15,7 +15,9 @@ import { pageWriteHeaders } from "./page_headers.js";
 /**
  * teams TEAM-20 and TEAM-42 (B4.11, NEW-teams-6; design-stage §2.9 item 7):
  * a Stakeholder's finished project conversation is sent for approval to a
- * named Member or Admin instead of being created; nothing exists until that
+ * named person who may create a project — an Admin, or a person who leads a
+ * project (TEAM-57 amends TEAM-20's Member or Admin; DEC-57) — instead of
+ * being created; nothing exists until that
  * person approves it, and the issues the approved plan creates are theirs,
  * their owner changeable afterwards. A real git repository, an on-disk
  * ledger and the real Team-configured HTTP server with five people at four
@@ -29,7 +31,7 @@ afterEach(async () => {
 
 const PEOPLE = [
   ["p_admin", "admin", "Ada Admin"],
-  ["p_member", "member", "Mo Member"],
+  ["p_mo", "admin", "Mo Admin"],
   ["p_member2", "member", "Mia Member"],
   ["p_stake", "stakeholder", "Sam Stakeholder"],
   ["p_viewer", "viewer", "Vic Viewer"],
@@ -149,7 +151,7 @@ async function setup() {
 const NOTHING = { cards: 0, projects: 0, briefs: 0 };
 
 describe("TEAM-20: a Stakeholder sends the plan for approval; nothing exists before it", () => {
-  it("records the send to a named Member, and creates no project, issue or brief", async () => {
+  it("records the send to a named approver, and creates no project, issue or brief", async () => {
     const s = await setup();
     // A Stakeholder cannot create the project directly.
     const direct = await s.call("p_stake", "POST", `/api/pm/proposals/${s.proposalId}/apply`, {
@@ -157,28 +159,28 @@ describe("TEAM-20: a Stakeholder sends the plan for approval; nothing exists bef
     });
     expect(direct.status).toBe(403);
     // The approver does not see a draft that was not sent (design-stage §2.9 item 1).
-    expect(await s.threadProposal("p_member")).toBeUndefined();
+    expect(await s.threadProposal("p_mo")).toBeUndefined();
 
     const res = await s.send("p_stake", {
-      approver: "p_member",
+      approver: "p_mo",
       choices: { type: "prototype", releaseLine: 1 },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { proposal: { approval: Record<string, unknown> } };
     expect(body.proposal.approval).toMatchObject({
       state: "sent",
-      approver: "p_member",
-      approverName: "Mo Member",
+      approver: "p_mo",
+      approverName: "Mo Admin",
       requestedBy: "p_stake",
     });
     const [sent] = await s.log.getEventsByTypes(["plan/sent_for_approval"]);
     expect(sent?.principal).toBe("p_stake");
-    expect(sent?.payload).toMatchObject({ proposalId: s.proposalId, approver: "p_member" });
+    expect(sent?.payload).toMatchObject({ proposalId: s.proposalId, approver: "p_mo" });
     expect(await s.created()).toEqual(NOTHING);
 
     // Both see it, with its state; the named approver now reads it in their thread.
     expect((await s.threadProposal("p_stake"))?.approval).toMatchObject({ state: "sent" });
-    expect((await s.threadProposal("p_member"))?.approval).toMatchObject({
+    expect((await s.threadProposal("p_mo"))?.approval).toMatchObject({
       state: "sent",
       requestedByName: "Sam Stakeholder",
     });
@@ -186,14 +188,15 @@ describe("TEAM-20: a Stakeholder sends the plan for approval; nothing exists bef
     expect(await s.threadProposal("p_member2")).toBeUndefined();
   });
 
-  it("refuses an approver below Member, a second send, and a Viewer's send", async () => {
+  it("refuses an approver below Member or who may not create a project, a second send, and a Viewer's send", async () => {
     const s = await setup();
-    for (const approver of ["p_viewer", "p_stake", "p_nobody"]) {
+    // TEAM-57: a Member who leads no project cannot approve a new project's plan.
+    for (const approver of ["p_viewer", "p_stake", "p_nobody", "p_member2"]) {
       const r = await s.send("p_stake", { approver });
       expect(r.status).toBe(400);
     }
-    expect((await s.send("p_viewer", { approver: "p_member" })).status).toBe(403);
-    expect((await s.send("p_stake", { approver: "p_member" })).status).toBe(200);
+    expect((await s.send("p_viewer", { approver: "p_mo" })).status).toBe(403);
+    expect((await s.send("p_stake", { approver: "p_mo" })).status).toBe(200);
     expect((await s.send("p_stake", { approver: "p_admin" })).status).toBe(409);
     expect(await s.log.getEventsByTypes(["plan/sent_for_approval"])).toHaveLength(1);
     expect(await s.created()).toEqual(NOTHING);
@@ -201,21 +204,21 @@ describe("TEAM-20: a Stakeholder sends the plan for approval; nothing exists bef
 
   it("cannot be applied or discarded around the named approver (T2)", async () => {
     const s = await setup();
-    await s.send("p_stake", { approver: "p_member" });
+    await s.send("p_stake", { approver: "p_mo" });
     const act = (who: string, verb: "apply" | "discard") =>
       s.call(who, "POST", `/api/pm/proposals/${s.proposalId}/${verb}`, { choices: {} });
     // An Admin holds proposal.apply and brief.accept, yet the plan is Mo's to approve.
     const applied = await act("p_admin", "apply");
     expect(applied.status).toBe(409);
-    expect(((await applied.json()) as { error: string }).error).toMatch(/Mo Member/);
+    expect(((await applied.json()) as { error: string }).error).toMatch(/Mo Admin/);
     // The approver too: Approve, not Apply, creates it (refused by level or by the send).
-    expect([403, 409]).toContain((await act("p_member", "apply")).status);
+    expect([403, 409]).toContain((await act("p_mo", "apply")).status);
     expect((await act("p_admin", "discard")).status).toBe(403);
     expect((await act("p_member2", "discard")).status).toBe(403);
     expect(await s.created()).toEqual(NOTHING);
-    expect((await s.threadProposal("p_member"))?.approval).toMatchObject({ state: "sent" });
+    expect((await s.threadProposal("p_mo"))?.approval).toMatchObject({ state: "sent" });
     // The approver may decline it.
-    expect((await act("p_member", "discard")).status).toBe(200);
+    expect((await act("p_mo", "discard")).status).toBe(200);
   });
 
   it("refuses to send a plan that is no one's conversation in the Team setup (T2)", async () => {
@@ -224,7 +227,7 @@ describe("TEAM-20: a Stakeholder sends the plan for approval; nothing exists bef
       "p_stake",
       "POST",
       `/api/pm/proposals/${s.unaddressedId}/send-for-approval`,
-      { approver: "p_member" },
+      { approver: "p_mo" },
     );
     expect(r.status).toBe(403);
     expect(await s.log.getEventsByTypes(["plan/sent_for_approval"])).toHaveLength(0);
@@ -232,8 +235,8 @@ describe("TEAM-20: a Stakeholder sends the plan for approval; nothing exists bef
 
   it("is approved only by the person it names, at Member or above", async () => {
     const s = await setup();
-    expect((await s.approve("p_member")).status).toBe(409); // not sent yet
-    await s.send("p_stake", { approver: "p_member" });
+    expect((await s.approve("p_mo")).status).toBe(409); // not sent yet
+    await s.send("p_stake", { approver: "p_mo" });
     expect((await s.approve("p_member2")).status).toBe(403);
     expect((await s.approve("p_stake")).status).toBe(403);
     expect(await s.created()).toEqual(NOTHING);
@@ -244,29 +247,29 @@ describe("TEAM-20: a Stakeholder sends the plan for approval; nothing exists bef
 describe("TEAM-42: the approver owns the issues the approved plan creates", () => {
   it("creates the project with the Stakeholder's choices, each issue owned by the approver", async () => {
     const s = await setup();
-    await s.send("p_stake", { approver: "p_member", choices: { type: "prototype" } });
-    const res = await s.approve("p_member");
+    await s.send("p_stake", { approver: "p_mo", choices: { type: "prototype" } });
+    const res = await s.approve("p_mo");
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       proposal: { state: string; approval: Record<string, unknown> };
       cards: { id: string }[];
     };
     expect(body.proposal.state).toBe("applied");
-    expect(body.proposal.approval).toMatchObject({ state: "approved", approvedBy: "p_member" });
+    expect(body.proposal.approval).toMatchObject({ state: "approved", approvedBy: "p_mo" });
     const after = await s.created();
     expect(after.projects).toBe(1);
     expect(after.briefs).toBe(1);
     const [approved] = await s.log.getEventsByTypes(["plan/approved"]);
-    expect(approved?.principal).toBe("p_member");
+    expect(approved?.principal).toBe("p_mo");
     const project = s.cardStore.listProjects()[0];
     expect(approved?.payload).toMatchObject({ proposalId: s.proposalId, projectId: project?.id });
     // The Stakeholder's Type was kept.
     expect(s.cardStore.depthProfiles.of(project?.id).profile).toBe("prototype");
     const cards = await s.cardStore.listCards();
     expect(cards.length).toBeGreaterThan(2);
-    for (const c of cards) expect(c.owner).toBe("p_member");
+    for (const c of cards) expect(c.owner).toBe("p_mo");
     // A second approval creates nothing more.
-    expect((await s.approve("p_member")).status).toBe(409);
+    expect((await s.approve("p_mo")).status).toBe(409);
     expect((await s.cardStore.listCards()).length).toBe(cards.length);
   });
 

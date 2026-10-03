@@ -102,6 +102,9 @@ const BUILDER = /(Prompt|PromptFor|Directive|Instructions?)$/;
  */
 const REFUSAL_BUILDER = /Refusal$|^refuse[A-Z]/;
 const PERSON_FACING_REFUSALS: ReadonlySet<string> = new Set([
+  // apps/harness/src/team/leaving.ts: "<name> is no longer a member of this workspace…",
+  // the dashboard's refusal when work is assigned to a removed member (teams TEAM-52).
+  "assignmentRefusal",
   // apps/harness/src/qualify.ts: "Refusing <model> as the Worker…", on the CLI.
   "qualificationRefusal",
   // apps/harness/src/measure_cmd.ts: "--auto-accept merges cards no person accepted…", on the CLI.

@@ -7,6 +7,7 @@ import {
   filesShownSinceEvidence,
   implementationFiles,
   ledgerBundle,
+  revertVerdict,
   reviewEntriesSinceEvidence,
 } from "./accept.js";
 
@@ -37,6 +38,11 @@ export interface ReviewDesk {
     /** RG-N5-4: a code owner must accept, and the viewer owns none of the files. */
     | { may: false; code: "not_code_owner"; who: Person[] }
     | { may: false; code: "not_independent"; because: "built" | "delegated"; who: Person[] };
+  /**
+   * DB-N21-3: on a Done issue, whether the viewer may revert it, and who may
+   * instead — the Accept rule, from the same function Revert refuses on.
+   */
+  revert?: { may: true } | { may: false; who: Person[] };
   /** A person built the work under review (DB-N5-4); absent when the Worker did. */
   builtBy?: { kind: "person"; id: string; name?: string };
   /**
@@ -126,11 +132,13 @@ export async function reviewDesk(
     };
   });
 
+  const rv = card.status === "done" ? revertVerdict(store, viewer, opts.acceptHolders) : undefined;
   return {
     findings,
     implementationFiles: ev ? implementationFiles(ev) : [],
     filesShown: await filesShownSinceEvidence(store, card.id),
     accept,
+    ...(rv ? { revert: rv.may ? { may: true } : { may: false, who: rv.who.map(person) } } : {}),
     ...(builder ? { builtBy: builtBy(builder, opts.nameOf(builder)) } : {}),
     testApprovals,
   };

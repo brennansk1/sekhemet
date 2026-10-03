@@ -27,6 +27,7 @@ import {
   readInheritedIssues,
 } from "./takeover_backlog.js";
 import { type Recon, declaredSubmodules, repoFiles, runRecon } from "./takeover_recon.js";
+import { realPath as realPathOf } from "./workspace_locator.js";
 import { agentConfigFiles, isAgentConfigApproved, isWorkspaceTrusted } from "./workspace_trust.js";
 
 /**
@@ -366,50 +367,69 @@ export async function runTakeover(root: string, options: TakeoverOptions): Promi
     say("3. Nothing runs yet: the repository is not trusted. Trusting it would run, confined:");
     for (const w of wouldRun) say(`   ${w}`);
   } else {
-    const timeoutMs = options.timeoutMs ?? 900_000;
-    const cache = join(root, ".sekhemet", "cache");
-    mkdirSync(cache, { recursive: true });
-    for (const [step, cmd] of [
-      ["install", plan.install],
-      ["build", plan.build],
-    ] as const) {
-      if (!cmd) continue;
-      const r = await runConfined(cmd[0], cmd[1], {
-        root,
-        timeoutMs,
-        env: { npm_config_cache: join(cache, "npm") },
-        ...(options.restricted ? { restricted: true } : {}),
-      });
-      runs.push({ step, command: line(cmd), exitCode: r.exitCode, ok: r.exitCode === 0 });
-      say(`3. ${step}: ${line(cmd)} → exit ${r.exitCode}`);
-      if (r.exitCode !== 0) {
-        // DS-TO-7: a first-class finding, never a stall.
-        add({
-          kind: "could_not_build",
-          command: line(cmd),
-          reason: failureReason(r.exitCode, r.stderr, r.stdout),
+    // Security item 10a: the repository's install, build and suite see only
+    // it — never the workspace's state or another project's root.
+    const store = cardStoreOf(options.store);
+    const { isolateCheckout } = await import("./card_root.js");
+    const { workspaceFolderOf } = await import("./workspace_locator.js");
+    const release = store
+      ? isolateCheckout(
+          {
+            repoPath: root,
+            cardStore: store,
+            workspaceFolder: store.workspaceFolder ?? workspaceFolderOf(root),
+          },
+          root,
+        )
+      : () => {};
+    try {
+      const timeoutMs = options.timeoutMs ?? 900_000;
+      const cache = join(root, ".sekhemet", "cache");
+      mkdirSync(cache, { recursive: true });
+      for (const [step, cmd] of [
+        ["install", plan.install],
+        ["build", plan.build],
+      ] as const) {
+        if (!cmd) continue;
+        const r = await runConfined(cmd[0], cmd[1], {
+          root,
+          timeoutMs,
+          env: { npm_config_cache: join(cache, "npm") },
+          ...(options.restricted ? { restricted: true } : {}),
         });
+        runs.push({ step, command: line(cmd), exitCode: r.exitCode, ok: r.exitCode === 0 });
+        say(`3. ${step}: ${line(cmd)} → exit ${r.exitCode}`);
+        if (r.exitCode !== 0) {
+          // DS-TO-7: a first-class finding, never a stall.
+          add({
+            kind: "could_not_build",
+            command: line(cmd),
+            reason: failureReason(r.exitCode, r.stderr, r.stdout),
+          });
+        }
       }
+      // The suite twice, confined, with no network: the onboarding baseline
+      // (DS-TO-6, SUR-38), on the live gates — the one deriver's proposal when
+      // the repository has none (a different live file is kept, SUR-7).
+      const derived = deriveGates(root);
+      const dir = join(root, ".sekhemet", "onboard");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "gates.proposed.toml"), derived.toml);
+      const installed = installGates(root, derived.toml, false);
+      if (installed.state === "written")
+        say("3. Checks: wrote .sekhemet/gates.toml from the project.");
+      const log = options.log;
+      const baseline = await recordOnboardingBaseline(root, dir, log, options.restricted === true);
+      if (log) {
+        const [latest] = (await log.getEventsByTypes([BASELINE_EVENT])).slice(-1);
+        baselineSeq = latest?.seq ?? 0;
+      }
+      say(
+        `3. Baseline: ${plural(baseline.entries, "pre-existing finding")}, ${plural(baseline.flaky, "flaky test")}, the suite run twice.`,
+      );
+    } finally {
+      release();
     }
-    // The suite twice, confined, with no network: the onboarding baseline
-    // (DS-TO-6, SUR-38), on the live gates — the one deriver's proposal when
-    // the repository has none (a different live file is kept, SUR-7).
-    const derived = deriveGates(root);
-    const dir = join(root, ".sekhemet", "onboard");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "gates.proposed.toml"), derived.toml);
-    const installed = installGates(root, derived.toml, false);
-    if (installed.state === "written")
-      say("3. Checks: wrote .sekhemet/gates.toml from the project.");
-    const log = options.log;
-    const baseline = await recordOnboardingBaseline(root, dir, log, options.restricted === true);
-    if (log) {
-      const [latest] = (await log.getEventsByTypes([BASELINE_EVENT])).slice(-1);
-      baselineSeq = latest?.seq ?? 0;
-    }
-    say(
-      `3. Baseline: ${plural(baseline.entries, "pre-existing finding")}, ${plural(baseline.flaky, "flaky test")}, the suite run twice.`,
-    );
   }
 
   // The connected tracker's open issues (DS-TO-13), read once trusted.
@@ -450,6 +470,9 @@ export async function runTakeover(root: string, options: TakeoverOptions): Promi
       })),
     },
     private: {
+      // TEAM-56: which repository this take-over is of, so its approval
+      // records that repository as the project (DEC-57).
+      root: realPathOf(root),
       recon: JSON.stringify(redactDeep({ ...recon, runs })),
       findingDetails: findings
         .filter((f) => f.reason || f.command)

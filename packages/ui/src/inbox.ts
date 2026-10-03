@@ -8,6 +8,7 @@
  * every word a person reads is here, so the page and the notices agree.
  */
 
+import { triageInboxLine } from "./intake.js";
 import { reviewItHref } from "./learn.js";
 import {
   type AiStateFacts,
@@ -171,7 +172,11 @@ export interface InboxItemFacts {
     | "plan_approval"
     | "plan_question"
     | "mention_invite"
-    | "invite_request";
+    | "invite_request"
+    // DB-N10-4: the project lead's count of issues waiting in Triage.
+    | "triage"
+    // Teams item 9a (TEAM-51): a project's Accept rule names no current member.
+    | "accept_rule";
   cardId?: string;
   title: string;
   project?: { id: string; name: string };
@@ -251,12 +256,24 @@ export function itemLine(item: InboxItemFacts): {
       };
     case "decision":
       return { title, line: `The Agent asks: ${item.question ?? "a question"}`, ...ai };
+    case "triage":
+      return { title, line: triageInboxLine(item.count), ...ai };
+    case "accept_rule":
+      return { title, line: acceptRuleInboxLine(item.project?.name), ...ai };
     default: {
       const said = item.change ? changeLine(item.change) : "";
       const more = item.count > 1 ? ` ${item.count} updates.` : "";
       return { title, line: `${said}${more}`.trim(), ...ai };
     }
   }
+}
+
+/**
+ * Teams item 9a (TEAM-51): an Accept rule left with no current member, in the
+ * words of its refusal, with what to do. No one it does not name may accept.
+ */
+export function acceptRuleInboxLine(project: string | undefined): string {
+  return `${project ? `${project}'s` : "This project's"} Accept rule names no current member, so no one can accept its issues. Edit the rule in Configuration › Project to name a person.`;
 }
 
 /** TEAM-22: the question the author answers before a mention reaches anyone. */
@@ -431,6 +448,8 @@ export const MY_ISSUES_COPY = {
   empty: "No issues are yours right now.",
   emptyHint:
     "Issues assigned or delegated to you, or waiting for your review, show here, across your projects.",
+  // FINDINGS TEAM-08: the empty state's next steps.
+  next: { board: "Open the board", inbox: "Open your Inbox", create: "New issue" },
   noProject: "No project",
   columns: { issue: "Issue", status: "Status", why: "Reason" },
 } as const;

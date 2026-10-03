@@ -81,6 +81,7 @@ import {
   lastToolApplied,
   verifyCardWorktree,
 } from "./card_gates.js";
+import { projectRootOf } from "./card_root.js";
 import {
   COMMANDS,
   type FrontDoorRoute,
@@ -136,6 +137,7 @@ import {
   LEDGER_COMMANDS,
   checkLedgerAnchor,
   ledgerCommand,
+  ledgerHeadTrailers,
   openLocalLedger,
 } from "./ledger_cmds.js";
 import { cardBranchHead, ledgerEvidenceSummary } from "./ledger_evidence.js";
@@ -240,7 +242,7 @@ import {
   tuneForRepo,
   writeTuningReport,
 } from "./tune.js";
-import { migrateLegacyUserDir, userDir } from "./user_dir.js";
+import { migrateLegacyUserDir, userDir, userPaths } from "./user_dir.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { approveBaseline, describeCandidate, visualCandidates } from "./visual_baseline.js";
 import { PressureControls, createCardWatchdog, workerFloorRefusal } from "./watchdog_actions.js";
@@ -260,6 +262,13 @@ import {
   runDevCommand,
 } from "./wave2.js";
 import {
+  holdsLedger,
+  ledgerPathOf,
+  realPath,
+  resolveWorkspace,
+  workspaceFolderOf,
+} from "./workspace_locator.js";
+import {
   agentConfigFiles,
   approveAgentConfig,
   describeUntrusted,
@@ -271,6 +280,7 @@ import {
   trustWorkspace,
   untrustedFiles,
 } from "./workspace_trust.js";
+import { readWorkspaces, runningServerFor } from "./workspaces.js";
 
 export interface CliConfig {
   command:
@@ -323,6 +333,7 @@ export interface CliConfig {
     | "ci"
     | "measure"
     | "models"
+    | "project"
     | "help";
   targetArg?: string | undefined;
   restrictedMode: boolean;
@@ -458,6 +469,75 @@ function isProjectRef(cardStore: CardStore, ref: string | undefined): boolean {
   return findProject(cardStore, ref) !== undefined;
 }
 
+/**
+ * Surface item 8a, NEW-surface-11: the folder a command acts on. In a
+ * workspace it is the project whose root holds the folder (or the workspace
+ * folder when no project's does); `serve` and `daemon` serve the whole
+ * workspace from its folder (SUR-76). A first run keeps the folder.
+ */
+export function cliWorkspace(
+  repoPath: string,
+  command?: string,
+): { repoPath: string; workspaceFolder: string; projectId?: string } | { refused: string } {
+  const found = resolveWorkspace(repoPath);
+  if (found.kind === "refused") return { refused: found.message };
+  if (found.kind === "first-run") return { repoPath, workspaceFolder: repoPath };
+  const target =
+    command === "serve" || command === "daemon" || command === "ui" || command === "board"
+      ? found.workspaceFolder
+      : (found.project?.rootPath ?? found.workspaceFolder);
+  return {
+    // One spelling of the folder as given (F18) when it is already the target.
+    repoPath: realPath(repoPath) === realPath(target) ? repoPath : target,
+    workspaceFolder: found.workspaceFolder,
+    ...(found.project ? { projectId: found.project.id } : {}),
+  };
+}
+
+/**
+ * SUR-79: why a first run here would start a second workspace for a
+ * repository that belongs to one: its history carries `Ledger-Head`
+ * trailers. Names the workspace on this machine whose ledger holds the
+ * newest trailer's hash — the machine's list only as a hint (RUN-86) — or
+ * says it is not on this machine, with the fixes. Undefined when none.
+ */
+function belongsElsewhere(repoPath: string): string | undefined {
+  const trailers = ledgerHeadTrailers(repoPath);
+  if (trailers.length === 0) return undefined;
+  const home = readWorkspaces(userPaths().workspaces)
+    .map((w) => w.folder)
+    .filter((f): f is string => typeof f === "string" && holdsLedger(f))
+    .find((folder) => {
+      try {
+        const db = new DatabaseSync(ledgerPathOf(folder), { readOnly: true });
+        try {
+          return trailers.some(
+            (t) =>
+              (
+                db.prepare("SELECT hash FROM events WHERE seq = ?").get(t.seq) as
+                  | { hash: string }
+                  | undefined
+              )?.hash === t.hash,
+          );
+        } finally {
+          db.close();
+        }
+      } catch {
+        return false;
+      }
+    });
+  const where = home
+    ? `its workspace is in ${home}: open it there (\`sekhemet\` in that folder), or add this clone to it from New project`
+    : "its workspace is not on this machine: restore its backup (`sekhemet dev restore`)";
+  return `This repository belongs to a Sekhemet workspace already (its history carries Ledger-Head trailers), so nothing was written: ${where}. To start a new workspace here anyway, run \`sekhemet --new-workspace\`.`;
+}
+
+/** SUR-80: a refused locator acts on no workspace, exit 1, the fix named. */
+function refuseWorkspace(message: string): void {
+  console.error(`sekhemet: ${message}`);
+  process.exitCode = 1;
+}
+
 export function initLocalKernel(repoPath: string): {
   db: DatabaseSync;
   log: EventLog;
@@ -488,6 +568,8 @@ export function initLocalKernel(repoPath: string): {
     );
   }
   const cardStore = new CardStore(db, log);
+  // K-N12-3: a card recorded with no project reads as the workspace folder's.
+  cardStore.workspaceFolder = workspaceFolderOf(repoPath);
   // Production boards check every column's entry condition (B1); Review
   // reads the evidence bundle the ledger records for the card (K-S7-7),
   // never a `latest-<card>.json` pointer, and none recorded before a rewind
@@ -532,7 +614,7 @@ export function initLocalKernel(repoPath: string): {
 
   // RUN-16: a closed card's worktree goes, its branch stays — on every path
   // that closes a card through this kernel.
-  removeWorktreesOnClose(repoPath, log);
+  removeWorktreesOnClose(repoPath, log, cardStore);
   return { db, log, cardStore, boardService };
 }
 
@@ -619,11 +701,23 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     route.kind === "reject" ||
     route.kind === "revert"
   ) {
-    return runTriage(route, parseCliArgs(route.flags).repoPath);
+    const at = cliWorkspace(parseCliArgs(route.flags).repoPath);
+    if ("refused" in at) return refuseWorkspace(at.refused);
+    return runTriage(route, at.repoPath);
   }
-  if (route.kind === "card") return runCardVerb(route, parseCliArgs(route.flags).repoPath);
+  if (route.kind === "card") {
+    const at = cliWorkspace(parseCliArgs(route.flags).repoPath);
+    if ("refused" in at) return refuseWorkspace(at.refused);
+    return runCardVerb(route, at.repoPath);
+  }
   const argv = route.argv;
   const config = parseCliArgs(argv);
+  // Surface item 8a (SUR-73, SUR-80): the workspace and project this folder
+  // belongs to, found from its ledger or its project's locator; a locator its
+  // ledger does not confirm is refused before anything opens.
+  const workspace = cliWorkspace(config.repoPath, config.command);
+  if ("refused" in workspace) return refuseWorkspace(workspace.refused);
+  config.repoPath = workspace.repoPath;
   // S9, item 40: `--trust` trusts the repository's configuration for this
   // invocation only; nothing is ever trusted implicitly.
   setInvocationTrust(argv.includes("--trust"));
@@ -876,6 +970,28 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   // ReviewWIP from this person's measured review minutes (B3).
   if (project) {
     await boardService.calibrateReviewWip(project.reviewMinutesPerDay).catch(() => undefined);
+  }
+
+  if (config.command === "project") {
+    // `sekhemet project list [--json]`, `sekhemet project move <id> <path>`
+    // (surface item 20d, SUR-77, SUR-81; kernel K-N12-7).
+    const { projectCommand } = await import("./project_cmd.js");
+    process.exitCode = await projectCommand(
+      argv
+        .slice(argv.indexOf("project") + 1)
+        .filter((a, i, all) => a !== "--repo" && all[i - 1] !== "--repo"),
+      {
+        workspaceFolder: workspace.workspaceFolder,
+        ...(workspace.projectId ? { folderProjectId: workspace.projectId } : {}),
+        cardStore,
+        log,
+        principal: cardStore.localPrincipal(),
+        print: (l) => console.log(l),
+        printErr: (l) => console.error(l),
+      },
+    );
+    db.close();
+    return;
   }
 
   if (config.command === "benchmark") {
@@ -1291,6 +1407,16 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       await printTerminalBoard(boardService);
       return;
     }
+    // SUR-76: `sekhemet` where the workspace is already served names that server.
+    const running = await runningServerFor(userPaths().workspaces, {
+      folder: workspace.workspaceFolder,
+      id: log.workspaceId(),
+    });
+    if (running) {
+      console.log(`Sekhemet board: ${running}/#/${homePage}  (already running for this workspace)`);
+      db.close();
+      return;
+    }
     const server = await startDashboardServer({
       db,
       log,
@@ -1365,6 +1491,16 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     if (argv.includes("--switch-to-solo")) {
       recordSwitchToSolo(log);
       console.log("Recorded the switch back to Solo: every request here is this machine's person.");
+    }
+    // SUR-76: one server per workspace; a running one is named, not doubled.
+    const running = await runningServerFor(userPaths().workspaces, {
+      folder: workspace.workspaceFolder,
+      id: log.workspaceId(),
+    });
+    if (running) {
+      console.log(`This workspace is already served at ${running}/`);
+      db.close();
+      return;
     }
     // runtime item 26: `--host` binds another address, which only the Team setup allows.
     const host = argv.includes("--host") ? argv[argv.indexOf("--host") + 1] : undefined;
@@ -1515,82 +1651,93 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // card's own worktree when one exists, and report typed failures with
     // their remedies plus the 3-file / 200-line bounds.
     const cardId = config.targetArg;
-    const worktree = cardId ? join(config.repoPath, ".sekhemet", "worktrees", cardId) : undefined;
-    const cwd = worktree && existsSync(worktree) ? worktree : config.repoPath;
-    if (cardId && cwd === config.repoPath) {
+    const card = cardId ? await cardStore.getCard(cardId) : null;
+    // Runtime item 2a (SUR-75): a card key from any project of the workspace
+    // runs that card's checks in its own project's root.
+    const { contextForCard, isolateCheckout } = await import("./card_root.js");
+    const place = contextForCard({ repoPath: config.repoPath, cardStore }, card ?? {});
+    const root = place.repoPath;
+    const worktree = cardId ? join(root, ".sekhemet", "worktrees", cardId) : undefined;
+    const cwd = worktree && existsSync(worktree) ? worktree : root;
+    if (cardId && cwd === root) {
       console.log(`No worktree for ${cardId}; running the checks in the repository instead.`);
     }
-    const gatesConfig = loadGatesConfig(config.repoPath);
+    const gatesConfig = loadGatesConfig(root);
     for (const w of gatesConfig.warnings ?? []) console.log(`  warning: ${w}`);
-    const card = cardId ? await cardStore.getCard(cardId) : null;
+    // Security item 10a: a card's checks see only its own project.
+    const releaseIsolation = cardId ? isolateCheckout(place, cwd) : () => {};
     let res: PipelineResult;
-    if (cardId && cwd !== config.repoPath) {
-      // The card's own verification — the same pipeline, runner, rungs,
-      // branch, bounds and built-in layers as the card run (gates rule 8, T1).
-      const base = gateBaseBranch(config.repoPath, gatesConfig);
-      console.log(`\nVerifying ${cardId} against ${base} in ${cwd}`);
-      res = await verifyCardWorktree({
-        repoPath: config.repoPath,
-        gatesConfig,
-        restricted: config.restrictedMode,
-        card: card ?? {},
-        worktree: cwd,
-        base,
-        // The same inputs as the card run: the onboarding baseline (GT-BF-2)
-        // and what a tool applied on its last run (GT-BF-3).
-        ...(await (
-          await import("./onboard.js")
-        )
-          .loadBaseline({
-            getEventsByTypes: (types: string[]) => cardStore.eventsOfType(types),
-          })
-          .then((b) => baselineInput(b))
-          .catch(() => ({}))),
-        ...(lastToolApplied(config.repoPath, cardId)
-          ? { toolApplied: lastToolApplied(config.repoPath, cardId) }
-          : {}),
-        // Air-gapped: only mirrored packages exist (X10).
-        registry: isAirgapped(config.repoPath)
-          ? mirrorRegistry(config.repoPath)
-          : npmRegistry(config.repoPath, {
-              // Through the one network policy (security item 32, SEC-14).
-              fetchImpl: policyFetch(
-                (() => {
-                  const n = networkConfigs(config.repoPath);
-                  return mergeNetworkConfigs(n.user, n.project);
-                })(),
-                {
-                  purpose: "supply-chain",
-                  // Inside the card-diff branch: cardId is set. A lookup whose
-                  // record fails fails too (security item 33).
-                  record: (r) =>
-                    cardStore.recordEvent({
-                      ...egressEvent(r),
-                      cardId: String(cardId),
-                      actor: "system",
-                    }),
-                },
-              ) as typeof fetch,
-            }),
-      });
-    } else {
-      // No card: the declared gates of the repository as it stands.
-      const rungs = verificationRungs(gatesConfig.gates, config.restrictedMode);
-      console.log(`\nRunning ${rungs.join(", ")} in ${cwd}`);
-      res = await runGatePipeline(
-        [
-          declaredStage(
-            new DeterministicGateRunner(confinedSandbox(config.restrictedMode), {
-              repoRoot: config.repoPath,
-              expectedConfigSha256: gatesConfig.sha256,
-              maxFailuresReported: Number.POSITIVE_INFINITY,
-            }),
-            rungs,
-            cwd,
-          ),
-        ],
-        { cwd },
-      );
+    try {
+      if (cardId && cwd !== root) {
+        // The card's own verification — the same pipeline, runner, rungs,
+        // branch, bounds and built-in layers as the card run (gates rule 8, T1).
+        const base = gateBaseBranch(root, gatesConfig);
+        console.log(`\nVerifying ${cardId} against ${base} in ${cwd}`);
+        res = await verifyCardWorktree({
+          repoPath: root,
+          gatesConfig,
+          restricted: config.restrictedMode,
+          card: card ?? {},
+          worktree: cwd,
+          base,
+          // The same inputs as the card run: the onboarding baseline (GT-BF-2)
+          // and what a tool applied on its last run (GT-BF-3).
+          ...(await (
+            await import("./onboard.js")
+          )
+            .loadBaseline({
+              getEventsByTypes: (types: string[]) => cardStore.eventsOfType(types),
+            })
+            .then((b) => baselineInput(b))
+            .catch(() => ({}))),
+          ...(lastToolApplied(config.repoPath, cardId)
+            ? { toolApplied: lastToolApplied(config.repoPath, cardId) }
+            : {}),
+          // Air-gapped: only mirrored packages exist (X10).
+          registry: isAirgapped(root)
+            ? mirrorRegistry(root)
+            : npmRegistry(root, {
+                // Through the one network policy (security item 32, SEC-14).
+                fetchImpl: policyFetch(
+                  (() => {
+                    const n = networkConfigs(root);
+                    return mergeNetworkConfigs(n.user, n.project);
+                  })(),
+                  {
+                    purpose: "supply-chain",
+                    // Inside the card-diff branch: cardId is set. A lookup whose
+                    // record fails fails too (security item 33).
+                    record: (r) =>
+                      cardStore.recordEvent({
+                        ...egressEvent(r),
+                        cardId: String(cardId),
+                        actor: "system",
+                      }),
+                  },
+                ) as typeof fetch,
+              }),
+        });
+      } else {
+        // No card: the declared gates of the repository as it stands.
+        const rungs = verificationRungs(gatesConfig.gates, config.restrictedMode);
+        console.log(`\nRunning ${rungs.join(", ")} in ${cwd}`);
+        res = await runGatePipeline(
+          [
+            declaredStage(
+              new DeterministicGateRunner(confinedSandbox(config.restrictedMode), {
+                repoRoot: root,
+                expectedConfigSha256: gatesConfig.sha256,
+                maxFailuresReported: Number.POSITIVE_INFINITY,
+              }),
+              rungs,
+              cwd,
+            ),
+          ],
+          { cwd },
+        );
+      }
+    } finally {
+      releaseIsolation();
     }
     for (const a of res.advisories) console.log(`  advisory: ${a}`);
     // Y19, RG-N3-1: each package the card touches runs its own gates inside
@@ -1976,8 +2123,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       console.error(`Issue not found: ${cardId}`);
       process.exit(1);
     }
+    // Runtime item 2a, SUR-75: the card runs in its own project's root,
+    // wherever in the workspace the command was started.
+    const cardRoot = projectRootOf(cardStore, card) ?? config.repoPath;
     // SUR-12: a derived test gate that cannot start stops the run, naming the file.
-    const cannotStart = gateStartStop(config.repoPath);
+    const cannotStart = gateStartStop(cardRoot);
     if (cannotStart.length) {
       for (const line of cannotStart) console.error(line);
       process.exitCode = 1;
@@ -2117,7 +2267,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         ? new Access({ db, setup: "team", localPrincipal: () => log.localPrincipal() })
         : undefined;
     const ctx = {
-      repoPath: config.repoPath,
+      repoPath: cardRoot,
+      workspaceFolder: workspace.workspaceFolder,
       restrictedMode: config.restrictedMode,
       cardStore,
       boardService,
@@ -2328,7 +2479,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       releaseLease();
       return;
     }
-    const readyRaw = (await cardStore.listCards({ status: "ready" })) as CardRecord[];
+    // SUR-75: the folder's project's Ready issues, or every active project's
+    // in turn (RUN-81) from a workspace folder that is no project's root.
+    const inScope = (c: CardRecord) =>
+      !workspace.projectId || (c.projectId ?? workspace.projectId) === workspace.projectId;
+    const readyRaw = ((await cardStore.listCards({ status: "ready" })) as CardRecord[]).filter(
+      inScope,
+    );
     if (readyRaw.length === 0) {
       console.log("No Ready issues.");
       releaseLease();
@@ -2472,7 +2629,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       hours: () => effectiveConfig(config.repoPath, argv).config.machine.hours,
     });
     const queuedWork = new QueuedCardWork({
-      next: async () => (await cardStore.listCards({ status: "ready" })) as CardRecord[],
+      next: async () =>
+        ((await cardStore.listCards({ status: "ready" })) as CardRecord[]).filter(inScope),
       tasks: (card) => cardOverlapTasks(config.repoPath, card),
       log: (line) => console.log(`   ${line}`),
     });
@@ -3510,6 +3668,10 @@ function printDevHelp(): void {
     ["board [--terminal]", "The board (the bare `sekhemet` opens it; --terminal for text)"],
     ["take-over", "Take over an unfinished project: trust, recon, then what runs"],
     [
+      "project list [--json] | project move <id> <path> [--yes]",
+      "The workspace's projects; record that a project's repository moved",
+    ],
+    [
       "take-over --approve TOP-<n> [--project <id>]",
       "Approve a take-over plan: its issues are planned",
     ],
@@ -3569,7 +3731,23 @@ async function openHome(flags: string[]): Promise<void> {
     : undefined;
   const findRoleWeights = await roleWeightsFinder(modelsDir);
   const yes = flags.includes("--yes");
-  if (!existsSync(join(repoPath, ".sekhemet", "config.toml"))) {
+  // Surface item 8a: a folder of a workspace's project is no first run
+  // (SUR-73); a locator its ledger does not confirm is refused (SUR-80); a
+  // repository whose history carries `Ledger-Head` trailers belongs to a
+  // workspace already, so its first run is refused unless --new-workspace (SUR-79).
+  const found = resolveWorkspace(repoPath);
+  if (found.kind === "refused") return refuseWorkspace(found.message);
+  const firstRun =
+    found.kind === "first-run" && !existsSync(join(repoPath, ".sekhemet", "config.toml"));
+  if (firstRun && !flags.includes("--new-workspace")) {
+    const refusal = belongsElsewhere(repoPath);
+    if (refusal) {
+      console.error(`sekhemet: ${refusal}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+  if (firstRun) {
     const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
     const out = await runFirstRun(repoPath, {
       findRoleWeights,

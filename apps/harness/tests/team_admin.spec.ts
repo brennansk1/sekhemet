@@ -192,6 +192,52 @@ interface AuditEntry {
   project?: string;
 }
 
+describe("FINDINGS TEAM-06: the audit log reads as a person's record", () => {
+  it("folds identical sign-ins in a row into one entry with a count, names a refusal's action in words, and never repeats the actor as the target", async () => {
+    const t = await team();
+    // Mo signs in three times in a row: one entry, three times.
+    for (let i = 0; i < 3; i++) {
+      await signedIn(
+        await call("POST", "/api/session", nobody, {
+          email: "mo@northwind.test",
+          password: PASSWORD,
+        }),
+      );
+    }
+    // Vic, a Viewer, is refused an edit on Chronicle.
+    await store.createCard({ id: "c1", tier: "story", title: "Export", projectId: t.project });
+    expect((await call("POST", "/api/cards/c1/start", t.vic)).status).toBe(403);
+
+    const { entries } = (await ok(t.ada, "GET", "/api/audit?limit=500")) as {
+      entries: (AuditEntry & { count?: number })[];
+    };
+    const moSignIns = entries.filter(
+      (e) => e.type === "session/started" && e.actor.principal === t.mo.principal,
+    );
+    expect(moSignIns[0]?.count).toBe(3);
+    // A sign-in names who signed in once, as the actor.
+    for (const e of entries.filter((x) => x.type.startsWith("session/")))
+      expect(e.target, e.type).toBe("");
+    const refused = entries.find((e) => e.type === "access/refused");
+    expect(refused?.target).toBe("edit this issue, on Chronicle");
+    // No raw permission id in any entry.
+    expect(entries.map((e) => e.target).join(" ")).not.toMatch(/issue\.edit/);
+
+    // The export keeps every row, uncounted.
+    const json = (await (
+      await call("GET", "/api/audit?format=json&action=sign_in", t.ada)
+    ).json()) as {
+      entries: (AuditEntry & { count?: number })[];
+    };
+    expect(
+      json.entries.filter(
+        (e) => e.type === "session/started" && e.actor.principal === t.mo.principal,
+      ).length,
+    ).toBeGreaterThanOrEqual(3);
+    expect(json.entries.some((e) => e.count !== undefined)).toBe(false);
+  });
+});
+
 describe("TEAM-27: the audit log, an Admin's read of the event log", () => {
   it("lists every sign-in, refusal summary, lock, level change, invite, token, password reset, model change and configuration change, filterable and exportable", async () => {
     const t = await team();

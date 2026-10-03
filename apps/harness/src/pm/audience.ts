@@ -26,6 +26,12 @@ export interface Audience {
   /** The workspace's people now (approved, not removed); the Team setup's only. */
   people?(): string[];
   /**
+   * Whether the person may create a project — an Admin, or a person who
+   * leads a project (teams item 6, TEAM-54, TEAM-57) — and so approve a new
+   * project's plan.
+   */
+  mayCreateProject?(principal: string): boolean;
+  /**
    * The people who may accept on a project (teams item 7, DEC-42): its
    * Accept rule's, else its lead, else the Admins. Undefined in Solo, whose
    * one person accepts (FINDINGS STA-02).
@@ -72,6 +78,7 @@ export function audienceFromAccess(access: () => Access, db: DatabaseSync): Audi
         .map((m) => m.principal),
     autoApplier: (project, kind) => access().autoApplier(project, kind),
     acceptHolders: (project) => access().acceptHolders(project),
+    mayCreateProject: (p) => access().can(p, "project.create"),
   };
 }
 

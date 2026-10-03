@@ -520,8 +520,8 @@ describe("the issue page and Review in a browser (C2a: ISS, REV, NEW-dashboard-1
       await toast.waitFor();
       const words = await toast.innerText();
       expect(words).toMatch(/Merged to main as a394ee4/);
-      // The toast promises no Revert until the issue page has one (NEW-dashboard-21).
-      expect(words).not.toMatch(/revert/i);
+      // The issue page offers Revert (NEW-dashboard-21), so the toast says where (§2.5.10).
+      expect(words).toMatch(/You can revert it from the issue page\./);
       expect(words).toMatch(/Your checkout of main is now behind it\./);
       expect(words).not.toMatch(/read-tree|\/Users\/|a394ee4f0c/);
       await page.context().close();

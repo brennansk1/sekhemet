@@ -46,16 +46,32 @@ import {
   planRelease,
 } from "@sekhemet/sync";
 import { integrationBranch } from "./accept.js";
+import { contextForCard, isolateCheckout } from "./card_root.js";
 import { latestLedgerEvidence } from "./ledger_evidence.js";
 import { changeRoute, setupFor } from "./planner_live.js";
 import { changeCardSummary } from "./pm/pm_copy.js";
 import { PmStore } from "./pm/store.js";
 import {
   applyDocumentProposal,
+  docsProjectOf,
   exportProjectDocuments,
   renderedDocuments,
 } from "./project_docs.js";
 import type { RepoContext } from "./wave2.js";
+
+/**
+ * The context of one project's acts (DEC-57: a workspace holds many projects
+ * and each keeps its own repository): its own root for the integration
+ * branch, the commits a release is planned from, the documents and the tag;
+ * the workspace's ledger stays where it is.
+ */
+export function forProject(
+  k: RepoContext,
+  projectId: string | undefined,
+): RepoContext & { projectId?: string } {
+  const placed = contextForCard(k, { projectId });
+  return { ...placed, ...(projectId ? { projectId } : {}) };
+}
 
 /**
  * Project done, computed (planner-pm §2.15, P13) — the harness side: the
@@ -143,14 +159,26 @@ export async function cardStrength(
  */
 export async function checkMain(
   k: RepoContext,
-  options: { sandbox?: ProcessSandbox; force?: boolean; restricted?: boolean } = {},
+  options: {
+    sandbox?: ProcessSandbox;
+    force?: boolean;
+    restricted?: boolean;
+    /** The project whose integration branch is checked (DEC-57); omitted, the one rooted here, else the brief's. */
+    projectId?: string;
+  } = {},
 ): Promise<{ check?: MainCheck; skipped?: string }> {
   const ledger = ledgerOf(k);
-  const reqs = (await k.cardStore.requirements.list()).filter((r) => !r.cut);
+  const project = options.projectId ?? (await docsProjectOf(k));
+  // DEC-57: the project's own requirements, checked in its own repository.
+  const kp = forProject(k, project);
+  const reqs = (await k.cardStore.requirements.list()).filter(
+    (r) =>
+      !r.cut && (project === undefined || r.projectId === undefined || r.projectId === project),
+  );
   if (reqs.length === 0) return { skipped: "no requirement is recorded" };
-  const { branch, sha } = mainHead(k.repoPath);
+  const { branch, sha } = mainHead(kp.repoPath);
   if (!sha) return { skipped: `${branch} has no commit` };
-  const last = await latestMainCheck(ledger);
+  const last = await latestMainCheck(ledger, project);
   if (last?.sha === sha && !options.force) return { check: last, skipped: "main was checked" };
 
   // Test → requirement links from each traced card's staged tests (§2.15.2).
@@ -178,7 +206,7 @@ export async function checkMain(
   // DS-P14-1: the depth profile recorded for the project (the one reader,
   // `depthProfiles.of`); each card's strength is judged against its own
   // project's profile, and the check records the brief's project's.
-  const profile = k.cardStore.depthProfiles.of(await defaultRequirementProject(ledger)).profile;
+  const profile = k.cardStore.depthProfiles.of(project).profile;
   const strengthByCard = new Map<string, MainTestResult["strength"]>();
   for (const id of new Set(fileCard.values())) {
     const card = await k.cardStore.getCard(id);
@@ -186,15 +214,18 @@ export async function checkMain(
     strengthByCard.set(id, strengthVerdict(await cardStrength(k, id), own));
   }
 
-  const gatesConfig = loadGatesConfig(k.repoPath);
+  const gatesConfig = loadGatesConfig(kp.repoPath);
   const sandbox = options.sandbox ?? confinedSandbox(options.restricted ?? false);
   const rungs = [...new Set(gatesConfig.gates.filter((g) => g.blocking).map((g) => g.rung))];
   const testGate = gatesConfig.gates.find((g) => g.rung === "test" && g.blocking);
-  const { gates, results, failures } = await new NodeGitSyncAdapter(k.repoPath).withScratchCheckout(
-    sha,
-    async (cwd) => {
+  const { gates, results, failures } = await new NodeGitSyncAdapter(
+    kp.repoPath,
+  ).withScratchCheckout(sha, async (cwd) => {
+    // Security item 10a: the project's checks and tests see only this project.
+    const release = isolateCheckout(kp, cwd);
+    try {
       const gateResult = await new DeterministicGateRunner(sandbox, {
-        repoRoot: k.repoPath,
+        repoRoot: kp.repoPath,
         expectedConfigSha256: gatesConfig.sha256,
       }).runGates(rungs, cwd);
       const run =
@@ -211,8 +242,10 @@ export async function checkMain(
           ...("unavailable" in run && files.length > 0 ? [`tests: ${run.unavailable}`] : []),
         ],
       };
-    },
-  );
+    } finally {
+      release();
+    }
+  });
   const tests: Record<string, MainTestResult> = {};
   for (const ref of refs) {
     const file = fileOf(ref);
@@ -229,10 +262,17 @@ export async function checkMain(
   }
   await recordMainCheck(
     ledger,
-    { sha, branch, gatesPassed: gates.passed, tests, profile },
+    {
+      sha,
+      branch,
+      gatesPassed: gates.passed,
+      tests,
+      profile,
+      ...(project ? { projectId: project } : {}),
+    },
     failures,
   );
-  return { check: (await latestMainCheck(ledger)) as MainCheck };
+  return { check: (await latestMainCheck(ledger, project)) as MainCheck };
 }
 
 /** The story map of a project (the default one when omitted), judged against main's head now. */
@@ -243,7 +283,7 @@ export async function projectStoryMap(
   const ledger = ledgerOf(k);
   const id = projectId ?? (await defaultRequirementProject(ledger));
   if (!id || !k.cardStore.getProject(id)) return undefined;
-  return storyMap(ledger, { projectId: id, mainSha: mainHead(k.repoPath).sha });
+  return storyMap(ledger, { projectId: id, mainSha: mainHead(forProject(k, id).repoPath).sha });
 }
 
 /**
@@ -266,14 +306,17 @@ export async function acceptSliceAndRelease(
   report: ReleaseReport;
 }> {
   const ledger = ledgerOf(k);
-  const { branch, sha } = mainHead(k.repoPath);
-  const { completesProject } = await acceptSlice(ledger, sliceId, principal, sha);
+  // DEC-57: the slice's own project — its integration branch, its commits.
   const slice = await k.cardStore.slices.get(sliceId);
-  const plan = planRelease(k.repoPath, { ref: branch });
-  const proposed = [];
-  for (const s of await k.cardStore.slices.list(slice?.projectId)) {
-    proposed.push(...(await k.cardStore.slices.releases(s.id)).map((r) => r.version));
-  }
+  const kp = forProject(k, slice?.projectId);
+  const { branch, sha } = mainHead(kp.repoPath);
+  const { completesProject } = await acceptSlice(ledger, sliceId, principal, sha);
+  const plan = planRelease(kp.repoPath, { ref: branch });
+  // Every release this project proposed, a maintenance release's too (NEW-planner-pm-12).
+  const proposed = (await k.log.getEventsByTypes(["release/proposed"]))
+    .map((e) => e.payload as { projectId?: string; version?: string })
+    .filter((p) => p.projectId === slice?.projectId && typeof p.version === "string")
+    .map((p) => p.version as string);
   const version = sliceReleaseVersion(plan, proposed);
   try {
     const r = await proposeSliceRelease(ledger, {
@@ -329,7 +372,7 @@ export async function acceptSliceAndRelease(
  */
 export async function extendRefusal(k: RepoContext, sliceId: string): Promise<string | undefined> {
   const ledger = ledgerOf(k);
-  const status = await sliceStatus(ledger, sliceId, mainHead(k.repoPath).sha);
+  const status = await sliceStatus(ledger, sliceId, await sliceMainSha(k, sliceId));
   if (!status) return `No release ${sliceId}`;
   const open = (await sliceCards(ledger, sliceId)).filter((c) => c.status !== "done");
   const unred = open.filter(
@@ -346,6 +389,12 @@ export async function extendRefusal(k: RepoContext, sliceId: string): Promise<st
     return `${unred.map((c) => c.id).join(", ")} ${unred.length === 1 ? "has" : "have"} no red test yet; extending is not offered`;
   }
   return undefined;
+}
+
+/** The head of a slice's own project's integration branch (DEC-57). */
+async function sliceMainSha(k: RepoContext, sliceId: string): Promise<string | undefined> {
+  const slice = await k.cardStore.slices.get(sliceId);
+  return mainHead(forProject(k, slice?.projectId).repoPath).sha;
 }
 
 /**
@@ -418,15 +467,23 @@ export async function projectDonePass(
     return { held: new Set(), lines, asks: [] };
   }
   const ledger = ledgerOf(k);
-  try {
-    const r = await checkMain(k);
-    if (r.check && !r.skipped) {
-      lines.push(
-        `Checked main at ${r.check.sha.slice(0, 7)}: checks ${r.check.gatesPassed ? "pass" : "fail"}, ${Object.values(r.check.tests).filter((t) => t.result === "passed").length} of ${Object.keys(r.check.tests).length} linked tests pass.`,
-      );
+  // DEC-57: each project with requirements has its own integration branch to check.
+  const projects = [
+    ...new Set(
+      (await k.cardStore.requirements.list()).filter((r) => !r.cut).map((r) => r.projectId),
+    ),
+  ];
+  for (const projectId of projects.length > 1 ? projects : [undefined]) {
+    try {
+      const r = await checkMain(k, projectId ? { projectId } : {});
+      if (r.check && !r.skipped) {
+        lines.push(
+          `Checked main at ${r.check.sha.slice(0, 7)}: checks ${r.check.gatesPassed ? "pass" : "fail"}, ${Object.values(r.check.tests).filter((t) => t.result === "passed").length} of ${Object.keys(r.check.tests).length} linked tests pass.`,
+        );
+      }
+    } catch (err) {
+      lines.push(`Main not checked: ${err instanceof Error ? err.message : String(err)}`);
     }
-  } catch (err) {
-    lines.push(`Main not checked: ${err instanceof Error ? err.message : String(err)}`);
   }
   // A scheduled pass: nobody asked, so an owned card's hold is its owner's to apply (PM-N9-9).
   const setup = setupFor(k.repoPath);
@@ -498,7 +555,28 @@ export async function releaseSubcommand(
     return 1;
   };
   try {
+    // NEW-planner-pm-12: `sekhemet release --confirm next` tags the proposed Next release.
+    if (sub === "--confirm" && a === "next") {
+      const nr = await import("./next_release.js");
+      const project = flagValue(args, "--project") ?? defaultProject(k);
+      if (!project) return fail("No project: name one with --project <id>.");
+      const t = await nr.tagNextRelease(k, project, principal);
+      print(`Tagged ${t.tag} at ${t.sha.slice(0, 7)}.`);
+      print(t.notice);
+      return 0;
+    }
     switch (sub) {
+      case "propose": {
+        // NEW-planner-pm-12 (PM-N12-2, -4): propose the open Next release.
+        const nr = await import("./next_release.js");
+        const project = flagValue(args, "--project") ?? defaultProject(k);
+        if (!project) return fail("No project: name one with --project <id>.");
+        const r = await nr.proposeNextRelease(k, project, principal);
+        print(`Proposed release ${r.version}. Tag it with: sekhemet release --confirm next`);
+        print(r.notes);
+        print(r.changelog);
+        return 0;
+      }
       case "status": {
         const map = await projectStoryMap(k, a);
         if (!map) return fail("No accepted brief: nothing to report.");
@@ -527,7 +605,7 @@ export async function releaseSubcommand(
           (await k.cardStore.ensureProject({ rootPath: k.repoPath, name: k.repoPath })).id;
         const r = await acceptBrief(ledger, { ...body, projectId }, principal);
         print(`Accepted: ${r.sliceIds.join(", ")} with ${r.requirementIds.join(", ")}.`);
-        await exportAfter(k, principal, "brief", print);
+        await exportAfter(forProject(k, projectId), principal, "brief", print);
         return 0;
       }
       case "accept": {
@@ -574,10 +652,11 @@ export async function releaseSubcommand(
       case "revise": {
         if (!a || !b) return fail("Usage: sekhemet release revise <REQ> <revision.json>");
         const r = await reviseAndPropose(k, a, readJson(b) as RequirementRevision, principal);
+        const kr = await requirementCtx(k, a);
         print(
           `${a} is now version ${r.version}.${r.held.length ? ` Held in Planning: ${r.held.join(", ")}.` : ""}${r.changeCards.length ? ` Seshat proposes change issues for ${r.changeCards.map((x) => x.cardId).join(", ")}.` : ""}`,
         );
-        await exportAfter(k, principal, a, print);
+        await exportAfter(kr, principal, a, print);
         return 0;
       }
       case "confirm": {
@@ -595,7 +674,7 @@ export async function releaseSubcommand(
         return await docsSubcommand(k, args.slice(1), principal, print);
       case "report": {
         if (!a) return fail("Usage: sekhemet release report <SLICE>");
-        const s = await sliceStatus(ledger, a, mainHead(k.repoPath).sha);
+        const s = await sliceStatus(ledger, a, await sliceMainSha(k, a));
         if (!s) return fail(`No release ${a}`);
         print(releaseReport(s.map, a).text);
         return 0;
@@ -606,6 +685,13 @@ export async function releaseSubcommand(
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
   }
+}
+
+/** The project rooted at this repository, else the only one; undefined when that is ambiguous. */
+function defaultProject(k: RepoContext): string | undefined {
+  const all = k.cardStore.listProjects().filter((p) => p.status === "active");
+  return (all.find((p) => p.rootPath === k.repoPath) ?? (all.length === 1 ? all[0] : undefined))
+    ?.id;
 }
 
 /** The sha proven for a slice's release, from `release/proven` (recorded at proposal time). */
@@ -668,6 +754,14 @@ export async function confirmSliceRelease(
 ): Promise<{ tag: string; sha: string; notice?: string }> {
   const release = (await k.cardStore.slices.releases(sliceId)).at(-1);
   if (!release) throw new Error(`No release is proposed for ${sliceId}`);
+  return confirmInProject(forProject(k, release.projectId), sliceId, release);
+}
+
+async function confirmInProject(
+  k: RepoContext & { projectId?: string },
+  sliceId: string,
+  release: { version: string; projectId: string },
+): Promise<{ tag: string; sha: string; notice?: string }> {
   const { sha: headSha } = mainHead(k.repoPath);
   if (!headSha) throw new Error("The integration branch has no commit");
   const proven = await provenSha(k, sliceId, release.version);
@@ -697,7 +791,7 @@ export async function confirmSliceRelease(
   if (docs.sha) {
     const recorded =
       k.cardStore.documents
-        .exports()
+        .exports(k.projectId)
         .at(-1)
         ?.files.map((f) => f.path) ?? [];
     const check = documentsOnlyCommit(k.repoPath, sha, docs.sha, recorded);
@@ -716,8 +810,22 @@ export async function confirmSliceRelease(
     payload: { sliceId, projectId: release.projectId, tag, sha: tagged, proven: sha },
     principal,
   });
-  const notice = [refused, docs.notice].filter(Boolean).join("\n");
+  // review-git §2.6 item 8 (NEW-review-git-7): the tag goes to the project's
+  // remote when its push setting is on; otherwise the release says it stays here.
+  const { pushToRemote } = await import("./remote_push.js");
+  const { pushNotice } = await import("./next_release.js");
+  const push = await pushToRemote(
+    { repoPath: k.repoPath, cardStore: k.cardStore },
+    { project: release.projectId, ref: `refs/tags/${tag}`, sha: tagged, principal },
+  );
+  const notice = [refused, docs.notice, pushNotice(tag, push)].filter(Boolean).join("\n");
   return { tag, sha: tagged, ...(notice ? { notice } : {}) };
+}
+
+/** The context of a requirement's own project (DEC-57). */
+async function requirementCtx(k: RepoContext, requirementId: string) {
+  const req = (await k.cardStore.requirements.list()).find((r) => r.id === requirementId);
+  return forProject(k, req?.projectId);
 }
 
 /**
@@ -820,15 +928,18 @@ async function docsSubcommand(
 /** The slice of the latest proposed release no `release/tagged` has followed, or undefined. */
 export async function latestUntaggedRelease(k: RepoContext): Promise<string | undefined> {
   const events = await k.log.getEventsByTypes(["release/proposed", "release/tagged"]);
+  // A maintenance release has no slice (NEW-planner-pm-12): `--confirm next` tags it.
+  const sliceOf = (e: { payload: unknown }) => (e.payload as { sliceId?: string }).sliceId;
   const tagged = new Set(
     events
       .filter((e) => e.type === "release/tagged")
-      .map((e) => String((e.payload as { sliceId: string }).sliceId)),
+      .map(sliceOf)
+      .filter((id): id is string => id !== undefined),
   );
   const last = events
     .filter((e) => e.type === "release/proposed")
-    .map((e) => String((e.payload as { sliceId: string }).sliceId))
-    .filter((id) => !tagged.has(id))
+    .map(sliceOf)
+    .filter((id): id is string => id !== undefined && !tagged.has(id))
     .at(-1);
   return last;
 }
@@ -873,7 +984,11 @@ export async function handleProjectDoneRoute(
     const slice = await k.cardStore.slices.get(report[1] as string);
     const s =
       slice && visible(slice.projectId)
-        ? await sliceStatus(ledgerOf(k), report[1] as string, mainHead(k.repoPath).sha)
+        ? await sliceStatus(
+            ledgerOf(k),
+            report[1] as string,
+            await sliceMainSha(k, report[1] as string),
+          )
         : undefined;
     if (!s) json(res, 404, { error: `No release ${report[1]}` });
     else json(res, 200, releaseReport(s.map, report[1] as string));
@@ -908,7 +1023,8 @@ export async function handleProjectDoneRoute(
           { ...(body as unknown as BriefInput), projectId },
           principal,
         );
-        await exportAfter(k, principal, "brief");
+        // DEC-57: the brief's documents go into its own project's repository.
+        await exportAfter(forProject(k, projectId), principal, "brief");
         json(res, 200, accepted);
         return true;
       }
@@ -946,7 +1062,7 @@ export async function handleProjectDoneRoute(
         return true;
       case "requirements/revise": {
         const revised = await reviseAndPropose(k, act.id, body as RequirementRevision, principal);
-        await exportAfter(k, principal, act.id);
+        await exportAfter(await requirementCtx(k, act.id), principal, act.id);
         json(res, 200, revised);
         return true;
       }

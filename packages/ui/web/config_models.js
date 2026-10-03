@@ -558,6 +558,9 @@ async function onClick(e) {
   } else if (d.confirmRecommended !== undefined && ui.dialog) {
     const shown = ui.dialog;
     ui.dialog = null;
+    // The run's `recommended` frames can arrive before this answer, which names
+    // the run as it started: a frame seen meanwhile is later, so it stays.
+    const before = ui.recommended;
     // The confirmation names back what the person saw: each download and the folder.
     await act(
       "POST",
@@ -568,7 +571,7 @@ async function onClick(e) {
         downloads: (shown.downloads ?? []).map((x) => ({ model: x.model, sha256: x.sha256 })),
       },
       (data) => {
-        ui.recommended = data.run;
+        if (ui.recommended === before) ui.recommended = data.run;
         render();
       },
     );

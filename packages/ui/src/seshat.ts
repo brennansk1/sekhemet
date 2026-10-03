@@ -319,3 +319,55 @@ export function userMessageView(m: { text: string; documents?: MessageDocumentLi
     note: `The whole message, ${thousands(whole.chars)} characters, is attached as ${whole.name}.`,
   };
 }
+
+/**
+ * Seshat's slash commands (H16), answered by code from the ledger: the one
+ * list `/help` replies with and the composer's `/` picker shows (FINDINGS
+ * PM-08: the composer promises "/ for commands").
+ */
+export const SLASH_COMMANDS: readonly { cmd: string; does: string }[] = [
+  { cmd: "/help", does: "This list." },
+  { cmd: "/status", does: "Standup from the Activity log: done, in flight, needs you." },
+  {
+    cmd: "/forecast",
+    does: "When the open work is likely done (Monte Carlo over throughput, 50th and 85th percentile).",
+  },
+  {
+    cmd: "/capability",
+    does: "How often the Coding model finishes each issue type, and the largest change it handles reliably.",
+  },
+  { cmd: "/research <question>", does: "Ask the Research model; the answer comes with sources." },
+  {
+    cmd: "/deep <question>",
+    does: "Deep research: several searches at once, then a check of every source.",
+  },
+  {
+    cmd: "/plan <feature>",
+    does: "The Planning model splits a feature into small issues, each with testable acceptance criteria.",
+  },
+  { cmd: "/update", does: "A draft of this week's project update, for you to edit and post." },
+  { cmd: "/ready <issue>", does: "Move an issue to To do." },
+  { cmd: "/park <issue> [reason]", does: "Put an issue on hold." },
+  { cmd: "/backlog <issue>", does: "Move an issue back to Backlog." },
+  { cmd: "/compact", does: "Fold the conversation into Seshat's summary." },
+];
+
+/** The commands matching what was typed after `/`; none once the command is followed by a space. */
+export function slashMatches(
+  text: string,
+): { name: string; cmd: string; does: string; insert: string }[] {
+  const m = /^\/([a-z]*)$/i.exec(text);
+  if (!m) return [];
+  const q = (m[1] ?? "").toLowerCase();
+  return SLASH_COMMANDS.map((c) => {
+    const name = c.cmd.slice(1).split(" ")[0] ?? "";
+    return { name, cmd: c.cmd, does: c.does, insert: `/${name}${c.cmd.includes(" ") ? " " : ""}` };
+  }).filter((c) => c.name.startsWith(q));
+}
+
+/** The composer's placeholder for its width in pixels (FINDINGS PM-09: never clipped mid-line). */
+export function composerPlaceholder(widthPx: number, name = "Seshat"): string {
+  return widthPx >= 480
+    ? `Ask ${name} about the board, an issue or a run… (/ for commands)`
+    : `Ask ${name}… (/ for commands)`;
+}

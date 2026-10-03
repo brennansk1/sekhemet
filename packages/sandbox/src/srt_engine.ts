@@ -6,6 +6,7 @@ import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox
 import { BWRAP_CANDIDATES, bubblewrapUnavailableReason } from "./bubblewrap.js";
 import {
   homeToolchainPaths,
+  isolationRules,
   keychainRules,
   ledgerReadDenies,
   realPath,
@@ -89,6 +90,7 @@ export function srtFilesystem(
   const denyWrite = [
     ...realRoots.flatMap((r) => [join(r, ".git"), `${globQuote(r)}/**/.[Gg][Ii][Tt]`]),
     ...srtConvenienceWrites(home),
+    ...(options.denyPaths ?? []).filter((p) => platform() === "darwin" || !p.includes("*")),
   ];
   // S3a: `denyHomeReads` makes the whole home unreadable, its toolchains and
   // the granted roots excepted, as the native profile does.
@@ -103,6 +105,8 @@ export function srtFilesystem(
       ...secretReadDenies(home),
       ...sessionSecretDenies(),
       ...ledgerReadDenies(roots),
+      // Item 10a: the card's view of other projects (no glob on Linux).
+      ...(options.denyPaths ?? []).filter((p) => platform() === "darwin" || !p.includes("*")),
     ],
     allowRead: [...realRoots, ...homeAllow],
     allowWrite,
@@ -311,7 +315,11 @@ export function srtWrap(
           ])
         : srtWrapped;
     // SEC-23b: srt's allowlist names the keychain's services itself.
-    const wrapped = platform() === "darwin" ? withKeychainRules(withSockets) : withSockets;
+    // Item 10a: a card's denies placed last too, where no srt allow reopens them.
+    const wrapped =
+      platform() === "darwin"
+        ? withKeychainRules(withSockets, isolationRules(options.denyPaths))
+        : withSockets;
     // `exec` again at the outer level: the spawned pid is the command itself.
     return { file: shell, argv: [flag, `exec ${wrapped}`] };
   });
@@ -355,7 +363,7 @@ const SRT_PROFILE_START = "/usr/bin/sandbox-exec -p '";
  * so the word ends at the first quote that begins neither. When srt's command
  * has no such profile the command is refused rather than run without them.
  */
-export function withKeychainRules(wrapped: string): string {
+export function withKeychainRules(wrapped: string, extra = ""): string {
   const start = wrapped.indexOf(SRT_PROFILE_START);
   if (start < 0) {
     throw new Error(
@@ -373,7 +381,7 @@ export function withKeychainRules(wrapped: string): string {
     if (wrapped.startsWith(`'"'"'`, q)) at = q + 5;
     else if (wrapped.startsWith(`'\\''`, q)) at = q + 4;
     else {
-      const rules = keychainRules().replace(/'/g, `'"'"'`);
+      const rules = `${extra ? `${extra}\n` : ""}${keychainRules()}`.replace(/'/g, `'"'"'`);
       return `${wrapped.slice(0, q)}\n${rules}\n${wrapped.slice(q)}`;
     }
   }

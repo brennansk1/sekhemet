@@ -9,15 +9,23 @@
 // choices made here. A folder that already holds a project cannot take a new
 // one: the page asks the server first and says so before any drafting, with
 // Plan the next piece of work (`/plan`) instead of a conversation (DS-N7-1).
-import { $, aiBadge, esc, getJSON, icon } from "./dom.js";
+import { $, aiBadge, esc, getJSON, icon, postJSON } from "./dom.js";
 import { START_PROJECT_OPENING } from "./lib/seshat.js";
-import { START_COPY as C, startDraftOf, startDraftView } from "./lib/start.js";
-import { openConversationWith, setFullThread } from "./pm_panel.js";
+import {
+  START_COPY as C,
+  startConversationOf,
+  startDraftOf,
+  startDraftView,
+  startPlaceView,
+} from "./lib/start.js";
+import { openConversationWith, setFullThread, togglePmPanel } from "./pm_panel.js";
 import { mountThread } from "./pm_thread.js";
 import { reviewPlanFor } from "./proposals.js";
 import { moveLine, reviewState, toggleCandidate } from "./review_plan_view.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
+import { chooseProject } from "./switcher.js";
+import { toast } from "./toast.js";
 
 const ui = {
   root: null,
@@ -31,6 +39,17 @@ const ui = {
   thread: null,
   /** The composer is offered the start of a project once, when the thread has loaded. */
   offered: false,
+  /**
+   * Where the project goes (DS-N8-1..3, DB-N26-1): the server's answer for
+   * the folder shown, the folder the person typed (if any), and which of the
+   * place's forms is open.
+   */
+  place: null,
+  chosenFolder: "",
+  checked: "",
+  form: "",
+  repoPath: "",
+  repoRefusal: null,
 };
 
 function current() {
@@ -42,6 +61,58 @@ function current() {
     ui.state = group ? reviewState(group, proposal.approval?.choices) : null;
   }
   return { proposal, group };
+}
+
+/** The folder approval creates: the one the person chose, else the draft's, else the server's. */
+function folderShown(group) {
+  if (!ui.place?.newFolder) return "";
+  return ui.chosenFolder || group?.folder || ui.place.folder || "";
+}
+
+/** Ask the server whether `folder` can take the project (DS-N8-3); re-renders. */
+function checkFolder(folder) {
+  if (!folder || folder === ui.checked) return;
+  ui.checked = folder;
+  getJSON(`/api/projects/new?folder=${encodeURIComponent(folder)}`).then((r) => {
+    if (!r.ok || folder !== ui.checked || !ui.root) return;
+    // The server's spelling of the folder (`~` and a relative path resolved).
+    if (ui.chosenFolder === folder && r.data?.folder) ui.chosenFolder = r.data.folder;
+    ui.checked = r.data?.folder ?? folder;
+    ui.place = r.data;
+    ui.last = "";
+    render();
+  });
+}
+
+/** The place bar above the conversation: the folder, its refusal, Add an existing repository. */
+function placeHtml(v, folder) {
+  const folderLine = v.folderLine
+    ? `<p class="sp-folder">${icon("layers", 14, "ic")}<span data-folder-line>${esc(v.folderLine)}</span><button type="button" class="btn ghost sm" data-change-folder aria-expanded="${ui.form === "folder"}">${esc(v.changeFolder)}</button></p>`
+    : "";
+  const add = `<button type="button" class="btn ghost sm" data-add-repo aria-expanded="${ui.form === "repo"}">${icon("merge", 14, "ic")}${esc(v.addRepository)}</button>`;
+  const folderForm =
+    ui.form === "folder"
+      ? `<form class="sp-form" data-folder-form><label for="sp-folder-in">${esc(C.folderLabel)}</label><div class="sp-inline"><input id="sp-folder-in" name="folder" type="text" autocomplete="off" spellcheck="false" value="${esc(folder)}"><button class="btn sm" type="submit">${esc(C.useFolder)}</button></div></form>`
+      : "";
+  const refusalHtml = (r) =>
+    r
+      ? `<div class="sp-refusal" role="alert"><p>${esc(r.text)}</p>${
+          r.openIt || r.addInstead
+            ? `<div class="sp-acts">${r.openIt ? `<button type="button" class="btn sm" data-open-project="${esc(r.openIt.project)}">${esc(r.openIt.label)}</button>` : ""}${r.addInstead ? `<button type="button" class="btn sm" data-add-instead="${esc(folder)}">${esc(v.addRepository)}</button>` : ""}</div>`
+            : ""
+        }</div>`
+      : "";
+  // A repository that cannot be taken over is said in its own form (TEAM-55, -60).
+  const repoRefusal = ui.repoRefusal
+    ? startPlaceView({ newFolder: false, refusal: ui.repoRefusal }).refusal
+    : null;
+  const repoForm =
+    ui.form === "repo"
+      ? `<form class="sp-form" data-repo-form><label for="sp-repo-in">${esc(C.repositoryLabel)}</label><div class="sp-inline"><input id="sp-repo-in" name="path" type="text" autocomplete="off" spellcheck="false" placeholder="~/code/my-repo" value="${esc(ui.repoPath)}"><button class="btn sm" type="submit">${esc(C.takeItOver)}</button></div><p class="sec">${esc(C.repositoryHint)}</p>${refusalHtml(repoRefusal ? { ...repoRefusal, addInstead: false } : null)}</form>`
+      : "";
+  const refusal = refusalHtml(v.refusal);
+  const note = v.approvalNote ? `<p class="sec sp-note">${esc(v.approvalNote)}</p>` : "";
+  return `<div class="sp-row">${folderLine}${add}</div>${folderForm}${repoForm}${refusal}${note}`;
 }
 
 /** The brief's lines are Markdown (DEC-44): its *emphasis* reads as emphasis. */
@@ -114,10 +185,31 @@ function render() {
     ui.offered = true;
     if (!group) ui.thread?.prefill(START_PROJECT_OPENING);
   }
+  const folder = folderShown(group);
+  if (folder) checkFolder(folder);
+  const place = startPlaceView({
+    newFolder: ui.place?.newFolder === true,
+    ...(folder ? { folder } : {}),
+    ...(ui.place?.folder === folder && ui.place?.shown ? { shown: ui.place.shown } : {}),
+    ...(ui.place?.mayCreate !== undefined ? { mayCreate: ui.place.mayCreate } : {}),
+    ...(ui.place?.refusal && ui.place?.folder === folder ? { refusal: ui.place.refusal } : {}),
+  });
+  const placeEl = $(".start-place", ui.root);
+  const placeMarkup = placeHtml(place, folder);
+  if (placeEl && placeEl.dataset.html !== placeMarkup) {
+    const typing = placeEl.contains(document.activeElement) ? document.activeElement?.id : "";
+    placeEl.innerHTML = placeMarkup;
+    placeEl.dataset.html = placeMarkup;
+    if (typing) document.getElementById(typing)?.focus();
+  }
   const v = startDraftView(group, {
     width: window.innerWidth,
     ...(ui.state ? { state: ui.state } : {}),
   });
+  // DS-N8-3: Review plan waits while the folder cannot take the project.
+  if (place.blocksApproval && v.reviewPlan.enabled) {
+    v.reviewPlan = { enabled: false, label: v.reviewPlan.label, reason: place.refusal?.text ?? "" };
+  }
   const page = ui.root.querySelector(".start");
   page.dataset.layout = v.layout;
   const pageTabs = $(".start-tabs", ui.root);
@@ -179,7 +271,11 @@ function focusSelector(el) {
 async function review() {
   const { proposal } = current();
   if (!proposal) return;
-  const result = await reviewPlanFor(proposal, { choices: ui.state, keepTalking: true });
+  const folder = folderShown(proposal.patch?.group);
+  const result = await reviewPlanFor(proposal, {
+    choices: { ...ui.state, ...(folder ? { folder } : {}) },
+    keepTalking: true,
+  });
   // Approved here (Solo's Create project, an approver's Approve): the project exists; its page opens.
   if (result?.proposal?.state === "applied") location.hash = "#/status";
   else render();
@@ -192,12 +288,16 @@ function blockedHtml(reason) {
 
 /** The conversation beside the live draft, for a folder that can take a new project. */
 function startConversation(root) {
-  root.innerHTML = `<div class="start"><div class="tabs ptabs start-tabs" role="tablist" aria-label="${esc(C.title)}" hidden></div><section class="start-convo" id="st-conversation" aria-label="Conversation with Seshat"></section><aside class="start-draft" id="st-draft" aria-labelledby="st-draft-h"></aside></div>`;
+  root.innerHTML = `<div class="start"><div class="start-place" role="region" aria-label="Where the project goes"></div><div class="tabs ptabs start-tabs" role="tablist" aria-label="${esc(C.title)}" hidden></div><section class="start-convo" id="st-conversation" aria-label="Conversation with Seshat"></section><aside class="start-draft" id="st-draft" aria-labelledby="st-draft-h"></aside></div>`;
+  // DS-N7-1: the start page's own conversation — never the current
+  // project's earlier messages, nor a proposal that would change that project.
+  const openedAt = Date.now();
   const thread = mountThread($(".start-convo", root), {
     variant: "full",
     intro: C.intro,
     starters: false,
     placeholder: C.composerPlaceholder,
+    messages: (all) => startConversationOf(all, openedAt),
   });
   setFullThread(thread);
   ui.thread = thread;
@@ -205,6 +305,36 @@ function startConversation(root) {
   ui.last = "";
   render();
   setTimeout(() => thread.focus(), 0);
+}
+
+/**
+ * DS-N8-2, TEAM-56: take over the repository at `path` — Seshat reads it as
+ * it is and posts what it found; it becomes a project when its plan is
+ * approved. A folder that cannot be taken over is said here (TEAM-55, -60).
+ */
+async function takeOverRepository(path) {
+  ui.repoPath = path;
+  ui.repoRefusal = null;
+  const r = await postJSON("/api/takeover", { path });
+  if (!r.ok) {
+    if (r.data?.refusal) {
+      ui.repoRefusal = r.data.refusal;
+      ui.last = "";
+      render();
+      $("#sp-repo-in", ui.root)?.focus();
+      return;
+    }
+    toast({
+      tone: "fail",
+      text: "The take-over did not run.",
+      detail: r.data?.error ?? `The server returned ${r.status || "no response"}.`,
+    });
+    return;
+  }
+  ui.form = "";
+  toast({ tone: "info", text: C.takingOver, detail: r.data?.path ?? path });
+  togglePmPanel(true);
+  location.hash = "#/board";
 }
 
 export function mount(view) {
@@ -216,6 +346,12 @@ export function mount(view) {
   ui.last = "";
   ui.pane = "conversation";
   ui.thread = null;
+  ui.place = null;
+  ui.chosenFolder = "";
+  ui.checked = "";
+  ui.form = "";
+  ui.repoPath = "";
+  ui.repoRefusal = null;
   let gone = false;
   // Ask the server first: a refused Create project after a whole conversation is a dead end.
   getJSON("/api/projects/new").then((r) => {
@@ -223,13 +359,47 @@ export function mount(view) {
     if (r.ok && r.data?.allowed === false && r.data.reason) {
       root.innerHTML = blockedHtml(r.data.reason);
       $("[data-plan-next]", root)?.focus();
-    } else startConversation(root);
+    } else {
+      ui.place = r.ok ? r.data : null;
+      ui.checked = r.ok ? (r.data?.folder ?? "") : "";
+      startConversation(root);
+    }
   });
   root.addEventListener("click", (e) => {
     const t = e.target instanceof Element ? e.target : null;
     if (!t) return;
     if (t.closest("[data-plan-next]")) {
       openConversationWith(C.planNextPrefill);
+      return;
+    }
+    // The place bar (DS-N8-1..3): change the folder, open a refused folder's
+    // project, or take over an existing repository instead.
+    const formFor = t.closest("[data-change-folder]")
+      ? "folder"
+      : t.closest("[data-add-repo]")
+        ? "repo"
+        : "";
+    if (formFor) {
+      ui.form = ui.form === formFor ? "" : formFor;
+      ui.last = "";
+      render();
+      $(formFor === "folder" ? "#sp-folder-in" : "#sp-repo-in", root)?.focus();
+      return;
+    }
+    const open = t.closest("[data-open-project]")?.dataset.openProject;
+    if (open) {
+      chooseProject(open);
+      location.hash = "#/board";
+      return;
+    }
+    const instead = t.closest("[data-add-instead]")?.dataset.addInstead;
+    if (instead !== undefined) {
+      ui.form = "repo";
+      ui.repoPath = instead;
+      ui.repoRefusal = null;
+      ui.last = "";
+      render();
+      $("#sp-repo-in", root)?.focus();
       return;
     }
     const pane = t.closest("[data-pane]");
@@ -259,6 +429,24 @@ export function mount(view) {
     } else if (group && ui.state && t.closest("[data-line-down]")) {
       ui.state = moveLine(group, ui.state, +1);
       render();
+    }
+  });
+  root.addEventListener("submit", (e) => {
+    const form = e.target instanceof HTMLFormElement ? e.target : null;
+    if (!form) return;
+    e.preventDefault();
+    if (form.matches("[data-folder-form]")) {
+      const value = String(new FormData(form).get("folder") ?? "").trim();
+      if (!value) return;
+      ui.chosenFolder = value;
+      ui.form = "";
+      ui.checked = "";
+      render();
+      return;
+    }
+    if (form.matches("[data-repo-form]")) {
+      const path = String(new FormData(form).get("path") ?? "").trim();
+      if (path) takeOverRepository(path);
     }
   });
   // Arrow keys move along a tab list (WAI-ARIA tabs).

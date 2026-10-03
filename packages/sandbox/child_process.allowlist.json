@@ -24,12 +24,14 @@
     "apps/harness/src/m0_path.ts": "M0 on the product path: the harness's own git on M0's cloned workspace (checkout, commit of the task's test patch from history) and the harness's own `queue` command, which confines the Worker's commands itself.",
     "apps/harness/src/measure_cmd.ts": "The harness's own git (rev-parse, status) on the harness checkout, to stamp a footprint with its commit.",
     "apps/harness/src/mutation_step.ts": "The harness's own git for mutation checkouts; tests run through the sandbox's gate runner.",
+    "apps/harness/src/next_release.ts": "The harness's own read-only git for a maintenance release (merge-base --is-ancestor, describe --tags, log) and, on a person's confirmation, its annotated tag (`git tag -a`), in the hardened environment (gitEnvFor); no repository code runs (planner-pm NEW-planner-pm-12).",
     "apps/harness/src/onboard.ts": "The harness's own git (rev-parse, log); its language-server probe runs confined through LspClient.",
     "apps/harness/src/overnight.ts": "Starts the harness's own `queue` command.",
     "apps/harness/src/project_done.ts": "The harness's own read-only git to name main's head (rev-parse) and, on a person's confirmation, to tag a proven release sha (`git tag -a`); and to list the tags for a Bug's *Release* (`git tag --list`, NEW-dashboard-15); no repo code runs, only the harness's own git plumbing on commits already on main.",
     "apps/harness/src/reachability_gate.ts": "The harness's own git to read the base branch.",
     "apps/harness/src/recurring.ts": "The harness's own git (rev-parse, diff --name-only).",
     "apps/harness/src/regression_gate.ts": "The harness's own git to read the base branch.",
+    "apps/harness/src/remote_push.ts": "The harness's own `git remote get-url` and `git push --porcelain` for the opt-in Push to remote after Accept and on release, in the process's hardened git environment (no hooks, no credential helper; GIT_TERMINAL_PROMPT=0), through the network policy, each result recorded (review-git NEW-review-git-7).",
     "apps/harness/src/repro.ts": "Reproducibility record: the harness's own git and the model server's --version.",
     "apps/harness/src/research/crawl4ai.ts": "The harness-installed crawl4ai service in its own venv.",
     "apps/harness/src/research/deps.ts": "ripgrep over a dependency's downloaded source (read-only search).",
@@ -80,6 +82,7 @@
   "runTrusted": {
     "apps/harness/src/bakeoff_tasks.ts": "The harness's own git to mine the project's history for bake-off tasks (log, diff) and to add, restore files in and remove a scratch worktree at a commit; the tests there run confined (MD-N4-7).",
     "apps/harness/src/supervisor.ts": "The harness's own git (reset, clean) to restore a crashed card's worktree to its last checkpoint, with the guarded worktree environment (runtime RUN-9).",
-    "apps/harness/src/wave2.ts": "The harness's own git to add and remove --validate-tools' scratch worktree."
+    "apps/harness/src/wave2.ts": "The harness's own git to add and remove --validate-tools' scratch worktree.",
+    "apps/harness/src/desktop_notify.ts": "The system's own notification tool (osascript on macOS, notify-send on Linux) for the Solo person's opt-in operating-system notification while no dashboard tab is open, the issue's text one argument after a fixed script, no shell (dashboard DB-N22-5, -6)."
   }
 }

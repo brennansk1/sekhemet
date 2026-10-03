@@ -2,19 +2,25 @@
 // `data-learn` attribute, the toggle, and the popover a `?` opens. Every word
 // and every number's sentence is the pure module's (`lib/learn.js`); a view
 // puts `tip(...)` beside a term and passes the facts it already has.
-import { esc, icon } from "./dom.js";
+import { esc, getJSON, icon } from "./dom.js";
 import {
   FIRST_RUN,
   answerFirstRun,
+  boardPracticeFacts,
+  lessonIsNew,
   managesWork,
+  markLessonsSeen,
+  practiceTipHtml,
   readRole,
   readTips,
+  reviewHistory,
   tipButtonHtml,
   tipFor,
   writeTips,
 } from "./lib/learn.js";
 import { placeUnder, pushOverlay, trapFocus } from "./overlay.js";
 import { getSession } from "./session.js";
+import { store } from "./store.js";
 
 export function storage() {
   try {
@@ -72,6 +78,43 @@ export function tip(id, term, facts) {
   return tipButtonHtml(tipsOn(), id, term, facts ? JSON.stringify(facts) : "");
 }
 
+/**
+ * A practice lesson's `?` (§2.9.5, NEW-dashboard-13): nothing with Tips off;
+ * marked new the first time its subject is on screen in this browser, and
+ * offered once — the mark goes when the person opens it or leaves the view
+ * (DB-N13-3). It never blocks the action beside it.
+ */
+const offered = new Set();
+export function practiceTip(id, term, facts) {
+  if (!tipsOn()) return "";
+  const isNew = lessonIsNew(storage(), id);
+  if (isNew) offered.add(id);
+  return practiceTipHtml(true, id, term, facts ? JSON.stringify(facts) : "", isNew);
+}
+
+function settleOffered() {
+  if (!offered.size) return;
+  markLessonsSeen(storage(), [...offered]);
+  offered.clear();
+}
+
+/** The numbers a practice lesson reads when it opens: the board, the checks, the person's reviews. */
+async function practiceFacts(id, facts) {
+  const practice = {
+    ...boardPracticeFacts(store.state.cards ?? []),
+    ...(store.state.gates?.gates ? { checks: store.state.gates.gates.length } : {}),
+    ...(facts.practice ?? {}),
+  };
+  if (id === "practice:review" || id === "practice:request_changes") {
+    const r = await getJSON("/api/events?type=review/decided&limit=500&order=desc").catch(() => ({
+      ok: false,
+    }));
+    const me = getSession().principal;
+    if (r.ok && me) practice.reviews = reviewHistory(r.data?.events ?? [], me);
+  }
+  return { ...facts, practice };
+}
+
 /** The Checks strip's `?`: this issue's results, and a lesson for each family present (DB-P4-2). */
 export function checksTip(gates) {
   const checks = (gates ?? []).map((g) => ({ id: g.id, label: g.label, state: g.state }));
@@ -110,13 +153,23 @@ function popoverHtml(t) {
 }
 
 /** Open the lesson a `?` names, anchored to it; Esc returns focus to the `?`. */
-export function openTip(btn) {
+export async function openTip(btn) {
   const same = open?.anchor === btn;
   closeTip();
   if (same) return;
+  const id = btn.dataset.tip;
+  let facts = factsOf(btn);
+  if (id?.startsWith("practice:")) {
+    // DB-N13-3: offered now; the `?` is no longer marked new.
+    markLessonsSeen(storage(), [id]);
+    offered.delete(id);
+    btn.removeAttribute("data-new");
+    facts = await practiceFacts(id, facts);
+    if (!btn.isConnected) return;
+  }
   let view;
   try {
-    view = tipFor(btn.dataset.tip, factsOf(btn));
+    view = tipFor(id, facts);
   } catch {
     return;
   }
@@ -160,6 +213,9 @@ export function openTip(btn) {
 /** Once, at boot: the attribute, the `?` buttons and the toggles, wherever they are drawn. */
 export function initTips() {
   apply();
+  // DB-N13-3: a lesson shown on a view is offered once; leaving the view settles it.
+  window.addEventListener("hashchange", settleOffered);
+  window.addEventListener("pagehide", settleOffered);
   // Capture: a `?` inside a view's clickable region opens its lesson, nothing else.
   document.addEventListener(
     "click",
@@ -168,7 +224,7 @@ export function initTips() {
       if (!q) return;
       e.preventDefault();
       e.stopPropagation();
-      openTip(q);
+      void openTip(q);
     },
     true,
   );
@@ -184,7 +240,7 @@ export function initTips() {
       if (!t?.matches("[data-tip]") || (e.key !== "Enter" && e.key !== " ")) return;
       e.preventDefault();
       e.stopPropagation();
-      openTip(t);
+      void openTip(t);
     },
     true,
   );

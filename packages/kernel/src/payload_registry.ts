@@ -395,8 +395,25 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     project: s(ID, true),
   },
   "member/approved": { principal: s(PRINCIPAL), level: s(LEVEL, true) },
-  "member/level_changed": { principal: s(PRINCIPAL), level: s(LEVEL), project: s(ID, true) },
+  // Teams TEAM-58 (DEC-57): a one-project override may be `none`, taking the project away.
+  "member/level_changed": {
+    principal: s(PRINCIPAL),
+    level: s(v.picklist(["admin", "member", "stakeholder", "viewer", "none"])),
+    project: s(ID, true),
+  },
   "member/removed": { principal: s(PRINCIPAL) },
+  // Teams item 9a (NEW-teams-13, TEAM-52): what a removal settled, by id only.
+  "member/removal_settled": {
+    principal: s(PRINCIPAL),
+    owns: s(v.array(ID), true),
+    leads: s(v.array(ID), true),
+    releases: s(v.array(ID), true),
+    acceptSeats: s(v.array(ID), true),
+    paused: s(v.array(ID), true),
+    held: s(v.array(ID), true),
+    emptiedRules: s(v.array(ID), true),
+  },
+  "member/assignment_refused": { principal: s(PRINCIPAL), cardId: s(ID) },
   "session/started": {
     session: s(ID),
     method: s(v.picklist(["password", "passkey", "oidc", "setup", "invite"])),
@@ -787,11 +804,16 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
   "slice/accepted": { projectId: s(ID), sliceId: s(ID), completesProject: s(v.boolean()) },
   // PM-P13-13: a release proposed for an accepted slice — its version and the
   // proven requirements; the changelog and the notes are text, private.
+  // NEW-planner-pm-12 (PM-N12-2): a maintenance release has no slice; it
+  // holds the accepted issues of the open Next release and the integration
+  // branch's sha it was computed at, which a person's confirmation tags.
   "release/proposed": {
-    sliceId: s(ID),
+    sliceId: s(ID, true),
     projectId: s(ID),
     version: s(SEMVER),
     requirementIds: s(v.array(ID)),
+    issues: s(v.array(ID), true),
+    sha: s(COMMIT, true),
     changelog: priv("free_text", v.record(CHANGELOG_CATEGORY, v.array(TEXT))),
     notes: priv("free_text", TEXT),
   },
@@ -804,8 +826,9 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
   },
   // PM-P13-13, DS-N3-8: a person tagged the release — the tag, the sha it
   // names (the documents' commit on the proven sha) and the proven sha.
+  // A maintenance release's tag has no slice (PM-N12-3).
   "release/tagged": {
-    sliceId: s(ID),
+    sliceId: s(ID, true),
     projectId: s(ID),
     tag: s(ID),
     sha: s(COMMIT),
@@ -871,6 +894,21 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
   // event's principal is who named them); no `lead` clears it. A Member who
   // leads a release not yet accepted may set the project's health.
   "release/lead_set": { sliceId: s(ID), projectId: s(ID), lead: s(PRINCIPAL, true) },
+  // planner-pm §2.7 item 7a (PM-N13-1, -2): a person started a sprint — the
+  // issues committed to it then, and their points with estimation on — or
+  // completed it: the done issues, and where each carried issue went (a
+  // sprint id, or `backlog`). Each is written in one group with the sprint's
+  // `cycle/updated` state (and, completing, the issues' moves).
+  "cycle/started": {
+    id: s(ID),
+    issues: s(v.array(ID)),
+    points: s(v.record(ID, v.pipe(v.number(), v.minValue(0))), true),
+  },
+  "cycle/completed": {
+    id: s(ID),
+    done: s(v.array(ID)),
+    carried: s(v.array(v.strictObject({ issue: ID, to: ID }))),
+  },
   // design-stage §2.9 item 7: a message in a sent plan's thread — the
   // approver's question, or the sender's answer. The words are private.
   "plan/commented": { proposalId: s(ID), id: s(ID), text: priv("free_text", TEXT) },
@@ -937,6 +975,33 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     ),
     // DEC-31, dashboard DB-N7-2: Preferences → Estimation, the project's.
     estimation: s(v.picklist(["off", "points"]), true),
+    // review-git NEW-review-git-7 (RG-N7-5): Push to remote after Accept and on release.
+    push_to_remote: s(v.boolean(), true),
+  },
+  // review-git NEW-review-git-7 (RG-N7-4): a push of the integration branch or
+  // a tag to the project's remote, made or refused — the ref, the sha, the
+  // remote's name (never its URL or a credential) and the result; why it was
+  // refused is the remote's or the policy's words, private.
+  "remote/pushed": {
+    project: s(ID),
+    ref: s(v.pipe(v.string(), v.regex(/^refs\/(?:heads|tags)\/\S+$/, "a branch or tag ref"))),
+    sha: s(COMMIT),
+    remote: s(ID),
+    result: s(v.picklist(["pushed", "refused", "not_allowed"])),
+    // Why, as a code the issue's Activity words without the private reason.
+    code: s(v.picklist(["behind", "exists", "policy", "no_remote", "other"]), true),
+    reason: priv("free_text", TEXT),
+  },
+  // planner-pm NEW-planner-pm-11 (PM-N11-3): a person posted the project's
+  // retrospective — the sprint it looks back on, when there was one, and the
+  // window its figures cover; the text a person edited is private.
+  "retrospective/posted": {
+    id: s(ID),
+    project: s(ID),
+    sprint: s(ID, true),
+    from: s(TEXT),
+    to: s(TEXT),
+    text: priv("free_text", TEXT),
   },
   // extensibility EXT-6, EXT-7 (fix round F3 review): an MCP client's move
   // the server refused, by actor `mcp`: the tool and the column asked for (a
@@ -967,6 +1032,17 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     people: s(v.array(PRINCIPAL), true),
     held: s(v.array(PRINCIPAL), true),
     text: priv("free_text", TEXT),
+  },
+  // dashboard NEW-dashboard-10 (DB-N10-3): a Member's triage decision on an
+  // untriaged Backlog issue, by their principal. *Accept into Backlog* leaves
+  // the issue in Backlog and is never `card/accepted`; a Decline's reason is
+  // the person's words, private and erasable.
+  "issue/triaged": {
+    cardId: s(ID),
+    decision: s(v.picklist(["accept", "decline", "duplicate", "snooze"])),
+    duplicateOf: s(ID, true),
+    until: s(v.pipe(v.string(), v.isoTimestamp()), true),
+    reason: priv("free_text", TEXT),
   },
   // teams item 22 (TEAM-21): the *Watch* toggle, by the person's principal.
   "issue/watched": { cardId: s(ID) },
@@ -1058,6 +1134,9 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
       "free_text",
       v.array(v.strictObject({ id: ID, reason: v.optional(TEXT), command: v.optional(TEXT) })),
     ),
+    // teams TEAM-56, design-stage DS-N8-2 (DEC-57): the repository taken over;
+    // a path names a person's directory, so it is private.
+    root: priv("personal", TEXT),
   },
   // design-stage §3 (DS-TO-9): the brief as found — each claim's label and
   // citations (finding ids, test ids, path:line, commits); its text private.
@@ -1205,10 +1284,12 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
   "reconcile/dismissed": { id: s(ID) },
   // design-stage DS-N3-1, -3: one export — the seq the documents were
   // generated from, whether names were replaced by roles, each file's
-  // repository-relative path, SHA-256 and kind.
+  // repository-relative path, SHA-256 and kind; `projectId` is the project
+  // whose repository received them (DEC-57), absent on an export from before.
   "docs/exported": {
     seq: s(v.pipe(v.number(), v.integer(), v.minValue(1))),
     noNames: s(v.boolean()),
+    projectId: s(ID, true),
     files: s(
       v.array(
         v.strictObject({
@@ -1224,6 +1305,7 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
   // for a file without the generated header.
   "docs/import_diffed": {
     path: s(ID),
+    projectId: s(ID, true),
     commit: s(COMMIT),
     sha256: s(SHA256),
     headerSeq: s(COUNT, true),

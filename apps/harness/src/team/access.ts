@@ -4,7 +4,16 @@ import type { DatabaseSync } from "node:sqlite";
 import type { EventLog } from "@sekhemet/kernel";
 import { CONFIG_ROUTES } from "../config_routes.js";
 import { allMembers, personName } from "./members.js";
-import { LEVELS, type Level, isLevel, levelRank, lowerLevel } from "./settings.js";
+import {
+  LEVELS,
+  type Level,
+  NO_ACCESS,
+  type ProjectLevel,
+  isLevel,
+  isProjectLevel,
+  levelRank,
+  lowerLevel,
+} from "./settings.js";
 
 /**
  * What a person may do (teams §2.2 items 6–9, NEW-teams-2; integrations
@@ -33,6 +42,11 @@ export interface ActionRule {
    */
   releaseLead?: true;
   /**
+   * Or a person who leads any project of the workspace, at Member or above
+   * there (teams item 6, NEW-teams-14: who may create a project).
+   */
+  anyLead?: true;
+  /**
    * `only`: held by the people the project's Accept rule names, at Member or
    * above (item 7) — the level alone is not enough. `or`: the level, or being named.
    */
@@ -58,12 +72,17 @@ export const ACTIONS = {
   "agent.guide": { level: "member", does: "guide the Agent" },
   "agent.pause": { level: "member", does: "pause the Agent" },
   "agent.take_over": { level: "member", does: "take this issue over from the Agent" },
-  review: { level: "member", does: "request changes, put on hold or reject this issue" },
+  review: {
+    level: "member",
+    does: "request changes, put on hold, mark Won't do or reopen this issue",
+  },
   "gates.run": { level: "member", does: "run the checks" },
   "proposal.apply": { level: "member", does: "apply Seshat's proposals" },
   "plan.approve": { level: "member", does: "approve plans" },
   "run.start": { level: "member", does: "start a queue or overnight run" },
-  "project.create": { level: "member", does: "create a project" },
+  // Teams item 6, TEAM-54, TEAM-57 (DEC-57): an Admin, or a person who leads
+  // a project in the workspace; a Member who leads none sends for approval.
+  "project.create": { level: "admin", anyLead: true, does: "create a project" },
   accept: { level: "member", acceptRule: "only", does: "accept this issue" },
   "permission.answer": {
     level: "member",
@@ -121,8 +140,8 @@ export interface MemberRecord {
   removed: boolean;
   /** The profile label (item 8): a home page and notification defaults, no permission. */
   label?: string | undefined;
-  /** Per-project overrides (item 6), by project id. */
-  projects: Record<string, Level>;
+  /** Per-project overrides (item 6), by project id; `none` takes the project away (TEAM-58). */
+  projects: Record<string, ProjectLevel>;
 }
 
 /** The project settings `project/settings_changed` records (teams §3). */
@@ -136,6 +155,11 @@ export interface ProjectSettings {
    * shows no points anywhere; `points` shows story points as Jira does.
    */
   estimation?: "off" | "points";
+  /**
+   * Push to remote after Accept and on release (review-git §2.6 item 8,
+   * NEW-review-git-7): off by default; changed like the project's settings.
+   */
+  push_to_remote?: boolean;
 }
 
 export interface TeamProjection {
@@ -228,7 +252,11 @@ export function projectTeam(db: DatabaseSync): TeamProjection {
     }
     const member = typeof p.principal === "string" ? members.get(p.principal) : undefined;
     if (!member) continue;
-    if (row.type === "member/level_changed" && typeof p.project === "string" && isLevel(p.level)) {
+    if (
+      row.type === "member/level_changed" &&
+      typeof p.project === "string" &&
+      isProjectLevel(p.level)
+    ) {
       member.projects[p.project] = p.level;
     } else if (row.type === "member/label_changed") {
       if (typeof p.label === "string" && p.label) member.label = p.label;
@@ -293,7 +321,16 @@ export class Access {
     if (this.isSoloPerson(principal)) return "admin";
     const m = this.projection().members.get(principal);
     if (!m || m.pending || m.removed) return undefined;
-    return (project ? m.projects[project] : undefined) ?? m.level;
+    const own = project ? m.projects[project] : undefined;
+    // TEAM-58: an override of *No access* leaves the person out of the project.
+    if (own === NO_ACCESS) return undefined;
+    return own ?? m.level;
+  }
+
+  /** Whether a per-project override took this project away from the person (TEAM-58). */
+  public hidden(principal: string, project: string | undefined): boolean {
+    if (!project) return false;
+    return this.projection().members.get(principal)?.projects[project] === NO_ACCESS;
   }
 
   public settings(project: string | undefined): ProjectSettings {
@@ -389,17 +426,27 @@ export class Access {
       // Solo with no rule recorded: the install's person holds Accept, as before.
       allowed = named || (accept?.source === "solo" && this.isSoloPerson(principal));
     } else {
-      allowed = level !== undefined && (atLevel || isLead || named);
+      const leadsAny =
+        rule.anyLead === true && level !== undefined && this.leadsAnyProject(principal);
+      allowed = level !== undefined && (atLevel || isLead || named || leadsAny);
     }
     const where = projectName ? `on ${projectName}` : "in this workspace";
     const who =
-      level === undefined
-        ? this.projection().members.get(principal)?.pending
-          ? "Your account is waiting for an Admin's approval."
-          : "You're not a member of this workspace."
-        : rule.acceptRule === "only" && member
-          ? "This project's Accept rule doesn't include you."
-          : `You're ${article(level)} ${LEVEL_NAME[level]} ${where}.`;
+      level === undefined && this.hidden(principal, project)
+        ? `You have no access to ${projectName ?? "this project"}.`
+        : level === undefined
+          ? this.projection().members.get(principal)?.pending
+            ? "Your account is waiting for an Admin's approval."
+            : "You're not a member of this workspace."
+          : rule.acceptRule === "only" && member
+            ? "This project's Accept rule doesn't include you."
+            : `You're ${article(level)} ${LEVEL_NAME[level]} ${where}.`;
+    // Teams item 9a (TEAM-51): a recorded rule left with no current member
+    // names the rule; it is never treated as no rule set, and nobody gains Accept.
+    const emptied =
+      rule.acceptRule === "only" && accept?.source === "rule" && (accept.holders ?? []).length === 0
+        ? emptiedRuleSentence(projectName)
+        : undefined;
     // DEC-42: with no rule set, the refusal says who accepts meanwhile.
     const unset =
       rule.acceptRule === "only" &&
@@ -425,14 +472,14 @@ export class Access {
               : level !== undefined && !member
                 ? "A Member this project's Accept rule names"
                 : "A person this project's Accept rule names"
-          : `${article(rule.level) === "an" ? "An" : "A"} ${LEVEL_NAME[rule.level]}${rule.lead ? " or the project lead" : ""}${rule.acceptRule === "or" ? " or a person this project's Accept rule names" : ""}`;
+          : `${article(rule.level) === "an" ? "An" : "A"} ${LEVEL_NAME[rule.level]}${rule.lead ? " or the project lead" : ""}${rule.anyLead ? " or a person who leads a project" : ""}${rule.acceptRule === "or" ? " or a person this project's Accept rule names" : ""}`;
     return {
       allowed,
       permission,
       ...(level !== undefined ? { level } : {}),
       needs: rule.level,
       grantedBy,
-      message: unset ?? `${who} ${grantedBy} can ${rule.does}${noLead}.`,
+      message: emptied ?? unset ?? `${who} ${grantedBy} can ${rule.does}${noLead}.`,
     };
   }
 
@@ -463,11 +510,26 @@ export class Access {
     return false;
   }
 
+  /** Whether the person leads any project of the workspace, at Member or above there. */
+  public leadsAnyProject(principal: string): boolean {
+    for (const [project, settings] of this.projection().projects) {
+      if (settings.lead !== principal) continue;
+      const level = this.level(principal, project);
+      if (level !== undefined && levelRank(level) >= levelRank("member")) return true;
+    }
+    return false;
+  }
+
   public isLead(principal: string, project: string): boolean {
     return (
       this.settings(project).lead === principal && this.level(principal, project) !== undefined
     );
   }
+}
+
+/** The sentence an emptied Accept rule's refusal and notice say (teams item 9a, TEAM-51). */
+export function emptiedRuleSentence(projectName: string | undefined): string {
+  return `${projectName ? `${projectName}'s` : "This project's"} Accept rule names no current member. The project lead or an Admin can edit it.`;
 }
 
 /** The Stakeholder refusals that offer to ask a Member instead (TEAM-5, item 19a). */
@@ -553,9 +615,14 @@ export class LastAdminError extends Error {}
 export async function recordLevelChange(
   log: EventLog,
   access: Access,
-  input: { by: string; principal: string; level: Level; project?: string; ceiling?: Level },
+  input: { by: string; principal: string; level: ProjectLevel; project?: string; ceiling?: Level },
 ): Promise<void> {
-  if (!isLevel(input.level)) throw new Error(`level must be one of ${LEVELS.join(", ")}`);
+  // TEAM-58: *No access* is a one-project override only.
+  if (input.project ? !isProjectLevel(input.level) : !isLevel(input.level)) {
+    throw new Error(
+      `level must be one of ${LEVELS.join(", ")}${input.project ? `, or ${NO_ACCESS} on one project` : ""}`,
+    );
+  }
   const decision = input.project
     ? access.decide(input.by, "level.override", input.project, undefined, input.ceiling)
     : access.decide(input.by, "members.manage", undefined, undefined, input.ceiling);
@@ -564,7 +631,12 @@ export async function recordLevelChange(
   if (!target || target.removed) {
     throw new Error(`${input.principal} is not a member of this workspace`);
   }
-  if (input.project && decision.level !== "admin" && decision.level !== undefined) {
+  if (
+    input.project &&
+    input.level !== NO_ACCESS &&
+    decision.level !== "admin" &&
+    decision.level !== undefined
+  ) {
     if (levelRank(input.level) > levelRank(decision.level)) {
       throw new AccessRefusedError({
         ...decision,
@@ -620,6 +692,7 @@ const SETTING_PERMISSION: Record<keyof ProjectSettings, Permission> = {
   lead: "project.lead",
   auto_apply: "auto_apply.enable",
   estimation: "project.settings",
+  push_to_remote: "project.settings",
 };
 
 /** Parse a settings patch; throws naming the bad field. */
@@ -666,9 +739,15 @@ export function parseSettingsPatch(body: Record<string, unknown>): ProjectSettin
     }
     out.estimation = body.estimation;
   }
+  if ("push_to_remote" in body) {
+    if (typeof body.push_to_remote !== "boolean") {
+      throw new Error("Push to remote after Accept and on release is either on or off.");
+    }
+    out.push_to_remote = body.push_to_remote;
+  }
   if (Object.keys(out).length === 0) {
     throw new Error(
-      "Nothing to change: name the Accept rule, the lead, resolved conversations, automatic changes or estimation.",
+      "Nothing to change: name the Accept rule, the lead, resolved conversations, automatic changes, estimation or the push to remote.",
     );
   }
   return out;
@@ -691,6 +770,12 @@ export function changedSettings(current: ProjectSettings, patch: ProjectSettings
   if (patch.lead && current.lead !== patch.lead) out.lead = patch.lead;
   if (patch.estimation && (current.estimation ?? "off") !== patch.estimation) {
     out.estimation = patch.estimation;
+  }
+  if (
+    patch.push_to_remote !== undefined &&
+    (current.push_to_remote ?? false) !== patch.push_to_remote
+  ) {
+    out.push_to_remote = patch.push_to_remote;
   }
   if (patch.auto_apply) {
     const diff = Object.fromEntries(
@@ -738,6 +823,8 @@ export interface RouteRule {
   sliceId?: string | undefined;
   requirementId?: string | undefined;
   suggestionId?: string | undefined;
+  /** A sprint: the caller resolves it to the sprint's own project (DEC-57). */
+  cycleId?: string | undefined;
   /** A proposal applied: the caller adds what its kind needs besides `proposal.apply`. */
   proposalId?: string | undefined;
   /** The permissions depend on the JSON body: read it, then ask again with it. */
@@ -798,7 +885,7 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
   ],
   [
     ["POST"],
-    new RegExp(`^/api/cards/(${CARD})/(return|park|unpark|reject|opened)$`),
+    new RegExp(`^/api/cards/(${CARD})/(return|park|unpark|reject|reopen|opened)$`),
     fixed("review", "card"),
   ],
   [["POST"], new RegExp(`^/api/cards/(${CARD})/(abort|pause)$`), fixed("agent.pause", "card")],
@@ -810,6 +897,8 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
   [["POST"], new RegExp(`^/api/cards/(${CARD})/message$`), fixed("agent.guide", "card")],
   [["POST"], new RegExp(`^/api/cards/(${CARD})/(rewind|fork|run)$`), fixed("agent.start", "card")],
   [["POST"], new RegExp(`^/api/cards/(${CARD})/reroute$`), fixed("issue.edit", "card")],
+  // Dashboard DB-N10-3: a triage decision is a Member's edit of the issue (no new permission).
+  [["POST"], new RegExp(`^/api/cards/(${CARD})/triage$`), fixed("issue.edit", "card")],
   // PM-N7-5: a person's approval of a plan's criteria is a Member's edit.
   [["POST"], new RegExp(`^/api/cards/(${CARD})/approve$`), fixed("issue.edit", "card")],
   [["POST"], new RegExp(`^/api/cards/(${CARD})/reorder$`), fixed("priority.change", "card")],
@@ -978,8 +1067,33 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
       ...(m[2] === "apply" ? { proposalId: m[1] } : {}),
     }),
   ],
-  [["POST"], /^\/api\/cycles$/, fixed("issue.edit")],
-  [["PATCH"], /^\/api\/cycles\/[A-Za-z0-9_-]+$/, fixed("issue.edit")],
+  // A sprint is one project's (DEC-57): planning, starting and completing it
+  // are a Member's of that project (dashboard DB-N11-1, -2; TEAM-58), so the
+  // person's level there decides — the body's project for a new sprint, the
+  // sprint's own project otherwise.
+  [
+    ["POST"],
+    /^\/api\/cycles$/,
+    (_m, body) =>
+      body === undefined
+        ? { permissions: [], needsBody: true }
+        : {
+            permissions: ["issue.edit"],
+            ...(typeof body.projectId === "string" && body.projectId
+              ? { projectId: body.projectId }
+              : {}),
+          },
+  ],
+  [
+    ["PATCH"],
+    /^\/api\/cycles\/([A-Za-z0-9_-]+)$/,
+    (m) => ({ permissions: ["issue.edit"], cycleId: m[1] }),
+  ],
+  [
+    ["POST"],
+    /^\/api\/cycles\/([A-Za-z0-9_-]+)\/(start|complete)$/,
+    (m) => ({ permissions: ["issue.edit"], cycleId: m[1] }),
+  ],
   [
     ["POST", "PATCH"],
     /^\/api\/learning\/rules\/[A-Za-z0-9_-]+(?:\/(approve|retire))?$/,
@@ -1043,6 +1157,19 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
     ["POST"],
     /^\/api\/suggestions\/([\w.-]+)\/(?:apply|dismiss|undo)$/,
     (m) => ({ permissions: ["proposal.apply"], suggestionId: m[1] }),
+  ],
+  // NEW-planner-pm-12: proposing and tagging a maintenance release is the
+  // project's Accept rule, like a slice's acceptance (B4.3, TEAM-4).
+  [
+    ["POST"],
+    new RegExp(`^/api/projects/(${PROJ})/releases/next/(?:propose|tag)$`),
+    (m) => ({ permissions: ["accept"], projectId: m[1] }),
+  ],
+  // NEW-planner-pm-11: a Member edits and posts the team's retrospective.
+  [
+    ["POST"],
+    new RegExp(`^/api/projects/(${PROJ})/retrospectives$`),
+    (m) => ({ permissions: ["issue.edit"], projectId: m[1] }),
   ],
   // PM_CONTRACT: the weekly update is posted by the project's lead or an Admin.
   [

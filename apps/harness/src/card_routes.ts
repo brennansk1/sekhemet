@@ -24,7 +24,8 @@ import {
   type EventLog,
   isCardStatus,
 } from "@sekhemet/kernel";
-import { checkoutNotice, integrationBranch } from "./accept.js";
+import { RevertConflictError, checkoutNotice, integrationBranch } from "./accept.js";
+import { contextForCard } from "./card_root.js";
 import {
   cardMessages,
   handBack,
@@ -41,9 +42,18 @@ import { reviewDesk } from "./review_desk.js";
 import type { Access } from "./team/access.js";
 import { type AiTeammatesDeps, aiStates } from "./team/ai_teammates.js";
 import type { InboxDeps } from "./team/inbox.js";
+import { TriageError, triageIssue } from "./team/intake.js";
 import { acceptDismissal, openThreadRefusal, reviewThreads } from "./team/review_threads.js";
 import { cardTrace } from "./tracing.js";
-import { park, recordReviewOpened, reject, revertAccept, sendBack, unpark } from "./triage.js";
+import {
+  park,
+  recordReviewOpened,
+  reject,
+  reopen,
+  revertAccept,
+  sendBack,
+  unpark,
+} from "./triage.js";
 
 /** An issue id in a path, as the server matches it. */
 const CARD_ID = "[A-Za-z0-9_.-]+";
@@ -90,6 +100,48 @@ export interface CardRoute {
 
 /** The routes, in the order the server tried them inline. */
 export const CARD_ROUTES: CardRoute[] = [
+  // Dashboard DB-N10-3: a Member's triage decision on an untriaged issue —
+  // Accept into Backlog, Decline, Duplicate of or Snooze — as `issue/triaged`.
+  {
+    method: "POST",
+    path: new RegExp(`^/api/cards/(${CARD_ID})/triage$`),
+    async handle(route, m) {
+      const { req, res, json, readJsonBody, isTrustedMutation, principalOf, canSee } = route;
+      if (!isTrustedMutation(req)) {
+        json(res, 403, { error: "Triage must come from the dashboard itself" });
+        return;
+      }
+      const deps = route.aiDeps();
+      if (!deps) {
+        json(res, 501, { error: "This server was started read-only" });
+        return;
+      }
+      const card = await deps.cardStore.getCard(m[1] as string);
+      if (!card || !canSee(req, route.projectOfCard(card))) {
+        json(res, 404, { error: `No issue ${m[1]}` });
+        return;
+      }
+      try {
+        const body = await readJsonBody(req);
+        const done = await triageIssue(
+          { ...deps, boardService: route.boardService, repoPath: route.repoPath },
+          {
+            cardId: card.id,
+            principal: principalOf(req),
+            decision: body.decision,
+            reason: body.reason,
+            duplicateOf: body.duplicateOf,
+            until: body.until,
+          },
+        );
+        json(res, 200, { decision: done.decision, card: done.card });
+      } catch (err) {
+        json(res, err instanceof TriageError ? err.status : 409, {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+  },
   // One attempt's steps: the transcript file, or live `card/step` events
   // while the card is still running and the transcript is not yet written.
   {
@@ -184,7 +236,12 @@ export const CARD_ROUTES: CardRoute[] = [
       const acceptDismissed = await acceptDismissal(store, card.id, nameOf);
       json(res, 200, {
         // P12, P14, RG-N5-3: the route's earlier fields stay in its contract.
-        ...(await reviewBrief(repoPath, store, log, card)),
+        ...(await reviewBrief(
+          contextForCard({ repoPath, cardStore: store }, card).repoPath,
+          store,
+          log,
+          card,
+        )),
         ...(await reviewDesk(
           { repoPath, cardStore: store, boardService: boardService as never, eventLog: log },
           card,
@@ -262,10 +319,13 @@ export const CARD_ROUTES: CardRoute[] = [
       return;
     },
   },
-  // Triage: accept, send back, park, reject, revert, and the files a review opened.
+  // Triage: accept, send back, park, reject (Won't do), reopen, revert, and the
+  // files a review opened (dashboard §2.6 Issue actions, NEW-dashboard-21).
   {
     method: "POST",
-    path: new RegExp(`^/api/cards/(${CARD_ID})/(accept|return|park|unpark|reject|revert|opened)$`),
+    path: new RegExp(
+      `^/api/cards/(${CARD_ID})/(accept|return|park|unpark|reject|reopen|revert|opened)$`,
+    ),
     async handle(route, m) {
       const {
         req,
@@ -382,6 +442,12 @@ export const CARD_ROUTES: CardRoute[] = [
           log,
           principal: principalOf(req),
         };
+        // DB-N21-2: Reopen, Won't do's undo, puts the issue back in To do.
+        if (verb === "reopen") {
+          await reopen(triage, card, reason);
+          json(res, 200, { ok: true, status: "ready" });
+          return;
+        }
         const to = verb === "return" ? "ready" : verb === "reject" ? "rejected" : "parked";
         if (verb === "return") {
           const comments = Array.isArray(body.comments)
@@ -396,7 +462,11 @@ export const CARD_ROUTES: CardRoute[] = [
         else await park(triage, card, reason);
         json(res, 200, { ok: true, status: to });
       } catch (err) {
-        json(res, 409, { error: err instanceof Error ? err.message : String(err) });
+        json(res, 409, {
+          error: err instanceof Error ? err.message : String(err),
+          // DB-N21-4: a revert git cannot apply names its files.
+          ...(err instanceof RevertConflictError ? { files: err.files } : {}),
+        });
       }
       return;
     },

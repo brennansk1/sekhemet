@@ -307,7 +307,8 @@ describe("TEAM-16: the Agent refuses what its person could not do", () => {
     });
     const access = new Access({ db, setup: "team", localPrincipal: () => log.localPrincipal() });
     const ready = (await store.listCards({ status: "ready" })).filter((c) => c.id === loose);
-    expect(ready[0]?.projectId).toBeUndefined();
+    // Kernel K-N12-3 (DEC-57): an issue recorded with no project reads as the workspace's one project.
+    expect(ready[0]?.projectId).toBe(t.project);
     expect(agentRefusal(access, store, ready[0] as never)?.person).toBe(t.mo.principal);
     expect(await runnableByTheirPeople(ready, { access, store, log })).toEqual([]);
   });

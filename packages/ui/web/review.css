@@ -790,6 +790,24 @@ dl.kv dd {
   justify-content: flex-end;
   gap: 8px;
 }
+/* NEW-dashboard-21: Won't do's reason and Revert's confirmation fit a phone. */
+.ia-pop {
+  max-width: calc(100vw - 16px);
+}
+.ia-pop .err {
+  font-size: var(--text-xs);
+  color: var(--state-fail);
+}
+.ia-pop input[aria-invalid="true"] {
+  border-color: var(--state-fail);
+}
+.ia-menu .mnote {
+  white-space: normal;
+}
+.ia-menu button[disabled] {
+  color: var(--text-secondary);
+  cursor: not-allowed;
+}
 
 /* Card view */
 .cv {
@@ -1113,4 +1131,16 @@ body.composing .cv-h [data-back] {
   .rfind li.rf > .ack {
     margin-left: 22px;
   }
+}
+
+/* NEW-dashboard-22: the one-time offer of a browser notification, above the queue. */
+.notify-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: var(--text-sm);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
 }

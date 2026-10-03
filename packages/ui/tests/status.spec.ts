@@ -289,12 +289,14 @@ describe("the page's sections and words (§2.8's order, DB-N9-1)", () => {
       "Needs you",
       "Waiting on others",
       "Requirements",
+      "Next release",
       "Risks",
       "Done this week",
       "Today's changes",
       "Who's working on what",
       "Models",
       "Flow",
+      "Retrospective",
       "Ask Seshat",
     ]);
   });

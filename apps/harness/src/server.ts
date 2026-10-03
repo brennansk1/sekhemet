@@ -58,6 +58,12 @@ import {
   sampleMemory,
   worktrees,
 } from "./dashboard_api.js";
+import {
+  findDesktopTool,
+  handleDesktopNotifyRoute,
+  readDesktopSetting,
+  startDesktopNotifier,
+} from "./desktop_notify.js";
 import { runDoctor } from "./doctor.js";
 import { releaseHeldCards } from "./execute.js";
 import { handleGithubRoute, startGithubSync, startRecurringTicker } from "./github_routes.js";
@@ -73,7 +79,8 @@ import { handlePlanApprovalRoute } from "./plan_approval.js";
 import { startGoalTicker } from "./planner_live.js";
 import { audienceFromAccess } from "./pm/audience.js";
 import { attachDocuments, documentsToAttach } from "./pm/documents.js";
-import { newProjectRefusal } from "./pm/pipeline.js";
+import { checkNewFolder, projectsDirOf, shownPath, suggestedFolder } from "./pm/new_project.js";
+import { createsNewFolder, newProjectRefusal } from "./pm/pipeline.js";
 import { dailyStandup } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { createPmApi } from "./pm_api.js";
@@ -107,6 +114,15 @@ import { identityDir } from "./team/credential_store.js";
 import { capNote, personOf, queueStanding, runningAgentIssues } from "./team/fair_queue.js";
 import { type InboxDeps, inboxNotifier } from "./team/inbox.js";
 import { handleInboxRoute } from "./team/inbox_routes.js";
+import { untriagedIssues } from "./team/intake.js";
+import {
+  type LeavingDeps,
+  type RemovalSummary,
+  assignmentRefusal,
+  recordAssignmentRefused,
+  removalSummary,
+  settleRemoval,
+} from "./team/leaving.js";
 import { allMembers, personName } from "./team/members.js";
 import { MIN_PASSWORD_LENGTH } from "./team/passwords.js";
 import { Presence, handlePresenceRoute, presenceFrame } from "./team/presence.js";
@@ -118,7 +134,7 @@ import {
   createServerIdentity,
   soloStartBlocked,
 } from "./team/serve.js";
-import { LEVELS, bindHost } from "./team/settings.js";
+import { LEVELS, type ProjectLevel, bindHost } from "./team/settings.js";
 import { generateDashboardHtml } from "./ui_html.js";
 import { userPaths } from "./user_dir.js";
 import { hookEngineFor } from "./user_hooks.js";
@@ -136,6 +152,7 @@ import {
   securityHeaders,
   tokenMatches,
 } from "./web_guard.js";
+import { workspaceFolderOf } from "./workspace_locator.js";
 import {
   type WorkspaceRecord,
   recordOwnWorkspace,
@@ -435,6 +452,12 @@ export function startDashboardServer(
     isTrustedMutation,
     principalOf: (req) => principalOf(req),
     nameOf: (principal) => namesOf()(principal),
+    // Teams item 9a (TEAM-50): a member who left gets no new work.
+    refuseAssignment: async (by, principal, cardId) => {
+      const refusal = assignmentRefusal(access, principal, (p) => namesOf()(p));
+      if (refusal) await recordAssignmentRefused(log, { by, principal, cardId });
+      return refusal;
+    },
     // planner-pm §2.8.5, §2.18 (B4.3): who Seshat answers, from the access module.
     audience: () => audienceFromAccess(() => access, options.db),
     // SEC-27c: the choice to keep secrets in a file is a config write, recorded with the person.
@@ -776,7 +799,11 @@ export function startDashboardServer(
     const entries = statusEntries();
     const facts = latestByCard(options.db, FACT_TYPES);
     const now = Date.now();
-    const cycles = await pmApi.pmStore.cycles();
+    // DEC-57: a project's board shows its own sprints, and any from before
+    // sprints had a project.
+    const cycles = (await pmApi.pmStore.cycles()).filter(
+      (c) => !projectId || !c.projectId || c.projectId === projectId,
+    );
     // Epics with roll-up progress (PM_CONTRACT §3): done/total cards and points.
     const epics = state.cards
       .filter((c) => c.tier === "epic")
@@ -808,11 +835,34 @@ export function startDashboardServer(
     // when the board is one project's (scoped, or the only one), off by default.
     const active = options.cardStore?.listProjects().filter((p) => p.status !== "archived") ?? [];
     const estimationProject = projectId ?? (active.length === 1 ? active[0]?.id : undefined);
+    // DB-N10-2: an untriaged issue says who filed it (the Triage view, `is:untriaged`).
+    const intake =
+      setup === "team" && options.cardStore
+        ? await untriagedIssues(
+            {
+              log,
+              cardStore: options.cardStore,
+              access,
+              projectOf: (card) => projectOfCard(card),
+            },
+            { cards: state.cards, now, nameOf: (p) => nameOf(p) },
+          )
+        : undefined;
     return {
       ...state,
-      cards: state.cards.map((card) =>
-        withDisplay(card, state.cards, entries, now, facts, starts, nameOf),
-      ),
+      cards: state.cards.map((card) => {
+        const shown = withDisplay(card, state.cards, entries, now, facts, starts, nameOf);
+        const waits = intake?.get(card.id);
+        return waits
+          ? {
+              ...shown,
+              display: {
+                ...shown.display,
+                intake: { from: waits.from, at: waits.at, ...(waits.by ? { by: waits.by } : {}) },
+              },
+            }
+          : shown;
+      }),
       epics,
       cycles,
       ...(reviewLimit ? { reviewLimit } : {}),
@@ -1078,6 +1128,8 @@ export function startDashboardServer(
         acceptIn: liveProjects()
           .filter((p) => access.acceptHolders(p.id)?.includes(principal))
           .map((p) => p.id),
+        // TEAM-57: whether they may create a project, so approve a new project's plan.
+        ...(access.can(principal, "project.create") ? { mayCreateProject: true } : {}),
       };
     };
   };
@@ -1138,6 +1190,8 @@ export function startDashboardServer(
       ...access.projection().releaseLeads.keys(),
     ]);
     for (const id of ids) {
+      // TEAM-58: a project taken away is not the person's.
+      if (access.hidden(principal, id)) continue;
       const level = m?.projects[id];
       const lead = access.isLead(principal, id);
       const releaseLead = access.leadsRelease(principal, id);
@@ -1292,12 +1346,14 @@ export function startDashboardServer(
     if (rule.suggestionId && store) {
       cardId = (await store.suggestions.get(rule.suggestionId))?.cardId;
     }
-    // A new project's group accepts its brief when applied (teams item 6,
-    // design-stage §2.9 item 7): `brief.accept` as well, never instead.
+    // A new project's group creates the project and accepts its first brief
+    // when applied: `project.create` as well, never instead (teams item 6,
+    // TEAM-54, TEAM-57; design-stage §2.9 item 7). Who may create a project —
+    // an Admin, or a person who leads one — accepts the brief of the project
+    // they create, which has no lead of its own yet.
     if (rule.proposalId) {
       const p = await pmApi.pmStore.proposal(rule.proposalId);
-      if (p?.kind === "start_project")
-        permissions = [...permissions, "project.create", "brief.accept"];
+      if (p?.kind === "start_project") permissions = [...permissions, "project.create"];
     }
     const card = (cardId && store ? await store.getCard(cardId) : undefined) ?? undefined;
     let project = rule.projectId ?? projectOfCard(card);
@@ -1307,6 +1363,10 @@ export function startDashboardServer(
     }
     if (project === undefined && rule.requirementId && store) {
       project = (await store.requirements.get(rule.requirementId))?.projectId;
+    }
+    // A sprint resolves to its own project (DEC-57; DB-N11-1, -2).
+    if (project === undefined && rule.cycleId) {
+      project = (await pmApi.pmStore.cycles()).find((c) => c.id === rule.cycleId)?.projectId;
     }
     // A project id read from the request body (never the URL's own resource
     // path) is trusted only once it is checked to exist (B4.3): otherwise a
@@ -1444,6 +1504,16 @@ export function startDashboardServer(
     }
   });
 
+  /** Teams item 9a: what settling a member's removal reads and writes. */
+  const leavingDeps = (): LeavingDeps => ({
+    repoPath,
+    access,
+    cardStore: options.cardStore as CardStore,
+    boardService: boardService as never,
+    log,
+    nameOf: (p) => namesOf()(p),
+  });
+
   const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const [url = "/", search = ""] = (req.url || "/").split("?");
     const query = new URLSearchParams(search);
@@ -1461,6 +1531,16 @@ export function startDashboardServer(
         memberFacts: memberFactsReader(),
         workspaceFacts,
         projectName: (id) => liveProjects().find((p) => p.id === id)?.name,
+        // Teams item 9a (NEW-teams-13): what a member who leaves leaves behind, settled.
+        ...(setup === "team" && options.cardStore
+          ? {
+              leaving: {
+                summary: (principal: string) => removalSummary(leavingDeps(), principal),
+                settle: (actor: string, summary: RemovalSummary) =>
+                  settleRemoval(leavingDeps(), actor, summary),
+              },
+            }
+          : {}),
         sessionFacts: (principal) => {
           const label = access.projection().members.get(principal)?.label;
           return { projects: ownProjects(principal), ...(label ? { label } : {}) };
@@ -1586,7 +1666,7 @@ export function startDashboardServer(
         const input = {
           by: principalOf(req),
           principal: levelMatch[1] as string,
-          level: body.level as Level,
+          level: body.level as ProjectLevel,
           ...(project ? { project } : {}),
           ...(ceiling ? { ceiling } : {}),
         };
@@ -1618,6 +1698,16 @@ export function startDashboardServer(
 
     if (await configApi.handle(req, res, url, query)) return;
     if (await benchmarkApi.handle(req, res, url, query)) return;
+    // NEW-dashboard-22 (DB-N22-5, -7): the Solo person's operating-system notification switch.
+    if (
+      await handleDesktopNotifyRoute(req, res, url, {
+        setup,
+        json,
+        readJsonBody,
+        trusted: isTrustedMutation,
+      })
+    )
+      return;
 
     // H12: workspace, project board and cards, split, run, gate, evidence, calibrate.
     if (
@@ -1631,6 +1721,16 @@ export function startDashboardServer(
         readJsonBody,
         trusted: isTrustedMutation,
         principalOf,
+        // DB-N10-1: below Member, an issue is filed for triage, with the project lead as assignee.
+        filing: (req, projectId) => {
+          if (setup !== "team") return { forTriage: false };
+          const level = access.level(principalOf(req), projectId);
+          const lead = access.settings(projectId).lead;
+          return {
+            forTriage: level === "stakeholder" || level === "viewer",
+            ...(lead ? { lead } : {}),
+          };
+        },
       }))
     ) {
       return;
@@ -1811,8 +1911,44 @@ export function startDashboardServer(
         json(res, 501, { error: "This server was started read-only" });
         return;
       }
+      // DS-N8-1, DS-N8-3, DB-N26-1: in a workspace that already holds a
+      // project, New project names the folder its approval creates (or the
+      // one the person typed, `?folder=`), says before any approval when
+      // that folder cannot take it, and whether this person may create a
+      // project or ends with Send for approval (TEAM-57).
+      if (await createsNewFolder({ repoPath, cardStore: store, log })) {
+        const workspaceFolder = workspaceFolderOf(repoPath);
+        const typed = query.get("folder")?.trim();
+        const folder =
+          typed || suggestedFolder(workspaceFolder, store, query.get("name")?.trim() || "project");
+        const verdict = checkNewFolder(workspaceFolder, store, folder);
+        json(res, 200, {
+          allowed: true,
+          newFolder: true,
+          projectsDir: projectsDirOf(workspaceFolder, store),
+          folder: verdict.folder,
+          shown: shownPath(verdict.folder),
+          ...(verdict.ok
+            ? {}
+            : {
+                refusal: {
+                  kind: verdict.kind,
+                  reason: verdict.reason,
+                  ...(verdict.project ? { project: verdict.project } : {}),
+                },
+              }),
+          mayCreate: access.can(principalOf(req), "project.create"),
+        });
+        return;
+      }
       const reason = await newProjectRefusal({ repoPath, cardStore: store, log });
-      json(res, 200, reason ? { allowed: false, reason } : { allowed: true });
+      json(
+        res,
+        200,
+        reason
+          ? { allowed: false, reason }
+          : { allowed: true, mayCreate: access.can(principalOf(req), "project.create") },
+      );
       return;
     }
 
@@ -2172,6 +2308,7 @@ export function startDashboardServer(
     if (
       (url === "/api/inbox" ||
         url === "/api/my-issues" ||
+        url === "/api/search" ||
         url.startsWith("/api/inbox/") ||
         url.startsWith("/api/issues/") ||
         url.startsWith("/api/cards/")) &&
@@ -2525,6 +2662,17 @@ export function startDashboardServer(
             }
           : {}),
       });
+      // NEW-dashboard-22 (DB-N22-5): in Solo, an operating-system notification
+      // when an issue enters In review and no dashboard tab holds the stream.
+      const desktop =
+        setup === "solo"
+          ? startDesktopNotifier(options.log, {
+              enabled: () => readDesktopSetting(),
+              listening: () => streams.size > 0,
+              tool: () => findDesktopTool(),
+              titleOf: async (id) => (await options.cardStore?.getCard(id))?.title,
+            })
+          : undefined;
       // X16: due recurring templates clone into Ready cards, once a minute.
       const stopRecurring = options.cardStore
         ? startRecurringTicker(repoPath, options.cardStore, options.log, {
@@ -2554,6 +2702,7 @@ export function startDashboardServer(
         close: () =>
           new Promise<void>((done) => {
             void notifier.then((n) => n.stop());
+            void desktop?.then((d) => d.stop());
             stopRecurring();
             goalTicker?.stop();
             github?.stop();

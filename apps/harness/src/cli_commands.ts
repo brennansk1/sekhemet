@@ -73,6 +73,8 @@ export const COMMANDS = [
   "benchmark",
   "export",
   "erase",
+  // `sekhemet project list|move` (surface item 20d, NEW-surface-11).
+  "project",
   ...DEV_COMMANDS,
 ] as const;
 
@@ -205,6 +207,8 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--mutants",
   "--name",
   "--new-setup-token",
+  // SUR-79: a first run in a repository that belongs to a workspace, anyway.
+  "--new-workspace",
   "--no",
   "--no-baseline",
   "--no-names",

@@ -8,7 +8,7 @@
  * everything that turns model text into markup escapes first.
  */
 
-import { formatTokens, plural } from "./vocabulary.js";
+import { boardColumnLabel, formatTokens, plural } from "./vocabulary.js";
 
 // ---------------------------------------------------------------------------
 // Priority (contract §2: Linear's 0..4 scale) and points
@@ -159,6 +159,8 @@ export interface PmCardLike {
     tone?: string;
     ownerName?: string;
     delegateName?: string;
+    /** Untriaged: who filed it and when (NEW-dashboard-10, `is:untriaged`). */
+    intake?: { from: string; at: string; by?: string };
   };
 }
 
@@ -333,6 +335,44 @@ export function applyAllLabel(proposals: ProposalLike[]): string {
     : `Apply ${changes}`;
 }
 
+/** FINDINGS PM-06: one open change shows one Apply; Apply all only for more. */
+export function showsApplyAll(proposals: readonly { state: string }[]): boolean {
+  return proposals.filter((p) => p.state === "open").length > 1;
+}
+
+/**
+ * FINDINGS PM-06: what applying a proposal did, in words and as the issues
+ * it touched — by title, never an id, with the board column each waits in.
+ */
+export function appliedResult(
+  kind: string,
+  cards: readonly { id: string; title: string; status: string }[],
+): { text: string; cards: { id: string; title: string; column: string }[] } {
+  const touched = cards.map((c) => ({
+    id: c.id,
+    title: c.title,
+    column: boardColumnLabel(c.status),
+  }));
+  const created = kind === "create_card" || kind === "split_card" || kind === "create_cards";
+  const first = touched[0];
+  if (!first) return { text: "Applied.", cards: [] };
+  const planned = cards[0]?.status === "planning" ? " while it is planned" : "";
+  if (touched.length === 1) {
+    return {
+      text: created
+        ? `Created “${first.title}”. It waits in ${first.column}${planned}.`
+        : `Changed “${first.title}”. It is in ${first.column}.`,
+      cards: touched,
+    };
+  }
+  const columns = [...new Set(touched.map((c) => c.column))];
+  const where = columns.length === 1 ? ` They wait in ${columns[0]}.` : "";
+  return {
+    text: `${created ? "Created" : "Changed"} ${plural(touched.length, "issue")}.${where}`,
+    cards: touched,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Safe markdown for PM replies
 // ---------------------------------------------------------------------------
@@ -381,6 +421,20 @@ function inline(raw: string, opts: MarkdownOptions): string {
           return `${pre}\uE000${chips.length - 1}\uE000`;
         });
       }
+      // FINDINGS PM-04: a Markdown link never shows its source. A web link
+      // opens apart from the dashboard; a repository file is named as code;
+      // any other target (javascript:, data:) is its label alone.
+      s = s.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (_m, label: string, target: string) => {
+        const html = /^https?:\/\//i.test(target)
+          ? `<a href="${target}" target="_blank" rel="noopener noreferrer nofollow">${label}</a>`
+          : /^[\w][\w./-]*$/.test(target) && !target.includes("..")
+            ? label === target
+              ? `<code>${target}</code>`
+              : `${label} (<code>${target}</code>)`
+            : label;
+        chips.push(html);
+        return `\uE000${chips.length - 1}\uE000`;
+      });
       s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
       s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<em>$2</em>");
       s = s.replace(/(^|[^\w])_([^_\n]+)_(?!\w)/g, "$1<em>$2</em>");
@@ -392,7 +446,8 @@ function inline(raw: string, opts: MarkdownOptions): string {
 /**
  * Render the PM's markdown subset: paragraphs, `-`/`*` and `1.` lists,
  * `**bold**`, `*em*`, `` `code` ``, fenced code and `#`–`###` headings.
- * Everything is escaped before formatting, and links are left as text.
+ * Everything is escaped before formatting. A link to the web is a link that
+ * opens apart; a repository file is named as code; no other target is a link.
  */
 export function renderPmMarkdown(text: string, opts: MarkdownOptions = {}): string {
   const lines = String(text ?? "")
@@ -597,6 +652,11 @@ export interface MatchContext {
   cycles?: CycleLike[];
   epics?: EpicLike[];
   statusLabel?: (s: string) => string;
+  /**
+   * The issues the server's full-text search found for the free words
+   * (DB-N12-1): they match although their title and key lack the words.
+   */
+  textHits?: ReadonlySet<string>;
 }
 
 export function slug(s: string): string {
@@ -684,6 +744,9 @@ function termMatches(card: PmCardLike, t: FilterTerm, ctx: MatchContext): boolea
             return card.status === "in_progress";
           case "unestimated":
             return !(typeof card.estimate === "number" && card.estimate > 0);
+          // DB-N10-2: an untriaged Backlog issue (the Triage view).
+          case "untriaged":
+            return card.status === "backlog" && Boolean(card.display?.intake);
           case "done":
             return card.status === "done";
           case "open":
@@ -746,7 +809,7 @@ export function matchCard(card: PmCardLike, f: CardFilter, ctx: MatchContext = {
   if (words.length) {
     const hay =
       `${card.display?.title ?? card.title ?? ""} ${card.id} ${card.display?.shortId ?? ""}`.toLowerCase();
-    if (!words.every((w) => hay.includes(w))) return false;
+    if (!words.every((w) => hay.includes(w)) && !ctx.textHits?.has(card.id)) return false;
   }
   return true;
 }

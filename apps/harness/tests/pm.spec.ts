@@ -249,7 +249,10 @@ describe("project manager", () => {
     });
     const reply = (await pm.thread()).at(-1);
     expect(reply?.state).toBe("error");
-    expect(reply?.text).toContain("model not installed");
+    // PM-01: a worded cause, never the exception's text (it goes to the log).
+    expect(reply?.cause).toBe("no_model");
+    expect(reply?.text).toMatch(/No model is answering for Seshat/);
+    expect(reply?.text).not.toContain("model not installed");
     expect(await pm.queued()).toEqual([]);
   });
 

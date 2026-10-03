@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { dirname } from "node:path";
 
@@ -118,6 +118,12 @@ export async function workspacesRoute(
   if (url !== "/api/workspaces" && !url.startsWith("/api/workspaces/")) return false;
   const method = req.method ?? "GET";
   const own = deps.own();
+  // SUR-76: which workspace this server serves, its id alone — reachable
+  // before signing in, so `sekhemet` and `serve` find a Team server too.
+  if (url === WORKSPACE_ID_ROUTE && method === "GET") {
+    deps.json(res, 200, own ? { current: own.id } : {});
+    return true;
+  }
   if (own) recordOwnWorkspace(deps.path, own);
   if (url === "/api/workspaces" && method === "GET") {
     const solo = deps.setup === "solo";
@@ -195,4 +201,44 @@ export async function workspacesRoute(
   }
   deps.json(res, 405, { error: "Not allowed here." });
   return true;
+}
+
+/** The id of the workspace a server serves, answered without a session (SUR-76). */
+export const WORKSPACE_ID_ROUTE = "/api/workspaces/id";
+
+/**
+ * SUR-76: the address of a running server that already serves this
+ * workspace, if any: an entry of the machine's list for this workspace's
+ * folder and id whose address answers `GET /api/workspaces/id` naming that
+ * id as its own — a route that needs no sign-in, so a Team server is found
+ * as a Solo one is. The list only says where to ask; the server's answer decides.
+ */
+export async function runningServerFor(
+  path: string,
+  workspace: { folder: string; id: string | undefined },
+  fetchImpl: typeof fetch = fetch,
+): Promise<string | undefined> {
+  if (!workspace.id) return undefined;
+  const same = (a: string | undefined) => {
+    if (!a) return false;
+    try {
+      return realpathSync(a) === realpathSync(workspace.folder);
+    } catch {
+      return false;
+    }
+  };
+  for (const w of readWorkspaces(path)) {
+    if (w.id !== workspace.id || !same(w.folder)) continue;
+    try {
+      const res = await fetchImpl(`${w.address}${WORKSPACE_ID_ROUTE}`, {
+        signal: AbortSignal.timeout(1500),
+      });
+      if (!res.ok) continue;
+      const body = (await res.json()) as { current?: unknown };
+      if (body.current === workspace.id) return w.address;
+    } catch {
+      // Not running there: start one.
+    }
+  }
+  return undefined;
 }

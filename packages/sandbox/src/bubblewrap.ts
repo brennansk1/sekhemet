@@ -163,6 +163,11 @@ export function bubblewrapArgv(
     .map(maskOf)
     .filter((m) => m !== undefined);
 
+  const isolationMasks = (options.denyPaths ?? [])
+    .filter((p) => !p.includes("*") && existsSync(p))
+    .map(maskOf)
+    .filter((m) => m !== undefined);
+
   return [
     "--die-with-parent",
     "--new-session",
@@ -181,6 +186,8 @@ export function bubblewrapArgv(
     ...rebound.flatMap((p) => ["--bind", p, p]),
     ...protectedGit.flatMap((p) => ["--ro-bind", p, p]),
     ...ledgerMasks.flatMap((m) => m.argv),
+    // Item 10a: the card's view of other projects, masked after every bind.
+    ...isolationMasks.flatMap((m) => m.argv),
     "--unshare-pid",
     "--unshare-ipc",
     "--unshare-uts",

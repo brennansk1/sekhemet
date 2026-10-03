@@ -208,6 +208,37 @@ describe("DB-N19-4: an Admin lists and revokes outstanding invites", () => {
   });
 });
 
+describe("FINDINGS TEAM-05: an invite for a malformed address or a member is refused", () => {
+  it("refuses an address that is not an email, saying what one looks like, and records nothing", async () => {
+    const { ada } = await team();
+    const before = (await log.getEventsByTypes(["member/invited"])).length;
+    const res = await call("POST", "/api/invites", ada, { level: "viewer", email: "not-an-email" });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe(
+      "not-an-email is not an email address. An invite's address looks like name@example.com.",
+    );
+    expect(await log.getEventsByTypes(["member/invited"])).toHaveLength(before);
+  });
+
+  it("refuses an address that already belongs to a member, and names no one else", async () => {
+    const { ada } = await team();
+    const res = await call("POST", "/api/invites", ada, {
+      level: "member",
+      email: "MO@northwind.test",
+    });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe(
+      "MO@northwind.test already belongs to a member of this workspace. Change their level on Members instead.",
+    );
+    // An invite with no address, or a new one, is still made.
+    expect((await call("POST", "/api/invites", ada, { level: "viewer" })).status).toBe(200);
+    expect(
+      (await call("POST", "/api/invites", ada, { level: "viewer", email: "vi@northwind.test" }))
+        .status,
+    ).toBe(200);
+  });
+});
+
 interface MembersBody {
   members: { principal: string; acceptIn?: string[] }[];
   levels: { level: string; allows: string[] }[];

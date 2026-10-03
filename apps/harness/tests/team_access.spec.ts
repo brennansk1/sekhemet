@@ -279,7 +279,7 @@ describe("the 403 on every write endpoint (TEAM-4, TEAM-5, TEAM-32, INT-24)", ()
     expect(refused.status).toBe(403);
     expect(refused.data).toMatchObject({ permission: "review", level: "viewer", needs: "member" });
     expect(String(refused.data.error)).toBe(
-      "You're a Viewer on Chronicle. A Member can request changes, put on hold or reject this issue.",
+      "You're a Viewer on Chronicle. A Member can request changes, put on hold, mark Won't do or reopen this issue.",
     );
     expect((await store.getCard(cardId))?.status).toBe("ready");
     const recorded = await refusals();

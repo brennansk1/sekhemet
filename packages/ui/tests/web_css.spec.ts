@@ -394,7 +394,8 @@ describe("the brand mark and the AI badge in the page (DB-N9-19, DB-N9-18)", () 
   it("DB-N9-18: Seshat and the Agent carry the badge where they are named; the Agent has no avatar", () => {
     // Seshat in its thread and panel headers.
     expect(source("pm_thread.js")).not.toContain("<b>${PM_NAME}</b>");
-    expect(source("pm_thread.js").match(/teammateName\(PM_NAME, "seshat"\)/g)?.length).toBe(4);
+    // (Five places: the fifth is the header of a reply Seshat could not give, PM-01.)
+    expect(source("pm_thread.js").match(/teammateName\(PM_NAME, "seshat"\)/g)?.length).toBe(5);
     // The panel header is *Seshat · Project manager* (DB-P5-6, `seshatHeader`), the badge after it.
     expect(source("pm_panel.js")).toContain("<b>${esc(st.title)}</b>${aiBadge()}");
     // The Agent on the issue page, in Activity, and as a tile's delegate.

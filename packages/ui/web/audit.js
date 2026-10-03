@@ -7,7 +7,7 @@
 // has no Audit (DB-N9-12). Every word is `/app/lib/team_admin.js`'s.
 import { $, aiBadge, esc, getJSON, icon } from "./dom.js";
 import { refusalMessage } from "./lib/account.js";
-import { AUDIT_CATEGORIES, AUDIT_COPY as C } from "./lib/team_admin.js";
+import { AUDIT_CATEGORIES, AUDIT_COPY as C, teamOnlyNotice } from "./lib/team_admin.js";
 import { getSession } from "./session.js";
 import { setTopbar } from "./shell.js";
 
@@ -109,7 +109,7 @@ function render() {
     body = `<div class="tbl-wrap" tabindex="0"><table class="tbl pj-tbl au-tbl"><caption class="sr-only">${esc(C.title)}</caption><thead><tr><th scope="col">${esc(C.time)}</th><th scope="col">${esc(C.actor)}</th><th scope="col">${esc(C.action)}</th><th scope="col">${esc(C.target)}</th></tr></thead><tbody>${v
       .map(
         (e) =>
-          `<tr><td data-col="time"><span class="pj-lbl">${esc(C.time)}</span><time class="tnum" datetime="${esc(e.at)}">${esc(when(e.at))}</time></td><td data-col="actor"><span class="pj-lbl">${esc(C.actor)}</span>${actorHtml(e.actor)}</td><td data-col="action"><span class="pj-lbl">${esc(C.action)}</span>${esc(e.action)}</td><td data-col="target"><span class="pj-lbl">${esc(C.target)}</span>${esc(e.target)}</td></tr>`,
+          `<tr><td data-col="time"><span class="pj-lbl">${esc(C.time)}</span><time class="tnum" datetime="${esc(e.at)}">${esc(when(e.at))}</time></td><td data-col="actor"><span class="pj-lbl">${esc(C.actor)}</span>${actorHtml(e.actor)}</td><td data-col="action"><span class="pj-lbl">${esc(C.action)}</span>${esc(e.action)}${e.count > 1 ? ` <span class="sec tnum">· ${esc(e.count)} times</span>` : ""}</td><td data-col="target"><span class="pj-lbl">${esc(C.target)}</span>${esc(e.target)}</td></tr>`,
       )
       .join(
         "",
@@ -131,10 +131,17 @@ export function mount(view) {
   ui.entries = undefined;
   ui.next = undefined;
   ui.error = "";
-  // Solo has no Audit (DB-N9-12).
+  // FINDINGS TEAM-07: Solo has no Audit (DB-N9-12); say so here instead of opening another page.
   if (getSession().mode !== "team") {
-    location.replace("#/");
-    return { unmount() {} };
+    const n = teamOnlyNotice("Audit");
+    setTopbar({ title: "Audit", crumb: "" });
+    root.innerHTML = `<div class="ib-empty team-only" role="status"><b>${esc(n.title)}</b><span>${esc(n.text)}</span><a class="btn" href="${esc(n.route)}">${esc(n.action)}</a></div>`;
+    return {
+      unmount() {
+        root.remove();
+        ui.root = null;
+      },
+    };
   }
   root.addEventListener("change", (e) => {
     const t = e.target instanceof Element ? e.target.closest("[data-au-filter]") : null;

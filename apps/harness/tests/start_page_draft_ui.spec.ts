@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
@@ -147,7 +147,7 @@ describe("the start page with a live draft (C2a start-server, NEW-design-stage-7
       // DS-N7-1: an empty folder can hold a new project; the page asks before drafting.
       const check = await fetch(`${base}/api/projects/new`);
       expect(check.status).toBe(200);
-      expect(await check.json()).toEqual({ allowed: true });
+      expect(await check.json()).toEqual({ allowed: true, mayCreate: true });
       const { ctx, page } = await open("#/projects", 1440, { "sekhemet-pm-panel": "open" });
       // The Projects page's New project (here its empty state) opens the start page.
       await page.locator(".pj [data-new]").click();
@@ -267,18 +267,17 @@ describe("the start page with a live draft (C2a start-server, NEW-design-stage-7
   );
 
   it(
-    "DS-N7-1 (DEC-57): in a folder that already holds a project, New project says so before any drafting and offers /plan",
+    "DS-N8-1 (DEC-57, DS-N7-4 withdrawn): in a workspace that already holds a project, New project opens the start page naming the folder its approval creates",
     { timeout: 90_000 },
     async () => {
-      // The server says it first: this folder cannot hold a second project.
+      // The server names a new folder beside the workspace folder's project (teams §3).
       const check = (await (await fetch(`${base}/api/projects/new`)).json()) as {
         allowed: boolean;
-        reason?: string;
+        newFolder?: boolean;
+        folder?: string;
       };
-      expect(check.allowed).toBe(false);
-      expect(check.reason).toMatch(
-        /^This folder already holds the project ".+", with .+: plan the next piece of work with \/plan instead\.$/,
-      );
+      expect(check).toMatchObject({ allowed: true, newFolder: true });
+      expect(dirname(check.folder ?? "")).toBe(dirname(realpathSync(dir)));
       for (const [from, width, button] of [
         ["#/projects", 1440, ".pj-head [data-new]"],
         ["#/projects", 400, ".pj-head [data-new]"],
@@ -291,26 +290,19 @@ describe("the start page with a live draft (C2a start-server, NEW-design-stage-7
         expect(box && box.y < 260, `${from} ${width}`).toBe(true);
         await top.click();
         await expect.poll(() => new URL(page.url()).hash).toBe("#/projects/new");
-        const blocked = page.locator(".start-blocked");
-        await blocked.waitFor();
-        expect(await blocked.locator("h2").innerText()).toBe("This folder already holds a project");
-        expect(await blocked.innerText()).toContain(check.reason as string);
-        // No conversation to invest in, and no other thread's proposal to apply here.
-        expect(await page.locator(".start-convo textarea").count()).toBe(0);
-        expect(await page.locator("#view [data-apply], #view .pm-proposal").count()).toBe(0);
-        // §2.11 item 7: one primary action — plan the next piece of work.
-        const primary = page.locator("#view .btn.primary");
-        expect(await primary.count()).toBe(1);
-        expect(await primary.innerText()).toBe("Plan the next piece of work");
+        // The conversation, with the folder named above it before any approval.
+        await page.locator(".start-convo textarea").waitFor();
+        await expect
+          .poll(() => page.locator(".start-place [data-folder-line]").innerText())
+          .toMatch(/^Will be created in .+/);
+        expect(await page.locator(".start-blocked").count()).toBe(0);
+        // §2.11 item 7: one primary action — Review plan.
+        expect(await page.locator("#view .btn.primary").count()).toBe(1);
         expect(
           await page.evaluate(
             () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
           ),
         ).toBe(false);
-        await primary.click();
-        await expect
-          .poll(() => page.locator("textarea:visible").first().inputValue())
-          .toBe("/plan ");
         await ctx.close();
       }
     },
@@ -323,7 +315,7 @@ describe("the start page with a live draft (C2a start-server, NEW-design-stage-7
     await sw.click();
     await page.locator("[data-new-project]").click();
     await expect.poll(() => new URL(page.url()).hash).toBe("#/projects/new");
-    await page.locator(".start-blocked").waitFor();
+    await page.locator(".start-convo textarea").waitFor();
     await page.goto(`${base}/#/board`);
     await page.locator("#side").waitFor();
     await page.keyboard.press("ControlOrMeta+k");

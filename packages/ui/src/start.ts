@@ -44,6 +44,23 @@ export const START_COPY = {
   planNext: "Plan the next piece of work",
   planNextPrefill: "/plan ",
   backToProjects: "Back to Projects",
+  /** DS-N8-1: the folder a new project's approval creates (DEC-57). */
+  willCreate: (folder: string) => `Will be created in ${folder}`,
+  changeFolder: "Change folder",
+  folderLabel: "Folder for the new project",
+  useFolder: "Use this folder",
+  /** DS-N8-3: a refused folder's own project, in this workspace. */
+  openIt: "Open it",
+  /** DS-N8-2, TEAM-56: the take-over of a repository on this server. */
+  addRepository: "Add an existing repository",
+  repositoryLabel: "Path to the repository on this server",
+  takeItOver: "Take it over",
+  repositoryHint:
+    "Seshat reads it as it is first. Nothing in it runs until it is trusted, and it becomes a project when you approve its plan.",
+  takingOver: "Taking over the repository…",
+  /** TEAM-57, DB-N26-1: who approves a new project when this person may not create one. */
+  sendsForApproval:
+    "An Admin or a project lead approves a new project: Review plan ends in Send for approval.",
 } as const;
 
 // --- Inputs: the parts of the group the draft reads (pm/pipeline.ts) --------
@@ -136,6 +153,37 @@ export function startDraftOf(messages: readonly MessageLike[] | undefined): Prop
     }
   }
   return null;
+}
+
+/**
+ * DS-N7-1: the start page's own conversation. In a workspace that already
+ * holds a project, the thread's earlier messages are that project's: none of
+ * them belongs here, and none of its proposals may be applied from here (the
+ * project they would change is not the one being started). Shown: the
+ * messages since the page opened (`openedAt`, ms), or — opened again while a
+ * draft is open — since the person's words that led to the draft; and of
+ * their proposals, only the start draft's.
+ */
+export function startConversationOf<M extends MessageLike & { role?: string; createdAt?: string }>(
+  messages: readonly M[] | undefined,
+  openedAt: number,
+): M[] {
+  const all = [...(messages ?? [])];
+  const draft = startDraftOf(all);
+  let from = all.findIndex((m) => (Date.parse(m.createdAt ?? "") || 0) >= openedAt);
+  if (from < 0) from = all.length;
+  if (draft) {
+    let at = all.findIndex((m) => (m.proposals ?? []).includes(draft as never));
+    while (at > 0 && all[at - 1]?.role === "user") at -= 1;
+    if (at >= 0 && at < from) from = at;
+  }
+  return all
+    .slice(from)
+    .map((m) =>
+      m.proposals?.some((p) => p.kind !== "start_project")
+        ? { ...m, proposals: m.proposals.filter((p) => p.kind === "start_project") }
+        : m,
+    );
 }
 
 export interface StartTab {
@@ -283,5 +331,64 @@ export function startDraftView(
     lineAfter: keep[line - 1]?.key ?? null,
     plan,
     reviewPlan,
+  };
+}
+
+// --- Where the project goes (DS-N8-1..3, DB-N26-1; DEC-57) -------------------
+
+/** `GET /api/projects/new`'s answer, as the page reads it. */
+export interface StartPlace {
+  /** The workspace already holds a project: approval creates a new folder. */
+  newFolder: boolean;
+  folder?: string;
+  /** The folder as a person reads it (`~` for the home folder). */
+  shown?: string;
+  mayCreate?: boolean;
+  refusal?: {
+    kind: string;
+    reason: string;
+    project?: { id?: string; name: string; workspace: string; here: boolean };
+  };
+}
+
+export interface StartPlaceView {
+  /** *Will be created in …*, or null when the server's own folder takes the project. */
+  folderLine: string | null;
+  changeFolder: string | null;
+  addRepository: string;
+  /** Why the folder cannot take the project, said before any approval (DS-N8-3). */
+  refusal: {
+    text: string;
+    /** *Open it* for a project of this workspace. */
+    openIt: { label: string; project: string } | null;
+    /** A folder holding code is offered the take-over instead. */
+    addInstead: boolean;
+  } | null;
+  /** Review plan waits while the folder is refused. */
+  blocksApproval: boolean;
+  /** TEAM-57: the plan goes for approval. */
+  approvalNote: string | null;
+}
+
+/** The place bar above the conversation (DS-N8-1..3, DB-N26-1). */
+export function startPlaceView(place: StartPlace): StartPlaceView {
+  const refusal = place.refusal
+    ? {
+        text: place.refusal.reason,
+        openIt:
+          place.refusal.project?.here && place.refusal.project.id
+            ? { label: START_COPY.openIt, project: place.refusal.project.id }
+            : null,
+        addInstead: place.refusal.kind === "has_code",
+      }
+    : null;
+  const shown = place.shown ?? place.folder;
+  return {
+    folderLine: place.newFolder && shown ? START_COPY.willCreate(shown) : null,
+    changeFolder: place.newFolder ? START_COPY.changeFolder : null,
+    addRepository: START_COPY.addRepository,
+    refusal,
+    blocksApproval: refusal !== null,
+    approvalNote: place.mayCreate === false ? START_COPY.sendsForApproval : null,
   };
 }

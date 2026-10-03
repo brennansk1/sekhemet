@@ -10,6 +10,7 @@ import { forget, loadDetail } from "./data.js";
 import { nextDiffMode } from "./diff.js";
 import { $, esc, getJSON, icon } from "./dom.js";
 import { EvidencePane, reviewHtml } from "./evidence.js";
+import { issueMoreHtml, openIssueMenu } from "./issue_actions.js";
 import { mountIssue } from "./issue_view.js";
 import { tip as learnTip, viewerManagesWork } from "./learn.js";
 import {
@@ -200,10 +201,10 @@ function renderHead() {
     .replace(
       '<div class="outcome">',
       `<div class="outcome">${pill}`,
-    )}</div>${presenceHtml(card.id)}<div class="acts">${triage}</div></div>${checklist}`;
+    )}</div>${presenceHtml(card.id)}<div class="acts">${triage}${issueMoreHtml(card)}</div></div>${checklist}`;
   if (head.dataset.html !== next) {
     const active = document.activeElement;
-    const which = ["data-accept", "data-back", "data-comment", "data-park"].find(
+    const which = ["data-accept", "data-back", "data-comment", "data-park", "data-issue-more"].find(
       (a) => active?.hasAttribute?.(a) && head.contains(active),
     );
     head.innerHTML = next;
@@ -590,7 +591,18 @@ export function mount(view, route) {
     else if (t.closest("[data-back]")) runAction("r");
     else if (t.closest("[data-park]")) runAction("p");
     else if (t.closest("[data-comment]")) runAction("comment");
-    else if (t.closest("[data-board-retry]"))
+    // NEW-dashboard-21: Won't do, Reopen and Revert from the issue's `⋯` menu.
+    else if (t.closest("[data-issue-more]")) {
+      const card = store.card(ui.id);
+      if (card)
+        void openIssueMenu(t.closest("[data-issue-more]"), card, {
+          detail: ui.detail,
+          onDone: () => {
+            forget(ui.id);
+            void load(true);
+          },
+        });
+    } else if (t.closest("[data-board-retry]"))
       window.dispatchEvent(new CustomEvent("sekhemet:refresh"));
   });
   ui.unsub = store.on((_s, patch) => {

@@ -337,6 +337,7 @@
       "burnup burnup needs"
       "burnup burnup waiting"
       "requirements risks working"
+      "release retro retro"
       "done today models"
       "flow flow flow"
       "ask ask ask";
@@ -387,6 +388,12 @@
   .stp-a-ask {
     grid-area: ask;
   }
+  .stp-a-release {
+    grid-area: release;
+  }
+  .stp-a-retro {
+    grid-area: retro;
+  }
   .stp-nums {
     grid-template-columns: repeat(5, minmax(0, 1fr));
   }
@@ -412,4 +419,37 @@
   .stp-new {
     display: inline-flex;
   }
+}
+
+/* NEW-planner-pm-12, NEW-review-git-7: the proposed release, a failed push. */
+.stp-rel {
+  margin: 8px 0;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+.stp-rel h3,
+.stp-retro-draft h3 {
+  margin: 12px 0 4px;
+  font-size: var(--text-base);
+}
+.stp-changelog summary,
+.stp-retro summary {
+  cursor: pointer;
+}
+.stp-push-fail {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  color: var(--state-fail);
+  overflow-wrap: anywhere;
+}
+/* NEW-planner-pm-11: the retrospective's draft and the posted ones. */
+.stp-retro {
+  padding: 8px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.stp-retro-draft .stp-acts,
+.stp-retro-draft > .btn {
+  margin-top: 8px;
 }

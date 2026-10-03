@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { InboxFilter } from "@sekhemet/ui";
+import { searchText } from "../search_index.js";
 import { AiTeammateError } from "./ai_teammates.js";
 import {
   type InboxAction,
@@ -8,6 +9,7 @@ import {
   inboxFor,
   markInboxItem,
   myIssues,
+  searchIssues,
   setWatch,
   watchState,
 } from "./inbox.js";
@@ -45,10 +47,14 @@ export async function handleInboxRoute(
   const [url = "", query = ""] = rawUrl.split("?");
   const inbox = url === "/api/inbox";
   const mine = url === "/api/my-issues";
+  // DB-N26-2: the palette's Issues, across every project the person can see.
+  const search = url === "/api/issues/search";
+  // DB-N12-1: full-text search, every project the person can see.
+  const fullText = url === "/api/search";
   const item = ITEM.exec(url);
   const watch = WATCH.exec(url);
   const mention = MENTION.exec(url);
-  if (!inbox && !mine && !item && !watch && !mention) return false;
+  if (!inbox && !mine && !search && !fullText && !item && !watch && !mention) return false;
   const method = req.method ?? "GET";
   const deps = ctx.deps();
   if (!deps) {
@@ -58,9 +64,11 @@ export async function handleInboxRoute(
       method === "GET"
         ? inbox
           ? { items: [], unread: 0 }
-          : mine
+          : mine || search
             ? { issues: [] }
-            : { watching: false, watchers: [] }
+            : fullText
+              ? { hits: [] }
+              : { watching: false, watchers: [] }
         : { error: "This server was started read-only" },
     );
     return true;
@@ -80,6 +88,33 @@ export async function handleInboxRoute(
       ctx.json(res, 200, { issues: await myIssues(deps, me) });
       return true;
     }
+    if (search) {
+      const params = new URLSearchParams(query);
+      const limit = Number.parseInt(params.get("limit") ?? "", 10);
+      ctx.json(res, 200, {
+        issues: await searchIssues(
+          deps,
+          me,
+          params.get("q") ?? "",
+          Number.isFinite(limit) ? limit : 50,
+        ),
+      });
+      return true;
+    }
+    if (fullText) {
+      const params = new URLSearchParams(query);
+      const limit = Number.parseInt(params.get("limit") ?? "", 10);
+      const project = params.get("project") ?? "";
+      ctx.json(res, 200, {
+        hits: await searchText(deps, {
+          q: params.get("q") ?? "",
+          canSee: (p) => deps.audience.canSee(me, p),
+          ...(project ? { project } : {}),
+          ...(Number.isFinite(limit) ? { limit } : {}),
+        }),
+      });
+      return true;
+    }
     if (watch) {
       const card = await deps.cardStore.getCard(watch[1] as string);
       if (!card || !ctx.canSee(req, deps.projectOf(card))) {
@@ -92,7 +127,7 @@ export async function handleInboxRoute(
     ctx.json(res, 405, { error: "Method not allowed." });
     return true;
   }
-  if (method !== "POST" || inbox || mine) {
+  if (method !== "POST" || inbox || mine || search || fullText) {
     ctx.json(res, 405, { error: "Method not allowed." });
     return true;
   }

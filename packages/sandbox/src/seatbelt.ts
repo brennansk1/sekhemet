@@ -250,6 +250,32 @@ export function keychainRules(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
+ * Item 10a (NEW-security-13): a card's view of other projects, other cards'
+ * worktrees and the workspace's state, denied for reading and writing. Placed
+ * last in both macOS profiles, beside the keychain rules, so no granted root
+ * or srt allowlist reopens them; a write is denied by name too, as srt allows
+ * `file-write-create file-write-unlink` in its roots by name.
+ */
+export function isolationRules(denyPaths: readonly string[] = []): string {
+  if (denyPaths.length === 0) return "";
+  const filters = [...new Set(denyPaths)].map((p) => {
+    const star = p.indexOf("*");
+    if (star < 0) return `(subpath "${quote(realPath(p))}")`;
+    const dir = dirname(p.slice(0, star + 1));
+    const rest = p.slice(dir.length + 1);
+    const pattern = rest
+      .split("*")
+      .map((part) => (part ? anyCaseRegex(part) : ""))
+      .join("[^/]*");
+    return `(regex #"^${regexQuote(realPath(dir))}/${pattern}")`;
+  });
+  return [
+    ";; Item 10a: a card sees only its own project (NEW-security-13).",
+    ...filters.flatMap((f) => KEYCHAIN_DENIED_OPS.map((op) => `(deny ${op} ${f})`)),
+  ].join("\n");
+}
+
+/**
  * Generate a macOS Seatbelt profile confining a subprocess to `allowedPaths`.
  *
  * The policy is deny-by-default. Reads are permitted broadly because
@@ -362,6 +388,7 @@ ${protectRules}
 ${networkRule}
 ${portRules ? `\n;; L23: the card's own loopback ports.\n${portRules}\n` : ""}${options.browser ? BROWSER_RULES : ""}
 
+${isolationRules(options.denyPaths)}
 ${keychainRules()}
 `;
 }

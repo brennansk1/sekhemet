@@ -290,12 +290,16 @@ export const STATUS_SECTIONS = [
   { id: "needs", heading: "Needs you" },
   { id: "waiting", heading: "Waiting on others" },
   { id: "requirements", heading: "Requirements" },
+  // NEW-planner-pm-12: issues accepted outside a planned release, and their release.
+  { id: "release", heading: "Next release" },
   { id: "risks", heading: "Risks" },
   { id: "done", heading: "Done this week" },
   { id: "today", heading: "Today's changes" },
   { id: "working", heading: "Who's working on what" },
   { id: "models", heading: "Models" },
   { id: "flow", heading: "Flow" },
+  // NEW-planner-pm-11: Seshat's draft, and the retrospectives people posted.
+  { id: "retro", heading: "Retrospective" },
   { id: "ask", heading: "Ask Seshat" },
 ] as const;
 

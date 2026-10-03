@@ -55,7 +55,14 @@ import {
 import { LearningStore } from "../learning/store.js";
 import { blockLines, isHeading, markdownBlocks } from "../markdown.js";
 import { type RepoContext, isGreenfield, planCommand, repoPlanner } from "../wave2.js";
+import { realPath, workspaceFolderOf } from "../workspace_locator.js";
 import { flowMetrics, monteCarloForecast } from "./metrics.js";
+import {
+  NewFolderRefusal,
+  checkNewFolder,
+  createProjectFolder,
+  suggestedFolder,
+} from "./new_project.js";
 import { NEW_PROJECT_REFUSAL } from "./pm_copy.js";
 
 /**
@@ -562,6 +569,12 @@ export interface ProjectGroup {
   cardOne: CardFields & { reason: string };
   /** What approval creates, counted; before it, nothing exists. */
   creates: { project: number; epics: number; issues: number; brief: number; cardZero: number };
+  /**
+   * The folder approval creates, under the workspace's projects folder, when
+   * the workspace already holds a project (DS-N8-1, TEAM-54); absent, the
+   * project is the server's own folder.
+   */
+  folder?: string;
 }
 
 /** A person's choices on Review plan, sent with Create project (DS-P2-7). */
@@ -576,6 +589,8 @@ export interface ProjectChoices {
   type?: string;
   /** Answers by question index: the index of the answer chosen. */
   answers?: Record<string, number>;
+  /** The folder approval creates, when the person changed it (DS-N8-1). */
+  folder?: string;
 }
 
 /** Each `## ` section's lines, a list item per line (DEC-44: read as Markdown). */
@@ -772,6 +787,17 @@ export async function draftProjectGroup(
       brief: 1,
       cardZero: 1,
     },
+    // DS-N8-1: in a workspace that already holds a project, the folder its
+    // approval creates, named before approval.
+    ...((await createsNewFolder(deps))
+      ? {
+          folder: suggestedFolder(
+            workspaceFolderOf(deps.repoPath),
+            deps.cardStore,
+            design.buildSpec.slice(0, 80),
+          ),
+        }
+      : {}),
   };
 }
 
@@ -835,6 +861,22 @@ export async function newProjectRefusal(
 }
 
 /**
+ * Whether New project creates a new folder (DS-N8-1, TEAM-54; DEC-57): the
+ * workspace already holds a project — any but the server's own folder's
+ * project while that one is still empty (no accepted brief, no issue, no
+ * code), which the first project takes as before.
+ */
+export async function createsNewFolder(
+  deps: Pick<PipelineDeps, "repoPath" | "cardStore" | "log">,
+): Promise<boolean> {
+  const projects = deps.cardStore.listProjects();
+  if (projects.length === 0) return false;
+  const own = realPath(workspaceFolderOf(deps.repoPath));
+  if (projects.some((p) => realPath(p.rootPath) !== own)) return true;
+  return (await newProjectRefusal(deps)) !== undefined;
+}
+
+/**
  * Apply a new project's group (planner-pm §2.9 item 2, PM-P2-2): with the
  * person as actor, the project and its brief — the releases as its slices,
  * the kept candidates as its requirements (PM-P13-1) —, the Type the person
@@ -845,10 +887,11 @@ export async function newProjectRefusal(
  * command is needed at any step.
  */
 export async function applyProjectGroup(
-  deps: PipelineDeps & { adapter?: LocalInferenceAdapter },
+  given: PipelineDeps & { adapter?: LocalInferenceAdapter },
   group: ProjectGroup,
   choices: ProjectChoices = {},
 ): Promise<{ epicId: string; cards: CardRecord[]; report: string }> {
+  let deps = given;
   const actor = deps.actor ?? "human";
   const principal = deps.principal ?? deps.cardStore.localPrincipal();
   const ledger = { store: deps.cardStore, log: deps.log };
@@ -863,18 +906,44 @@ export async function applyProjectGroup(
   const first = kept.slice(0, line);
   const later = kept.slice(line);
 
-  // A new project only (planner-pm §2.9 item 2): before any write, a folder
-  // that already holds code, an accepted brief or cards is refused, so
-  // neither its brief's baseline is replaced nor card zero's generator run
-  // over its code.
-  await refuseUnlessNewFolder(deps);
+  // DS-N8-1, TEAM-54: in a workspace that already holds a project, the new
+  // project is a new folder under its projects folder; otherwise the
+  // server's own folder takes it.
+  const workspaceFolder = workspaceFolderOf(deps.repoPath);
+  const newFolder = await createsNewFolder(deps);
+  const name = group.buildSpec.slice(0, 80);
+  const folder = newFolder
+    ? (choices.folder ?? group.folder ?? suggestedFolder(workspaceFolder, deps.cardStore, name))
+    : undefined;
+  if (folder !== undefined) {
+    // TEAM-55, TEAM-60: refused before anything is written, with the project named.
+    const verdict = checkNewFolder(workspaceFolder, deps.cardStore, folder);
+    if (!verdict.ok) throw new PipelineRefusal(verdict.reason);
+  } else {
+    // A new project only (planner-pm §2.9 item 2): before any write, a folder
+    // that already holds code, an accepted brief or cards is refused, so
+    // neither its brief's baseline is replaced nor card zero's generator run
+    // over its code.
+    await refuseUnlessNewFolder(deps);
+  }
   // The Type the person chose (DS-P14-1): one of the profiles, never
   // replaced silently by the proposed one.
   const chosen = choices.type !== undefined ? parseDepthProfile(choices.type) : undefined;
   if (choices.type !== undefined && !chosen)
     throw new PipelineRefusal(NEW_PROJECT_REFUSAL.notAType(choices.type));
-  const name = group.buildSpec.slice(0, 80);
-  const project = await deps.cardStore.ensureProject({ rootPath: deps.repoPath, name });
+  // TEAM-54: on approval, the folder, `git init` and `project/created
+  // {via: "new_folder"}` with the person as principal; everything after is
+  // written into the new project.
+  const project =
+    folder !== undefined
+      ? await createProjectFolder(
+          { workspaceFolder, cardStore: deps.cardStore, log: deps.log },
+          { folder, name, principal },
+        ).catch((err: unknown) => {
+          throw err instanceof NewFolderRefusal ? new PipelineRefusal(err.message) : err;
+        })
+      : await deps.cardStore.ensureProject({ rootPath: deps.repoPath, name });
+  if (folder !== undefined) deps = { ...deps, repoPath: project.rootPath };
   const profile = chosen ?? group.type.profile;
   const before = deps.cardStore.depthProfiles.of(project.id);
   if (!before.recorded || (chosen && chosen !== before.profile)) {

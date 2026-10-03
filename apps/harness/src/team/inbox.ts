@@ -22,6 +22,8 @@ import {
   aiStates,
   startRequests,
 } from "./ai_teammates.js";
+import { triageCountsFor } from "./intake.js";
+import { REMOVAL_SETTLED, emptiedAcceptRules } from "./leaving.js";
 import {
   ACCEPT_DISMISSED,
   REVIEW_COMMENTED,
@@ -626,8 +628,48 @@ async function needsYou(deps: InboxDeps, fold: InboxFold, me: string): Promise<O
       link: `#/review/${encodeURIComponent(card.id)}`,
     });
   }
+  // DB-N10-4: the project lead's count of issues waiting in Triage, per project.
+  for (const t of await triageCountsFor(deps, me, (p) => deps.audience.canSee(me, p))) {
+    const project = deps.cardStore.getProject(t.project);
+    out.push({
+      id: `triage:${t.project}`,
+      reason: "needs_you",
+      kind: "triage",
+      title: "Triage",
+      ...(project ? { project: { id: project.id, name: project.name } } : {}),
+      count: t.count,
+      at: t.at,
+      seq: t.seq,
+      link: "#/board/triage",
+    });
+  }
   // TEAM-22: the author's question, and after *Invite*, the Admins' request.
   const admin = deps.access.level(me) === "admin";
+  // TEAM-51: an Accept rule left with no current member waits in the project
+  // lead's and every Admin's Inbox until a person with the right edits it.
+  const emptied = emptiedAcceptRules(deps.access, deps.cardStore);
+  if (emptied.length) {
+    const settled = await deps.log.getEventsByTypes([REMOVAL_SETTLED]);
+    for (const r of emptied) {
+      if (!admin && r.lead !== me) continue;
+      const when = settled
+        .filter((e) =>
+          ((e.payload as { emptiedRules?: string[] }).emptiedRules ?? []).includes(r.project),
+        )
+        .at(-1);
+      out.push({
+        id: `accept-rule:${r.project}`,
+        reason: "needs_you",
+        kind: "accept_rule",
+        title: `${r.name}'s Accept rule`,
+        project: { id: r.project, name: r.name },
+        count: 1,
+        at: when?.createdAt ?? new Date(0).toISOString(),
+        seq: when?.seq ?? 0,
+        link: "#/configuration/project",
+      });
+    }
+  }
   for (const c of fold.comments.values()) {
     if (c.held.length === 0) continue;
     const card = await visibleCard(c.cardId);
@@ -706,7 +748,13 @@ export async function inboxFor(
     const open = list.filter((d) => d.seq > mark.done);
     const shown = open.length ? open : list;
     const latest = shown[shown.length - 1] as Delivery;
-    const reason = strongestReason(shown.map((d) => d.reason));
+    // FINDINGS TEAM-01: Review requested only while the issue waits in In
+    // review; once it leaves, the request is over and the row is Watching.
+    const reason = strongestReason(
+      shown.map((d) =>
+        d.reason === "review_requested" && card.status !== "review" ? "watching" : d.reason,
+      ),
+    );
     const projectRec = project ? deps.cardStore.getProject(project) : undefined;
     const aboutAi = card.delegate?.kind === "worker" || shown.some((d) => d.change.byAi);
     all.push({
@@ -923,6 +971,47 @@ export async function myIssues(deps: InboxDeps, me: string): Promise<MyIssueFact
     });
   }
   return out;
+}
+
+/** One issue a search found (dashboard DB-N26-2, §2.4.21). */
+export interface IssueHit {
+  id: string;
+  title: string;
+  status: string;
+  updatedAt: string;
+  project?: { id: string; name: string };
+}
+
+/**
+ * Search the issues of every project the person can see (dashboard DB-N26-2,
+ * teams TEAM-58; DEC-57): a title or id containing `q`, any case, newest
+ * change first; with no `q`, the newest. A project the person cannot see is
+ * never searched.
+ */
+export async function searchIssues(
+  deps: InboxDeps,
+  me: string,
+  q: string,
+  limit = 50,
+): Promise<IssueHit[]> {
+  const needle = q.trim().toLowerCase();
+  const out: IssueHit[] = [];
+  for (const card of await deps.cardStore.listCards()) {
+    const project = deps.projectOf(card);
+    if (!deps.audience.canSee(me, project)) continue;
+    if (needle && !`${card.title} ${card.id}`.toLowerCase().includes(needle)) continue;
+    const rec = project ? deps.cardStore.getProject(project) : undefined;
+    out.push({
+      id: card.id,
+      title: card.title,
+      status: card.status,
+      updatedAt: card.updatedAt,
+      ...(rec ? { project: { id: rec.id, name: rec.name } } : {}),
+    });
+  }
+  return out
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, Math.max(1, Math.min(200, limit)));
 }
 
 // ---------------------------------------------------------------------------

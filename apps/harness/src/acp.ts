@@ -3,6 +3,7 @@ import type { CardStore } from "@sekhemet/kernel";
 import type { ModelHold } from "@sekhemet/models";
 import { plural } from "@sekhemet/ui";
 import { appendPersonMessage } from "./pm/documents.js";
+import { seshatFailure } from "./pm/failure.js";
 import { answerQueued } from "./pm/service.js";
 import type { PmStore } from "./pm/store.js";
 
@@ -155,7 +156,8 @@ export class AcpAgent {
             sessionUpdate: "agent_message_chunk",
             content: {
               type: "text",
-              text: `Seshat could not answer: ${err instanceof Error ? err.message : String(err)}`,
+              // PM-01: the worded cause, never the exception's text.
+              text: `Seshat couldn't reply. ${seshatFailure(err).text}`,
             },
           });
           return this.reply(msg.id, { stopReason: "end_turn" });

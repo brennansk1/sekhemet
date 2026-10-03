@@ -13,7 +13,9 @@ import { defaultSlotCacheDir, sweepErasedSlots } from "@sekhemet/models";
 import { reapOrphanedGroups, runTrusted } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter, gitEnvFor } from "@sekhemet/sync";
 import { plural } from "@sekhemet/ui";
+import { cardWorktree, projectRootOf } from "./card_root.js";
 import { Tracer } from "./tracing.js";
+import { workspaceFolderOf } from "./workspace_locator.js";
 
 /**
  * What the supervisor does when a runner starts (runtime.md items 2, 10, 33,
@@ -31,7 +33,8 @@ import { Tracer } from "./tracing.js";
  *    than 30 days deleted from `traces.db` (RUN-15).
  */
 
-export const processRegistryDir = (repoPath: string) => join(repoPath, ".sekhemet", "processes");
+export const processRegistryDir = (repoPath: string) =>
+  join(workspaceFolderOf(repoPath), ".sekhemet", "processes");
 
 export interface CrashSweepEntry {
   cardId: string;
@@ -69,7 +72,8 @@ export async function sweepCrashedAttempts(
     });
     await cardStore.updateCard(card.id, { stopReason: "crashed" }, "harness");
     const checkpoint = (await cardStore.getCheckpoints(card.id)).at(-1);
-    const worktree = join(repoPath, ".sekhemet", "worktrees", card.id);
+    // Runtime item 2a: the card's worktree is in its own project's root.
+    const worktree = cardWorktree(projectRootOf(cardStore, card) ?? repoPath, card.id);
     let restoredTo: string | undefined;
     if (
       checkpoint &&
@@ -167,10 +171,12 @@ export async function supervisorStart(
 ): Promise<SupervisorStart> {
   const reapedProcesses = reapOrphanedGroups(processRegistryDir(ctx.repoPath));
   const crashed = await sweepCrashedAttempts(ctx.repoPath, ctx.cardStore, ctx.boardService);
-  const retention = await runRetention(ctx.repoPath, ctx.cardStore, ctx.log, options.now).catch(
+  // The workspace's run files and traces are beside its ledger (runtime item 2).
+  const state = workspaceFolderOf(ctx.repoPath);
+  const retention = await runRetention(state, ctx.cardStore, ctx.log, options.now).catch(
     () => undefined,
   );
-  const spansDeleted = pruneTraces(ctx.repoPath, options.now);
+  const spansDeleted = pruneTraces(state, options.now);
   // The spine (erasure), after the retention prune's own erasure: a saved KV
   // slot whose prompt text an erasure covers is deleted before any restore
   // (models rule 20i, MD-N14-37). A slot of unknown sources goes on any
@@ -231,12 +237,21 @@ export function describeSupervisorStart(start: SupervisorStart): string[] {
  * subscribed to the ledger, so every path that closes a card — the board, the
  * CLI's triage, the dashboard — is covered. Returns the unsubscribe.
  */
-export function removeWorktreesOnClose(repoPath: string, log: EventLog): () => void {
+export function removeWorktreesOnClose(
+  repoPath: string,
+  log: EventLog,
+  cardStore?: CardStore,
+): () => void {
   return log.subscribe({ type: "card/status_changed" }, (event) => {
     const p = event.payload as { toStatus?: string; fromStatus?: string };
-    if (p.toStatus !== "rejected" || !event.cardId) return;
-    const worktree = join(repoPath, ".sekhemet", "worktrees", event.cardId);
-    if (!existsSync(worktree)) return;
-    void new NodeGitSyncAdapter(repoPath).removeWorktree(event.cardId).catch(() => undefined);
+    const cardId = event.cardId;
+    if (p.toStatus !== "rejected" || !cardId) return;
+    void (async () => {
+      // Runtime item 2a: the worktree is in the card's own project's root.
+      const card = cardStore ? await cardStore.getCard(cardId) : undefined;
+      const root = (cardStore && card ? projectRootOf(cardStore, card) : undefined) ?? repoPath;
+      if (!existsSync(cardWorktree(root, cardId))) return;
+      await new NodeGitSyncAdapter(root).removeWorktree(cardId);
+    })().catch(() => undefined);
   });
 }

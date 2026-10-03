@@ -22,6 +22,7 @@ import {
   storyMap,
 } from "@sekhemet/planner";
 import {
+  type KeepAChangelogCategory,
   NodeGitSyncAdapter,
   commitFilesOnBranch,
   keepAChangelogSection,
@@ -40,6 +41,7 @@ import {
   paragraphLines,
 } from "./markdown.js";
 import { PmStore } from "./pm/store.js";
+import { realPath } from "./workspace_locator.js";
 
 /**
  * Project documents in the repository, generated from the ledger
@@ -64,6 +66,25 @@ export interface DocsContext {
   repoPath: string;
   cardStore: CardStore;
   log: EventLog;
+  /**
+   * The project whose documents these are (DEC-57: each project keeps its own
+   * repository). Omitted, the project rooted at `repoPath`; a repository no
+   * project is rooted at falls back to the brief accepted last.
+   */
+  projectId?: string | undefined;
+}
+
+/**
+ * The project a documents context is about (DEC-57): the one it names, else
+ * the one rooted at its repository, else (a repository no project is rooted
+ * at, as before projects had their own roots) the brief accepted last.
+ */
+export async function docsProjectOf(ctx: DocsContext): Promise<string | undefined> {
+  if (ctx.projectId) return ctx.projectId;
+  const here = realPath(ctx.repoPath);
+  const rooted = ctx.cardStore.listProjects().find((p) => realPath(p.rootPath) === here);
+  if (rooted) return rooted.id;
+  return defaultRequirementProject({ store: ctx.cardStore, log: ctx.log });
 }
 
 export interface DocsLayout {
@@ -105,6 +126,17 @@ export interface ExportOptions {
   card?: string;
   /** A release being tagged: its CHANGELOG.md section and notes are written too (DS-N3-8). */
   release?: { sliceId: string; version: string };
+  /**
+   * A maintenance release being tagged (planner-pm NEW-planner-pm-12,
+   * PM-N12-2): no slice; its Keep a Changelog categories, its notes and its
+   * issues, written as a slice's release is (DS-N3-8).
+   */
+  maintenance?: {
+    version: string;
+    changelog: Partial<Record<KeepAChangelogCategory, string[]>>;
+    notes: string;
+    issues: readonly string[];
+  };
   /** The integration branch's head the export must build on; it refuses a moved branch. */
   expectedHead?: string;
   /** The release date; today when omitted. */
@@ -234,7 +266,7 @@ function metaLine(r: Requirement, status: string): string {
 
 async function projectData(ctx: DocsContext) {
   const ledger: PlannerLedger = { store: ctx.cardStore, log: ctx.log };
-  const projectId = await defaultRequirementProject(ledger);
+  const projectId = await docsProjectOf(ctx);
   if (!projectId) return undefined;
   const requirements = await ctx.cardStore.requirements.list({ projectId });
   const briefEvent = (await ctx.log.getEventsByTypes(["brief/accepted"]))
@@ -243,7 +275,7 @@ async function projectData(ctx: DocsContext) {
   if (requirements.length === 0 && !briefEvent) return undefined;
   // Judged as of the latest check on main, so a later commit (these
   // documents' own among them) does not turn every status to "planned".
-  const check = await latestMainCheck(ledger);
+  const check = await latestMainCheck(ledger, projectId);
   const map = await storyMap(ledger, { projectId, mainSha: check?.sha });
   const views = new Map(map.slices.flatMap((s) => s.requirements).map((v) => [v.id, v]));
   return {
@@ -605,10 +637,25 @@ async function tellOnce(ctx: DocsContext, text: string): Promise<void> {
   await pm.appendReply({ replyTo: [], text, model: "ledger" });
 }
 
-async function answeredDecisions(ctx: DocsContext): Promise<PlannerDecision[]> {
+/**
+ * The decisions answered for a project (DEC-57): a decision asked by an issue
+ * of another project is that project's record; one asked by no known issue
+ * belongs to every project, as before projects had their own roots.
+ */
+async function answeredDecisions(
+  ctx: DocsContext,
+  projectId: string | undefined,
+): Promise<PlannerDecision[]> {
   const ledger: PlannerLedger = { store: ctx.cardStore, log: ctx.log };
+  const projectOfCard = new Map(
+    (await ctx.cardStore.listCards()).map((c) => [c.id, c.projectId ?? undefined] as const),
+  );
   return (await new DecisionStore(ledger).all())
     .filter((d) => d.state === "answered" || d.state === "default_applied")
+    .filter((d) => {
+      const own = projectOfCard.get(d.request.cardId);
+      return projectId === undefined || own === undefined || own === projectId;
+    })
     .sort((a, b) => (a.record.answeredAt ?? "").localeCompare(b.record.answeredAt ?? ""));
 }
 
@@ -659,10 +706,13 @@ export async function exportProjectDocuments(
   }
   const tree = listBranchFiles(ctx.repoPath, head);
   const layout = docsLayout(ctx.repoPath, tree);
-  const data = await projectData(ctx);
-  const decisions = await answeredDecisions(ctx);
+  const project = await docsProjectOf(ctx);
+  const data = await projectData({ ...ctx, ...(project ? { projectId: project } : {}) });
+  const decisions = await answeredDecisions(ctx, project);
 
-  // 1. Merged edits to generated documents become proposals (DS-N3-2).
+  // 1. Merged edits to generated documents become proposals (DS-N3-2). Each
+  // project's exports are its own (DEC-57): the same path in another
+  // project's repository is another document.
   const docs = ctx.cardStore.documents;
   const diffed = new Set(
     (await ctx.log.getEventsByTypes(["docs/import_diffed"])).map((e) => {
@@ -671,12 +721,12 @@ export async function exportProjectDocuments(
     }),
   );
   const lastByPath = new Map<string, ProjectDocumentKind>();
-  for (const e of docs.exports()) for (const f of e.files) lastByPath.set(f.path, f.kind);
+  for (const e of docs.exports(project)) for (const f of e.files) lastByPath.set(f.path, f.kind);
   const byMark = new Map(decisions.map((d) => [d.id, d]));
   for (const [path, kind] of lastByPath) {
     if (kind === "changelog" || kind === "release") continue;
     const text = readBranchFile(ctx.repoPath, head, path);
-    const last = docs.lastExport(path);
+    const last = docs.lastExport(path, project);
     if (text === undefined || !last || sha256(text) === last.sha256) continue;
     if (diffed.has(`${path}\u0000${sha256(text)}`)) continue;
     const differences =
@@ -686,9 +736,11 @@ export async function exportProjectDocuments(
           ? diffBrief(text, data?.baseline)
           : diffDecision(text, byMark.get(DECISION_MARK.exec(text)?.[1] ?? ""));
     const commit = lastCommitTouching(ctx.repoPath, head, path) ?? head;
-    result.proposals.push(...(await docs.recordImportDiff({ path, commit, text, differences })));
+    result.proposals.push(
+      ...(await docs.recordImportDiff({ path, commit, text, differences, projectId: project })),
+    );
   }
-  const openPaths = new Set((await docs.openProposals()).map((p) => p.path));
+  const openPaths = new Set((await docs.openProposals(project)).map((p) => p.path));
 
   // 2. The documents, rendered from the ledger at this seq.
   const seq = ledgerSeq(ctx.cardStore);
@@ -756,6 +808,32 @@ export async function exportProjectDocuments(
         date,
       ),
     });
+  } else if (options.maintenance) {
+    // NEW-planner-pm-12: a maintenance release's section and notes, as a slice's.
+    const m = options.maintenance;
+    const date = options.date ?? today();
+    const section = keepAChangelogSection(m.version, date, m.changelog);
+    const existing = readBranchFile(ctx.repoPath, head, "CHANGELOG.md");
+    let changelog = prependChangelogSection(existing, section, m.version);
+    if (existing === undefined) changelog = `${generatedHeader(seq)}\n${changelog}`;
+    else if (readGeneratedHeader(existing) !== undefined && changelog !== existing) {
+      changelog = `${generatedHeader(seq)}\n${bodyOf(changelog)}`;
+    }
+    out.push({ path: "CHANGELOG.md", kind: "changelog", text: changelog });
+    out.push({
+      path: `${layout.product}/releases/${m.version}.md`,
+      kind: "release",
+      text: `${[
+        generatedHeader(seq),
+        `# Release ${m.version}`,
+        "",
+        `A maintenance release, released on ${date}.`,
+        "",
+        m.notes.trim() || "No notes were proposed for this release.",
+        "",
+        `Issues: ${m.issues.join(", ") || "none"}.`,
+      ].join("\n")}\n`,
+    });
   }
 
   // 3. What to write, what to leave (DS-N3-2, -5).
@@ -774,7 +852,7 @@ export async function exportProjectDocuments(
     }
     if (readGeneratedHeader(existing) === undefined) {
       result.left.push(doc.path);
-      if (!docs.lastExport(doc.path)) {
+      if (!docs.lastExport(doc.path, project)) {
         await tellOnce(
           ctx,
           `${doc.path} has no generated header, so it is yours: it was left as it is. The ${doc.kind} generated from the Activity log is shown with \`sekhemet release docs\`; copy what you want from it, or remove your file to let Sekhemet keep it.`,
@@ -788,7 +866,7 @@ export async function exportProjectDocuments(
     }
     if (
       bodyOf(existing) === bodyOf(doc.text) &&
-      docs.lastExport(doc.path)?.sha256 === sha256(existing)
+      docs.lastExport(doc.path, project)?.sha256 === sha256(existing)
     ) {
       kept.push({ ...doc, text: existing });
       continue;
@@ -810,13 +888,14 @@ export async function exportProjectDocuments(
   }
 
   if (writes.length === 0) return result;
+  const releaseVersion = options.release?.version ?? options.maintenance?.version;
   const accepter = await personLabel(ctx, principal, noNames);
   const sha = await new NodeGitSyncAdapter(ctx.repoPath).withAcceptLock(async () =>
     commitFilesOnBranch(ctx.repoPath, {
       branch,
       expectedOld: head,
       files: writes.map((d) => ({ path: d.path, text: d.text })),
-      subject: `docs(product): ${options.release ? `release ${options.release.version} notes and changelog; ` : ""}project documents from Activity log entry ${seq}`,
+      subject: `docs(product): ${releaseVersion ? `release ${releaseVersion} notes and changelog; ` : ""}project documents from Activity log entry ${seq}`,
       body: `Generated from the Activity log: ${writes.map((d) => d.path).join(", ")}.`,
       trailers: {
         Card: options.card ?? options.release?.sliceId ?? "docs",
@@ -832,6 +911,7 @@ export async function exportProjectDocuments(
   await docs.recordExport({
     seq,
     noNames,
+    projectId: project,
     files: [...writes, ...kept].map((d) => ({
       path: d.path,
       sha256: sha256(d.text),
@@ -975,8 +1055,8 @@ export async function applyDocumentProposal(
   let done: string;
   if (p.kind === "added") {
     const parsed = JSON.parse(text) as { title: string; criteria: string[] };
-    const ledger: PlannerLedger = { store: ctx.cardStore, log: ctx.log };
-    const projectId = await defaultRequirementProject(ledger);
+    // The requirement joins the project whose document gained it (DEC-57).
+    const projectId = p.projectId ?? (await docsProjectOf(ctx));
     const made = await ctx.cardStore.requirements.create(
       {
         title: parsed.title,

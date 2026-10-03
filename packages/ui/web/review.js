@@ -4,7 +4,9 @@ import { forget, loadDetail } from "./data.js";
 import { nextDiffMode } from "./diff.js";
 import { $, announce, brandMark, esc, icon } from "./dom.js";
 import { EvidencePane } from "./evidence.js";
+import { practiceTip } from "./learn.js";
 import { ISSUE_TYPE_LABELS, checksVerdict, formatWait } from "./lib/vocabulary.js";
+import { notifyOfferHtml, wireNotifyOffer } from "./notify.js";
 import {
   acknowledgeFocused,
   focusNextFinding,
@@ -93,9 +95,20 @@ function rowHtml(card) {
   return `<button class="q-row" type="button" role="option" id="q-${esc(card.id)}" data-id="${esc(card.id)}" aria-selected="${sel}" tabindex="${sel ? "0" : "-1"}"><div class="q-t">${esc(card.display?.title ?? card.title)}</div><div class="q-m">${rowMeta(card)}</div></button>`;
 }
 
+/** DB-N22-1: the offer shows once the queue holds work, until a choice is made here. */
+function renderNotifyOffer(queueSize) {
+  const host = $("[data-notify-offer]", ui.root);
+  if (!host) return;
+  const html = notifyOfferHtml(queueSize);
+  if (host.dataset.html === html) return;
+  host.innerHTML = html;
+  host.dataset.html = html;
+}
+
 function renderQueue() {
   const { ready, needYou } = queueGroups();
-  const html = `<div class="q-h" id="q-ready">Ready for review <span class="c tnum">${ready.length}</span></div>${ready.length ? ready.map(rowHtml).join("") : '<div class="q-empty">Nothing waiting for you.</div>'}<div class="q-sep" role="separator"></div><div class="q-h" id="q-need">Needs you <span class="c tnum">${needYou.length}</span></div>${needYou.length ? needYou.map(rowHtml).join("") : '<div class="q-empty">Nothing is stuck.</div>'}`;
+  // §2.9.5 (NEW-dashboard-13): reviewing a change, taught where the queue is.
+  const html = `<div class="q-h" id="q-ready">Ready for review <span class="c tnum">${ready.length}</span>${ready.length ? practiceTip("practice:review", "Reviewing a change") : ""}</div>${ready.length ? ready.map(rowHtml).join("") : '<div class="q-empty">Nothing waiting for you.</div>'}<div class="q-sep" role="separator"></div><div class="q-h" id="q-need">Needs you <span class="c tnum">${needYou.length}</span></div>${needYou.length ? needYou.map(rowHtml).join("") : '<div class="q-empty">Nothing is stuck.</div>'}`;
   const q = $(".queue", ui.root);
   if (q && html !== ui.queueHtml) {
     const hadFocus = q.contains(document.activeElement);
@@ -105,6 +118,7 @@ function renderQueue() {
     ui.queueHtml = html;
     if (hadFocus) document.getElementById(`q-${ui.selected}`)?.focus({ preventScroll: true });
   }
+  renderNotifyOffer(ready.length + needYou.length);
   const project = store.state.meta?.project ?? "";
   setTopbar({
     title: "Review",
@@ -375,9 +389,14 @@ export function onKey(e) {
 export function mount(view, route) {
   const root = document.createElement("div");
   root.className = "view-host";
-  root.innerHTML = `<div class="wrap"><div class="queue" role="listbox" aria-label="Review queue"></div><section class="ev" aria-label="Evidence"><div class="ev-scroll" tabindex="-1"></div><div data-triage></div></section><div data-facts style="display:contents"></div></div>`;
+  // NEW-dashboard-22: the one-time offer of a browser notification, above the queue.
+  root.innerHTML = `<div data-notify-offer></div><div class="wrap"><div class="queue" role="listbox" aria-label="Review queue"></div><section class="ev" aria-label="Evidence"><div class="ev-scroll" tabindex="-1"></div><div data-triage></div></section><div data-facts style="display:contents"></div></div>`;
   view.append(root);
   ui.root = root;
+  wireNotifyOffer($("[data-notify-offer]", root), () => {
+    const { ready, needYou } = queueGroups();
+    renderNotifyOffer(ready.length + needYou.length);
+  });
   ui.queueHtml = "";
   ui.triageHtml = "";
   ui.selected = null;

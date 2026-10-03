@@ -193,3 +193,63 @@ export function loadFailedText(thing: string, status: number): { title: string; 
     detail: "Sekhemet had a problem answering. Try again; if it keeps happening, restart it.",
   };
 }
+
+// --- Across the projects a person can see (DB-N26-2; DEC-57) -----------------
+
+export const CROSS_PROJECT_COPY = {
+  all: "All projects",
+  filterLabel: "Project",
+} as const;
+
+export interface CrossProjectFilter {
+  /** The project's id; "" for all of them. */
+  id: string;
+  label: string;
+  count: number;
+  selected: boolean;
+}
+
+/**
+ * My issues, the Inbox and the palette's *Issues* across every project the
+ * person can see (dashboard DB-N26-2, teams TEAM-58): the rows of the
+ * visible projects only, each with its project's name, and the project
+ * filter — *All projects* and each project with its count. With one project
+ * nothing is named and no filter is offered. A filter naming a project no
+ * longer listed shows them all.
+ */
+export function crossProjectRows<T extends { projectId?: string | null | undefined }>(
+  items: readonly T[],
+  projects: readonly { id: string; name: string }[],
+  filter = "",
+): {
+  rows: { item: T; projectId: string; projectName: string }[];
+  filters: CrossProjectFilter[];
+  showProject: boolean;
+} {
+  const names = new Map(projects.map((p) => [p.id, p.name]));
+  const visible = items
+    .filter((i) => i.projectId && names.has(i.projectId))
+    .map((item) => ({
+      item,
+      projectId: item.projectId as string,
+      projectName: names.get(item.projectId as string) as string,
+    }));
+  const showProject = projects.length > 1;
+  const chosen = showProject && names.has(filter) ? filter : "";
+  const filters: CrossProjectFilter[] = showProject
+    ? [
+        { id: "", label: CROSS_PROJECT_COPY.all, count: visible.length, selected: chosen === "" },
+        ...projects.map((p) => ({
+          id: p.id,
+          label: p.name,
+          count: visible.filter((r) => r.projectId === p.id).length,
+          selected: chosen === p.id,
+        })),
+      ]
+    : [];
+  return {
+    rows: chosen ? visible.filter((r) => r.projectId === chosen) : visible,
+    filters,
+    showProject,
+  };
+}

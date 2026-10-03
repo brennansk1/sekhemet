@@ -860,6 +860,60 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     return this.runGit(["rev-parse", "--verify", ref]);
   }
 
+  /**
+   * Whether `sha` is a commit some branch of this repository reaches (read
+   * only): a moved project's folder must hold every merge its accepted cards
+   * made (kernel rule 38a, K-N12-7).
+   */
+  public reachesCommit(sha: string): boolean {
+    if (!/^[0-9a-f]{7,64}$/i.test(sha)) return false;
+    if (
+      !this.runGit(["rev-parse", "--verify", "--quiet", `${sha}^{commit}`], this.repoRoot, true)
+    ) {
+      return false;
+    }
+    return (
+      this.runGit(
+        ["for-each-ref", "--count=1", "--format=%(refname)", "--contains", sha, "refs/heads"],
+        this.repoRoot,
+        true,
+      ) !== ""
+    );
+  }
+
+  /**
+   * `git init` a new project's folder on `branch` (teams TEAM-54): the folder
+   * New project creates on a plan's approval. The process's git is hardened
+   * by the constructor, so no repository configuration runs a program.
+   */
+  public static initRepository(
+    folder: string,
+    options: { branch?: string; subject: string; card: string },
+  ): NodeGitSyncAdapter {
+    const adapter = new NodeGitSyncAdapter(folder);
+    adapter.runGit(["init", "-q", "-b", options.branch ?? "main"], folder);
+    // Its first commit, empty, so a card's worktree has a base to start from;
+    // attributed as every harness commit is (X26). Git's identity is the
+    // person's; with none configured, the harness names itself.
+    const identity = adapter.gitConfig("user.email")
+      ? []
+      : ["-c", "user.name=Sekhemet", "-c", "user.email=sekhemet@localhost"];
+    const message = [
+      options.subject,
+      "",
+      `Card: ${options.card}`,
+      "Agent-Model: none",
+      "Agent-Harness: sekhemet",
+      "Agent-Role: setup",
+      `Co-authored-by: ${modelCoAuthor("none")}`,
+    ].join("\n");
+    adapter.runGit(
+      [...identity, "commit", "--no-verify", "--allow-empty", "-q", "-m", message],
+      folder,
+    );
+    return adapter;
+  }
+
   /** A git config value of the repository, or "" (read only). */
   public gitConfig(key: string): string {
     return this.runGit(["config", key], this.repoRoot, true);

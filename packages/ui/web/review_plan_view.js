@@ -125,14 +125,17 @@ export function reviewState(group, from) {
 }
 
 /**
- * What Review plan's button does for this person (teams TEAM-20, design-stage
- * §2.9 item 7): `create` in Solo and for a Member or an Admin; `send` for a
- * Stakeholder, who names an approver; once sent, `approve` for the person
- * it was sent to and `waiting` for anyone else.
+ * What Review plan's button does for this person (teams TEAM-20, TEAM-57,
+ * design-stage §2.9 item 7): `create` in Solo and for a person who may create
+ * a project (an Admin, or one who leads a project); `send` for anyone else —
+ * a Stakeholder, or a Member who leads none — who names an approver; once
+ * sent, `approve` for the person it was sent to and `waiting` for anyone else.
+ * `mayCreate` is the server's answer; unknown, a Stakeholder sends.
  */
-export function planAction({ setup = "solo", level, me, approval } = {}) {
+export function planAction({ setup = "solo", level, me, approval, mayCreate } = {}) {
   if (setup !== "team") return "create";
   if (approval?.state === "sent") return approval.approver === me ? "approve" : "waiting";
+  if (mayCreate === false) return "send";
   return level === "stakeholder" ? "send" : "create";
 }
 
@@ -175,6 +178,8 @@ export function choicesOf(state) {
     releaseLine: state.line,
     type: state.type,
     ...(Object.keys(state.answers).length ? { answers: { ...state.answers } } : {}),
+    // DS-N8-1: the folder a new project's approval creates, as the start page chose it.
+    ...(state.folder ? { folder: state.folder } : {}),
   };
 }
 
@@ -281,18 +286,20 @@ function footHtml(opts) {
   if (action === "send") {
     const approvers = opts.approvers;
     if (approvers === undefined) {
-      return `${who("Finding the Members and Admins who can approve it…")}${foot('<button type="button" class="btn primary" data-send disabled aria-describedby="rp-who">Send for approval</button>')}`;
+      return `${who("Finding the Admins and project leads who can approve it…")}${foot('<button type="button" class="btn primary" data-send disabled aria-describedby="rp-who">Send for approval</button>')}`;
     }
     if (!approvers.length) {
-      return `${who("No Member or Admin can approve it yet: ask an Admin to invite one.")}${foot('<button type="button" class="btn primary" data-send disabled aria-describedby="rp-who">Send for approval</button>')}`;
+      return `${who("No one here can approve it yet: an Admin, or a person who leads a project, approves a new project.")}${foot('<button type="button" class="btn primary" data-send disabled aria-describedby="rp-who">Send for approval</button>')}`;
     }
-    return `${who("A Member or an Admin approves it, and can change it first. Nothing is created until they approve it.")}${foot(`${approverSelectHtml(approvers)}<button type="button" class="btn primary" data-send aria-describedby="rp-count rp-who">Send for approval</button>`)}`;
+    return `${who("An Admin or a project lead approves it, and can change it first. Nothing is created until they approve it.")}${foot(`${approverSelectHtml(approvers)}<button type="button" class="btn primary" data-send aria-describedby="rp-count rp-who">Send for approval</button>`)}`;
   }
   // In the Team setup creating the project accepts its brief, an Admin's to
   // do: the button says so, and who may press it is said beforehand.
   const team = opts.setup === "team";
   const note = team
-    ? who("In the Team setup an Admin creates the project, since creating it accepts its brief.")
+    ? who(
+        "In the Team setup an Admin or a project lead creates the project, and creating it accepts its brief.",
+      )
     : "";
   const label = team ? "Create project and accept its brief" : "Create project";
   return `${note}${foot(`<button type="button" class="btn primary" data-create aria-describedby="rp-count${team ? " rp-who" : ""}">${label}</button>`)}`;

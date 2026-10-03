@@ -433,4 +433,53 @@ describe("Use the recommended models in the page (DB-N6-16, Chromium)", () => {
     await page.getByText(/Review model: not assigned — /).waitFor();
     expect((await log.getEventsByTypes(["models/assigned"])).length).toBe(3);
   }, 60_000);
+
+  // The run's frames on the live stream can overtake the POST's own answer,
+  // which names the run as it stood when it started ("benchmarking"). The page
+  // keeps the later state: the answer arriving last does not put it back to
+  // *Running the quick benchmark…*, where it stayed until the test timed out.
+  it("keeps the finished run when its frames arrive before the POST's answer", async () => {
+    const { chromium } = await import("playwright-core");
+    const reg = new ModelRegistry(join(dir, "models.json"));
+    reg.recordQualification("tiny", { suiteVersion: "q1", passRate: 1, status: "qualified" });
+    const { base, log } = await serve({});
+    const browser = await chromium.launch();
+    closers.push(() => browser.close());
+    const page = await (
+      await browser.newContext({ viewport: { width: 1280, height: 900 } })
+    ).newPage();
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await page.route("**/api/config/recommended", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      const answer = await route.fetch();
+      await held;
+      await route.fulfill({ response: answer });
+    });
+    await page.goto(`${base}/#/configuration/models`);
+    await page.getByRole("button", { name: "Apply suggestion" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByText("Nothing to download.").waitFor();
+    const answered = page.waitForResponse(
+      (r) => r.url().endsWith("/api/config/recommended") && r.request().method() === "POST",
+    );
+    await dialog.getByRole("button", { name: "Use them" }).click();
+    // The finished run, from its frames, while the POST's answer is held back.
+    await page.getByText(/Review model: not assigned — /).waitFor({ timeout: 10_000 });
+    expect((await log.getEventsByTypes(["models/assigned"])).length).toBe(3);
+    release();
+    await answered;
+    // Past the page's handling of the answer: two frames and a task later.
+    await page.evaluate(
+      () =>
+        new Promise((r) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 100))),
+        ),
+    );
+    expect(await page.getByText("Coding model: tiny assigned").isVisible()).toBe(true);
+    expect(await page.getByText(/Review model: not assigned — /).isVisible()).toBe(true);
+    expect(await page.getByText("Running the quick benchmark…").count()).toBe(0);
+  }, 30_000);
 });

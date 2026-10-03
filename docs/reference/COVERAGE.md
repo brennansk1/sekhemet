@@ -325,10 +325,10 @@ The changes D1 wrote into the specs from [DESIGN_GAPS_C1](DESIGN_GAPS_C1.md) and
 
 | ID | Change | Spec | Workflow | State |
 | --- | --- | --- | --- | --- |
-| NEW-dashboard-10 | Intake: Stakeholders file and Members triage | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
-| NEW-dashboard-11 | The sprint lifecycle | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
-| NEW-dashboard-12 | Full-text search | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
-| NEW-dashboard-13 | Lessons for the practice a person performs | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-10 | Intake: Stakeholders file and Members triage | [dashboard](../design/specs/dashboard.md) | C2b | built (C2b): DB-N10-1..4 |
+| NEW-dashboard-11 | The sprint lifecycle | [dashboard](../design/specs/dashboard.md) | C2b | partial (C2b): DB-N11-1, -2, -3, -5 built; DB-N11-4 waits for Seshat's tool (PM-N13-6) |
+| NEW-dashboard-12 | Full-text search | [dashboard](../design/specs/dashboard.md) | C2b | built (C2b): DB-N12-1..3 |
+| NEW-dashboard-13 | Lessons for the practice a person performs | [dashboard](../design/specs/dashboard.md) | C2 | built (C2b): DB-N13-1..3 |
 | NEW-dashboard-14 | The Definition of done and readiness, readable | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
 | NEW-dashboard-15 | New issue by type, with a Bug's reproduction | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
 | NEW-dashboard-16 | Undo for field and bulk edits | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
@@ -336,8 +336,8 @@ The changes D1 wrote into the specs from [DESIGN_GAPS_C1](DESIGN_GAPS_C1.md) and
 | NEW-dashboard-18 | Status as a grid at wide widths | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
 | NEW-dashboard-19 | The approved mockups where they are more complete ([DEC-51](../design/DECISIONS.md#dec-51--c1s-k3-list-decided)) | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
 | NEW-dashboard-20 | Primary buttons in dark ink; gold as the brand accent ([DEC-51](../design/DECISIONS.md#dec-51--c1s-k3-list-decided)) | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
-| NEW-dashboard-21 | Won't do, Reopen and Revert in the dashboard ([DEC-51](../design/DECISIONS.md#dec-51--c1s-k3-list-decided)) | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
-| NEW-dashboard-22 | A notification when work waits ([DEC-53](../design/DECISIONS.md#dec-53--design_gaps-c-decided) c4) | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-21 | Won't do, Reopen and Revert in the dashboard ([DEC-51](../design/DECISIONS.md#dec-51--c1s-k3-list-decided)) | [dashboard](../design/specs/dashboard.md) | C2 | built (C2b): DB-N21-1..4 |
+| NEW-dashboard-22 | A notification when work waits ([DEC-53](../design/DECISIONS.md#dec-53--design_gaps-c-decided) c4) | [dashboard](../design/specs/dashboard.md) | C2 | built (C2b): DB-N22-1..7 |
 | NEW-dashboard-23 | The professional words on screen ([DEC-52](../design/DECISIONS.md#dec-52--the-professional-words-naming-amended)) | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
 | NEW-dashboard-24 | Network activity in Project configuration ([security](../design/specs/security.md) NEW-security-11) | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
 | NEW-design-stage-7 | Starting a project as a page with a live draft | [design-stage](../design/specs/design-stage.md) | C2 | not started (D1, DEC-56) |
@@ -353,11 +353,11 @@ The changes D1 wrote into the specs from [DESIGN_GAPS_C1](DESIGN_GAPS_C1.md) and
 | NEW-models-18 | downloads that resume and fit | [models](../design/specs/models.md) | C3 | not started (D1, DEC-56) |
 | NEW-models-19 | Get the inference engine | [models](../design/specs/models.md) | C3 | not started (D1, DEC-56) |
 | NEW-models-20 | Ollama's cloud models refused | [models](../design/specs/models.md) | C2 | not started (D1, DEC-56) |
-| NEW-planner-pm-11 | The retrospective, as a report for people | [planner-pm](../design/specs/planner-pm.md) | C2b | not started (D1, DEC-56) |
-| NEW-planner-pm-12 | Maintenance releases, an open *Next release* | [planner-pm](../design/specs/planner-pm.md) | C2b | not started (D1, DEC-56) |
-| NEW-planner-pm-13 | The sprint lifecycle (planner side) | [planner-pm](../design/specs/planner-pm.md) | C2 | not started (D1, DEC-56) |
+| NEW-planner-pm-11 | The retrospective, as a report for people | [planner-pm](../design/specs/planner-pm.md) | C2b | built (C2b): PM-N11-1..4 |
+| NEW-planner-pm-12 | Maintenance releases, an open *Next release* | [planner-pm](../design/specs/planner-pm.md) | C2b | built (C2b): PM-N12-1..4, its CHANGELOG.md section and release notes committed before the tag (*Tag the release* in Needs you not built) |
+| NEW-planner-pm-13 | The sprint lifecycle (planner side) | [planner-pm](../design/specs/planner-pm.md) | C2b | partial (C2b): PM-N13-1, -2, -3, -5 built; PM-N13-4 (the bet's carry-over basis) and -6 (the tool, PROMPT_STANDARD rule 35) not yet |
 | NEW-review-git-6 | *Request changes*, the industry's word for send back | [review-git](../design/specs/review-git.md) | C2a | not started (D1, DEC-56) |
-| NEW-review-git-7 | Push to remote after Accept and on release | [review-git](../design/specs/review-git.md) | C2b | not started (D1, DEC-56) |
+| NEW-review-git-7 | Push to remote after Accept and on release | [review-git](../design/specs/review-git.md) | C2b | built (C2b): RG-N7-1..5 |
 | NEW-runtime-11 | backups that survive the repository | [runtime](../design/specs/runtime.md) | C4, C5 | not started (D1, DEC-56) |
 | NEW-runtime-12 | the machine stays awake while it works | [runtime](../design/specs/runtime.md) | C4 | not started (D1, DEC-56) |
 | NEW-runtime-13 | a full disk is a named stop | [runtime](../design/specs/runtime.md) | C4 | not started (D1, DEC-56) |
@@ -370,7 +370,7 @@ The changes D1 wrote into the specs from [DESIGN_GAPS_C1](DESIGN_GAPS_C1.md) and
 | NEW-surface-9 | learning that a release or a security fix exists | [surface](../design/specs/surface.md) | C5, C7 | not started (D1, DEC-56) |
 | NEW-surface-10 | `--json` for scripts | [surface](../design/specs/surface.md) | C2c | not started (D1, DEC-56) |
 | NEW-teams-12 | A Team install with no identity provider | [teams](../design/specs/teams.md) | C5 | not started (D1, DEC-56) |
-| NEW-teams-13 | When a member leaves | [teams](../design/specs/teams.md) | C2b | not started (D1, DEC-56) |
+| NEW-teams-13 | When a member leaves | [teams](../design/specs/teams.md) | C2b | built (C2b): TEAM-49..52 |
 | NEW-worker-loop-11 | `disk_low`, the full-disk stop ([runtime.md](../design/specs/runtime.md) NEW-runtime-13) | [worker-loop](../design/specs/worker-loop.md) | C4 | not started (D1, DEC-56) |
 
 ### Added by the workspace design (D2, 2026-10-01, DEC-57)
@@ -380,13 +380,13 @@ A server is a workspace with many projects. Each change is *not started*.
 | ID | Change | Spec | Workflow | State |
 | --- | --- | --- | --- | --- |
 | NEW-dashboard-25 | The project switcher and the workspace switcher (DEC-57) | [dashboard](../design/specs/dashboard.md) | C2a | not started (D2, DEC-57) |
-| NEW-dashboard-26 | Many projects on one server: New project and the cross-project views (DEC-57) | [dashboard](../design/specs/dashboard.md) | C2b | not started (D2, DEC-57) |
-| NEW-design-stage-8 | A new project in a workspace of many | [design-stage](../design/specs/design-stage.md) | C2b | not started (D2, DEC-57) |
-| NEW-kernel-12 | one ledger per workspace | [kernel](../design/specs/kernel.md) | C4 (K-N12-3: C2b) | not started (D2, DEC-57) |
-| NEW-runtime-16 | one server, many project roots | [runtime](../design/specs/runtime.md) | C2b | not started (D2, DEC-57) |
+| NEW-dashboard-26 | Many projects on one server: New project and the cross-project views (DEC-57) | [dashboard](../design/specs/dashboard.md) | C2b | built (C2b): DB-N26-1..3 |
+| NEW-design-stage-8 | A new project in a workspace of many | [design-stage](../design/specs/design-stage.md) | C2b | built (C2b): DS-N8-1..3 |
+| NEW-kernel-12 | one ledger per workspace | [kernel](../design/specs/kernel.md) | C4 (K-N12-3: C2b) | partial: K-N12-1 (C2a), K-N12-3, -6, -7 (C2b); K-N12-2, -4, -5 C4's |
+| NEW-runtime-16 | one server, many project roots | [runtime](../design/specs/runtime.md) | C2b | partial (C2b): RUN-79..82; RUN-83 waits on RUN-69 |
 | NEW-runtime-17 | the machine's list of workspaces | [runtime](../design/specs/runtime.md) | C2a | not started (D2, DEC-57) |
 | NEW-runtime-18 | backups per workspace | [runtime](../design/specs/runtime.md) | C4 | not started (D2, DEC-57) |
-| NEW-security-13 | a card sees only its own project (DEC-57) | [security](../design/specs/security.md) | C2b | not started (D2, DEC-57) |
+| NEW-security-13 | a card sees only its own project (DEC-57) | [security](../design/specs/security.md) | C2b | built (C2b): SEC-N13-1, -2 |
 | NEW-security-14 | the credential store per workspace (DEC-57) | [security](../design/specs/security.md) | C4 | not started (D2, DEC-57) |
-| NEW-surface-11 | the command line in a workspace of many projects | [surface](../design/specs/surface.md) | C2b | not started (D2, DEC-57) |
-| NEW-teams-14 | A server is one workspace holding any number of projects, and other workspaces one switch away | [teams](../design/specs/teams.md) | C2b (TEAM-59: C2a) | not started (D2, DEC-57) |
+| NEW-surface-11 | the command line in a workspace of many projects | [surface](../design/specs/surface.md) | C2b | partial (C2b): SUR-73, -75..-81; SUR-74 not built |
+| NEW-teams-14 | A server is one workspace holding any number of projects, and other workspaces one switch away | [teams](../design/specs/teams.md) | C2b (TEAM-59: C2a) | partial (C2b): TEAM-54..58, -60; the acceptance run not yet |

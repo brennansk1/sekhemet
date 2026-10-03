@@ -57,6 +57,8 @@ interface ReplyPayload {
   proposals?: PmProposal[];
   cites?: PmCite[];
   error?: boolean;
+  /** Why a reply could not be given (PM-01): a cause, never the exception's text. */
+  cause?: "no_model" | "timeout" | "other";
   createdAt: string;
   model?: string;
   /** Who it answers (Team setup, PM-N9-8); a broadcast has none. */
@@ -223,6 +225,7 @@ export class PmStore {
     proposals?: Omit<PmProposal, "id" | "state">[];
     cites?: PmCite[];
     error?: boolean;
+    cause?: "no_model" | "timeout" | "other";
     model?: string;
     /** The person it answers (Team setup, PM-N9-8). */
     to?: string;
@@ -244,6 +247,7 @@ export class PmStore {
       ...(proposals.length > 0 ? { proposals } : {}),
       ...(input.cites && input.cites.length > 0 ? { cites: input.cites } : {}),
       ...(input.error ? { error: true } : {}),
+      ...(input.error && input.cause ? { cause: input.cause } : {}),
       ...(input.model ? { model: input.model } : {}),
       ...(input.to ? { to: input.to } : {}),
       skillVersion: SESHAT_SKILL_VERSION,
@@ -313,6 +317,8 @@ export class PmStore {
       ...(p.skillVersion ? { skillVersion: p.skillVersion } : {}),
       // Who wrote it: the Planning model, the ledger or the notifier (PM-N9-6).
       ...(p.model ? { model: p.model } : {}),
+      // PM-01: a reply Seshat could not give says why, and what Retry sends again.
+      ...(p.error ? { replyTo: p.replyTo, ...(p.cause ? { cause: p.cause } : {}) } : {}),
     };
   }
 
@@ -499,6 +505,7 @@ export class PmStore {
       endsOn: input.endsOn,
       state: input.state ?? "planned",
       ...(input.goal ? { goal: input.goal } : {}),
+      ...(input.projectId ? { projectId: input.projectId } : {}),
     };
     await this.log.append({ actor, type: PM_EVENTS.cycleCreated, payload: cycle });
     return cycle;

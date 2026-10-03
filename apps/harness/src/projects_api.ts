@@ -67,6 +67,22 @@ export async function projectsOverview(deps: {
   const waiting: WaitingFacts[] = [];
   const projects: ProjectFacts[] = [];
 
+  // DB-N26-3, RUN-82: why each paused project is paused — added while the
+  // active-project cap was reached, or paused by a person — from the ledger.
+  const projectEvents = await deps.log.getEventsByTypes(["project/created", "project/updated"]);
+  const pausedReason = (id: string): string => {
+    const last = projectEvents
+      .filter((e) => (e.payload as { id?: string }).id === id)
+      .filter((e) => typeof (e.payload as { status?: string }).status === "string")
+      .at(-1);
+    if (last?.type === "project/created") {
+      const cap = store.activeProjectCap;
+      return `Added while ${cap === 1 ? "1 project was" : `${cap} projects were`} active, the most that run at once.`;
+    }
+    const by = last?.principal ? nameFor(a, last.principal, me) : undefined;
+    return by ? `Paused by ${by}.` : "Paused.";
+  };
+
   for (const project of visible) {
     const own = cards.filter((c) => c.projectId === project.id);
     const facts = await statusFacts({
@@ -143,6 +159,7 @@ export async function projectsOverview(deps: {
         working: own.filter((c) => c.status === "in_progress").map((c) => c.title),
         queued: own.filter((c) => c.status === "ready").length,
       },
+      ...(project.status === "paused" ? { paused: { reason: pausedReason(project.id) } } : {}),
     });
   }
 

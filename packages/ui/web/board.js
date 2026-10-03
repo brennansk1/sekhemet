@@ -4,6 +4,7 @@
 import { openCreate } from "./create.js";
 import { $, $$, brandMark, esc, icon, postJSON, tip } from "./dom.js";
 import { fieldKey, selectionOrFocused } from "./fields.js";
+import * as intakeView from "./intake.js";
 import * as lanes from "./lanes.js";
 import { tip as learnTip } from "./learn.js";
 import { noteFor } from "./level_gate.js";
@@ -20,6 +21,7 @@ import {
   writePipeline,
 } from "./lib/columns.js";
 import { QUICK_CREATE_COPY, epicFromFilter } from "./lib/create.js";
+import { TRIAGE_COPY } from "./lib/intake.js";
 import { columnLessonId } from "./lib/learn.js";
 import { draggedBy } from "./lib/live.js";
 import { formatQuery } from "./lib/pm.js";
@@ -223,7 +225,7 @@ function renderTopbar() {
   const projectAttr = store.state.project?.id
     ? ` data-needs-project="${esc(store.state.project.id)}"`
     : "";
-  const actions = `<button class="btn top-ask" type="button" data-top-ask>${icon("chat", 14, "ic s14")}Ask Seshat</button><button class="btn primary top-create" type="button" data-top-create data-needs="issue.create" data-needs-quiet${projectAttr} aria-label="New issue" aria-keyshortcuts="C" title="New issue (C)">${icon("plus", 14, "ic s14")}<span class="lbl">New issue</span></button>`;
+  const actions = `<button class="btn top-ask" type="button" data-top-ask>${icon("chat", 14, "ic s14")}Ask Seshat</button><button class="btn primary top-create" type="button" data-top-create data-needs="issue.file" data-needs-quiet${projectAttr} aria-label="New issue" aria-keyshortcuts="C" title="New issue (C)">${icon("plus", 14, "ic s14")}<span class="lbl">New issue</span></button>`;
   setTopbar({ title: "Board", crumb: `${project}${project ? " · " : ""}${count}`, actions });
   paintViewBar(ui.barHost, ui.cycHost, "board");
 }
@@ -599,7 +601,9 @@ function boardLevelNote() {
   const project = store.state.project?.id;
   const create = noteFor("issue.create", project);
   const move = noteFor("priority.change", project);
-  return [create, move && move !== create ? move.replace(/^You're [^.]*\. /, "") : ""]
+  // DB-N10-1: a Stakeholder still files from New issue, for triage.
+  const files = create && !noteFor("issue.file", project) ? TRIAGE_COPY.filesForTriage : "";
+  return [create, files, move && move !== create ? move.replace(/^You're [^.]*\. /, "") : ""]
     .filter(Boolean)
     .join(" ");
 }
@@ -972,6 +976,8 @@ function onTopClick(e) {
 export function mount(view, route) {
   if (route?.params?.[0] === "list") return listView.mount(view, route);
   if (route?.params?.[0] === "map") return mapView.mount(view, route);
+  // DB-N10-2: the Triage view, the untriaged issues with their four decisions.
+  if (route?.params?.[0] === "triage") return intakeView.mount(view, route);
   const outer = document.createElement("div");
   outer.className = "view-host";
   outer.innerHTML =

@@ -168,7 +168,92 @@
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+/* DS-N8-1..3 (DEC-57): where the project goes, above the conversation —
+   the folder approval creates, its refusal, Add an existing repository. */
+.start-place {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-sm);
+}
+.start-place:empty {
+  display: none;
+}
+.sp-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.sp-folder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--text-secondary);
+}
+.sp-folder > span {
+  flex: 1 1 180px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+.start-place .btn {
+  flex: none;
+}
+.sp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 640px;
+}
+.sp-form label {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.sp-form p {
+  margin: 0;
+  font-size: var(--text-xs);
+}
+.sp-inline {
+  display: flex;
+  gap: 8px;
+}
+.sp-inline input {
+  flex: 1;
+  min-width: 0;
+}
+.sp-refusal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--state-fail);
+  border-radius: var(--radius-card);
+  padding: 8px 10px;
+  background: var(--bg-raised);
+}
+.sp-refusal p {
+  margin: 0;
+  flex: 1 1 240px;
+  overflow-wrap: anywhere;
+}
+.sp-acts {
+  display: flex;
+  gap: 8px;
+}
+.sp-note {
+  margin: 0;
+  font-size: var(--text-xs);
 }
 .start-tabs {
   grid-column: 1 / -1;
@@ -180,14 +265,14 @@
   display: none;
 }
 .start-convo {
-  grid-row: 2;
+  grid-row: 3;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
 .start-draft {
-  grid-row: 2;
+  grid-row: 3;
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
@@ -368,4 +453,20 @@
   justify-content: center;
   gap: 8px;
   margin-top: 8px;
+}
+
+/* DB-N26-3: a paused project's reason and its Resume; a refused Resume's sentence. */
+.pj-paused {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 4px;
+  font-size: var(--text-xs);
+}
+.pj-refused {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  color: var(--state-fail);
 }

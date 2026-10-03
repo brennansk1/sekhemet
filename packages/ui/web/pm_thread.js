@@ -13,9 +13,11 @@ import {
 import {
   composerCostLine,
   composerHint,
+  composerPlaceholder,
   composerStarters,
   documentChip,
   pastedDocument,
+  slashMatches,
   userMessageView,
 } from "./lib/seshat.js";
 import { columnLabel } from "./lib/vocabulary.js";
@@ -138,6 +140,19 @@ function messageHtml(m) {
       ? `<div class="docs">${m.documents.map((d) => docChipHtml(d)).join("")}</div>`
       : "";
     return `<article class="msg user" data-msg="${esc(m.id)}">${body}${whole}${docs}<div class="meta tnum">${esc(time(m.createdAt))}${note}</div></article>${err}`;
+  }
+  // PM-01 (§2.7 item 8): a reply Seshat could not give is *Seshat couldn't
+  // reply.*, the plain cause, Retry with the same text, and — when no model
+  // answers — where to set one up. Never the exception's text.
+  if (m.state === "error") {
+    const setUp =
+      m.cause === "no_model"
+        ? `<a class="btn sm ghost" href="#/configuration/models">${icon("settings", 12, "ic s12")}Open Configuration › Models</a>`
+        : "";
+    const retry = m.replyTo?.length
+      ? `<button class="btn sm" type="button" data-retry-reply="${esc(m.id)}">${icon("refresh", 12, "ic s12")}Retry</button>`
+      : "";
+    return `<article class="msg pm failed" data-msg="${esc(m.id)}" role="alert"><header>${avatar()}${teammateName(PM_NAME, "seshat")}<time class="tnum">${esc(time(m.createdAt))}</time></header><p><b>${PM_NAME} couldn't reply.</b> ${esc(m.text)}</p><div class="acts">${retry}${setUp}</div></article>`;
   }
   const proposals = proposalGroupHtml(m.proposals ?? [], { groupId: m.id });
   return `<article class="msg pm" data-msg="${esc(m.id)}"><header>${avatar()}${teammateName(PM_NAME, "seshat")}<time class="tnum">${esc(time(m.createdAt))}</time></header><div class="md">${md(m.text)}</div>${proposals}${sourcesHtml(m.cites)}${citesHtml(m.cites)}</article>`;
@@ -332,7 +347,8 @@ function matchCards(q) {
 /**
  * Mount the thread into `host`. `variant` is "panel" or "full". The start
  * page (design-stage §2.11) gives its own `intro` and `placeholder`, and no
- * `starters`: it is where a project starts.
+ * `starters`: it is where a project starts, and `messages`, which of the
+ * thread's messages are its own conversation (DS-N7-1).
  * Returns { focus(), prefill(text), destroy() }.
  */
 export function mountThread(
@@ -341,14 +357,24 @@ export function mountThread(
     variant = "panel",
     intro: introText,
     starters: withStarters = true,
-    placeholder = `Ask ${PM_NAME} about the board, an issue or a run… (/ for commands)`,
+    placeholder,
+    messages: ownMessages = (all) => all,
   } = {},
 ) {
-  host.innerHTML = `<div class="pm-thread ${variant}"><div class="pm-log" role="log" aria-live="off" aria-label="Conversation with ${PM_NAME}" tabindex="0"></div><div class="pm-compose"><div class="starters" data-starters></div><div data-ctx></div><div class="docs" data-docs hidden></div><div class="box"><textarea rows="1" aria-label="Message ${PM_NAME}" placeholder="${esc(placeholder)}"></textarea><button class="send" type="button" data-send aria-label="Send (Enter)">${icon("send", 14, "ic s14")}</button><div class="picker" role="listbox" hidden></div></div><p class="hint" data-hint hidden></p><p class="cost" data-cost></p></div></div>`;
+  host.innerHTML = `<div class="pm-thread ${variant}"><div class="pm-log" role="log" aria-live="off" aria-label="Conversation with ${PM_NAME}" tabindex="0"></div><div class="pm-compose"><div class="starters" data-starters></div><div data-ctx></div><div class="docs" data-docs hidden></div><div class="box"><textarea rows="1" aria-label="Message ${PM_NAME}" placeholder="${esc(placeholder ?? composerPlaceholder(560, PM_NAME))}"></textarea><button class="send" type="button" data-send aria-label="Send (Enter)">${icon("send", 14, "ic s14")}</button><div class="picker" role="listbox" hidden></div></div><p class="hint" data-hint hidden></p><p class="cost" data-cost></p></div></div>`;
   const log = $(".pm-log", host);
   const ta = $("textarea", host);
   const picker = $(".picker", host);
   const ctxSlot = $("[data-ctx]", host);
+  // PM-09: the default placeholder fits the composer it sits in, never clipped mid-line.
+  if (placeholder === undefined && typeof ResizeObserver === "function") {
+    const fit = () => {
+      const want = composerPlaceholder(ta.clientWidth, PM_NAME);
+      if (ta.clientWidth > 0 && ta.placeholder !== want) ta.placeholder = want;
+    };
+    new ResizeObserver(fit).observe(ta);
+    fit();
+  }
   let lastLog = "";
   let lastCtxKey = "";
   let dismissed = false;
@@ -382,9 +408,10 @@ export function mountThread(
         introText ??
         `I'm ${PM_NAME}, the project manager for ${project}. I read the board, the runs and the Activity log, and I propose changes you approve. I never change the board myself.`;
       const intro = `<article class="msg pm intro">${avatar()}<div><header>${teammateName(PM_NAME, "seshat")}<span class="sec">Project manager</span></header><div class="md"><p>${esc(words)}</p></div></div></article>`;
-      const pending = pendingMessage(pm.messages);
-      const parts = pm.messages.map((m) => messageHtml(m) + (m === pending ? pendingHtml(m) : ""));
-      html = (pm.messages.length ? "" : intro) + parts.join("");
+      const shown = ownMessages(pm.messages);
+      const pending = pendingMessage(shown);
+      const parts = shown.map((m) => messageHtml(m) + (m === pending ? pendingHtml(m) : ""));
+      html = (shown.length ? "" : intro) + parts.join("");
     }
     if (html === lastLog) return;
     const stick = atBottom() || !lastLog;
@@ -482,6 +509,19 @@ export function mountThread(
   }
 
   function renderPicker() {
+    // PM-08: "/" lists Seshat's commands, as the placeholder promises.
+    const slash = slashMatches(ta.value.slice(0, ta.selectionStart));
+    if (slash.length && ta.selectionStart === ta.value.length) {
+      pick = { items: slash, i: Math.min(pick.i, slash.length - 1), start: 0, slash: true };
+      picker.innerHTML = slash
+        .map(
+          (c, i) =>
+            `<div class="pk-o pk-cmd" role="option" aria-selected="${i === pick.i}" data-pick-cmd="${esc(c.insert)}"><span class="mono">${esc(c.cmd)}</span><span class="t">${esc(c.does)}</span></div>`,
+        )
+        .join("");
+      picker.hidden = false;
+      return;
+    }
     const mq = mentionQuery(ta);
     if (!mq) return closePicker();
     const items = matchCards(mq.q);
@@ -494,6 +534,16 @@ export function mountThread(
       )
       .join("");
     picker.hidden = false;
+  }
+
+  /** PM-08: the chosen command replaces what was typed. */
+  function insertCommand(text) {
+    ta.value = text;
+    ta.setSelectionRange(text.length, text.length);
+    closePicker();
+    autosize();
+    renderHint();
+    ta.focus();
   }
 
   function insertMention(id) {
@@ -523,8 +573,13 @@ export function mountThread(
         e.preventDefault();
         return;
       }
-      if (e.key === "Enter" || e.key === "Tab") {
-        insertMention(pick.items[pick.i].id);
+      // A command typed whole goes as typed: Enter sends it.
+      const whole = pick.slash && pick.items[pick.i].insert === ta.value;
+      if (e.key === "Enter" && whole) {
+        closePicker();
+      } else if (e.key === "Enter" || e.key === "Tab") {
+        if (pick.slash) insertCommand(pick.items[pick.i].insert);
+        else insertMention(pick.items[pick.i].id);
         e.preventDefault();
         return;
       }
@@ -557,6 +612,11 @@ export function mountThread(
     const pk = t.closest("[data-pick]");
     if (pk) {
       insertMention(pk.dataset.pick);
+      return;
+    }
+    const cmd = t.closest("[data-pick-cmd]");
+    if (cmd) {
+      insertCommand(cmd.dataset.pickCmd);
       return;
     }
     const chip = t.closest("[data-chip]");
@@ -593,6 +653,14 @@ export function mountThread(
         (x) => x.id === t.closest("[data-retry]").dataset.retry,
       );
       if (m) sendMessage(m.text, m.context);
+    } else if (t.closest("[data-retry-reply]")) {
+      // PM-01: Retry sends the messages the failed reply answered, with their context.
+      const all = store.state.pm.messages;
+      const reply = all.find((x) => x.id === t.closest("[data-retry-reply]").dataset.retryReply);
+      for (const id of reply?.replyTo ?? []) {
+        const m = all.find((x) => x.id === id && x.role === "user");
+        if (m) sendMessage(m.text, m.context);
+      }
     }
   });
   bindProposals(log);

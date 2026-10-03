@@ -12,6 +12,8 @@ import {
   recordAssumptionOutcome,
 } from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
+import { DESCRIPTION_MAX, type Reproduction, issueSpec } from "@sekhemet/ui";
+import { cardWorktree, contextForCard, isolateCheckout } from "./card_root.js";
 import { pruneLogDir } from "./daemon.js";
 import { applyProposal } from "./pm/apply.js";
 import { PmStore } from "./pm/store.js";
@@ -50,6 +52,12 @@ export interface RunRouteContext {
   principalOf?: (req: IncomingMessage) => string;
   /** Starts `sekhemet <args>` detached; returns its pid. Injectable for tests. */
   launch?: (args: string[]) => number;
+  /**
+   * How a filing is taken (dashboard DB-N10-1): below Member, an issue is
+   * filed for triage, with the project lead as its assignee and only what a
+   * filer may say — its title, description, type and labels.
+   */
+  filing?: (req: IncomingMessage, projectId: string) => { forTriage: boolean; lead?: string };
 }
 
 const CARD = "card_[A-Za-z0-9_-]+";
@@ -108,6 +116,21 @@ function cardFields(b: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
+/** What a person below Member may say when filing an issue for triage (DB-N10-1). */
+function filerFields(b: Record<string, unknown>): Record<string, unknown> {
+  return Array.isArray(b.labels)
+    ? { labels: b.labels.filter((l): l is string => typeof l === "string" && !!l.trim()) }
+    : {};
+}
+
+/** The New issue form's type as the card's stored tier, change and kind (DEC-31; `issueTypeOf`). */
+const TYPE_FIELDS: Record<string, { tier: CardTier; change?: "fix"; kind?: "spike" }> = {
+  story: { tier: "story" },
+  bug: { tier: "story", change: "fix" },
+  task: { tier: "task" },
+  spike: { tier: "story", kind: "spike" },
+};
+
 export async function handleRunRoutes(
   req: IncomingMessage,
   res: ServerResponse,
@@ -161,9 +184,36 @@ export async function handleRunRoutes(
       json(res, 400, { error: "An issue needs a title" });
       return true;
     }
-    const tier = TIERS.has(String(b.tier)) ? (b.tier as CardTier) : "task";
+    const projectId = projCards[1] as string;
+    const how = ctx.filing?.(req, projectId) ?? { forTriage: false };
+    // The New issue form's words (NEW-dashboard-15): a description, a Bug's
+    // reproduction and the type, as the quick-create proposal reads them.
+    const typed = TYPE_FIELDS[String(b.type)];
+    const description =
+      typeof b.description === "string" ? b.description.trim().slice(0, DESCRIPTION_MAX) : "";
+    const reproduction =
+      b.reproduction && typeof b.reproduction === "object"
+        ? (b.reproduction as Reproduction)
+        : undefined;
+    const spec =
+      typeof b.spec === "string" && b.spec.trim()
+        ? b.spec
+        : issueSpec(description, String(b.type) === "bug" ? reproduction : undefined);
+    const fields = how.forTriage ? filerFields(b) : cardFields(b);
+    const tier = TIERS.has(String(b.tier)) ? (b.tier as CardTier) : (typed?.tier ?? "task");
     const card = await s.createCard(
-      { ...cardFields(b), title, tier, status: "backlog", projectId: projCards[1] } as never,
+      {
+        ...fields,
+        ...(spec ? { spec } : {}),
+        ...(typed?.change ? { change: typed.change } : {}),
+        ...(typed?.kind ? { kind: typed.kind } : {}),
+        // DB-N10-1: filed for triage, the project lead is its assignee.
+        ...(how.forTriage && how.lead ? { owner: how.lead } : {}),
+        title,
+        tier,
+        status: "backlog",
+        projectId,
+      } as never,
       "human",
     );
     json(res, 201, { card });
@@ -237,19 +287,25 @@ export async function handleRunRoutes(
       return true;
     }
 
-    // gate
-    const wt = join(ctx.repoPath, ".sekhemet", "worktrees", cardId);
-    const cwd = existsSync(wt) ? wt : ctx.repoPath;
-    const cfg = loadGatesConfig(ctx.repoPath);
+    // gate — in the card's own project's root (runtime item 2a), its commands
+    // seeing only that project (security item 10a).
+    const root = contextForCard({ repoPath: ctx.repoPath, cardStore: s }, card).repoPath;
+    const wt = cardWorktree(root, cardId);
+    const cwd = existsSync(wt) ? wt : root;
+    const cfg = loadGatesConfig(root);
     const wanted = Array.isArray(b.gates) ? (b.gates as unknown[]).map(String) : undefined;
     const gates = wanted
       ? cfg.gates.filter((g) => wanted.includes(g.id) || wanted.includes(g.rung))
       : cfg.gates;
     const runner = new DeterministicGateRunner(new ProcessSandbox(), {
-      repoRoot: ctx.repoPath,
+      repoRoot: root,
       expectedConfigSha256: cfg.sha256,
     });
-    const result = await runner.runGates([...new Set(gates.map((g) => g.rung))], cwd);
+    // Item 10a wherever the checks run: the card's worktree, else its project's root.
+    const release = isolateCheckout({ repoPath: root, cardStore: s }, cwd);
+    const result = await runner
+      .runGates([...new Set(gates.map((g) => g.rung))], cwd)
+      .finally(release);
     json(res, 200, {
       cwd,
       passed: result.passed,

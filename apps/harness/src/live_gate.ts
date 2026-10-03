@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { GateRung, GateRunner, RunGatesOptions } from "@sekhemet/gates";
+import { workspaceFolderOf } from "./workspace_locator.js";
 
 /**
  * The running check, live (dashboard DB-N2-10, *Running Tests…*).
@@ -22,7 +23,8 @@ export interface LiveGate {
 
 /** Where a card's running check is announced. */
 export function liveGatePath(repoPath: string, cardId: string): string {
-  return join(repoPath, ".sekhemet", "live", `${cardId}.gate.json`);
+  // Runtime item 2: live files are the workspace's, beside its ledger.
+  return join(workspaceFolderOf(repoPath), ".sekhemet", "live", `${cardId}.gate.json`);
 }
 
 function alive(pid: unknown): boolean {
@@ -51,7 +53,7 @@ export function readLiveGate(repoPath: string, cardId: string): LiveGate | undef
 
 function write(repoPath: string, cardId: string, gate: { gate: string; rung: GateRung }): void {
   try {
-    mkdirSync(join(repoPath, ".sekhemet", "live"), { recursive: true });
+    mkdirSync(dirname(liveGatePath(repoPath, cardId)), { recursive: true });
     writeFileSync(
       liveGatePath(repoPath, cardId),
       JSON.stringify({ ...gate, pid: process.pid, startedAt: new Date().toISOString() }),

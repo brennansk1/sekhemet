@@ -159,6 +159,16 @@
 .msg.error p {
   margin-bottom: 8px;
 }
+/* PM-01: a reply Seshat could not give — the cause, Retry and where to set a model up. */
+.msg.pm.failed p {
+  font-size: var(--text-sm);
+  margin-bottom: 8px;
+}
+.msg.pm.failed .acts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
 /* Markdown subset (renderPmMarkdown) */
 .md {
@@ -1222,4 +1232,22 @@ body.pm-open .col {
     border-radius: 0;
     padding: 12px 16px;
   }
+}
+
+/* FINDINGS PM-04: on a touch screen there is no keyboard to press, so
+   Seshat's thread, its proposals and its panel show no key hints. */
+@media (hover: none) and (pointer: coarse) {
+  .pm-thread kbd,
+  .pm-dock kbd,
+  .pgroup kbd {
+    display: none;
+  }
+}
+
+/* FINDINGS PM-06: an applied change names the issues it touched and where each waits. */
+.prop.applied .pres {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }

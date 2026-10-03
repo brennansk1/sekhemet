@@ -319,6 +319,26 @@ export const NEW_PROJECT_REFUSAL = {
   notAType: (type: string) => `"${type}" is not a project Type.`,
 };
 
+/**
+ * New project's folder in a workspace of many (TEAM-55, TEAM-60; DS-N8-3):
+ * why a folder cannot take a new project, said before any approval is asked.
+ */
+export const NEW_FOLDER_REFUSAL = {
+  hasProject: (name: string, workspace: string) =>
+    `This folder already holds the project ${name}, in the workspace ${workspace}.`,
+  nested: (folder: string, project: string, inside: boolean) =>
+    inside
+      ? `${folder} lies inside the folder of the project ${project}; a project's folder never lies inside another's. Choose a folder outside it.`
+      : `${folder} contains the folder of the project ${project}; a project's folder never contains another's. Choose another folder.`,
+  hasCode: (folder: string) =>
+    `${folder} already holds code, so it is not a new project: add it as an existing repository instead.`,
+  notAFolder: (folder: string) => `${folder} is a file, not a folder.`,
+  notARepository: (folder: string) =>
+    `${folder} is not a git repository: start a new project there instead, or run git init first.`,
+  missing: (folder: string) => `There is no folder at ${folder} on this server.`,
+  notAbsolute: "Name the folder by its full path, starting with / or ~.",
+};
+
 /** A plan sent for approval (TEAM-20, TEAM-42): why it cannot be applied or discarded around its approver. */
 export const PLAN_APPROVAL_REFUSAL = {
   applied: (approver: string) =>

@@ -24,6 +24,7 @@ import { navNameOf } from "./lib/nav.js";
 import * as machineView from "./machine.js";
 import * as membersView from "./members.js";
 import * as myIssuesView from "./my_issues.js";
+import { noticeEvents } from "./notify.js";
 import * as playbookView from "./playbook.js";
 import { initPm, loadThread, onPmEvent } from "./pm_client.js";
 import { initPmPanel } from "./pm_panel.js";
@@ -439,6 +440,8 @@ export function connect() {
       // Views that follow the ledger (Steps, Thread, Ledger) read the new events.
       store.state.feed = payload.events ?? [];
       noteSeq(payload.events);
+      // NEW-dashboard-22: an issue entering In review while this tab is not in front.
+      if (!payload.replay) noticeEvents(payload.events);
       // A replay after a gap: the Seshat thread may have moved too.
       if (payload.replay) loadThread();
       if ((payload.events ?? []).some((e) => /^decision\//.test(e.type))) refreshDecisions();

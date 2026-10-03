@@ -17,6 +17,7 @@ import {
   type WebhookIntent,
   githubWebhookHandler,
 } from "@sekhemet/sync";
+import { contextForCard } from "./card_root.js";
 import { suggestedAccepters } from "./codeowners.js";
 import {
   DEPENDENCY_LABEL,
@@ -322,6 +323,22 @@ export async function handleGithubRoute(
     return true;
   }
 
+  // NEW-planner-pm-12: the open Next release, Propose release and Tag release.
+  const { handleNextReleaseRoute } = await import("./next_release.js");
+  if (
+    await handleNextReleaseRoute(req, res, url, {
+      repoPath: ctx.repoPath,
+      cardStore,
+      log: ctx.log,
+      json,
+      isTrustedMutation: ctx.isTrustedMutation,
+      principalOf: (r) => ctx.principalOf?.(r) ?? cardStore.localPrincipal(),
+      canSee: (r, p) => ctx.canSee?.(r, p) ?? true,
+    })
+  ) {
+    return true;
+  }
+
   // U8: visual gate images (baselines, captures, candidates) for Review.
   const visual = /^\/api\/visual\/(baselines|actual|candidates)\/([\w.@-]+\.png)$/.exec(url);
   if (visual && req.method === "GET") {
@@ -507,7 +524,11 @@ export async function handleGithubRoute(
   const diff = new RegExp(`^/api/cards/(${CARD})/diff$`).exec(url);
   if (diff && req.method === "GET") {
     try {
-      json(res, 200, await new NodeGitSyncAdapter(ctx.repoPath).structuralDiff(diff[1] as string));
+      // RUN-79: a card's branch lives in its own project's repository.
+      const id = diff[1] as string;
+      const card = await cardStore.getCard(id);
+      const root = contextForCard({ repoPath: ctx.repoPath, cardStore }, card ?? {}).repoPath;
+      json(res, 200, await new NodeGitSyncAdapter(root).structuralDiff(id));
     } catch (err) {
       json(res, 404, { error: err instanceof Error ? err.message : String(err) });
     }
@@ -521,7 +542,9 @@ export async function handleGithubRoute(
       json(res, 404, { error: `Issue not found: ${id}` });
       return true;
     }
-    json(res, 200, await reviewBrief(ctx.repoPath, cardStore, ctx.log, card));
+    // RUN-79: the suggested accepters come from the card's own repository's CODEOWNERS.
+    const root = contextForCard({ repoPath: ctx.repoPath, cardStore }, card).repoPath;
+    json(res, 200, await reviewBrief(root, cardStore, ctx.log, card));
     return true;
   }
   return false;

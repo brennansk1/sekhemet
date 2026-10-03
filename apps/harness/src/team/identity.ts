@@ -715,6 +715,22 @@ export class Identity {
     if (!Number.isFinite(days) || days <= 0 || days > 30) {
       return failure(400, "An invite expires within 30 days.");
     }
+    // FINDINGS TEAM-05: an address that is not one, or a member's, makes no invite.
+    const address = input.email?.trim();
+    if (address && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+      return failure(
+        400,
+        `${address} is not an email address. An invite's address looks like name@example.com.`,
+      );
+    }
+    const known = address ? personByEmail(this.db, address) : undefined;
+    const member = known ? memberOf(this.db, known) : undefined;
+    if (member && !member.removed) {
+      return failure(
+        409,
+        `${address} already belongs to a member of this workspace. Change their level on Members instead.`,
+      );
+    }
     const id = secret();
     const inviteRef = ref("inv");
     const expires = this.iso(days * DAY);

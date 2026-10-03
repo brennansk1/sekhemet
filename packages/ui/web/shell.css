@@ -411,6 +411,35 @@
 .po[aria-selected="true"] {
   background: var(--bg-overlay);
 }
+/* DB-N12-1: a full-text hit's matched words in context, on a second line. */
+.po.po-hit {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 36px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  row-gap: 2px;
+}
+.po .po-ctx {
+  flex-basis: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.po .po-ctx mark {
+  background: none;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+@media (max-width: 560px) {
+  /* A phone gives the title its own line, then the key, project and column. */
+  .po.po-hit .t {
+    flex-basis: 100%;
+  }
+}
 .po[aria-selected="true"] .t .pl {
   color: var(--text-primary);
 }

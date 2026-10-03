@@ -2,7 +2,7 @@
 // One copy of the conversation in the store; the panel and #/pm both render it.
 import { announce, getJSON, postJSON } from "./dom.js";
 import { noteFor } from "./level_gate.js";
-import { statusStep } from "./lib/pm.js";
+import { appliedResult, statusStep } from "./lib/pm.js";
 import { whyNotSendable } from "./lib/seshat.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
@@ -178,8 +178,29 @@ export async function decide(proposal, verb, { quiet = false } = {}) {
     state: verb === "apply" ? "applied" : "discarded",
   };
   if (!next.decidedAt) next.decidedAt = new Date().toISOString();
+  // PM-06: what the apply did — the issues by title and where each waits.
+  if (verb === "apply" && Array.isArray(r.data?.cards))
+    next.result = appliedResult(proposal.kind, r.data.cards);
   patchProposal(next);
-  if (verb === "apply") window.dispatchEvent(new CustomEvent("sekhemet:refresh"));
+  if (verb === "apply") {
+    window.dispatchEvent(new CustomEvent("sekhemet:refresh"));
+    const first = next.result?.cards?.[0];
+    if (!quiet && next.result)
+      toast({
+        tone: "pass",
+        text: next.result.text,
+        ...(first
+          ? {
+              action: {
+                label: "Open",
+                run: () => {
+                  location.hash = `#/card/${encodeURIComponent(first.id)}`;
+                },
+              },
+            }
+          : {}),
+      });
+  }
   return { ok: true, proposal: next };
 }
 

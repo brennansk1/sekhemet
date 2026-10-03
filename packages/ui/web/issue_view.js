@@ -3,6 +3,7 @@
 // agent — its state in words and the controls it offers. Every word and every
 // rule comes from `/app/lib/issue.js`; this module only renders and posts.
 import { aiBadge, esc, icon, postJSON, teammateName } from "./dom.js";
+import { practiceTip } from "./learn.js";
 import { ISSUE_COPY, agentPanel, criteriaChecks } from "./lib/issue.js";
 import { aiStateLine } from "./lib/teammates.js";
 import { toast } from "./toast.js";
@@ -25,7 +26,8 @@ function criteriaHtml(card, evidence) {
         `<li class="cc ${i.state}"><span class="cc-mark">${MARK[i.state]()}</span><span class="cc-t">${i.id ? `<span class="mono sec">${esc(i.id)}</span> ` : ""}${esc(i.text)}</span><span class="cc-s">${esc(i.stateText)}</span></li>`,
     )
     .join("");
-  return `<section aria-labelledby="iss-crit-h"><h3 class="sh" id="iss-crit-h">${esc(ISSUE_COPY.criteria)} <span class="sec tnum">${esc(c.summary)}</span></h3>${items ? `<ul class="crit-checks">${items}</ul>` : ""}${c.note ? `<p class="sec">${esc(c.note)}</p>` : ""}</section>`;
+  // §2.9.5 (NEW-dashboard-13): approving acceptance criteria, taught where they are.
+  return `<section aria-labelledby="iss-crit-h"><h3 class="sh" id="iss-crit-h">${esc(ISSUE_COPY.criteria)} <span class="sec tnum">${esc(c.summary)}</span>${practiceTip("practice:criteria", "Acceptance criteria")}</h3>${items ? `<ul class="crit-checks">${items}</ul>` : ""}${c.note ? `<p class="sec">${esc(c.note)}</p>` : ""}</section>`;
 }
 
 /**

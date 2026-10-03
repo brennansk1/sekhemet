@@ -1,17 +1,22 @@
 // Command palette (FRONTEND_DESIGN §2.5.10): grouped, fuzzy, with shortcuts.
 import { openCheatsheet } from "./cheatsheet.js";
-import { MOD, copyText, esc, icon, kbd } from "./dom.js";
+import { MOD, copyText, esc, getJSON, icon, kbd } from "./dom.js";
+import { runIssueAction } from "./issue_actions.js";
 import { tipsOn, toggleTips } from "./learn.js";
 import { ACCOUNT_COPY } from "./lib/account.js";
+import { issueActions } from "./lib/issue_actions.js";
 import { paletteGoTo } from "./lib/nav.js";
+import { searchHits, searchWords } from "./lib/search.js";
 import { paletteSeshat } from "./lib/seshat.js";
 import { START_ROUTE } from "./lib/start.js";
 import { ISSUE_TYPE_LABELS, columnLabel } from "./lib/vocabulary.js";
 import { pushOverlay, trapFocus } from "./overlay.js";
 import { askSeshat } from "./pm_panel.js";
 import { currentContext } from "./pm_thread.js";
+import { followProject, visibleProjects } from "./project_filter.js";
 import { getSession, signOutAndLeave } from "./session.js";
 import { currentNav, setDensity, toggleTheme } from "./shell.js";
+import { sprintPaletteItems } from "./sprints.js";
 import { store } from "./store.js";
 import { openProjectSwitcher, openWorkspaceSwitcher } from "./switcher.js";
 import { toast } from "./toast.js";
@@ -211,6 +216,14 @@ function cardActions(actions) {
       keys: ["p"],
       run: run("p"),
     });
+  // NEW-dashboard-21: the closing and reopening actions, in NAMING's words.
+  for (const a of issueActions(card)) {
+    out.push({
+      label: `${a.label} “${title}”`,
+      search: `${a.label} ${a.id === "wontdo" ? "close reject" : a.id}`,
+      run: () => void runIssueAction(a.id, card),
+    });
+  }
   out.push({
     label: `Open “${title}”`,
     search: "Open issue",
@@ -229,7 +242,7 @@ function cardActions(actions) {
 }
 
 function cardItems() {
-  return store.state.cards.map((c) => {
+  const here = store.state.cards.map((c) => {
     const d = c.display ?? {};
     const kinds = ISSUE_TYPE_LABELS[d.type]?.label ?? "";
     return {
@@ -241,6 +254,82 @@ function cardItems() {
       card: c,
     };
   });
+  // DB-N26-2: the issues of the other projects this person can see, each
+  // named with its project; opening one makes that project current.
+  const seen = new Set(store.state.cards.map((c) => c.id));
+  const visible = new Set(visibleProjects().map((p) => p.id));
+  const others = (open?.others ?? [])
+    .filter((i) => !seen.has(i.id) && i.project && visible.has(i.project.id))
+    .map((i) => ({
+      label: i.title,
+      search: `${i.title} ${i.id} ${i.project.name}`,
+      shortId: i.id.toLowerCase(),
+      meta: `<span class="po-proj">${esc(i.project.name)}</span> · ${esc(columnLabel(i.status))}`,
+      run: () => {
+        followProject(i.project.id);
+        location.hash = `#/card/${encodeURIComponent(i.id)}`;
+      },
+      card: { id: i.id, status: i.status, display: {} },
+    }));
+  return [...here, ...others];
+}
+
+/**
+ * DB-N12-1: the full-text search's issues for the typed words — matched in
+ * the title, key, description, acceptance criteria or a comment, Done and
+ * Won't do included, across every project the person can see — each with its
+ * key, project, column and the matched words in context.
+ */
+function textItems(q) {
+  const found = open?.search;
+  if (!found || found.q !== q) return [];
+  return searchHits(found.rows, q).map((h) => ({
+    label: h.title,
+    hits: [],
+    shortId: h.key.toLowerCase(),
+    meta: `<span class="mono">${esc(h.key)}</span>${h.project ? ` · <span class="po-proj">${esc(h.project.name)}</span>` : ""} · ${esc(h.column)}`,
+    context: `<span class="sr-only">${esc(h.where)}: </span>${h.context
+      .map((c) => (c.hit ? `<mark>${esc(c.text)}</mark>` : esc(c.text)))
+      .join("")}`,
+    run: () => {
+      if (h.project) followProject(h.project.id);
+      location.hash = `#/card/${encodeURIComponent(h.id)}`;
+    },
+    card: { id: h.id, display: {} },
+  }));
+}
+
+/** The words the palette searches for: the query without its `>` or `#` prefix. */
+function searchedText(value) {
+  const raw = value.trim();
+  return raw.startsWith(">") ? "" : raw.replace(/^#/, "").trim();
+}
+
+/** Ask the server's full-text search, once the typing pauses (DB-N12-1). */
+function scheduleSearch(state) {
+  clearTimeout(state.searchTimer);
+  const q = searchedText(state.input.value);
+  if (q.length < 2 || searchWords(q).length === 0) {
+    state.search = null;
+    return;
+  }
+  state.searchTimer = setTimeout(async () => {
+    const r = await getJSON(`/api/search?q=${encodeURIComponent(q)}&limit=8`).catch(() => ({
+      ok: false,
+    }));
+    if (!r.ok || open !== state || searchedText(state.input.value) !== q) return;
+    state.search = { q, rows: r.data?.hits ?? [] };
+    render();
+  }, 120);
+}
+
+/** DB-N26-2: the issues of every project this person can see, read once as the palette opens. */
+async function loadOtherIssues(state) {
+  if (visibleProjects().length < 2) return;
+  const r = await getJSON("/api/issues/search?limit=200").catch(() => ({ ok: false }));
+  if (!r.ok || open !== state) return;
+  state.others = r.data?.issues ?? [];
+  render();
 }
 
 function build(query, actions) {
@@ -273,6 +362,12 @@ function build(query, actions) {
   }
   if (only !== "commands") {
     let cards = rank(cardItems());
+    // DB-N12-1: the full-text search's issues first, best match first.
+    const found = textItems(q);
+    if (found.length) {
+      const ids = new Set(found.map((f) => f.card.id));
+      cards = [...found, ...cards.filter((c) => !ids.has(c.card.id))];
+    }
     if (!q) {
       // Empty query: the cards that need a person first.
       cards = cards.sort(
@@ -286,6 +381,9 @@ function build(query, actions) {
   if (only !== "cards") {
     const go = rank(views());
     if (go.length) groups.push({ name: "Go to", items: go });
+    // DB-N11-1..3, -5: Start sprint, Complete sprint, Sprint report and New sprint.
+    const sp = rank(sprintPaletteItems());
+    if (sp.length) groups.push({ name: "Sprints", items: sp });
     const pr = rank(prefs());
     if (pr.length) groups.push({ name: "Preferences", items: pr });
   }
@@ -324,7 +422,8 @@ function render() {
           const sel = i === open.index;
           const keys = it.keys ? `<span class="meta">${kbd(...it.keys)}</span>` : "";
           const meta = it.meta ? `<span class="meta">${it.meta}</span>` : "";
-          const row = `<div class="po" role="option" id="${id}" data-i="${i}" aria-selected="${sel}"><span class="t">${highlight(it.label, it.hits ?? [])}</span>${meta}${keys}</div>`;
+          const ctx = it.context ? `<span class="po-ctx">${it.context}</span>` : "";
+          const row = `<div class="po${ctx ? " po-hit" : ""}" role="option" id="${id}" data-i="${i}" aria-selected="${sel}"><span class="t">${highlight(it.label, it.hits ?? [])}</span>${meta}${keys}${ctx}</div>`;
           i++;
           return row;
         })
@@ -342,6 +441,7 @@ function render() {
 
 export function closePalette() {
   if (!open) return;
+  clearTimeout(open.searchTimer);
   const { node, remove, invoker } = open;
   open = null;
   remove();
@@ -402,10 +502,13 @@ export function openPalette(initial, actions) {
       return e.key !== "Escape";
     },
   });
-  open = { node, input, remove, invoker, index: 0, flat: [], actions };
+  open = { node, input, remove, invoker, index: 0, flat: [], actions, others: [] };
+  void loadOtherIssues(open);
   input.value = prefill;
+  scheduleSearch(open);
   input.addEventListener("input", () => {
     open.index = 0;
+    scheduleSearch(open);
     render();
   });
   node.addEventListener("click", (e) => {

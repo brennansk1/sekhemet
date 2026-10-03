@@ -1,6 +1,7 @@
 import type { CardStore } from "@sekhemet/kernel";
 import type { ModelHold } from "@sekhemet/models";
 import { appendPersonMessage } from "./pm/documents.js";
+import { failureDetail, seshatFailure } from "./pm/failure.js";
 import { answerQueued, runnerLease } from "./pm/service.js";
 import type { PmStore } from "./pm/store.js";
 import type { PmMessage } from "./pm/types.js";
@@ -96,7 +97,9 @@ export async function runAsk(question: string, deps: AskDeps): Promise<0 | 1 | 2
       ...(deps.researcher ? { researcher: deps.researcher } : {}),
     });
   } catch (err) {
-    say(`Seshat could not answer: ${err instanceof Error ? err.message : String(err)}`);
+    // PM-01: the worded cause; the exception's text to stderr.
+    console.error(failureDetail(err));
+    say(`Seshat couldn't reply. ${seshatFailure(err).text}`);
     return 1;
   }
   const replies = await repliesSince();

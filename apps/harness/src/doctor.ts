@@ -30,6 +30,7 @@ import { secretStoreStatus } from "./secret_store.js";
 import { readMoveRecord, userDir } from "./user_dir.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { playbookDoctorCheck } from "./wave2.js";
+import { holdsLedger, ledgerFacts, rewriteLocators } from "./workspace_locator.js";
 
 export type CheckStatus = "pass" | "warn" | "fail";
 
@@ -341,6 +342,8 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
     researchConsentCheck(repoPath),
     await researchPipelineCheck(repoPath),
     secretStoreCheck(),
+    // SUR-78: every project's locator, rewritten from the ledger.
+    projectLocatorsCheck(repoPath),
   ];
 
   return { ok: checks.every((c) => c.status !== "fail"), checks };
@@ -456,6 +459,36 @@ export async function researchPipelineCheck(repoPath: string): Promise<Diagnosti
   } finally {
     db.close();
   }
+}
+
+/**
+ * SUR-78 (kernel rule 38a): run in the workspace folder, rewrite every
+ * project's missing or disagreeing locator from the ledger and report each
+ * one; a project whose folder is gone is named with its fix.
+ */
+export function projectLocatorsCheck(repoPath: string): DiagnosticCheck {
+  if (!holdsLedger(repoPath)) {
+    return check(
+      "Project locators",
+      "pass",
+      "not a workspace folder: its Activity log is elsewhere",
+    );
+  }
+  let facts: ReturnType<typeof ledgerFacts>;
+  try {
+    facts = ledgerFacts(repoPath);
+  } catch (err) {
+    return check("Project locators", "warn", `the Activity log could not be read: ${String(err)}`);
+  }
+  const lines = rewriteLocators(repoPath, facts.projects, facts.workspaceId);
+  const missing = lines.some((l) => l.includes("is missing"));
+  return lines.length === 0
+    ? check(
+        "Project locators",
+        "pass",
+        `${facts.projects.length} project${facts.projects.length === 1 ? "" : "s"}, every locator agrees with the Activity log`,
+      )
+    : check("Project locators", missing ? "warn" : "pass", lines.join(" "));
 }
 
 /**

@@ -147,6 +147,14 @@ export async function sendPlanForApproval(
       400,
     );
   }
+  // TEAM-57 (amends TEAM-20): a new project's plan is approved by one who may
+  // create a project, an Admin or a person who leads a project.
+  if (audience.mayCreateProject && !audience.mayCreateProject(approver)) {
+    throw new ProposalError(
+      `${nameOf(audience, approver)} cannot create a project here, so cannot approve this plan: an Admin or a person who leads a project can.`,
+      400,
+    );
+  }
   const choices = input.choices as Record<string, unknown> | undefined;
   await pmStore.sendForApproval(proposal.id, approver, choices);
   const approval: PmPlanApproval = {

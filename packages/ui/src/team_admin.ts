@@ -26,8 +26,13 @@ const isAccessLevel = (v: unknown): v is AccessLevel =>
 
 /** An access level as a word (DEC-35); "" for none. */
 export function accessLevelWord(level: string | undefined | null): string {
+  // TEAM-58 (DEC-57): a one-project override may take the project away.
+  if (level === NO_ACCESS) return "No access";
   return isAccessLevel(level) ? LEVEL_WORD[level] : "";
 }
+
+/** A one-project override that takes the project away (teams item 6, TEAM-58). */
+export const NO_ACCESS = "none";
 
 /* ---------- The action table, as the page reads it (DB-N9-17) ---------- */
 
@@ -40,6 +45,8 @@ export interface ControlRule {
   releaseLead?: true;
   /** Held by the people the project's Accept rule names (`only`), or the level or being named (`or`). */
   acceptRule?: "only" | "or";
+  /** A person who leads any project of the workspace may too (who creates a project, TEAM-57). */
+  anyLead?: true;
   /** What the person tried, as the note says it: "A Member can <does>." */
   does: string;
 }
@@ -66,12 +73,16 @@ export const CONTROL_RULES = {
   "agent.guide": { level: "member", does: "guide the Agent" },
   "agent.pause": { level: "member", does: "pause the Agent" },
   "agent.take_over": { level: "member", does: "take this issue over from the Agent" },
-  review: { level: "member", does: "request changes, put on hold or reject this issue" },
+  review: {
+    level: "member",
+    does: "request changes, put on hold, mark Won't do or reopen this issue",
+  },
   "gates.run": { level: "member", does: "run the checks" },
   "proposal.apply": { level: "member", does: "apply Seshat's proposals" },
   "plan.approve": { level: "member", does: "approve plans" },
   "run.start": { level: "member", does: "start a queue or overnight run" },
-  "project.create": { level: "member", does: "create a project" },
+  // TEAM-54, TEAM-57 (DEC-57): an Admin, or a person who leads a project.
+  "project.create": { level: "admin", anyLead: true, does: "create a project" },
   accept: { level: "member", acceptRule: "only", does: "accept this issue" },
   "permission.answer": {
     level: "member",
@@ -164,10 +175,21 @@ export function levelNote(
   const needs = rule.acceptRule === "only" ? "member" : rule.level;
   if (rank >= LEVEL_ORDER.indexOf(needs)) return undefined;
   if (rule.lead && own?.lead && rank >= LEVEL_ORDER.indexOf("member")) return undefined;
+  if (
+    rule.anyLead &&
+    Object.values(viewer.projects ?? {}).some(
+      (p) =>
+        p.lead &&
+        LEVEL_ORDER.indexOf(isAccessLevel(p.level) ? p.level : level) >=
+          LEVEL_ORDER.indexOf("member"),
+    )
+  ) {
+    return undefined;
+  }
   const who =
     rule.acceptRule === "only"
       ? "A Member this project's Accept rule names"
-      : `${article(rule.level) === "an" ? "An" : "A"} ${LEVEL_WORD[rule.level]}${rule.lead ? " or the project lead" : ""}`;
+      : `${article(rule.level) === "an" ? "An" : "A"} ${LEVEL_WORD[rule.level]}${rule.lead ? " or the project lead" : ""}${rule.anyLead ? " or a person who leads a project" : ""}`;
   return `You're ${article(level)} ${LEVEL_WORD[level]} ${place}. ${who} can ${rule.does}.`;
 }
 
@@ -880,7 +902,11 @@ export function auditEntry(
     const release = `${named ?? "a release"}${projectName ? ` on ${projectName}` : ""}`;
     target = targetPrincipal ? `${person(targetPrincipal)} for ${release}` : release;
   } else if (row.type === "access/refused") {
-    target = `${str(p.permission)}${projectName ? ` on ${projectName}` : ""}`;
+    // FINDINGS TEAM-06: what was refused, in the table's words, never its id.
+    const does =
+      CONTROL_RULES[str(p.permission) as keyof typeof CONTROL_RULES]?.does ??
+      "an action their level does not allow";
+    target = `${does}${projectName ? `, on ${projectName}` : ""}`;
   } else if (targetPrincipal) {
     target = `${person(targetPrincipal)}${projectName ? ` on ${projectName}` : ""}`;
   } else if (row.type.startsWith("token/")) {
@@ -888,7 +914,8 @@ export function auditEntry(
   } else if (row.type === "member/invited") {
     target = `Invite ${str(p.invite)}${projectName ? ` to ${projectName}` : ""}`;
   } else if (row.type.startsWith("session/")) {
-    target = row.principal ? person(row.principal) : "";
+    // TEAM-06: a sign-in's person is its actor; naming them again as the target says nothing.
+    target = "";
   } else if (row.type.startsWith("model")) {
     target = str(p.model) || roleWord(p.role);
   } else if (projectName) {
@@ -905,6 +932,32 @@ export function auditEntry(
     ...(targetPrincipal ? { targetPrincipal } : {}),
     ...(project ? { project } : {}),
   };
+}
+
+/**
+ * FINDINGS TEAM-06: identical entries in a row — the same actor, action and
+ * target, as thirty sign-ins in a morning — read as one, with their count and
+ * the newest time. The page's read only: the export keeps every row.
+ */
+export function collapseAuditRuns<T extends AuditEntry>(
+  entries: readonly T[],
+): (T & { count?: number })[] {
+  const out: (T & { count?: number })[] = [];
+  for (const e of entries) {
+    const last = out.at(-1);
+    if (
+      last &&
+      last.type === e.type &&
+      last.action === e.action &&
+      last.target === e.target &&
+      (last.actor.principal ?? last.actor.name) === (e.actor.principal ?? e.actor.name)
+    ) {
+      last.count = (last.count ?? 1) + 1;
+      continue;
+    }
+    out.push({ ...e });
+  }
+  return out;
 }
 
 /** The actor as one phrase: "Agent (AI) on behalf of Mo Member", "Ada Admin", "Sekhemet". */
@@ -937,4 +990,98 @@ export function auditCsv(entries: readonly AuditEntry[]): string {
       .join(","),
   );
   return `${[head.join(","), ...lines].join("\r\n")}\r\n`;
+}
+
+/** What *Remove* is told about the person (teams item 9a, `GET /api/members/:id/removal`). */
+export interface RemovalSummaryFacts {
+  principal: string;
+  name?: string;
+  owns: { id: string; title: string; status: string }[];
+  leads: {
+    projects: { id: string; name: string }[];
+    releases: { project: string; id: string; name?: string }[];
+  };
+  acceptSeats: { project: string; name: string; emptied: boolean }[];
+  agentWork: { id: string; title: string; status: string; running: boolean }[];
+}
+
+const listOf = (items: readonly string[]): string =>
+  items.length <= 1
+    ? (items[0] ?? "")
+    : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+const issues = (n: number, what = "") =>
+  `${n} ${what ? `${what} ` : ""}${n === 1 ? "issue" : "issues"}`;
+
+/**
+ * TEAM-49: what *Remove* says before anything is removed — what the person
+ * owns and leads, their seats in Accept rules (a rule naming only them is a
+ * warning: no one else gains Accept, DEC-53 c15) and the Agent work they
+ * started. Never a principal id.
+ */
+export function removalView(s: RemovalSummaryFacts): {
+  title: string;
+  lines: string[];
+  warnings: string[];
+} {
+  const lines = ["Their sessions and tokens end now."];
+  const warnings: string[] = [];
+  if (s.owns.length) {
+    const shown = s.owns.slice(0, 5).map((c) => c.title);
+    const more = s.owns.length > 5 ? ` and ${s.owns.length - 5} more` : "";
+    lines.push(
+      `They are the assignee of ${issues(s.owns.length, "open")}: ${shown.join(", ")}${more}. Each keeps its assignee; reassign them on the board.`,
+    );
+  }
+  if (s.leads.projects.length)
+    lines.push(
+      `They lead ${listOf(s.leads.projects.map((p) => p.name))}. Name a new lead in the project's settings.`,
+    );
+  const releases = s.leads.releases.map((r) => r.name).filter((n): n is string => Boolean(n));
+  if (releases.length) lines.push(`They lead ${listOf(releases)}.`);
+  for (const seat of s.acceptSeats.filter((x) => x.emptied)) {
+    warnings.push(
+      `${seat.name}'s Accept rule names only them. Its issues cannot be accepted until the project lead or an Admin edits the rule; no one else gains Accept.`,
+    );
+  }
+  const shared = s.acceptSeats.filter((x) => !x.emptied).map((x) => `${x.name}'s`);
+  if (shared.length)
+    lines.push(
+      `They are on ${listOf(shared)} Accept rule${shared.length === 1 ? "" : "s"}; the others on ${shared.length === 1 ? "it" : "them"} can still accept.`,
+    );
+  if (s.agentWork.length) {
+    const running = s.agentWork.filter((w) => w.running).length;
+    const queued = s.agentWork.length - running;
+    const parts = [
+      ...(running
+        ? [`${issues(running, "running")} ${running === 1 ? "stops" : "stop"} at its next step`]
+        : []),
+      ...(queued ? [`${issues(queued, "queued")} ${queued === 1 ? "waits" : "wait"} on hold`] : []),
+    ];
+    lines.push(`The Agent work they started pauses: ${parts.join(", and ")}.`);
+  }
+  if (lines.length === 1 && warnings.length === 0)
+    lines.push("They own, lead and started nothing here.");
+  return { title: `Remove ${s.name ?? "this person"}?`, lines, warnings };
+}
+
+/**
+ * FINDINGS TEAM-07: Members and Audit opened in Solo say what they are and
+ * where to go, instead of opening another page in silence (DB-N9-12: Solo
+ * has neither).
+ */
+export function teamOnlyNotice(page: "Members" | "Audit"): {
+  title: string;
+  text: string;
+  action: string;
+  route: string;
+} {
+  return {
+    title: `${page} is a Team page`,
+    text:
+      page === "Members"
+        ? "This Sekhemet runs in Solo: you are its one person, so there is no one to manage. A team runs Sekhemet in the Team setup on a shared server, which adds members, invites and access levels."
+        : "This Sekhemet runs in Solo: every change is yours, and the Activity log records it. A team runs Sekhemet in the Team setup on a shared server, which adds an Audit of who did what.",
+    action: "Back to Status",
+    route: "#/status",
+  };
 }

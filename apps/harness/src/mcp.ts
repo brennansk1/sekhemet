@@ -32,6 +32,7 @@ import {
 import { defaultRegistryPath } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { ledgerBundle } from "./accept.js";
+import { isolateCheckout, projectRootOf } from "./card_root.js";
 import { runDoctor } from "./doctor.js";
 import { LearningStore } from "./learning/store.js";
 import { capabilityReport } from "./pm/capability.js";
@@ -261,14 +262,24 @@ const MCP_TOOLS: McpTool[] = [
     inputSchema: { type: "object", properties: { card_id: str } },
     handler: async (a, ctx) => {
       const id = cardIdArg(a);
-      const wt = id ? join(ctx.repoPath, ".sekhemet", "worktrees", id) : undefined;
-      const cwd = wt && existsSync(wt) ? wt : ctx.repoPath;
-      const cfg = loadGatesConfig(ctx.repoPath);
+      // Runtime item 2a: a card's checks run in its own project's root.
+      const card = id ? await ctx.cardStore.getCard(id) : undefined;
+      const root = (card ? projectRootOf(ctx.cardStore, card) : undefined) ?? ctx.repoPath;
+      const wt = id ? join(root, ".sekhemet", "worktrees", id) : undefined;
+      const cwd = wt && existsSync(wt) ? wt : root;
+      const cfg = loadGatesConfig(root);
       const runner = new DeterministicGateRunner(new ProcessSandbox(), {
-        repoRoot: ctx.repoPath,
+        repoRoot: root,
         expectedConfigSha256: cfg.sha256,
       });
-      const res = await runner.runGates([...new Set(cfg.gates.map((g) => g.rung))], cwd);
+      // Security item 10a: a card's checks see only its own project.
+      // Item 10a wherever the checks run: the card's worktree, else its project's root.
+      const release = id
+        ? isolateCheckout({ repoPath: root, cardStore: ctx.cardStore }, cwd)
+        : () => {};
+      const res = await runner
+        .runGates([...new Set(cfg.gates.map((g) => g.rung))], cwd)
+        .finally(release);
       return {
         passed: res.passed,
         gates: res.rungResults,

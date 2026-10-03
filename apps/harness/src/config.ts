@@ -92,6 +92,13 @@ export interface SekhemetConfig {
    * config only — a repository cannot switch its reader into solo (INT-26).
    */
   team: { mode: "solo" | "team"; workspace: string };
+  /**
+   * `[workspace] projects_dir` (teams §3, NEW-teams-14): the folder New
+   * project creates projects in; empty, `<workspace folder>/projects` when the
+   * workspace folder holds no project, else its parent directory. Read from
+   * the workspace folder's config.
+   */
+  workspace: { projectsDir: string };
   /** Who a request is in the Team setup (teams §3, B4.10); user config only (INT-26). */
   identity: {
     sources: IdentitySource[];
@@ -157,6 +164,7 @@ export const DEFAULT_CONFIG: SekhemetConfig = {
     autoMergeDependencies: false,
   },
   team: { mode: "solo", workspace: "Sekhemet" },
+  workspace: { projectsDir: "" },
   identity: {
     sources: ["accounts"],
     userHeader: "x-forwarded-email",
@@ -372,6 +380,7 @@ function project(merged: TomlTable, problems: string[] = [], user?: TomlTable): 
   const network = table(merged, "network");
   const sync = table(merged, "sync");
   const telemetry = table(merged, "telemetry");
+  const workspace = table(merged, "workspace");
 
   const modeRaw = str(network.mode, d.network.mode);
   const mode: NetworkMode =
@@ -430,6 +439,7 @@ function project(merged: TomlTable, problems: string[] = [], user?: TomlTable): 
       autoMergeDependencies: bool(review.auto_merge_dependencies, d.review.autoMergeDependencies),
     },
     ...userOnly(user),
+    workspace: { projectsDir: str(workspace.projects_dir, d.workspace.projectsDir) },
     scheduler: {
       fairShare: bool(table(user, "scheduler").fair_share, d.scheduler.fairShare),
       maxWaitS: Math.max(1, num(table(user, "scheduler").max_wait_s, d.scheduler.maxWaitS)),

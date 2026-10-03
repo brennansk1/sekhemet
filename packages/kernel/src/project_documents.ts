@@ -64,6 +64,8 @@ export interface DocumentDifference {
 export interface DocumentProposal extends DocumentDifference {
   id: string;
   path: string;
+  /** The project whose repository holds the document (DEC-57); absent from before. */
+  projectId?: string;
   commit: string;
   state: "open" | "applied" | "dismissed";
 }
@@ -93,6 +95,11 @@ function checkPath(path: string): void {
   }
 }
 
+/** Whether a record of `own` project counts for `wanted`: either unnamed, or the same (DEC-57). */
+function sameProject(own: string | undefined, wanted: string | undefined): boolean {
+  return wanted === undefined || own === undefined || own === wanted;
+}
+
 interface Row {
   seq: number;
   type: string;
@@ -113,7 +120,7 @@ export class ProjectDocumentLedger {
 
   /** Record one export (DS-N3-1, -3): the seq it was generated from, and each file's path and SHA-256. */
   public async recordExport(
-    input: { seq: number; noNames: boolean; files: ExportedFile[] },
+    input: { seq: number; noNames: boolean; files: ExportedFile[]; projectId?: string | undefined },
     actor = "planner",
   ): Promise<void> {
     if (!Number.isInteger(input.seq) || input.seq < 1 || input.seq > this.head()) {
@@ -137,27 +144,55 @@ export class ProjectDocumentLedger {
       payload: {
         seq: input.seq,
         noNames: input.noNames,
+        ...(input.projectId ? { projectId: input.projectId } : {}),
         files: input.files.map((f) => ({ path: f.path, sha256: f.sha256, kind: f.kind })),
       },
     });
   }
 
-  /** Every export, oldest first. */
-  public exports(): { exportSeq: number; seq: number; noNames: boolean; files: ExportedFile[] }[] {
+  /**
+   * Every export, oldest first; with `projectId`, that project's (DEC-57: each
+   * project keeps its own repository, so the same path in two projects is two
+   * documents). An export recorded before exports named their project counts
+   * for every project.
+   */
+  public exports(projectId?: string): {
+    exportSeq: number;
+    seq: number;
+    noNames: boolean;
+    projectId?: string;
+    files: ExportedFile[];
+  }[] {
     return (
       this.db
         .prepare("SELECT seq, type, payload FROM events WHERE type = 'docs/exported' ORDER BY seq")
         .all() as unknown as Row[]
-    ).map((r) => {
-      const p = JSON.parse(r.payload) as { seq: number; noNames: boolean; files: ExportedFile[] };
-      return { exportSeq: r.seq, seq: p.seq, noNames: p.noNames, files: p.files };
-    });
+    )
+      .map((r) => {
+        const p = JSON.parse(r.payload) as {
+          seq: number;
+          noNames: boolean;
+          projectId?: string;
+          files: ExportedFile[];
+        };
+        return {
+          exportSeq: r.seq,
+          seq: p.seq,
+          noNames: p.noNames,
+          ...(p.projectId ? { projectId: p.projectId } : {}),
+          files: p.files,
+        };
+      })
+      .filter((e) => sameProject(e.projectId, projectId));
   }
 
-  /** The last export of a path: its SHA-256, kind and generating seq; undefined when never exported. */
-  public lastExport(path: string): (ExportedFile & { seq: number; exportSeq: number }) | undefined {
+  /** The last export of a path (in a project, when given): its SHA-256, kind and generating seq; undefined when never exported. */
+  public lastExport(
+    path: string,
+    projectId?: string,
+  ): (ExportedFile & { seq: number; exportSeq: number }) | undefined {
     let out: (ExportedFile & { seq: number; exportSeq: number }) | undefined;
-    for (const e of this.exports()) {
+    for (const e of this.exports(projectId)) {
       const f = e.files.find((x) => x.path === path);
       if (f) out = { ...f, seq: e.seq, exportSeq: e.exportSeq };
     }
@@ -180,11 +215,17 @@ export class ProjectDocumentLedger {
    * computed here from its text; the text itself is not recorded.
    */
   public async recordImportDiff(
-    input: { path: string; commit: string; text: string; differences: DocumentDifference[] },
+    input: {
+      path: string;
+      commit: string;
+      text: string;
+      differences: DocumentDifference[];
+      projectId?: string | undefined;
+    },
     actor = "planner",
   ): Promise<string[]> {
     checkPath(input.path);
-    if (!this.lastExport(input.path)) {
+    if (!this.lastExport(input.path, input.projectId)) {
       throw new Error(
         `${input.path} was never exported: only a generated document's changes become proposals`,
       );
@@ -209,6 +250,7 @@ export class ProjectDocumentLedger {
       type: "docs/import_diffed",
       payload: {
         path: input.path,
+        ...(input.projectId ? { projectId: input.projectId } : {}),
         commit: input.commit,
         sha256: createHash("sha256").update(input.text).digest("hex"),
         ...(headerSeq !== undefined ? { headerSeq } : {}),
@@ -219,8 +261,8 @@ export class ProjectDocumentLedger {
     return proposals.map((p) => p.id);
   }
 
-  /** Every import proposal with where it stands, and its private text. */
-  public async proposals(): Promise<DocumentProposal[]> {
+  /** Every import proposal (of a project, when given) with where it stands, and its private text. */
+  public async proposals(projectId?: string): Promise<DocumentProposal[]> {
     const byId = new Map<string, DocumentProposal>();
     for (const e of await this.log.getEventsByTypes([
       "docs/import_diffed",
@@ -235,6 +277,7 @@ export class ProjectDocumentLedger {
             ...d,
             ...(typeof texts[d.id] === "string" ? { proposed: texts[d.id] as string } : {}),
             path: String(p.path),
+            ...(typeof p.projectId === "string" ? { projectId: p.projectId } : {}),
             commit: String(p.commit),
             state: "open",
           });
@@ -245,11 +288,11 @@ export class ProjectDocumentLedger {
       if (d && d.state === "open")
         d.state = e.type === "docs/proposal_applied" ? "applied" : "dismissed";
     }
-    return [...byId.values()];
+    return [...byId.values()].filter((d) => sameProject(d.projectId, projectId));
   }
 
-  public async openProposals(): Promise<DocumentProposal[]> {
-    return (await this.proposals()).filter((p) => p.state === "open");
+  public async openProposals(projectId?: string): Promise<DocumentProposal[]> {
+    return (await this.proposals(projectId)).filter((p) => p.state === "open");
   }
 
   private async mustOpen(id: string): Promise<DocumentProposal> {

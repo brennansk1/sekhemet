@@ -11,6 +11,17 @@ export function isLevel(value: unknown): value is Level {
   return typeof value === "string" && (LEVELS as readonly string[]).includes(value);
 }
 
+/**
+ * A per-project override may also take a person's access away (teams item 6,
+ * TEAM-58; DEC-57): the project is then left out of everything they see.
+ */
+export const NO_ACCESS = "none" as const;
+export type ProjectLevel = Level | typeof NO_ACCESS;
+
+export function isProjectLevel(value: unknown): value is ProjectLevel {
+  return value === NO_ACCESS || isLevel(value);
+}
+
 /** The lower of two levels (a token acts at the lower of its scope and the person's level). */
 export function lowerLevel(a: Level, b: Level): Level {
   return LEVELS.indexOf(a) <= LEVELS.indexOf(b) ? a : b;

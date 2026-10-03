@@ -18,6 +18,7 @@ import { $, aiBadge, announce, copyText, esc, getJSON, icon, sendJSON } from "./
 import { refusalMessage } from "./lib/account.js";
 import {
   MEMBERS_COPY as C,
+  NO_ACCESS,
   MEMBERS_PARTS_COPY as P,
   PROFILE_LABELS,
   accessLevelLines,
@@ -28,9 +29,11 @@ import {
   memberRows,
   membersTab,
   membersTabs,
+  removalView,
   signInLines,
+  teamOnlyNotice,
 } from "./lib/team_admin.js";
-import { openMenu } from "./overlay.js";
+import { openMenu, pushOverlay, trapFocus } from "./overlay.js";
 import { getSession } from "./session.js";
 import { setTopbar } from "./shell.js";
 import { toast } from "./toast.js";
@@ -80,11 +83,14 @@ async function loadInvites() {
 
 const projectNames = () => Object.fromEntries(ui.projects.map((p) => [p.id, p.name]));
 
-function levelOptions(selected) {
-  return LEVELS.map(
-    (l) =>
-      `<option value="${l}"${l === selected ? " selected" : ""}>${esc(accessLevelWord(l))}</option>`,
-  ).join("");
+function levelOptions(selected, { noAccess = false } = {}) {
+  // TEAM-58: a one-project override may take the project away: No access.
+  return (noAccess ? [NO_ACCESS, ...LEVELS] : LEVELS)
+    .map(
+      (l) =>
+        `<option value="${l}"${l === selected ? " selected" : ""}>${esc(accessLevelWord(l))}</option>`,
+    )
+    .join("");
 }
 
 function projectOptions(withWorkspace) {
@@ -110,7 +116,7 @@ function editorHtml(row) {
   const id = `mb-ed-${esc(row.principal)}`;
   let fields = "";
   if (e.kind === "level")
-    fields = `<div class="auth-field"><label for="${id}-level">${esc(C.level)}</label><select id="${id}-level" name="level">${levelOptions(row.level)}</select></div>`;
+    fields = `<div class="auth-field"><label for="${id}-level">${esc(C.level)}</label><select id="${id}-level" name="level">${levelOptions(row.level, { noAccess: true })}</select></div>`;
   else if (e.kind === "override")
     fields = `<div class="auth-field"><label for="${id}-project">${esc(C.overrideProject)}</label><select id="${id}-project" name="project">${projectOptions(false)}</select></div><div class="auth-field"><label for="${id}-level">${esc(C.overrideLevel)}</label><select id="${id}-level" name="level">${levelOptions(row.level)}</select></div>`;
   else if (e.kind === "label")
@@ -305,13 +311,61 @@ function openRowMenu(anchor, principal) {
     items.push("-");
     items.push({
       label: C.remove,
-      run: async () => {
-        if (!window.confirm(C.removeConfirm(row.name))) return;
-        if (await act("DELETE", `/api/members/${principal}`, undefined, C.remove)) load();
-      },
+      // Teams item 9a (TEAM-49): Remove first lists what the person leaves behind.
+      run: () => openRemoval(principal, row.name, anchor),
     });
   }
   openMenu(anchor, items, { heading: row.name });
+}
+
+/**
+ * Teams item 9a (TEAM-49, -50): the removal's confirmation — what the person
+ * owns and leads, their Accept-rule seats (a rule naming only them is a
+ * warning), the Agent work they started — then *Remove* or Cancel.
+ */
+async function openRemoval(principal, name, anchor) {
+  const r = await getJSON(`/api/members/${principal}/removal`).catch(() => ({ ok: false }));
+  if (!r.ok) {
+    ui.error = refusalMessage(r.status ?? 0, r.data);
+    render();
+    return;
+  }
+  const v = removalView(r.data);
+  const node = document.createElement("div");
+  node.className = "scrim";
+  const warnings = v.warnings
+    .map((w) => `<li class="why">${icon("alert", 14, "ic s14")}<span>${esc(w)}</span></li>`)
+    .join("");
+  node.innerHTML = `<div class="dialog mb-remove" role="alertdialog" aria-modal="true" aria-labelledby="mb-rm-h" aria-describedby="mb-rm-d"><header><h2 id="mb-rm-h">${esc(v.title)}</h2></header><div class="mb-rm-b" id="mb-rm-d">${warnings ? `<ul class="plain mb-rm-warn">${warnings}</ul>` : ""}<ul class="plain mb-rm-lines">${v.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul></div><div class="mb-rm-f"><button class="btn ghost" type="button" data-cancel>${esc(C.cancel)}</button><button class="btn primary" type="button" data-confirm-remove>${esc(C.remove)}</button></div></div>`;
+  document.getElementById("overlay-root").append(node);
+  const close = () => {
+    remove();
+    node.remove();
+    anchor?.focus?.();
+  };
+  const remove = pushOverlay({
+    kind: "remove-member",
+    modal: true,
+    close: () => {
+      node.remove();
+      anchor?.focus?.();
+    },
+    onKey: (e) => {
+      if (trapFocus(node, e)) return true;
+      return e.key !== "Escape";
+    },
+  });
+  node.addEventListener("click", async (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    if (e.target === node || t?.closest("[data-cancel]")) close();
+    else if (t?.closest("[data-confirm-remove]")) {
+      t.closest("[data-confirm-remove]").disabled = true;
+      close();
+      if (await act("DELETE", `/api/members/${principal}`, undefined, `${C.remove}d ${name}.`))
+        load();
+    }
+  });
+  node.querySelector("[data-cancel]").focus();
 }
 
 async function submitEdit(form) {
@@ -389,10 +443,17 @@ export function mount(view, route) {
   ui.error = "";
   ui.invites = undefined;
   ui.tab = route?.params?.[0] ?? "members";
-  // Solo has no Members (DB-N9-12): its one person is the whole workspace.
+  // FINDINGS TEAM-07: Solo has no Members (DB-N9-12); say so here instead of opening another page.
   if (getSession().mode !== "team") {
-    location.replace("#/");
-    return { unmount() {} };
+    const n = teamOnlyNotice("Members");
+    setTopbar({ title: "Members", crumb: "" });
+    root.innerHTML = `<div class="ib-empty team-only" role="status"><b>${esc(n.title)}</b><span>${esc(n.text)}</span><a class="btn" href="${esc(n.route)}">${esc(n.action)}</a></div>`;
+    return {
+      unmount() {
+        root.remove();
+        ui.root = null;
+      },
+    };
   }
   root.addEventListener("submit", (e) => {
     const form = e.target instanceof Element ? e.target : null;

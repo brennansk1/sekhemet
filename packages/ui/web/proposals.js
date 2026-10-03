@@ -8,7 +8,9 @@ import {
   formatShortDate,
   proposalDiff,
   proposalKind,
+  showsApplyAll,
 } from "./lib/pm.js";
+import { levelNote } from "./lib/team_admin.js";
 import { ISSUE_TYPE_LABELS, issueTypeOf } from "./lib/vocabulary.js";
 import { cardChip, diffContext, prioMark } from "./marks.js";
 import { applyAll, decide, discardAll } from "./pm_client.js";
@@ -117,7 +119,12 @@ export function proposalHtml(p, ctx = diffContext()) {
     const verb = p.state === "applied" ? "Applied" : "Discarded";
     const mark =
       p.state === "applied" ? icon("check", 12, "ic s12 i-pass") : icon("x", 12, "ic s12");
-    return `<li class="prop ${p.state}" data-prop="${esc(p.id)}">${mark}<b>${verb}</b><span class="sum">${esc(p.summary)}</span>${when ? `<span class="when tnum">${p.state === "applied" ? "by you " : ""}at ${esc(when)}</span>` : ""}</li>`;
+    // PM-06: an applied change names the issues it created or changed, and where each waits.
+    const result =
+      p.state === "applied" && p.result
+        ? `<span class="pres">${esc(p.result.text)}${(p.result.cards ?? []).map((c) => `${cardChip(c.id, { max: 40 }) ?? `<a href="#/card/${encodeURIComponent(c.id)}">${esc(c.title)}</a>`}<span class="sec">${esc(c.column)}</span>`).join("")}</span>`
+        : "";
+    return `<li class="prop ${p.state}" data-prop="${esc(p.id)}">${mark}<b>${verb}</b><span class="sum">${esc(p.summary)}</span>${result}${when ? `<span class="when tnum">${p.state === "applied" ? "by you " : ""}at ${esc(when)}</span>` : ""}</li>`;
   }
   const isBusy = busy.has(p.id);
   const stale = p.state === "stale";
@@ -144,7 +151,8 @@ export function proposalGroupHtml(proposals, { title = "Proposed changes", group
   const ctx = diffContext();
   const open = proposals.filter((p) => p.state === "open");
   // A new project is never applied in bulk: it goes through Review plan.
-  const bulk = withoutReviewPlan(open).length > 0;
+  // PM-06: one open change shows one Apply, its own; Apply all is for more.
+  const bulk = showsApplyAll(withoutReviewPlan(open));
   const head = open.length
     ? `<span class="sec tnum">${open.length} open</span><div class="gacts">${open.length > 1 ? `<button class="btn ghost sm" type="button" data-discard-all>Discard all</button>` : ""}${bulk ? `<button class="btn primary sm" type="button" data-apply-all data-needs="proposal.apply">${esc(applyAllLabel(withoutReviewPlan(proposals)))} ${kbd("⇧Y")}</button>` : ""}</div>`
     : `<span class="sec">All decided</span>`;
@@ -159,7 +167,15 @@ export function proposalGroupHtml(proposals, { title = "Proposed changes", group
  */
 export async function reviewPlanFor(p, extra = {}) {
   const { level, principal: me } = getSession();
-  const result = await openReviewPlan(p, { setup: getSession().mode, level, me, ...extra });
+  // TEAM-57: who may create a project (an Admin, or one who leads a project) creates it.
+  const mayCreate = levelNote(getSession(), "project.create") === undefined;
+  const result = await openReviewPlan(p, {
+    setup: getSession().mode,
+    level,
+    me,
+    mayCreate,
+    ...extra,
+  });
   if (result?.proposal) Object.assign(p, result.proposal);
   store.set({});
   return result;

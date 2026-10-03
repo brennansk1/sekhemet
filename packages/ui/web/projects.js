@@ -5,7 +5,7 @@
 // server. Every word is `projectsModel`'s (`/app/lib/projects.js`); a row
 // opens that project's Status, its overview. *New project* opens the start
 // page, #/projects/new (design-stage §2.11), which this route mounts.
-import { $, aiBadge, esc, getJSON, icon } from "./dom.js";
+import { $, aiBadge, esc, getJSON, icon, postJSON } from "./dom.js";
 import { viewerManagesWork } from "./learn.js";
 import { PROJECTS_COPY as C, projectsModel } from "./lib/projects.js";
 import { START_ROUTE } from "./lib/start.js";
@@ -14,7 +14,8 @@ import { setTopbar } from "./shell.js";
 import * as startPage from "./start.js";
 import { chooseProject, setProjectList } from "./switcher.js";
 
-const ui = { root: null, last: "", overview: undefined, loading: false };
+/** `refused`: a Resume the server refused, by project, with its sentence (DB-N26-3). */
+const ui = { root: null, last: "", overview: undefined, loading: false, refused: {} };
 
 async function load() {
   ui.loading = true;
@@ -68,7 +69,11 @@ function folderNote(r) {
 
 function rowHtml(r, columns) {
   const cells = {
-    name: `<a href="#/status" data-open="${esc(r.id)}"><b>${esc(r.name)}</b></a><span class="sec pj-state">${esc(r.state)}${esc(folderNote(r))}</span>`,
+    name: `<a href="#/status" data-open="${esc(r.id)}"><b>${esc(r.name)}</b></a><span class="sec pj-state">${esc(r.state)}${esc(folderNote(r))}</span>${
+      r.paused
+        ? `<span class="pj-paused"><span class="sec">${esc(r.paused.reason)}</span><button class="btn sm" type="button" data-resume="${esc(r.id)}">${esc(r.paused.resume)}</button></span>${ui.refused[r.id] ? `<span class="pj-refused" role="alert">${esc(ui.refused[r.id])}</span>` : ""}`
+        : ""
+    }`,
     health: healthHtml(r),
     release: progressHtml(r),
     forecast: `<span class="tnum">${esc(r.forecast)}</span>`,
@@ -156,6 +161,16 @@ function startProject() {
   location.hash = START_ROUTE;
 }
 
+async function resumeProject(id) {
+  const r = await postJSON(`/api/projects/${encodeURIComponent(id)}`, { status: "active" });
+  ui.refused = r.ok
+    ? {}
+    : { [id]: r.data?.error ?? `The server returned ${r.status || "no response"}.` };
+  ui.last = "";
+  if (r.ok) load();
+  else render();
+}
+
 export function mount(view, parsed) {
   if (parsed?.params?.[0] === "new") return startPage.mount(view);
   const root = document.createElement("div");
@@ -175,6 +190,13 @@ export function mount(view, parsed) {
       ui.overview = undefined;
       render();
       load();
+      return;
+    }
+    // DB-N26-3, RUN-82: Resume a paused project; at the cap it is refused
+    // with the cap's sentence until a person pauses another.
+    const resume = t.closest("[data-resume]");
+    if (resume) {
+      void resumeProject(resume.dataset.resume);
       return;
     }
     const open = t.closest("[data-open]");

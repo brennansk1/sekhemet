@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from "@simplewebauthn/server";
 import type { Failure, Identity, SignedIn } from "./identity.js";
 import { SESSION_COOKIE, parseCookies } from "./identity.js";
+import type { RemovalSummary } from "./leaving.js";
 import { personEmail, personName } from "./members.js";
 import { OIDC_STATE_COOKIE, type Sso, clearedOidcStateCookie, oidcStateCookie } from "./oidc.js";
 import type { Passkeys } from "./passkeys.js";
@@ -50,6 +51,14 @@ export interface IdentityRouteDeps {
    * page's level notes (DB-N9-17), and their profile label, which sets their
    * default page in the Team setup (dashboard §2.2.5, teams item 8).
    */
+  /**
+   * When a member leaves (teams item 9a, NEW-teams-13): what *Remove* lists
+   * first (TEAM-49), and the settlement after it (TEAM-50 to -52).
+   */
+  leaving?: {
+    summary: (principal: string) => Promise<RemovalSummary>;
+    settle: (actor: string, summary: RemovalSummary) => Promise<Record<string, unknown>>;
+  };
   sessionFacts?: (principal: string) => {
     projects: Record<string, { level?: string; lead?: boolean; releaseLead?: boolean }>;
     label?: string;
@@ -73,6 +82,7 @@ const RESET_LINK = /^\/api\/password-reset\/([A-Za-z0-9_-]+)$/;
 // A level change (`/api/members/:id/level`) is the access module's route.
 const MEMBER_ACTION = /^\/api\/members\/(p_[0-9a-z]+)\/(unlock|password-reset|approve)$/;
 const MEMBER = /^\/api\/members\/(p_[0-9a-z]+)$/;
+const MEMBER_REMOVAL = /^\/api\/members\/(p_[0-9a-z]+)\/removal$/;
 const TOKEN = /^\/api\/tokens\/(t_[0-9a-f]+)$/;
 const SESSION_REF = /^\/api\/sessions\/(s_[0-9a-f]+)$/;
 
@@ -80,6 +90,8 @@ const SESSION_REF = /^\/api\/sessions\/(s_[0-9a-f]+)$/;
 export function isPublicRoute(method: string, url: string): boolean {
   const m = method.toUpperCase();
   if (url === "/api/session") return true;
+  // SUR-76: the workspace's id alone, so a second `sekhemet` finds this server.
+  if (url === "/api/workspaces/id" && m === "GET") return true;
   if (url === "/api/setup" && m === "POST") return true;
   if (INVITE.test(url) && m === "GET") return true;
   if (INVITE_ACCEPT.test(url) && m === "POST") return true;
@@ -180,6 +192,7 @@ export async function handleIdentityRoute(
     SESSION_REF.test(url) ||
     url === "/api/members" ||
     MEMBER.test(url) ||
+    MEMBER_REMOVAL.test(url) ||
     MEMBER_ACTION.test(url) ||
     RESET_LINK.test(url) ||
     url.startsWith("/api/passkeys/") ||
@@ -481,10 +494,26 @@ export async function handleIdentityRoute(
     });
     return true;
   }
+  // TEAM-49: what the person leaves behind, listed before *Remove* is confirmed.
+  const removal = MEMBER_REMOVAL.exec(url);
+  if (removal?.[1] && method === "GET") {
+    if (notAdmin("remove members")) return true;
+    if (!deps.leaving) json(res, 404, { error: "Members are removed in the Team setup." });
+    else json(res, 200, await deps.leaving.summary(removal[1]));
+    return true;
+  }
   const member = MEMBER.exec(url);
   if (member?.[1] && method === "DELETE") {
     if (notAdmin("remove members")) return true;
-    done(identity.remove(actor, member[1]));
+    // TEAM-50: what they leave is read before the removal takes their level away.
+    const summary = await deps.leaving?.summary(member[1]);
+    const r = identity.remove(actor, member[1]);
+    if (!r.ok) {
+      refuse(r);
+      return true;
+    }
+    const settled = summary && deps.leaving ? await deps.leaving.settle(actor, summary) : {};
+    json(res, 200, { ok: true, ...settled });
     return true;
   }
   const action = MEMBER_ACTION.exec(url);

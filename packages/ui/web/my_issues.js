@@ -4,14 +4,17 @@
 // project in the List view's look; a row opens the issue. An issue the Agent
 // is working on shows its state with the AI badge (teams item 19). Every
 // word is `/app/lib/inbox.js`'s.
+import { openCreate } from "./create.js";
 import { $, aiBadge, esc, getJSON, icon } from "./dom.js";
 import { MY_ISSUES_COPY as C, myIssueGroups } from "./lib/inbox.js";
 import { aiStateLine } from "./lib/teammates.js";
 import { parseTitle, shortId } from "./lib/vocabulary.js";
+import { crossProject, followProject } from "./project_filter.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
 
-const ui = { root: null, last: "", issues: undefined };
+/** `project`: the project filter (DB-N26-2), "" for all the projects this person can see. */
+const ui = { root: null, last: "", issues: undefined, project: "" };
 
 async function load() {
   const r = await getJSON("/api/my-issues").catch(() => ({ ok: false, status: 0 }));
@@ -33,7 +36,7 @@ function tableHtml(g) {
   const rows = g.issues
     .map(
       (i) =>
-        `<tr><td data-col="issue"><span class="pj-lbl">${esc(C.columns.issue)}</span><a href="#/card/${encodeURIComponent(i.id)}/activity"><span class="mono sec">${esc(shortId(i.id))}</span> <b>${esc(parseTitle(i.title).title)}</b></a>${aiHtml(i.ai)}</td><td data-col="status"><span class="pj-lbl">${esc(C.columns.status)}</span>${esc(i.statusLabel)}</td><td data-col="why"><span class="pj-lbl">${esc(C.columns.why)}</span>${esc(i.whyLabel)}</td></tr>`,
+        `<tr><td data-col="issue"><span class="pj-lbl">${esc(C.columns.issue)}</span><a href="#/card/${encodeURIComponent(i.id)}/activity"${i.project?.id ? ` data-project="${esc(i.project.id)}"` : ""}><span class="mono sec">${esc(shortId(i.id))}</span> <b>${esc(parseTitle(i.title).title)}</b></a>${aiHtml(i.ai)}</td><td data-col="status"><span class="pj-lbl">${esc(C.columns.status)}</span>${esc(i.statusLabel)}</td><td data-col="why"><span class="pj-lbl">${esc(C.columns.why)}</span>${esc(i.whyLabel)}</td></tr>`,
     )
     .join("");
   return `<section class="ib-group" aria-labelledby="mi-h-${esc(g.id || "none")}"><h2 id="mi-h-${esc(g.id || "none")}">${esc(g.name)} <span class="sec tnum">${g.issues.length}</span></h2><div class="tbl-wrap" tabindex="0"><table class="tbl pj-tbl mi-tbl"><caption class="sr-only">${esc(`${C.title}: ${g.name}`)}</caption><thead><tr><th scope="col">${esc(C.columns.issue)}</th><th scope="col">${esc(C.columns.status)}</th><th scope="col">${esc(C.columns.why)}</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
@@ -47,8 +50,21 @@ function render() {
   else if (!Array.isArray(v))
     html = `<p class="stp-notice" role="status"><b>Couldn't load your issues.</b> <span class="sec">The server returned ${esc(v.error)}.</span></p>`;
   else if (v.length === 0)
-    html = `<div class="ib-empty">${icon("user", 24, "ic s24")}<b>${esc(C.empty)}</b><span>${esc(C.emptyHint)}</span></div>`;
-  else html = myIssueGroups(v).map(tableHtml).join("");
+    // FINDINGS TEAM-08: the empty state offers the next step.
+    html = `<div class="ib-empty">${icon("user", 24, "ic s24")}<b>${esc(C.empty)}</b><span>${esc(C.emptyHint)}</span><span class="ib-next"><a class="btn" href="#/board">${esc(C.next.board)}</a><a class="btn ghost" href="#/inbox">${esc(C.next.inbox)}</a><button class="btn ghost" type="button" data-mi-create>${esc(C.next.create)}</button></span></div>`;
+  else {
+    // DB-N26-2: every project this person can see, with the project filter.
+    const xp = crossProject(
+      v.map((i) => ({ ...i, projectId: i.project?.id })),
+      ui.project,
+    );
+    const shown = xp.rows.map((r) => r.item);
+    // With one project (or the list not read yet) every row is shown as it came.
+    const rows = xp.filters.length ? shown : v;
+    html = `${xp.control ? `<div class="xp-bar">${xp.control}</div>` : ""}${myIssueGroups(rows)
+      .map(tableHtml)
+      .join("")}`;
+  }
   setTopbar({
     title: C.title,
     crumb: Array.isArray(v) && v.length ? `${v.length} ${v.length === 1 ? "issue" : "issues"}` : "",
@@ -66,9 +82,29 @@ export function mount(view) {
   ui.root = root;
   ui.last = "";
   ui.issues = undefined;
+  root.addEventListener("change", (e) => {
+    const select = e.target instanceof HTMLSelectElement ? e.target : null;
+    if (!select?.matches("[data-project-filter]")) return;
+    ui.project = select.value;
+    ui.last = "";
+    render();
+    $("[data-project-filter]", root)?.focus();
+  });
+  root.addEventListener("click", (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    const link = t?.closest("a[data-project]");
+    if (link) followProject(link.dataset.project);
+    // TEAM-08: New issue from the empty state, as the top bar's.
+    if (t?.closest("[data-mi-create]")) openCreate();
+  });
   // A change on the board can change what is yours: refetch then.
   let soon = 0;
   const unsub = store.on((_s, patch) => {
+    // The projects this person can see name the rows and the filter (DB-N26-2).
+    if ("project" in patch) {
+      ui.last = "";
+      render();
+    }
     if (!("cards" in patch) || soon) return;
     soon = setTimeout(() => {
       soon = 0;

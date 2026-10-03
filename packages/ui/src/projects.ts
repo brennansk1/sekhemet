@@ -50,6 +50,11 @@ export interface ProjectFacts {
   waitingOnYou: number;
   /** The Agent's current issues here, by title, and how many are queued. */
   agent: { working: string[]; queued: number };
+  /**
+   * Why a paused project is paused (dashboard DB-N26-3, runtime RUN-82): it
+   * was added while the active-project cap was reached, or a person paused it.
+   */
+  paused?: { reason: string };
 }
 
 export interface WaitingFacts {
@@ -116,6 +121,8 @@ export interface ProjectRow {
   waiting: string;
   agent: string;
   lead: string;
+  /** DB-N26-3: why it is paused, and *Resume*; absent when it is not paused. */
+  paused?: { reason: string; resume: string };
 }
 
 export interface WaitingItem {
@@ -170,6 +177,8 @@ export const PROJECTS_COLUMNS: readonly { id: keyof ProjectRow; label: string; a
 export const PROJECTS_COPY = {
   title: "Projects",
   newProject: "New project",
+  /** DB-N26-3: a paused project's one action. */
+  resume: "Resume",
   startFirst: "Start your first project",
   startDetail: "Tell Seshat what you want to build; it plans the first issues with you.",
   waiting: "Waiting on you",
@@ -345,6 +354,9 @@ export function projectsModel(input: ProjectsInput): ProjectsView {
       waiting: p.waitingOnYou ? plural(p.waitingOnYou, "item") : "None",
       agent: agentWords(p.agent),
       lead: p.lead ? capital(p.lead) : "No lead",
+      ...(p.state === "paused" && p.paused
+        ? { paused: { reason: p.paused.reason, resume: PROJECTS_COPY.resume } }
+        : {}),
     };
   });
 

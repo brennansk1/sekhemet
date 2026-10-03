@@ -18,6 +18,7 @@ import { teammatePicker } from "./lib/teammates.js";
 import { prioMark } from "./marks.js";
 import { openMenu } from "./overlay.js";
 import { openPicker } from "./picker.js";
+import { offerNoSprint } from "./sprints.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
 import { mutationsBlocked } from "./triage.js";
@@ -248,10 +249,8 @@ export function editField(field, cardIds, anchor) {
     case "cycleId": {
       const cycles = [...s.cycles].filter((c) => c.state !== "closed");
       if (!cycles.length) {
-        toast({
-          text: "No sprints yet.",
-          detail: "Plan a sprint with Seshat.",
-        });
+        // DB-N11-5: New sprint and Plan a sprint with Seshat, never a dead end.
+        offerNoSprint(anchor);
         return;
       }
       openPicker(anchor, {

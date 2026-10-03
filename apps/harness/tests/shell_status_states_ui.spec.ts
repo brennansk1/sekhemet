@@ -42,15 +42,16 @@ describe("the shell, Status and the states in a browser (C2a status-shell)", () 
     dir = mkdtempSync(join(tmpdir(), "sek-shell-c2a-"));
     execFileSync("git", ["init", "-q"], { cwd: dir });
     execFileSync("git", ["config", "user.name", "Ada Lovelace"], { cwd: dir });
-    mkdirSync(join(dir, "shop"), { recursive: true });
+    // Kernel rule 38a (K-N12-6): project roots never nest, so the second is beside the first.
+    const shop = `${dir}-shop`;
+    mkdirSync(shop, { recursive: true });
     mkdirSync(join(dir, ".sekhemet"), { recursive: true });
     db = new DatabaseSync(join(dir, ".sekhemet", "events.db"));
     initSchema(db);
     const log = new EventLog(db);
     store = new CardStore(db, log);
     chronicle = (await store.ensureProject({ name: "Chronicle", rootPath: dir })).id;
-    storefront = (await store.ensureProject({ name: "Storefront", rootPath: join(dir, "shop") }))
-      .id;
+    storefront = (await store.ensureProject({ name: "Storefront", rootPath: shop })).id;
     const card = async (
       id: string,
       title: string,
@@ -109,6 +110,7 @@ describe("the shell, Status and the states in a browser (C2a status-shell)", () 
     await server?.close();
     db?.close();
     rmSync(dir, { recursive: true, force: true });
+    rmSync(`${dir}-shop`, { recursive: true, force: true });
   });
 
   async function open(
@@ -312,6 +314,13 @@ describe("the shell, Status and the states in a browser (C2a status-shell)", () 
         Math.round(req.y),
       ]);
       expect(req.x < risks.x && risks.x < working.x).toBe(true);
+      // C2b: Next release (one third) beside the Retrospective (two thirds), below that band.
+      const release = await box(".stp-a-release");
+      const retro = await box(".stp-a-retro");
+      expect(release.y).toBeGreaterThan(req.y);
+      expect(Math.abs(retro.y - release.y)).toBeLessThan(4);
+      expect(retro.x).toBeGreaterThan(release.x);
+      expect(retro.width).toBeGreaterThan(release.width * 1.6);
       // The reading order stays §2.8's: the DOM's.
       expect(
         await page.$$eval(".stp > section", (s) =>
@@ -322,12 +331,14 @@ describe("the shell, Status and the states in a browser (C2a status-shell)", () 
         "burnup",
         "needs",
         "requirements",
+        "release",
         "risks",
         "done",
         "today",
         "working",
         "models",
         "flow",
+        "retro",
         "ask",
       ]);
       // STA-03: no browser indent on the strip; the values at --text-xl, 600.

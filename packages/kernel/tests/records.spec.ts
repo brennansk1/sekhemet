@@ -232,9 +232,19 @@ describe("@sekhemet/kernel run records, structure and projections (K4-K21, B5, B
     });
     await store.setProjectStatus(p2.id, "paused");
     expect((await store.setProjectStatus(p3.id, "active")).status).toBe("active");
-    // A card created without a project joins the oldest active one.
-    const card = await store.createCard({ id: "card_p", tier: "story", title: "P" });
-    expect(card.projectId).toBe(p1.id);
+    // Kernel rule 38a, K-N12-3 (DEC-57, superseding "a card created without a
+    // project joins the oldest active one"): with several projects a card
+    // names its own, and one without is refused before appending.
+    await expect(
+      store.createCard({ id: "card_p", tier: "story", title: "P" }),
+    ).rejects.toMatchObject({ code: "project_required" });
+    const card = await store.createCard({
+      id: "card_p",
+      tier: "story",
+      title: "P",
+      projectId: p3.id,
+    });
+    expect(card.projectId).toBe(p3.id);
   });
 
   it("refuses an actor outside the documented enum, in code and in SQL (K5)", async () => {

@@ -268,9 +268,15 @@ describe("DS-N3-1: the documents are generated from the ledger and committed ont
 });
 
 /** Card c1 with one checkpoint and its evidence, in Review. */
-async function cardInReview() {
+async function cardInReview(project?: string) {
   const adapter = new NodeGitSyncAdapter(root);
-  await store.createCard({ id: "c1", tier: "story", title: "Card c1", scopeFiles: ["src/**"] });
+  await store.createCard({
+    id: "c1",
+    tier: "story",
+    title: "Card c1",
+    scopeFiles: ["src/**"],
+    ...(project ? { projectId: project } : {}),
+  });
   const wt = await adapter.createWorktree("c1", "main", "Card c1");
   writeFileSync(join(wt, "src", "b.ts"), "export const b = 2;\n");
   await adapter.commitCheckpoint({
@@ -648,5 +654,137 @@ describe("DEC-31: a requirements document speaks MoSCoW, and a changed priority 
         proposed: "performance",
       },
     ]);
+  });
+});
+
+// DEC-57: a workspace holds many projects and each keeps its own
+// repository. A project's documents, its main check and its release are its
+// own: an Accept in project A never commits project B's brief, an export of
+// B never makes A's documents look edited, and a release of B is planned,
+// proven and tagged in B's repository whichever folder the server started in.
+describe("DEC-57: each project's documents and releases stay in its own repository", () => {
+  let rootB: string;
+  let projectB: string;
+  const gitB = (...a: string[]) => execFileSync("git", a, { cwd: rootB, encoding: "utf8" }).trim();
+
+  beforeEach(async () => {
+    rootB = realpathSync(mkdtempSync(join(tmpdir(), "project-docs-beta-")));
+    gitB("init", "-q", "-b", "main");
+    gitB("config", "user.name", "Jane Doe");
+    gitB("config", "user.email", "jane@example.com");
+    writeFileSync(join(rootB, ".gitignore"), ".sekhemet/\n");
+    writeFileSync(join(rootB, "invoice.ts"), "export const invoice = 1;\n");
+    gitB("add", "-A");
+    gitB("commit", "-q", "-m", "feat: round invoices");
+    projectB = (await store.ensureProject({ rootPath: rootB, name: "Beta" })).id;
+  });
+  afterEach(() => rmSync(rootB, { recursive: true, force: true }));
+
+  async function briefB(): Promise<void> {
+    await acceptBrief(
+      ledger(),
+      {
+        projectId: projectB,
+        baseline: "Invoices are rounded by hand",
+        slices: [
+          {
+            title: "Rounding",
+            appetite: { cards: 3 },
+            requirements: [{ key: "round", title: "Beta rounds invoices", kano: "must-be" }],
+          },
+        ],
+      },
+      principal,
+    );
+  }
+
+  it("an Accept in project A commits A's documents, never the brief accepted last in B", async () => {
+    await brief();
+    await briefB();
+    const card = await cardInReview(projectId);
+    const accept = { repoPath: root, cardStore: store, boardService: board, eventLog: log };
+    await recordReviewOpened(accept, card, ["src/b.ts"]);
+    await acceptCard(accept, card);
+    const requirements = onMain("docs/product/requirements.md") as string;
+    expect(requirements).toContain("Save a recipe");
+    expect(requirements).not.toContain("Beta rounds invoices");
+    expect(onMain("docs/product/brief.md")).toContain("# Product brief: Recipes");
+    expect(store.documents.exports().at(-1)?.projectId).toBe(projectId);
+    // Nothing was written into B's repository by A's Accept.
+    expect(readBranchFile(rootB, "main", "docs/product/requirements.md")).toBeUndefined();
+  });
+
+  it("an export of B never makes A's generated documents look edited", async () => {
+    await brief();
+    await exportProjectDocuments(ctx(), { principal, card: "docs" });
+    await briefB();
+    const b = await exportProjectDocuments(
+      { repoPath: rootB, cardStore: store, log },
+      { principal, card: "docs" },
+    );
+    expect(readBranchFile(rootB, "main", "docs/product/requirements.md")).toContain(
+      "Beta rounds invoices",
+    );
+    expect(b.proposals).toEqual([]);
+    const again = await exportProjectDocuments(ctx(), { principal, card: "docs" });
+    expect(again.proposals).toEqual([]);
+    expect(await store.documents.openProposals()).toEqual([]);
+    expect(onMain("docs/product/requirements.md")).toContain("Save a recipe");
+  });
+
+  it("a release of B is planned, proven and tagged in B's repository from the server's folder", async () => {
+    await brief();
+    await briefB();
+    const headA = git("rev-parse", "main");
+    const headB = gitB("rev-parse", "main");
+    await log.append({
+      actor: "gate",
+      type: "requirement/main_checked",
+      payload: {
+        sha: headB,
+        branch: "main",
+        gatesPassed: true,
+        tests: {},
+        profile: "internal tool",
+        projectId: projectB,
+      },
+    });
+    const sliceB = (await store.slices.list(projectB))[0]?.id as string;
+    await store.createCard({
+      id: "c_round",
+      tier: "task",
+      title: "Round",
+      status: "ready",
+      projectId: projectB,
+    });
+    await store.updateCardStatus("c_round", "done", "built", "harness", { override: true });
+    const reqB = (await store.requirements.list({ projectId: projectB }))[0]?.id as string;
+    await store.requirements.link({ requirementId: reqB, from: "card", ref: "c_round" });
+    await store.requirements.link({ requirementId: reqB, from: "test", ref: "r.spec.ts" });
+    await log.append({
+      actor: "gate",
+      type: "requirement/main_checked",
+      payload: {
+        sha: headB,
+        branch: "main",
+        gatesPassed: true,
+        tests: { "r.spec.ts": { result: "passed", strength: "met" } },
+        profile: "internal tool",
+        projectId: projectB,
+      },
+    });
+    // k is the server's folder: project A's root.
+    const accepted = await acceptSliceAndRelease(k, sliceB, principal);
+    expect(accepted.releaseRefused).toBeUndefined();
+    expect(accepted.release?.changelog).toMatch(/round invoices/);
+    const [proven] = await log.getEventsByTypes(["release/proven"]);
+    expect(proven?.payload).toMatchObject({ sliceId: sliceB, sha: headB });
+    const tagged = await confirmSliceRelease(k, sliceB);
+    expect(gitB("rev-parse", `${tagged.tag}^{commit}`)).toBe(tagged.sha);
+    expect(gitB("rev-parse", `${tagged.sha}^`)).toBe(headB);
+    expect(readBranchFile(rootB, tagged.tag, "CHANGELOG.md")).toContain("round invoices");
+    // A's repository has no tag and no new commit.
+    expect(git("tag", "--list")).toBe("");
+    expect(git("rev-parse", "main")).toBe(headA);
   });
 });

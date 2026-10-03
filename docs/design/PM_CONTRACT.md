@@ -65,7 +65,9 @@ updated in the same commit.
 | `externalRef` | existing | `{ system: "github" \| "forgejo", id, url }`; `id` is `owner/repo#n` for GitHub | issue key | identifier | `owner/repo#n` |
 
 Cycles are stored as ledger-backed records:
-`{ id, name, startsOn, endsOn, goal?, state: "planned" | "active" | "closed" }`.
+`{ id, name, startsOn, endsOn, goal?, state: "planned" | "active" | "closed", projectId? }`
+(`projectId`: the project the sprint is in, DEC-57; a project has at most one
+active sprint, and a sprint without one spans the workspace).
 
 ## 3. Endpoints
 
@@ -164,8 +166,10 @@ interface PmProposal {
   id: string;
   kind: "create_card" | "update_card" | "split_card" | "reorder" | "move_card"
       | "create_cycle" | "assign_cycle" | "park" | "unpark"
-      | "start_project";                // patch.brief: the person's sentence; patch.group: the new
+      | "start_project"                 // patch.brief: the person's sentence; patch.group: the new
                                         // project's ProjectGroup (below), when Seshat drafted one
+      | "close_cycle";                  // patch {cycleId, carryTo: "next" | "new" | "backlog"}: applied,
+                                        // it completes the sprint with the applying person as actor
   summary: string;              // "Suggested: split Ledger into 2 cards (5 pts). Why: the Worker looped on it."
   why?: string;                 // the reason; every Seshat proposal has one (PM-N9-4)
   suggestionId?: string;        // the suggestion on the issue this is (PM-N9-1): applying either
@@ -814,9 +818,25 @@ from one read:
   (the project's lead or an Admin; Solo's person is Admin), and any other
   value is a 400 (`estimation is off or points`).
 - `PATCH /api/cards/:id` with any of the section 2 fields (inline editing).
-- `GET /api/cycles`, `POST /api/cycles`, `PATCH /api/cycles/:id`. A `PATCH`
-  that moves a sprint to `closed` also records Seshat's measures for it once
-  (`pm/sprint_measured`, planner-pm PM-P6-12).
+- `GET /api/cycles`, `POST /api/cycles` (`{name, startsOn, endsOn, goal?,
+  projectId?, state?}`; `state: "active"` creates the sprint and starts it, 409
+  while another sprint of the project is active), `PATCH /api/cycles/:id`
+  (name, dates, goal; a change of `state` is a 409: a sprint's state changes
+  only by starting or completing it). `/api/board?project=` lists that
+  project's sprints and those with no project.
+- The sprint lifecycle (planner-pm §2.7 item 7a): `POST /api/cycles/:id/start`
+  → `{ cycle }` records `cycle/started {id, issues, points?}` and the sprint
+  active as one group (409 naming the active sprint; nothing recorded).
+  `POST /api/cycles/:id/complete` with `{ carryTo: "next" | "new" | "backlog",
+  newSprint?: {name?, startsOn?, endsOn?} }` → `{ cycle, next?, done, carried,
+  report }` records the new sprint (for `new`), each not-done issue's move,
+  `cycle/completed {id, done, carried: [{issue, to}]}` and the sprint closed as
+  one group, then Seshat's measures once (`pm/sprint_measured`, PM-P6-12); 409
+  for `next` with no planned sprint, or a sprint that is not active.
+  `GET /api/cycles/:id/report` → `{ cycle, report: { cycleId, unit: "issues" |
+  "points", committed, added, removed, completed, carriedOver: {…, to} } }`,
+  each bucket `{ issues: string[], points: number }`, computed from the ledger;
+  409 before the sprint started (or for a sprint active before starts were recorded). Start and complete need `issue.edit`.
 - `GET /api/metrics/pm` returns Seshat's measured quality
   `{ proposals: {applied, discarded, open, acceptanceRate?},
      plannedCards: {cards, passedFirstTry}, profileCorrections, forecast?,

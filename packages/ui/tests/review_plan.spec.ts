@@ -168,15 +168,29 @@ describe("DS-P2-7: candidates by priority, the release line, the Type, two quest
     expect(html).toContain("Create project");
   });
 
-  it("for a Member or an Admin in the Team setup, says an Admin creates it and accepts its brief", () => {
+  it("for a person who may create a project in the Team setup, says an Admin or a project lead creates it and accepts its brief", () => {
     const g = group();
     const html = reviewPlanHtml(g, reviewState(g), { setup: "team" });
     expect(html).not.toContain("Send for approval");
     // The button says what pressing it does: it creates the project and
     // accepts its brief, which is an Admin's to do (TEAM-20 not built).
     expect(html).toMatch(/data-create[^>]*>Create project and accept its brief</);
-    // Who may create it is said before the press, not after a 403.
-    expect(html).toMatch(/an Admin creates the project/i);
+    // Who may create it is said before the press, not after a 403 (TEAM-57).
+    expect(html).toMatch(/an Admin or a project lead creates the project/i);
+  });
+
+  it("TEAM-57: a Member who leads no project sends it for approval instead of creating it", () => {
+    const g = group();
+    const html = reviewPlanHtml(g, reviewState(g), {
+      setup: "team",
+      level: "member",
+      me: "p_member",
+      mayCreate: false,
+      approvers: [{ principal: "p_admin", name: "Ada Admin" }],
+    });
+    expect(html).toMatch(/data-send[^>]*>Send for approval</);
+    expect(html).not.toContain("data-create");
+    expect(html).toMatch(/An Admin or a project lead approves it/);
   });
 });
 
@@ -204,7 +218,7 @@ describe("TEAM-20: a Stakeholder sends the plan for approval instead of creating
     expect(html).toMatch(/Nothing is created until they approve it/);
   });
 
-  it("with no Member or Admin to send it to, says so and sends nothing", () => {
+  it("with no Admin or project lead to send it to, says so and sends nothing", () => {
     const g = group();
     const html = reviewPlanHtml(g, reviewState(g), {
       setup: "team",
@@ -212,7 +226,7 @@ describe("TEAM-20: a Stakeholder sends the plan for approval instead of creating
       approvers: [],
     });
     expect(html).toMatch(/data-send[^>]*disabled/);
-    expect(html).toMatch(/No Member or Admin/);
+    expect(html).toMatch(/No one here can approve it yet/);
   });
 
   it("once sent, tells the Stakeholder who approves it, with nothing to press", () => {

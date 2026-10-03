@@ -14,9 +14,10 @@ import { pageWriteHeaders } from "./page_headers.js";
 
 /**
  * Teams item 6 and design-stage §2.9 item 7 (B4.4 review): in the Team setup
- * applying a new project's group accepts its brief, so it needs `brief.accept`
- * (an Admin, before any project has a lead) as well as `proposal.apply`; a
- * Member's Apply creates nothing. A real git repository, an on-disk ledger and
+ * applying a new project's group creates the project and accepts its brief,
+ * so it needs `project.create` — an Admin, or a person who leads a project
+ * (TEAM-54, TEAM-57; DEC-57 moved it from a Member) — as well as
+ * `proposal.apply`; a Member who leads no project's Apply creates nothing. A real git repository, an on-disk ledger and
  * the real HTTP server (DEFINITION_OF_DONE §2A); no model is loaded.
  */
 
@@ -97,11 +98,11 @@ async function setup() {
 }
 
 describe("Team setup: a new project's group is created by one who may accept its brief", () => {
-  it("refuses a Member's Apply with 403 naming brief.accept, and creates nothing", async () => {
+  it("refuses a Member's Apply with 403 naming project.create (TEAM-57), and creates nothing", async () => {
     const s = await setup();
     const res = await s.apply("p_member");
     expect(res.status).toBe(403);
-    expect(((await res.json()) as { permission?: string }).permission).toBe("brief.accept");
+    expect(((await res.json()) as { permission?: string }).permission).toBe("project.create");
     expect(await s.cardStore.listCards()).toHaveLength(0);
     expect(await s.log.getEventsByTypes(["brief/accepted"])).toHaveLength(0);
   });

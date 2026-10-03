@@ -44,6 +44,14 @@ export interface SandboxOptions {
    * so a private HOME variable alone would leave `~/.ssh` readable by path.
    */
   denyHomeReads?: boolean;
+  /**
+   * Security item 10a (NEW-security-13): paths the command may neither read
+   * nor write, whatever else is granted — a card's view of other projects,
+   * other cards' worktrees and the workspace's state. A path may end in a
+   * `*` glob (macOS engines only). Usually filled in by the card's
+   * registered isolation (`registerCardIsolation`).
+   */
+  denyPaths?: string[];
 }
 
 export interface ExecutionResult {

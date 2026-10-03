@@ -3,8 +3,10 @@
 // candidate, a release line moved with its arrows (or by dragging a
 // candidate across it), the Type, the questions, and one Create project
 // that applies the proposal with the person's choices (PM_CONTRACT §3). In
-// the Team setup a Stakeholder sends it for approval to a Member or an Admin
-// they name instead, and that person approves it (teams TEAM-20, TEAM-42).
+// the Team setup a person who may not create a project (a Stakeholder, or a
+// Member who leads none) sends it for approval to an Admin or a project lead
+// they name instead, and that person approves it (teams TEAM-20, TEAM-42,
+// TEAM-57).
 import { getJSON, postJSON } from "./dom.js";
 import { closeTop, pushOverlay, trapFocus } from "./overlay.js";
 import {
@@ -23,12 +25,15 @@ import { toast } from "./toast.js";
 /** A proposal Review plan can show; kept pure in the view module. */
 export { hasReviewPlan } from "./review_plan_view.js";
 
-/** The Members and Admins a Stakeholder may send a plan to, by name; never themselves. */
+/**
+ * Who a plan may be sent to, by name; never themselves: the people who may
+ * create a project — an Admin, or a person who leads a project (TEAM-57).
+ */
 async function loadApprovers(me) {
   const r = await getJSON("/api/members");
   if (!r.ok) return [];
   return (r.data?.members ?? [])
-    .filter((m) => !m.pending && (m.level === "member" || m.level === "admin"))
+    .filter((m) => !m.pending && m.mayCreateProject === true)
     .filter((m) => m.principal !== me)
     .map((m) => ({ principal: m.principal, name: m.name ?? m.principal }));
 }
@@ -48,6 +53,7 @@ export function openReviewPlan(
     approvers: given = loadApprovers,
     choices,
     keepTalking = false,
+    mayCreate,
   } = {},
 ) {
   const group = proposal.patch.group;
@@ -56,7 +62,7 @@ export function openReviewPlan(
   let state = choices
     ? { ...reviewState(group), ...choices }
     : reviewState(group, approval?.choices);
-  const view = { setup, level, me, approval, approvers: undefined, keepTalking };
+  const view = { setup, level, me, approval, approvers: undefined, keepTalking, mayCreate };
   const host = document.createElement("div");
   host.className = "rp-dialog";
   host.setAttribute("role", "dialog");

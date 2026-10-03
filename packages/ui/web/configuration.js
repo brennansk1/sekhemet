@@ -12,7 +12,7 @@
 // value with the file it came from; above it, the Agent queue's per-person
 // cap (teams item 30, TEAM-30), an Admin's to save (`PUT /api/config/queue`).
 import { esc, getJSON, sendJSON } from "./dom.js";
-import { setTips, storage, tipsOn } from "./learn.js";
+import { practiceTip, setTips, storage, tipsOn } from "./learn.js";
 import { FIRST_RUN, readRole, writeRole } from "./lib/learn.js";
 import { machineLine } from "./lib/machine_tier.js";
 import { ESTIMATION_LABELS } from "./lib/pm.js";
@@ -28,6 +28,7 @@ import {
   reviewMinutesInput,
 } from "./lib/settings.js";
 import { levelNote } from "./lib/team_admin.js";
+import { mountNotifyPrefs } from "./notify.js";
 import { getSession } from "./session.js";
 import { currentThemeChoice, setDensity, setTheme, setTopbar } from "./shell.js";
 import { store } from "./store.js";
@@ -125,7 +126,7 @@ function preferencesHtml() {
     (c) =>
       `<option value="${c.value}"${density === c.value ? " selected" : ""}>${esc(c.label)}</option>`,
   ).join("");
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-preferences"><h3 id="cfg-h-preferences">Preferences</h3><div class="row"><label for="cfg-theme">Theme</label><select id="cfg-theme" data-theme-select>${opt("system", "Match the system")}${opt("dark", "Basalt (dark)")}${opt("light", "Sand (light)")}</select></div><div class="row"><label for="cfg-density">Density</label><select id="cfg-density" data-density-select aria-describedby="cfg-density-why">${dens}</select></div><p class="sec" id="cfg-density-why">Comfortable board cards add the first line of the issue's description. The theme and density apply to this browser only and need no permission.</p>${tipsHtml()}${estimationHtml()}<div data-auto-apply></div></section>`;
+  return `<section class="cfg-sec" aria-labelledby="cfg-h-preferences"><h3 id="cfg-h-preferences">Preferences</h3><div class="row"><label for="cfg-theme">Theme</label><select id="cfg-theme" data-theme-select>${opt("system", "Match the system")}${opt("dark", "Basalt (dark)")}${opt("light", "Sand (light)")}</select></div><div class="row"><label for="cfg-density">Density</label><select id="cfg-density" data-density-select aria-describedby="cfg-density-why">${dens}</select></div><p class="sec" id="cfg-density-why">Comfortable board cards add the first line of the issue's description. The theme and density apply to this browser only and need no permission.</p>${tipsHtml()}<div data-notify-prefs></div>${estimationHtml()}<div data-auto-apply></div></section>`;
 }
 
 /**
@@ -230,7 +231,53 @@ function projectHtml(cfg) {
   const where = cfg.project?.rootPath
     ? `<p class="sec">${esc(cfg.project.name)} · <span class="mono">${esc(cfg.project.rootPath)}</span></p>`
     : "";
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-project"><h3 id="cfg-h-project">Project configuration</h3>${where}${doneHtml(cfg.definitionOfDone)}${queueHtml(cfg)}<h4>Values in force</h4><p class="sec">The values in force, and the file each came from. Edit the files to change them.</p><div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">From</th></tr></thead><tbody>${rows}</tbody></table></div>${problems ? `<h4>Problems</h4><ul class="cfg-warn">${problems}</ul>` : ""}</section>`;
+  return `<section class="cfg-sec" aria-labelledby="cfg-h-project"><h3 id="cfg-h-project">Project configuration</h3>${where}${doneHtml(cfg.definitionOfDone)}${queueHtml(cfg)}${pushHtml(cfg)}<h4>Values in force</h4><p class="sec">The values in force, and the file each came from. Edit the files to change them.</p><div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">From</th></tr></thead><tbody>${rows}</tbody></table></div>${problems ? `<h4>Problems</h4><ul class="cfg-warn">${problems}</ul>` : ""}</section>`;
+}
+
+/**
+ * Push to remote after Accept and on release (review-git §2.6 item 8,
+ * NEW-review-git-7): the project's, off by default, changed by whoever may
+ * change the project's settings (`project.settings`) and recorded as
+ * `project/settings_changed`; read-only with the level note otherwise
+ * (DB-N9-17). Its state is read from the project's settings once drawn.
+ */
+function pushHtml(cfg) {
+  const project = store.state.project;
+  if (!project?.id) return "";
+  const remote = cfg.config?.review?.remote || "origin";
+  const note = levelNote(getSession(), "project.settings");
+  return `<h4 id="cfg-h-push">Push to remote</h4><div class="row"><label><input type="checkbox" data-push-remote disabled> Push to remote after Accept and on release</label></div><p class="sec" id="cfg-push-why">On: after each Accept the integration branch is pushed to <span class="mono">${esc(remote)}</span>, and each release's tag when it is tagged, with the credentials this server's account already has; never forced. Off: accepted work and tags stay in this server's repository.${note ? ` Read-only. ${esc(note)}` : ""}</p><p class="why" role="status" data-push-note></p>`;
+}
+
+async function renderPush() {
+  const box = ui.root?.querySelector("[data-push-remote]");
+  const project = store.state.project?.id;
+  if (!box || !project) return;
+  const r = await getJSON(`/api/projects/${encodeURIComponent(project)}/settings`).catch(() => ({
+    ok: false,
+    data: null,
+  }));
+  box.checked = r.ok && r.data?.settings?.push_to_remote === true;
+  box.disabled = !r.ok || Boolean(levelNote(getSession(), "project.settings"));
+  box.setAttribute("aria-describedby", "cfg-push-why");
+}
+
+async function savePush(on) {
+  const project = store.state.project?.id;
+  const note = ui.root?.querySelector("[data-push-note]");
+  const box = ui.root?.querySelector("[data-push-remote]");
+  if (!project) return;
+  const r = await sendJSON("PATCH", `/api/projects/${encodeURIComponent(project)}/settings`, {
+    push_to_remote: on,
+  });
+  if (r.ok) {
+    const now = r.data?.settings?.push_to_remote === true;
+    if (box) box.checked = now;
+    if (note) note.textContent = now ? "Saved: on." : "Saved: off.";
+  } else {
+    if (box) box.checked = !on;
+    if (note) note.textContent = r.data?.error ?? "Not saved.";
+  }
 }
 
 /**
@@ -241,7 +288,7 @@ function doneHtml(facts) {
   if (!facts) return "";
   const v = definitionOfDone(facts);
   const rows = v.rows.map((r) => `<dt>${esc(r.label)}</dt><dd>${esc(r.text)}</dd>`).join("");
-  return `<section class="cfg-dod" aria-labelledby="cfg-h-dod"><h4 id="cfg-h-dod">Definition of done</h4><p class="dod-sentence">${esc(v.sentence)}</p><dl>${rows}</dl><p class="sec">Read-only: it states what the checks, the project's Type and the Accept rule already enforce.</p></section>`;
+  return `<section class="cfg-dod" aria-labelledby="cfg-h-dod"><h4 id="cfg-h-dod">Definition of done${practiceTip("practice:definition_of_done", "Definition of done")}</h4><p class="dod-sentence">${esc(v.sentence)}</p><dl>${rows}</dl><p class="sec">Read-only: it states what the checks, the project's Type and the Accept rule already enforce.</p></section>`;
 }
 
 /**
@@ -299,6 +346,8 @@ async function renderSection() {
     ui.child = await mountBenchmark(host);
   } else if (ui.section === "preferences") {
     host.innerHTML = preferencesHtml();
+    // NEW-dashboard-22: the browser notification and, in Solo, this computer's.
+    void mountNotifyPrefs(host.querySelector("[data-notify-prefs]"));
     renderAutoApply();
   } else {
     host.innerHTML = '<div class="sk" style="height:120px"></div>';
@@ -308,6 +357,7 @@ async function renderSection() {
     ).catch(() => ({ ok: false, data: null }));
     const cfg = r.ok ? r.data : { error: r.data?.error ?? "The configuration could not be read." };
     host.innerHTML = ui.section === "review" ? reviewHtml(cfg) : projectHtml(cfg);
+    if (ui.section === "project" && !cfg.error) void renderPush();
   }
 }
 
@@ -361,6 +411,7 @@ function onChange(e) {
   if (t instanceof HTMLSelectElement && t.hasAttribute("data-estimation-select")) {
     saveEstimation(t.value === "points" ? "points" : "off");
   }
+  if (t instanceof HTMLInputElement && t.hasAttribute("data-push-remote")) savePush(t.checked);
   if (t instanceof HTMLInputElement && t.dataset.autoApplyProp) {
     saveAutoApply(t.dataset.autoApplyProp, t.checked);
   }

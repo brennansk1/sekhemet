@@ -66,6 +66,12 @@ export interface MainCheck {
   tests: Record<string, MainTestResult>;
   /** The depth profile whose rule `strength` was judged against. */
   profile: string;
+  /**
+   * The project whose integration branch was checked (DEC-57: each project
+   * keeps its own repository). A check recorded before projects had their
+   * own roots has none and counts for every project.
+   */
+  projectId?: string;
   seq: number;
   at: string;
 }
@@ -247,13 +253,27 @@ export async function recordMainCheck(
       gatesPassed: check.gatesPassed,
       tests: check.tests,
       profile: check.profile,
+      ...(check.projectId ? { projectId: check.projectId } : {}),
     },
     ...(failures.length > 0 ? { private: { failures: [...failures] } } : {}),
   });
 }
 
-export async function latestMainCheck(ledger: PlannerLedger): Promise<MainCheck | undefined> {
-  const last = (await ledger.log.getEventsByTypes([MAIN_CHECKED])).at(-1);
+/**
+ * The latest check of a project's integration branch (DEC-57): a check
+ * recorded for another project is not this one's; one with no project
+ * (recorded before projects had their own roots) counts for every project.
+ */
+export async function latestMainCheck(
+  ledger: PlannerLedger,
+  projectId?: string,
+): Promise<MainCheck | undefined> {
+  const last = (await ledger.log.getEventsByTypes([MAIN_CHECKED]))
+    .filter((e) => {
+      const own = (e.payload as { projectId?: string }).projectId;
+      return projectId === undefined || own === undefined || own === projectId;
+    })
+    .at(-1);
   if (!last) return undefined;
   const p = last.payload as Omit<MainCheck, "seq" | "at">;
   return { ...p, seq: last.seq, at: last.createdAt };
@@ -480,7 +500,7 @@ export async function storyMap(
   options: { projectId: string; mainSha?: string | undefined },
 ): Promise<StoryMap> {
   const { projectId } = options;
-  const main = await latestMainCheck(ledger);
+  const main = await latestMainCheck(ledger, projectId);
   // Undefined means not proven (fail closed): not knowing the integration
   // branch's head now is not the same as knowing it has not moved.
   const stale =

@@ -29,6 +29,7 @@ import {
   writeBriefAsFound,
 } from "./takeover_brief.js";
 import { reconGit } from "./takeover_recon.js";
+import { realPath, registerProject } from "./workspace_locator.js";
 
 /**
  * Take over a project, B4.4's half after the inventory (design-stage §2.10
@@ -692,7 +693,16 @@ export interface TakeoverApprovalContext {
  */
 export async function approveTakeoverPlan(
   ctx: TakeoverApprovalContext,
-  input: { proposalId: string; projectId?: string },
+  input: {
+    proposalId: string;
+    projectId?: string;
+    /**
+     * TEAM-56 (DEC-57): the taken-over repository is not the server's folder,
+     * so its approval records it as the workspace's project `via: "adopted"`
+     * — only then, with the person as principal.
+     */
+    adopt?: { workspaceFolder: string; root: string; name: string };
+  },
   principal: string,
 ): Promise<{
   defaultsApplied: string[];
@@ -709,6 +719,12 @@ export async function approveTakeoverPlan(
     candidateIds: [] as string[],
   };
   let cards = proposal.cards;
+  let projectId = input.projectId;
+  if (input.adopt && !projectId) {
+    projectId = store
+      .listProjects()
+      .find((p) => realPath(p.rootPath) === realPath(input.adopt?.root ?? ""))?.id;
+  }
   if (!store.takeover.isPlanApproved(input.proposalId)) {
     const now = await rebucketed(store, proposal.cards);
     const same = (a: readonly ProposedTakeoverCard[], b: readonly ProposedTakeoverCard[]) =>
@@ -720,7 +736,21 @@ export async function approveTakeoverPlan(
         `Your answers changed the plan since ${input.proposalId}: review ${next} and approve that one`,
       );
     }
-    const r = await store.takeover.approvePlan(input, principal);
+    // TEAM-56: the adopted repository becomes a project only as the plan is approved.
+    if (input.adopt && !projectId) {
+      projectId = (
+        await registerProject(store, ctx.log, input.adopt.workspaceFolder, {
+          rootPath: input.adopt.root,
+          name: input.adopt.name,
+          via: "adopted",
+          principal,
+        })
+      ).id;
+    }
+    const r = await store.takeover.approvePlan(
+      { proposalId: input.proposalId, ...(projectId ? { projectId } : {}) },
+      principal,
+    );
     seeded = {
       defaultsApplied: r.defaultsApplied,
       requirementIds: r.requirementIds,
@@ -750,13 +780,14 @@ export async function approveTakeoverPlan(
         title: T.epic(input.proposalId),
         status: "in_progress",
         labels: ["take-over"],
-        ...(input.projectId ? { projectId: input.projectId } : {}),
+        ...(projectId ? { projectId } : {}),
       },
       "planner",
     );
   }
   const deps: PipelineDeps = {
-    repoPath: ctx.repoPath,
+    // Runtime item 2a: the adopted repository's own root.
+    repoPath: input.adopt?.root ?? ctx.repoPath,
     cardStore: store,
     log: ctx.log,
     principal,
@@ -787,9 +818,7 @@ export async function approveTakeoverPlan(
       continue;
     }
     const outcome = (
-      await createThroughPipeline(deps, [
-        draftOf(c, { findings, claims, epicId, projectId: input.projectId }),
-      ])
+      await createThroughPipeline(deps, [draftOf(c, { findings, claims, epicId, projectId })])
     )[0];
     const planned = outcome?.cards ?? [];
     const issueLink = c.links.find((l) => reconciled.has(l));
@@ -818,7 +847,7 @@ export async function approveTakeoverPlan(
           ...(scope.length > 0 ? { scopeFiles: scope } : {}),
           ...(!isChar && c.change && card.change !== c.change ? { change: c.change } : {}),
           ...(externalRef && !isChar ? { externalRef } : {}),
-          ...(input.projectId ? { projectId: input.projectId } : {}),
+          ...(projectId ? { projectId } : {}),
         },
         "planner",
         { principal },

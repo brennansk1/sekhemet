@@ -29,6 +29,23 @@
 .col-h .tip-q {
   margin-left: -4px;
 }
+/* §2.9.5 (DB-N13-3): a practice lesson not yet offered in this browser. It
+   is the same `?`, drawn in ink, with a dot that says it is new. */
+.tip-q[data-new="true"] {
+  position: relative;
+  color: var(--text-primary);
+  border-color: var(--text-primary);
+}
+.tip-q[data-new="true"]::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-primary);
+}
 
 /* The popover a `?` opens: what it is, this project's line, the canon. */
 .tip-pop {

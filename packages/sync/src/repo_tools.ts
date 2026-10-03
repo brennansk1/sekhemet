@@ -158,6 +158,58 @@ export function nextVersion(previous: string | undefined, bump: Bump): string {
   return `v${semver.inc(from.version, release) ?? from.version}`;
 }
 
+/** `git log --format=%H%x1f%B%x1e` output as Conventional-Commit squashes. */
+function parseLog(raw: string): ReleaseCommit[] {
+  return raw
+    .split("\x1e")
+    .map((b) => b.trim())
+    .filter(Boolean)
+    .map((b) => {
+      const [sha, msg = ""] = b.split("\x1f");
+      const m = CC.exec(msg.split("\n")[0] ?? "");
+      return {
+        sha: sha as string,
+        type: m?.[1] ?? "other",
+        ...(m?.[2] ? { scope: m[2] } : {}),
+        subject: m?.[4] ?? msg.split("\n")[0] ?? "",
+        breaking: Boolean(m?.[3]) || /^BREAKING CHANGE:/m.test(msg),
+      };
+    });
+}
+
+/**
+ * The bump a set of squashes gives (review-git §2.6 item 7): a breaking
+ * change is major, a `feat` minor, a `fix` or `perf` patch, anything else
+ * none. `nextVersion` keeps a breaking change on 0.y.z to the next minor.
+ */
+export function releaseBump(commits: readonly ReleaseCommit[]): Bump {
+  return commits.some((c) => c.breaking)
+    ? "major"
+    : commits.some((c) => c.type === "feat")
+      ? "minor"
+      : commits.some((c) => c.type === "fix" || c.type === "perf")
+        ? "patch"
+        : "none";
+}
+
+/**
+ * The squashes at `shas`, in the order given (planner-pm PM-N12-2): a
+ * maintenance release is computed from its own issues' squashes, not from
+ * every commit since the last tag. A sha the repository lacks is refused,
+ * named.
+ */
+export function releaseCommitsAt(repoPath: string, shas: readonly string[]): ReleaseCommit[] {
+  return shas.flatMap((sha) => {
+    let raw: string;
+    try {
+      raw = git(["log", "-1", "--format=%H%x1f%B%x1e", `${sha}^{commit}`, "--"], repoPath);
+    } catch {
+      throw new Error(`The repository holds no commit ${sha}`);
+    }
+    return parseLog(raw);
+  });
+}
+
 /**
  * Aggregate the Conventional Commits since the last tag on `ref` (the
  * checkout's HEAD when omitted; a slice's release passes the integration
@@ -179,28 +231,8 @@ export function planRelease(
   }
   const range = previousTag ? `${previousTag}..${ref}` : ref;
   const raw = git(["log", "--no-merges", "--format=%H%x1f%B%x1e", range], repoPath);
-  const commits = raw
-    .split("\x1e")
-    .map((b) => b.trim())
-    .filter(Boolean)
-    .map((b) => {
-      const [sha, msg = ""] = b.split("\x1f");
-      const m = CC.exec(msg.split("\n")[0] ?? "");
-      return {
-        sha: sha as string,
-        type: m?.[1] ?? "other",
-        ...(m?.[2] ? { scope: m[2] } : {}),
-        subject: m?.[4] ?? msg.split("\n")[0] ?? "",
-        breaking: Boolean(m?.[3]) || /^BREAKING CHANGE:/m.test(msg),
-      };
-    });
-  const bump: Bump = commits.some((c) => c.breaking)
-    ? "major"
-    : commits.some((c) => c.type === "feat")
-      ? "minor"
-      : commits.some((c) => c.type === "fix" || c.type === "perf")
-        ? "patch"
-        : "none";
+  const commits = parseLog(raw);
+  const bump = releaseBump(commits);
   // With no bump the version stays the previous tag's, normalised (`release-1.2.3` is v1.2.3).
   const version = nextVersion(previousTag, bump);
   let changelog: string | undefined;

@@ -13,7 +13,7 @@ import {
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { readKernelPressureLevel } from "@sekhemet/models";
 import { resolvePlannerModel } from "@sekhemet/planner";
-import { type Reproduction, issueSpec, quickCreateRequest } from "@sekhemet/ui";
+import { type Reproduction, issueSpec, quickCreateRequest, sameProject } from "@sekhemet/ui";
 import { effectiveConfig } from "./config_apply.js";
 import { recommendRoster } from "./init.js";
 import { handleIntegrationsApi } from "./integrations.js";
@@ -33,7 +33,6 @@ import {
   parseMessage,
   readMessageBody,
 } from "./pm/documents.js";
-import { recordSprintClose } from "./pm/judgement.js";
 import { burnupMetrics, flowMetrics, pmQuality } from "./pm/metrics.js";
 import type { ProjectChoices } from "./pm/pipeline.js";
 import {
@@ -45,6 +44,14 @@ import {
   withApprovalNames,
 } from "./pm/send_for_approval.js";
 import { DEFAULT_PM_MODEL, answerQueued, pmModelFor, runnerLease } from "./pm/service.js";
+import {
+  type CarryTo,
+  SprintRefusal,
+  completeSprint,
+  onlyProjectOf,
+  sprintReportOf,
+  startSprint,
+} from "./pm/sprints.js";
 import { type MessageDocument, PmStore } from "./pm/store.js";
 import {
   SuggestionError,
@@ -90,6 +97,15 @@ export interface PmApiContext {
   principalOf?: (req: IncomingMessage) => string;
   /** A principal's recorded name (DB-N16-2: Undo names who changed a field since). */
   nameOf?: (principal: string) => string | undefined;
+  /**
+   * Teams item 9a (TEAM-50, -52): why new work cannot be assigned to this
+   * person (a member who left), recorded as a refusal; undefined when it can.
+   */
+  refuseAssignment?: (
+    by: string | undefined,
+    principal: string,
+    cardId: string,
+  ) => Promise<string | undefined>;
   /**
    * Who is asked and what each person can see (planner-pm §2.8.5, §2.18;
    * teams items 6, 19a, 20). A Solo install's one person when omitted.
@@ -312,6 +328,24 @@ export function createPmApi(ctx: PmApiContext) {
     return message;
   };
 
+  const sprintDeps = (cardStore: CardStore) => ({ log: ctx.log, cardStore, pmStore });
+  /** A sprint step's refusal as the person's status and words; any other failure recorded nothing. */
+  const sprintRoute = async <T>(
+    res: ServerResponse,
+    step: () => Promise<T>,
+  ): Promise<T | undefined> => {
+    try {
+      return await step();
+    } catch (err) {
+      if (err instanceof SprintRefusal) ctx.json(res, err.status, { error: err.message });
+      else
+        ctx.json(res, 500, {
+          error: `Nothing was recorded: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      return undefined;
+    }
+  };
+
   const mutationGuard = (req: IncomingMessage, res: ServerResponse): CardStore | undefined => {
     if (!ctx.isTrustedMutation(req)) {
       ctx.json(res, 403, { error: "Actions must come from the dashboard itself" });
@@ -514,7 +548,7 @@ export function createPmApi(ctx: PmApiContext) {
       const choices = projectChoicesOf((await ctx.readJsonBody(req)).choices);
       if (choices === null) {
         ctx.json(res, 400, {
-          error: `choices must be {accept?: string[], remove?: string[], releaseLine?: number, type?: ${DEPTH_PROFILES.map((p) => `"${p}"`).join(" | ")}, answers?: {index: number}}`,
+          error: `choices must be {accept?: string[], remove?: string[], releaseLine?: number, type?: ${DEPTH_PROFILES.map((p) => `"${p}"`).join(" | ")}, answers?: {index: number}, folder?: string}`,
         });
         return true;
       }
@@ -587,7 +621,7 @@ export function createPmApi(ctx: PmApiContext) {
       const choices = projectChoicesOf(body.choices);
       if (choices === null) {
         ctx.json(res, 400, {
-          error: `choices must be {accept?: string[], remove?: string[], releaseLine?: number, type?: ${DEPTH_PROFILES.map((p) => `"${p}"`).join(" | ")}, answers?: {index: number}}`,
+          error: `choices must be {accept?: string[], remove?: string[], releaseLine?: number, type?: ${DEPTH_PROFILES.map((p) => `"${p}"`).join(" | ")}, answers?: {index: number}, folder?: string}`,
         });
         return true;
       }
@@ -741,6 +775,72 @@ export function createPmApi(ctx: PmApiContext) {
       }
       await postWeeklyUpdate(ctx.log, { project, text, principal: me });
       ctx.json(res, 200, { posted: { project } });
+      return true;
+    }
+
+    // --- The retrospective (planner-pm NEW-planner-pm-11, PM-N11-1..3) -------
+    const retroRoute = /^\/api\/projects\/(proj_[A-Za-z0-9_-]+)\/retrospectives$/.exec(url);
+    if (retroRoute && (req.method === "GET" || req.method === "POST")) {
+      const project = retroRoute[1] as string;
+      const me = personOf(req);
+      const a = audience();
+      if (!ctx.cardStore?.getProject(project) || !a.canSee(me, project)) {
+        ctx.json(res, 404, { error: `No project ${project}` });
+        return true;
+      }
+      const { postRetrospective, retrospectiveState } = await import("./pm/retrospective.js");
+      const { contextForCard } = await import("./card_root.js");
+      const deps = {
+        cardStore: ctx.cardStore,
+        log: ctx.log,
+        pmStore,
+        repoPath: contextForCard(
+          { repoPath: ctx.repoPath, cardStore: ctx.cardStore },
+          {
+            projectId: project,
+          },
+        ).repoPath,
+      };
+      if (req.method === "GET") {
+        ctx.json(res, 200, await retrospectiveState(deps, project, a, me));
+        return true;
+      }
+      if (!mutationGuard(req, res)) return true;
+      let b: Record<string, unknown>;
+      try {
+        b = await readMessageBody(req, ctx.readJsonBody);
+      } catch (err) {
+        if (!(err instanceof MessageRefused)) throw err;
+        ctx.json(res, err.status, { error: err.message, ...err.detail });
+        return true;
+      }
+      const text = typeof b.text === "string" ? b.text.trim() : "";
+      if (!text) {
+        ctx.json(res, 400, { error: "A retrospective needs its text" });
+        return true;
+      }
+      const iso = (v: unknown) =>
+        typeof v === "string" && Number.isFinite(Date.parse(v)) ? v : undefined;
+      const from = iso(b.from);
+      const to = iso(b.to);
+      if (!from || !to) {
+        ctx.json(res, 400, { error: "A retrospective names the window it covers: from and to" });
+        return true;
+      }
+      const sprint = typeof b.sprint === "string" && b.sprint ? b.sprint : undefined;
+      if (sprint && !(await pmStore.cycles()).some((c) => c.id === sprint)) {
+        ctx.json(res, 400, { error: `No sprint ${sprint}` });
+        return true;
+      }
+      const id = await postRetrospective(ctx.log, {
+        project,
+        ...(sprint ? { sprint } : {}),
+        from,
+        to,
+        text,
+        principal: me,
+      });
+      ctx.json(res, 200, { posted: { id, project } });
       return true;
     }
 
@@ -901,14 +1001,115 @@ export function createPmApi(ctx: PmApiContext) {
         ctx.json(res, 400, { error: "A sprint needs a name, startsOn and endsOn (YYYY-MM-DD)" });
         return true;
       }
-      const cycle = await pmStore.createCycle({
-        name,
-        startsOn: b.startsOn,
-        endsOn: b.endsOn,
-        ...(typeof b.goal === "string" && b.goal.trim() ? { goal: b.goal.trim() } : {}),
-        ...(b.state === "active" || b.state === "planned" ? { state: b.state } : {}),
-      });
+      // DEC-57: a sprint is one project's — the one named, else the
+      // workspace's only project; a project that does not exist is a 400, and
+      // in a workspace of many, a sprint that names none is refused.
+      const named = typeof b.projectId === "string" && b.projectId ? b.projectId : undefined;
+      if (named && !ctx.cardStore?.getProject(named)) {
+        ctx.json(res, 400, { error: `No project ${named}` });
+        return true;
+      }
+      const projectId = named ?? onlyProjectOf(ctx.cardStore);
+      if (!projectId && (ctx.cardStore?.listProjects().length ?? 0) > 1) {
+        ctx.json(res, 400, {
+          error: "A sprint is one project's: choose the project it plans (projectId).",
+        });
+        return true;
+      }
+      // A sprint created active is started (PM-N13-1): refused, before
+      // anything is recorded, while another sprint of the project is active.
+      if (b.state === "active") {
+        const active = (await pmStore.cycles()).find(
+          (c) => c.state === "active" && sameProject(c, projectId ? { projectId } : {}),
+        );
+        if (active) {
+          ctx.json(res, 409, {
+            error: `${active.name} is active. Complete it before you start ${name}.`,
+          });
+          return true;
+        }
+      }
+      let cycle = await pmStore.createCycle(
+        {
+          name,
+          startsOn: b.startsOn,
+          endsOn: b.endsOn,
+          ...(typeof b.goal === "string" && b.goal.trim() ? { goal: b.goal.trim() } : {}),
+          ...(projectId ? { projectId } : {}),
+        },
+        "human",
+      );
+      if (b.state === "active" && ctx.cardStore) {
+        const created = cycle;
+        const started = await sprintRoute(res, () =>
+          startSprint(sprintDeps(ctx.cardStore as CardStore), created.id, {
+            principal: personOf(req),
+          }),
+        );
+        if (!started) return true;
+        cycle = started;
+      }
       ctx.json(res, 200, { cycle });
+      return true;
+    }
+    // The sprint lifecycle (planner-pm §2.7 item 7a; dashboard DB-N11-1..3).
+    const sprintAction = /^\/api\/cycles\/([A-Za-z0-9_-]+)\/(start|complete|report)$/.exec(url);
+    if (sprintAction && sprintAction[2] === "report" && req.method === "GET") {
+      const id = sprintAction[1] as string;
+      const cycle = (await pmStore.cycles()).find((c) => c.id === id);
+      if (!cycle) {
+        ctx.json(res, 404, { error: "No such sprint" });
+        return true;
+      }
+      const report = await sprintReportOf(ctx.log, id);
+      if (!report) {
+        ctx.json(res, 409, {
+          error:
+            cycle.state === "planned"
+              ? `${cycle.name} has not started, so it has no report yet.`
+              : `${cycle.name} was active before Sekhemet recorded sprint starts, so it has no report.`,
+        });
+        return true;
+      }
+      ctx.json(res, 200, { cycle, report });
+      return true;
+    }
+    if (sprintAction && sprintAction[2] !== "report" && req.method === "POST") {
+      const cardStore = mutationGuard(req, res);
+      if (!cardStore) return true;
+      const id = sprintAction[1] as string;
+      const b = await ctx.readJsonBody(req);
+      if (sprintAction[2] === "start") {
+        const cycle = await sprintRoute(res, () =>
+          startSprint(sprintDeps(cardStore), id, { principal: personOf(req) }),
+        );
+        if (cycle) ctx.json(res, 200, { cycle });
+        return true;
+      }
+      const carryTo = b.carryTo as CarryTo;
+      const ns = b.newSprint as Record<string, unknown> | undefined;
+      const iso = /^\d{4}-\d{2}-\d{2}$/;
+      if (
+        ns !== undefined &&
+        (typeof ns !== "object" ||
+          ns === null ||
+          (ns.name !== undefined && typeof ns.name !== "string") ||
+          (ns.startsOn !== undefined &&
+            !(typeof ns.startsOn === "string" && iso.test(ns.startsOn))) ||
+          (ns.endsOn !== undefined && !(typeof ns.endsOn === "string" && iso.test(ns.endsOn))))
+      ) {
+        ctx.json(res, 400, {
+          error: "newSprint is {name?, startsOn?, endsOn?} with dates as YYYY-MM-DD",
+        });
+        return true;
+      }
+      const done = await sprintRoute(res, () =>
+        completeSprint(sprintDeps(cardStore), id, carryTo, {
+          principal: personOf(req),
+          ...(ns ? { newSprint: ns as { name?: string; startsOn?: string; endsOn?: string } } : {}),
+        }),
+      );
+      if (done) ctx.json(res, 200, { ...done, report: await sprintReportOf(ctx.log, id) });
       return true;
     }
     const cycleMatch = /^\/api\/cycles\/([A-Za-z0-9_-]+)$/.exec(url);
@@ -919,20 +1120,21 @@ export function createPmApi(ctx: PmApiContext) {
       for (const k of ["name", "startsOn", "endsOn", "goal"]) {
         if (typeof b[k] === "string") patch[k] = b[k];
       }
-      if (b.state === "planned" || b.state === "active" || b.state === "closed") {
-        patch.state = b.state;
-      }
       const id = cycleMatch[1] as string;
       const was = (await pmStore.cycles()).find((c) => c.id === id);
-      const updated = await pmStore.updateCycle(id, patch);
-      if (!updated) {
+      if (!was) {
         ctx.json(res, 404, { error: "No such sprint" });
         return true;
       }
-      // PM-P6-12: a sprint that closes has Seshat's measures recorded.
-      if (updated.state === "closed" && was?.state !== "closed" && ctx.cardStore) {
-        await recordSprintClose({ cardStore: ctx.cardStore, log: ctx.log }, updated);
+      // PM-N13-1, -2: a sprint's state changes only by Start sprint and
+      // Complete sprint, which record what the change committed and carried.
+      if (b.state !== undefined && b.state !== was.state) {
+        ctx.json(res, 409, {
+          error: `A sprint's state changes by starting or completing it: POST /api/cycles/${id}/start, or POST /api/cycles/${id}/complete with carryTo next, new or backlog.`,
+        });
+        return true;
       }
+      const updated = await pmStore.updateCycle(id, patch);
       ctx.json(res, 200, { cycle: updated });
       return true;
     }
@@ -984,6 +1186,14 @@ export function createPmApi(ctx: PmApiContext) {
         }
       }
       const principal = ctx.principalOf?.(req);
+      // TEAM-50: no one can assign new work to a member who left.
+      if (typeof patch.assignee === "string" && ctx.refuseAssignment) {
+        const refusal = await ctx.refuseAssignment(principal, patch.assignee, id);
+        if (refusal) {
+          ctx.json(res, 409, { error: refusal });
+          return true;
+        }
+      }
       const card = await cardStore.updateCard(
         id,
         patch as CardUpdate,
@@ -1274,6 +1484,10 @@ export function projectChoicesOf(raw: unknown): ProjectChoices | undefined | nul
         answers[q] = a;
       }
       out.answers = answers;
+    } else if (key === "folder") {
+      // DS-N8-1: the folder a new project's approval creates, as the person changed it.
+      if (typeof v !== "string" || !v.trim()) return null;
+      out.folder = v.trim();
     } else {
       return null;
     }

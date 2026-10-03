@@ -12,6 +12,7 @@ import {
 } from "@sekhemet/kernel";
 import { MergeConflictError, NodeGitSyncAdapter, groupByIntent } from "@sekhemet/sync";
 import { boardColumnLabel } from "@sekhemet/ui";
+import { contextForCard } from "./card_root.js";
 import { ownersOf } from "./codeowners.js";
 import { effectiveConfig } from "./config_apply.js";
 import { localPersonDetails } from "./ledger_cmds.js";
@@ -21,6 +22,7 @@ import {
   requiresResolvedThreads,
   reviewThreads,
 } from "./team/review_threads.js";
+import { workspaceFolderOf } from "./workspace_locator.js";
 
 /**
  * Accept, safely (review-git §2.5, S5, NEW-review-git-5).
@@ -166,7 +168,8 @@ export async function ledgerBundle(
   if (!record) return undefined;
   try {
     const body = readFileSync(
-      isAbsolute(record.path) ? record.path : join(ctx.repoPath, record.path),
+      // Kernel rule 38a: evidence is beside the workspace's ledger.
+      isAbsolute(record.path) ? record.path : join(workspaceFolderOf(ctx.repoPath), record.path),
       "utf8",
     );
     if (createHash("sha256").update(body).digest("hex") !== record.sha256) return undefined;
@@ -547,6 +550,17 @@ export async function acceptCard(
   actor = "human",
   options: AcceptOptions = {},
 ): Promise<string> {
+  // Runtime item 2a (RUN-79): the merge is into the card's own project's
+  // repository, under that repository's accept lock.
+  return acceptCardIn(contextForCard(ctx, card), card, actor, options);
+}
+
+async function acceptCardIn(
+  ctx: AcceptContext & { restrictedMode?: boolean },
+  card: CardRecord,
+  actor: string,
+  options: AcceptOptions,
+): Promise<string> {
   const execute = await import("./execute.js");
   const facts = await acceptPreconditions(ctx, card.id, actor, options);
   const { ev, principal, independent, auto } = facts;
@@ -694,15 +708,44 @@ export async function acceptCard(
   await execute.releaseHeldCards(execCtx).catch(() => []);
   if (stored.parentId) await execute.rollupParent(execCtx, stored.parentId).catch(() => undefined);
   // DS-N3-1: the project documents follow the person's accept onto the
-  // integration branch. The accept stands; a failed export is said.
+  // integration branch — the card's own project's, in its own repository
+  // (DEC-57). The accept stands; a failed export is said.
   if (ctx.eventLog) {
     const { exportProjectDocuments } = await import("./project_docs.js");
     await exportProjectDocuments(
-      { repoPath: ctx.repoPath, cardStore: ctx.cardStore, log: ctx.eventLog },
+      {
+        repoPath: ctx.repoPath,
+        cardStore: ctx.cardStore,
+        log: ctx.eventLog,
+        projectId: stored.projectId ?? undefined,
+      },
       { principal, card: stored.id },
     ).catch((err: unknown) => {
       (ctx.report ?? console.error)(
         `The project documents were not updated after ${stored.id} was accepted: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  }
+  // review-git §2.6 item 8 (NEW-review-git-7): with the project's push setting
+  // on, the integration branch — the squash and the documents that followed
+  // it — goes to the project's remote. The accept stands whatever the remote
+  // says: a refusal is recorded and shown, and the next Accept or tag pushes again.
+  const project = stored.projectId ?? ctx.cardStore.listProjects()[0]?.id;
+  if (project) {
+    const { pushToRemote } = await import("./remote_push.js");
+    const head = (() => {
+      try {
+        return adapter.revParse(`refs/heads/${target}^{commit}`);
+      } catch {
+        return sha;
+      }
+    })();
+    await pushToRemote(
+      { repoPath: ctx.repoPath, cardStore: ctx.cardStore },
+      { project, ref: `refs/heads/${target}`, sha: head, principal, cardId: stored.id },
+    ).catch((err: unknown) => {
+      (ctx.report ?? console.error)(
+        `${target} was not pushed after ${stored.id} was accepted: ${err instanceof Error ? err.message : String(err)}`,
       );
     });
   }
@@ -776,6 +819,39 @@ export async function recordReviewOpened(
 }
 
 /**
+ * A revert git cannot apply (dashboard DB-N21-4): nothing was written, the
+ * issue stays in Done, and the files are named.
+ */
+export class RevertConflictError extends Error {
+  constructor(
+    public readonly cardId: string,
+    public readonly onto: string,
+    public readonly files: string[],
+  ) {
+    super(
+      `The revert of ${cardId} conflicts with later changes on ${onto} in ${files.join(", ") || "files git did not name"}. Nothing was written and the issue stays in Done.`,
+    );
+    this.name = "RevertConflictError";
+  }
+}
+
+/**
+ * Who may revert an accepted issue (DB-N21-3): a person the project's Accept
+ * rule names, or with no rule the install's Accept holder — the check
+ * `revertAccept` refuses on and the review desk shows before Revert is
+ * pressed, from one function. `who` is the people who may.
+ */
+export function revertVerdict(
+  store: CardStore,
+  principal: string,
+  rule?: readonly string[],
+): { may: true } | { may: false; who: string[] } {
+  const holders = rule ? [...new Set(rule)] : store.acceptHolders();
+  const may = rule ? holders.includes(principal) : store.mayAccept(principal);
+  return may ? { may: true } : { may: false, who: holders };
+}
+
+/**
  * Revert an accepted card (§2.4, RG-S5-10): a revert commit of its squash on
  * the integration branch (plumbing, compare-and-set), then Done → Ready,
  * recorded as `card/reverted { sha, revertSha }` in the move's transaction.
@@ -788,6 +864,17 @@ export async function revertAccept(
   /** The project's Accept rule, when recorded (teams item 7). */
   rule?: readonly string[],
 ): Promise<string> {
+  // Runtime item 2a: the revert is in the card's own project's repository.
+  return revertAcceptIn(contextForCard(ctx, card), card, reason, principal, rule);
+}
+
+async function revertAcceptIn(
+  ctx: AcceptContext,
+  card: CardRecord,
+  reason: string,
+  principal: string,
+  rule?: readonly string[],
+): Promise<string> {
   const stored = await ctx.cardStore.getCard(card.id);
   if (stored?.status !== "done") {
     throw new Error(
@@ -797,7 +884,7 @@ export async function revertAccept(
   const accepted = (await ctx.cardStore.cardEvents(card.id, ["card/accepted"])).at(-1);
   const p = accepted?.payload as { sha?: string; integration?: string } | undefined;
   if (!p?.sha) throw new Error(`${card.id} has no accepted squash in the Activity log to revert`);
-  if (rule ? !rule.includes(principal) : !ctx.cardStore.mayAccept(principal)) {
+  if (!revertVerdict(ctx.cardStore, principal, rule).may) {
     throw new AcceptRefusedError(
       "not_permitted",
       `${principal} does not hold the Accept permission; reverting an accept is for a person on the Accept rule`,
@@ -807,14 +894,21 @@ export async function revertAccept(
   const adapter = new NodeGitSyncAdapter(ctx.repoPath);
   return adapter.withAcceptLock(async () => {
     const head = adapter.revParse(`refs/heads/${target}^{commit}`);
-    const revert = await adapter.revertSquash(target, p.sha as string, {
-      Card: card.id,
-      "Agent-Model": "none",
-      "Agent-Harness": "sekhemet",
-      "Agent-Role": "reviewer",
-      "Reverted-by": acceptedBy(ctx.repoPath, ctx.cardStore, principal),
-      "Co-authored-by": "sekhemet <harness@sekhemet.local>",
-    });
+    const revert = await adapter
+      .revertSquash(target, p.sha as string, {
+        Card: card.id,
+        "Agent-Model": "none",
+        "Agent-Harness": "sekhemet",
+        "Agent-Role": "reviewer",
+        "Reverted-by": acceptedBy(ctx.repoPath, ctx.cardStore, principal),
+        "Co-authored-by": "sekhemet <harness@sekhemet.local>",
+      })
+      .catch((err: unknown) => {
+        // DB-N21-4: nothing was written; the issue stays in Done, the files named.
+        if (err instanceof MergeConflictError)
+          throw new RevertConflictError(card.id, target, err.files);
+        throw err;
+      });
     try {
       await ctx.boardService.transitionCard({
         cardId: card.id,

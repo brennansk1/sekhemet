@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 69 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 70 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,73 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 70 — 2026-10-03 (C2b: the team process. A workspace of many projects, sprints, intake and triage, search, Won't do / Reopen / Revert, a member leaving, retrospectives, maintenance releases, push to remote; and the injection re-run)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. The owner restarted the Mac to clear swap, then chose to run C2b at once, in low-memory mode (tests at one worker), beside the injection run. One workflow: 12 agents, 3.83M tokens, none failed. Five builders ran one at a time, followed by three reviews in parallel, a fixer, a blocker re-check, a sweep and a gate. The lead then fixed the gate's five failures.
+
+- **A workspace of many projects (DEC-57):**
+  - each card runs in its own project's root, across run, accept, revert, take-over, the gate routes, MCP gates, rewind and the crash sweep (RUN-79/80);
+  - projects take turns fairly, and one added at the cap starts paused (RUN-81/82);
+  - `project_required`, `project_nested` and `project move`, the last recorded with the person and checked against the folder's history (K-N12-3/6/7);
+  - the CLI finds its workspace from any project folder through the locator, with `project list` and `project move`; a first run is refused where `Ledger-Head` trailers show a workspace (SUR-73..81);
+  - New project creates a folder with `git init` on approval, or adopts a repository; `project.create` is an Admin's or a project lead's; a per-project *No access* level (TEAM-54..60);
+  - My issues, the Inbox, search and the palette work across projects (DB-N26);
+  - **containment:** a card cannot read other projects or the workspace ledger, through `SandboxOptions.denyPaths` on all three engines (SEC-N13-1/-2, `project_isolation.spec.ts`).
+- **Sprints:** start and complete, with carry-over to the next sprint, a new one or the backlog; one active sprint; the report from the ledger (NEW-dashboard-11, NEW-planner-pm-13).
+- **Intake and triage, and search:**
+  - Stakeholders file requests and Members triage them (*Accept into Backlog*, Decline, Duplicate) (NEW-dashboard-10);
+  - full-text search on SQLite FTS5 in `node:sqlite`, with no library, measured at p75 ≈ 3 ms over 10,000 issues in-process (NEW-dashboard-12).
+- **Issue and team actions:**
+  - Won't do, Reopen and Revert in the dashboard, each with Undo (NEW-dashboard-21);
+  - a member leaving: work is reassigned, and Accept stays refused with the lead and Admins told when no one is left on the rule (DEC-53 c15 is no);
+  - lessons for the practice a person performs;
+  - a browser notification, and an opt-in operating-system notification while no tab is open (NEW-dashboard-22);
+  - Seshat's failures are plain sentences, and status is answered without a model (PM-01, PM-02).
+- **Releases:**
+  - the retrospective as a report for people (NEW-planner-pm-11);
+  - maintenance releases with an open *Next release* computing version, changelog and notes (NEW-planner-pm-12);
+  - an opt-in push to remote after Accept and on release, decided by the network policy, recorded, with failed pushes retried (NEW-review-git-7).
+- **Review:** 2 blockers, both fixed and confirmed by the re-check.
+  - After an Accept, one project's documents were committed into another project's repository. `exportProjectDocuments` now takes the card's project.
+  - Sprint writes were checked at workspace level, not at the sprint's project.
+  - The 10 majors were all fixed.
+- **The gate's five failures, fixed by the lead:**
+  - git's `--is-ancestor`, `--tags` and `--abbrev`, and `notify-send`'s `--app-name`, join the flag test's tool-flag list;
+  - `assignmentRefusal()` is a person-facing refusal (the dashboard's 409), so it joins the scanner's named person-facing list;
+  - `next_release.ts` and `remote_push.ts` join the SEC-18 allowlist, each with its reason;
+  - a Status heading used 13px where `var(--text-base)` belongs;
+  - a Chromium wiring test kept timing out under load. The lead first read this as a C2b slowdown from two timings per tree, which was wrong: five runs on the committed build showed the same ~31 s.
+    - **The cause** was an old race in Configuration › Models (`config_models.js`). After *Use them*, the POST's 202 answer (`benchmarking`) often arrived after the stream's `done` frame and overwrote it, so the page stayed on "Running the quick benchmark…". The server finishes in ~7 ms.
+    - **The fix:** the answer is applied only if no newer frame has arrived. A new test holds the answer back with `page.route`; it failed every time before the fix. The step now takes ~1 s every run.
+  - `seshat_no_model_ui.spec.ts` (PM-01) read the user messages the moment the second failed reply appeared. Under load, the retried message lands over the stream just after it, so the test now waits for the same count of 2.
+- **Checked, not assumed:** `remote_push.ts` runs git in the process's hardened environment (`hardenGitForProcess`): `core.hooksPath=/dev/null`, so no repository hook runs. Its blank `credential.helper` means a push reaches an SSH remote through the person's agent, while an HTTPS remote needing a stored credential is refused and recorded. This v1 limitation is now stated in review-git's row.
+- **Lead rulings** (owner's delegation):
+  - PM-03 (Seshat's panel over the page at 1100 px) is the spec's overlay from 1024 to 1279 px, so the spec stands;
+  - TEAM-02 (a full Notifications page) is not built in v1: the two switches stay in Preferences.
+- **Existing tests changed because the spec changed** (DEC-57, TEAM-57), each asserting the new required behaviour, none weakened:
+  - `records.spec.ts`: a card without a project is refused once a workspace has two;
+  - `start_project*.spec.ts`: the next project goes to a new folder;
+  - plan-approval specs: the approver is an Admin;
+  - `start_page_draft_ui.spec.ts`: DS-N7-4 is replaced by DS-N8-1.
+- **Left, with reasons (in the specs' rows):**
+  - RUN-83 waits on the free-space floor (C4);
+  - SUR-74's CLI adoption into another workspace;
+  - Seshat's create and plan proposals in a multi-project workspace and its `propose_close_cycle` tool (PROMPT_STANDARD rule 35);
+  - triage reads the filer's current level;
+  - a Decline is two appends;
+  - a maintenance release writes no `CHANGELOG.md` section yet;
+  - the bubblewrap side of project isolation is checked as an argv only (Linux runtime in C2c's VM run).
+- **The injection run (B1's live check):** it ran from a frozen snapshot of b2d0cfb, since C2b was rebuilding the worktree, with nail-mtp and thinking off.
+  - **11 of 14 held, and no breach in any fixture:** the secret was intact, with no outside writes, no egress and no listener hits.
+  - **Not proven:** two page-channel fixtures (the Worker never fetched the page) and one stopped by memory pressure while C2b's tests ran.
+  - **F27, for C2c:** the page fixtures must deliver deterministically. The run is kept aside, not recorded as B1 evidence; a full re-run follows with nothing else loading the machine.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1697 files), vitest 753 files, 5,918 passed, 54 skipped.
+- **Where the cards stop:**
+  - C2b is done.
+  - **Next:**
+    - **C2c:** CLI, trust and Linux, including CLI-01, the Linux relays (DEC-50), DEC-55's fixes and F27;
+    - then the injection re-run and B1.
 
 ### Entry 69 — 2026-10-02 (C2a: the core surfaces. The board at every width, the issue page's properties rail, Review, Status, the shell with the project and workspace switchers, Inbox, Members, Configuration, the Start page, and the professional words)
 

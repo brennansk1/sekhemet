@@ -247,6 +247,17 @@ async function perform(
   switch (s.kind) {
     case "assignee": {
       const to = String(v);
+      // Teams item 9a (TEAM-50): no new work for a person no longer in the workspace.
+      if (
+        /^p_/.test(to) &&
+        ctx.audience?.setup === "team" &&
+        ctx.audience.people &&
+        !ctx.audience.people().includes(to)
+      ) {
+        throw new Error(
+          `${ctx.audience.nameOf(to) ?? "This person"} is no longer a member of this workspace, so no new work can be assigned to them.`,
+        );
+      }
       if (/^p_/.test(to)) await ctx.cardStore.changeOwner(card.id, to, principal, actor);
       else await ctx.cardStore.updateCard(card.id, { assignee: to }, actor, who);
       break;

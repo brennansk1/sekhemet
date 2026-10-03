@@ -10,6 +10,7 @@ import { aiBadge } from "./issue_view.js";
 import { viewerManagesWork } from "./learn.js";
 import { noteFor } from "./level_gate.js";
 import { burnupTarget } from "./lib/burnup.js";
+import { RELEASES_COPY, nextReleaseView, retroView } from "./lib/releases.js";
 import { START_COPY, START_ROUTE } from "./lib/start.js";
 import { STATUS_COPY, STATUS_SECTIONS, statusModel } from "./lib/status.js";
 import { sendMessage } from "./pm_client.js";
@@ -40,6 +41,12 @@ const ui = {
   target: false,
   /** The Set release lead form is open (teams item 28, DB-N9-2). */
   releaseLead: false,
+  /** The project's open Next release (NEW-planner-pm-12), or null. */
+  next: null,
+  /** The project's retrospective: due, its draft, and the posted ones (NEW-planner-pm-11). */
+  retro: null,
+  /** The retrospective editor: null, or { text, error }. */
+  retroEditor: null,
   busy: false,
   timer: 0,
   off: null,
@@ -61,14 +68,20 @@ async function json(path) {
 
 async function load() {
   const id = store.state.project?.id;
-  const [facts, map, standup, signals, standing] = await Promise.all([
+  const none = { status: 0, data: null };
+  const [facts, map, standup, signals, standing, next, retro] = await Promise.all([
     json(`/api/status${projectQuery()}`),
     json(`/api/story-map${id ? `/${encodeURIComponent(id)}` : ""}`),
     json("/api/standup"),
     // The project's own signals, scoped by the server to what the person can see (PM-N9-8).
     json(`/api/signals${projectQuery()}`),
     json("/api/queue/standing"),
+    // NEW-planner-pm-12, -11: the project's Next release and its retrospective.
+    id ? json(`/api/projects/${encodeURIComponent(id)}/releases/next`) : none,
+    id ? json(`/api/projects/${encodeURIComponent(id)}/retrospectives`) : none,
   ]);
+  ui.next = next.data?.next ?? null;
+  ui.retro = retro.data ?? null;
   ui.facts = { status: facts.status, data: facts.data?.facts ?? null };
   ui.map = map.data;
   ui.standup = standup.data;
@@ -319,6 +332,70 @@ function flowHtml(v) {
     .join("")}</ul>${v.flow.note ? `<p class="sec">${esc(v.flow.note)}</p>` : ""}`;
 }
 
+/** Next release (planner-pm §2.15 item 8a; review-git §2.6 item 8): its issues, Propose or Tag, the pushes. */
+function releaseHtml() {
+  const v = nextReleaseView(ui.next, ui.facts.data?.mayAccept !== false);
+  const issues = v.issues.length
+    ? `<ul class="stp-list">${v.issues
+        .map(
+          (i) =>
+            `<li><span>${esc(i.title)}</span><span class="stp-state sec">${esc(i.category)}</span></li>`,
+        )
+        .join("")}</ul>`
+    : "";
+  const proposed = v.proposed
+    ? `<div class="stp-rel"><p><b>${esc(v.proposed.heading)}</b></p><h3>${esc(RELEASES_COPY.notes)}</h3><div class="stp-text">${esc(v.proposed.notes)}</div><details class="stp-changelog"><summary>${esc(RELEASES_COPY.changelog)}</summary><div class="stp-text mono">${esc(v.proposed.changelog)}</div></details></div>`
+    : "";
+  const blocked = blockedReason();
+  const why = v.action?.disabled ?? blocked;
+  const action = v.action
+    ? `<div class="stp-acts"><button class="btn sm" type="button" data-act="${esc(v.action.act)}"${why ? " disabled" : ""}>${icon("tag", 14, "ic s14")}${esc(v.action.label)}</button>${why ? `<span class="why sec">${esc(why)}</span>` : ""}</div>`
+    : "";
+  const failed = v.failed
+    .map(
+      (f) => `<p class="stp-push-fail" role="status">${icon("alert", 14, "ic s14")}${esc(f)}</p>`,
+    )
+    .join("");
+  return `<p>${esc(v.lede)}</p>${issues}${proposed}${action}${failed}<p class="sec">${esc(v.push)}</p>`;
+}
+
+/** The retrospective (planner-pm §2.7 item 4): Seshat's draft, its actions as proposals, the posted ones. */
+function retroHtml() {
+  const sprints = Object.fromEntries((store.state.cycles ?? []).map((c) => [c.id, c.name]));
+  const v = retroView(ui.retro, sprints);
+  const blocked = blockedReason();
+  let draft = "";
+  if (v.draft) {
+    const groups = v.draft.groups
+      .map(
+        (g) =>
+          `<h3>${esc(g.heading)}</h3><ul class="stp-list">${g.items.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>`,
+      )
+      .join("");
+    const actions = v.draft.actions.length
+      ? `<ul class="stp-list stp-risks">${v.draft.actions
+          .map((a) => {
+            const press = a.href
+              ? `<a class="btn sm" href="${esc(a.href)}">${esc(a.label)}</a>`
+              : `<button class="btn sm" type="button" data-act="retro-issue" data-title="${esc(a.title ?? "")}" data-why="${esc(a.why)}"${blocked ? " disabled" : ""}>${esc(a.label)}</button>`;
+            return `<li><p>${esc(a.text)}</p><p class="sec"><b>Why:</b> ${esc(a.why)}</p>${press}</li>`;
+          })
+          .join("")}</ul>`
+      : "";
+    const editor = ui.retroEditor
+      ? `<form class="stp-editor" data-retro-editor><label for="stp-retro">${esc(RELEASES_COPY.editorLabel)}</label><p class="sec" id="stp-retro-hint">${esc(RELEASES_COPY.editorHint)}</p><textarea id="stp-retro" rows="14" aria-describedby="stp-retro-hint">${esc(ui.retroEditor.text)}</textarea>${ui.retroEditor.error ? `<p class="err" role="alert">${esc(ui.retroEditor.error)}</p>` : ""}<div class="acts"><button class="btn ghost" type="button" data-retro-cancel>${esc(C.cancel)}</button><button class="btn" type="submit"${ui.busy || blocked ? " disabled" : ""}>${icon("send", 14, "ic s14")}${esc(RELEASES_COPY.post)}</button></div></form>`
+      : `<button class="btn sm" type="button" data-retro-edit${blocked ? " disabled" : ""}>${icon("pencil", 14, "ic s14")}${esc(RELEASES_COPY.editPost)}</button>`;
+    draft = `<div class="stp-retro-draft"><p>${aiBadge()} ${esc(v.draft.lede)}</p>${groups}<h3>${esc(RELEASES_COPY.actions)}</h3>${actions || empty("None: nothing slowed the team enough to change how it works.")}<p class="sec">${esc(v.draft.basedOn)}</p>${editor}</div>`;
+  }
+  const posted = v.posted
+    .map(
+      (r, i) =>
+        `<details class="stp-retro" id="retro-${esc(r.id)}"${i === 0 && !v.draft ? " open" : ""}><summary><b>${esc(r.title)}</b> <span class="sec">${esc(r.byline)}</span></summary><div class="stp-text">${esc(r.text)}</div></details>`,
+    )
+    .join("");
+  return `${draft}${posted}${v.empty ? empty(v.empty) : ""}`;
+}
+
 function askHtml() {
   // STA-10: an empty question is refused beside the box, never silently dropped.
   return `<form class="stp-ask" data-ask novalidate><label class="sr-only" for="stp-ask-q">${esc(C.askLabel)}</label><input id="stp-ask-q" autocomplete="off" aria-describedby="stp-ask-note" placeholder="${esc(C.askPlaceholder)}"><button class="btn" type="submit">${icon("chat", 14, "ic s14")}${esc(C.ask)}</button></form><button class="btn primary stp-start" type="button" data-start>${icon("plus", 14, "ic s14")}${esc(C.startProject)}</button><p class="why sec" id="stp-ask-note" role="status" data-ask-note></p>`;
@@ -353,12 +430,14 @@ function render() {
       section("needs", needsHtml(v)),
       v.waiting ? section("waiting", list(v.waiting.items, v.waiting.empty)) : "",
       section("requirements", requirementsHtml(v)),
+      ui.next ? section("release", releaseHtml()) : "",
       section("risks", risksHtml(v)),
       section("done", list(v.doneThisWeek.items, v.doneThisWeek.empty)),
       section("today", list(v.standup.lines, v.standup.empty)),
       section("working", workingHtml(v)),
       section("models", `<p>${esc(v.models)}</p>`),
       section("flow", flowHtml(v)),
+      ui.retro ? section("retro", retroHtml()) : "",
       section("ask", askHtml()),
     ].join("");
   }
@@ -367,12 +446,17 @@ function render() {
   const active = document.activeElement;
   const focus = active && ui.root.contains(active) ? focusKey(active) : "";
   const draft = $("#stp-update", ui.root)?.value;
+  const retroDraft = $("#stp-retro", ui.root)?.value;
   const ask = $("#stp-ask-q", ui.root)?.value;
   ui.last = html;
   $(".stp", ui.root).innerHTML = html;
   if (draft !== undefined && ui.editor && !ui.editor.loading) {
     const ta = $("#stp-update", ui.root);
     if (ta) ta.value = draft;
+  }
+  if (retroDraft !== undefined && ui.retroEditor) {
+    const ta = $("#stp-retro", ui.root);
+    if (ta) ta.value = retroDraft;
   }
   if (ask) {
     const q = $("#stp-ask-q", ui.root);
@@ -573,6 +657,33 @@ async function act(btn) {
         text: verb === "start" ? "The Agent is on it, on your behalf." : "Request declined.",
       });
     else fail(verb === "start" ? "start the Agent" : "decline the request", r);
+  } else if (kind === "release-propose" || kind === "release-tag") {
+    // NEW-planner-pm-12: a person proposes the Next release, then tags it.
+    const project = ui.facts.data?.project?.id ?? "";
+    const verb = kind === "release-propose" ? "propose" : "tag";
+    const r = await postJSON(
+      `/api/projects/${encodeURIComponent(project)}/releases/next/${verb}`,
+      {},
+    );
+    if (r.ok) {
+      const said =
+        verb === "propose"
+          ? RELEASES_COPY.proposedToast(r.data?.proposed?.version ?? "")
+          : RELEASES_COPY.taggedToast(r.data?.tag ?? "");
+      toast({ tone: "pass", text: said, ...(r.data?.notice ? { detail: r.data.notice } : {}) });
+      announce(said);
+    } else fail(verb === "propose" ? "propose the release" : "tag the release", r);
+  } else if (kind === "retro-issue") {
+    // PM-N11-2: the retrospective's proposed issue, filed by the person who pressed.
+    const project = ui.facts.data?.project?.id ?? "";
+    const r = await postJSON(`/api/projects/${encodeURIComponent(project)}/cards`, {
+      title: btn.dataset.title ?? "",
+      description: btn.dataset.why ?? "",
+    });
+    if (r.ok) {
+      toast({ tone: "pass", text: RELEASES_COPY.filed });
+      announce(RELEASES_COPY.filed);
+    } else fail("file the issue", r);
   } else if (kind === "slice-accept") {
     const r = await postJSON(`/api/slices/${encodeURIComponent(id)}/accept`, {});
     if (r.ok) toast({ tone: "pass", text: "Release accepted." });
@@ -597,6 +708,51 @@ async function act(btn) {
       });
   }
   refreshAll();
+}
+
+function openRetro() {
+  ui.retroEditor = { text: ui.retro?.draft?.text ?? "", error: "" };
+  render();
+  $("#stp-retro", ui.root)?.focus();
+}
+
+function closeRetro() {
+  ui.retroEditor = null;
+  render();
+  $("[data-retro-edit]", ui.root)?.focus();
+}
+
+/** PM-N11-3: a person posts the retrospective as edited. */
+async function postRetro() {
+  const id = ui.facts.data?.project?.id;
+  const text = $("#stp-retro", ui.root)?.value ?? "";
+  const due = ui.retro?.due;
+  if (!id || !due || ui.busy) return;
+  if (!text.trim()) {
+    ui.retroEditor = { text, error: RELEASES_COPY.needsText };
+    render();
+    return;
+  }
+  ui.busy = true;
+  const r = await postJSON(`/api/projects/${encodeURIComponent(id)}/retrospectives`, {
+    text,
+    from: due.from,
+    to: due.to,
+    ...(due.sprint ? { sprint: due.sprint.id } : {}),
+  });
+  ui.busy = false;
+  if (!r.ok) {
+    ui.retroEditor = { text, error: r.data?.error ?? `The server returned ${r.status}.` };
+    render();
+    return;
+  }
+  ui.retroEditor = null;
+  toast({ tone: "pass", text: RELEASES_COPY.posted });
+  announce(RELEASES_COPY.posted);
+  await load();
+  $(`#retro-${CSS.escape(r.data?.posted?.id ?? "")}`, ui.root)
+    ?.querySelector("summary")
+    ?.focus();
 }
 
 async function extend(form) {
@@ -645,10 +801,13 @@ export function mount(view) {
   ui.health = false;
   ui.target = false;
   ui.releaseLead = false;
+  ui.retroEditor = null;
   root.addEventListener("click", (e) => {
     const t = e.target instanceof Element ? e.target : null;
     if (!t) return;
-    if (t.closest("[data-write]")) openEditor();
+    if (t.closest("[data-retro-edit]")) openRetro();
+    else if (t.closest("[data-retro-cancel]")) closeRetro();
+    else if (t.closest("[data-write]")) openEditor();
     else if (t.closest("[data-set-health]")) openHealth();
     else if (t.closest("[data-cancel-health]")) closeHealth();
     else if (t.closest("[data-set-target]")) openTarget();
@@ -679,6 +838,7 @@ export function mount(view) {
     const f = e.target;
     if (!(f instanceof HTMLFormElement)) return;
     if (f.matches("[data-editor]")) postUpdate();
+    else if (f.matches("[data-retro-editor]")) postRetro();
     else if (f.matches("[data-health]")) saveHealth(f);
     else if (f.matches("[data-target]"))
       saveTarget(f.dataset.target, $("#stp-target", f)?.value || null);
@@ -691,7 +851,10 @@ export function mount(view) {
     if (e.key !== "Escape") return;
     const t = e.target instanceof Element ? e.target : null;
     // Esc closes the editor or the Extend form and returns focus to what opened it.
-    if (t?.closest("[data-editor]")) {
+    if (t?.closest("[data-retro-editor]")) {
+      e.stopPropagation();
+      closeRetro();
+    } else if (t?.closest("[data-editor]")) {
       e.stopPropagation();
       closeEditor();
     } else if (t?.closest("[data-health]")) {

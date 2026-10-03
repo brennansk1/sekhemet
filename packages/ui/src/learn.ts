@@ -313,6 +313,26 @@ export interface LearnFacts {
   checks?: { id: string; label: string; state: string; layer?: string }[];
   /** The issue whose type the `?` explains (the issue page's type). */
   card?: { kind?: string; change?: string; tier?: string; split?: string; title?: string };
+  /** The numbers the practice lessons read (§2.9.5, NEW-dashboard-13). */
+  practice?: PracticeFacts;
+}
+
+/** What the practice lessons' own lines are computed from (DB-N13-2). */
+export interface PracticeFacts {
+  /** This person's last reviews (`reviewHistory`). */
+  reviews?: { decided: number; accepted: number; requested: number; cameBackAccepted: number };
+  inReview?: number;
+  criteria?: { open: number; withCriteria: number };
+  priorities?: { urgent: number; high: number; medium: number; low: number; none: number };
+  blocked?: { open: number; waiting: number };
+  /** The checks the project's gates run. */
+  checks?: number;
+  /** Issues waiting in Triage. */
+  triage?: number;
+  /** Issues in To do (sprint planning with no sprint running). */
+  ready?: number;
+  done?: number;
+  onHold?: number;
 }
 
 interface Lesson {
@@ -617,6 +637,267 @@ const LESSONS: Record<string, Lesson> = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// The practice a person performs (§2.9.5, NEW-dashboard-13; FINDINGS PRC-05)
+// ---------------------------------------------------------------------------
+
+const ATLASSIAN_REVIEW: Source = {
+  label: "Atlassian: code reviews",
+  url: "https://www.atlassian.com/agile/software-development/code-reviews",
+};
+
+/** The practice lessons, in the order §2.9.5 names them. */
+export const PRACTICE_LESSONS = [
+  "practice:review",
+  "practice:request_changes",
+  "practice:criteria",
+  "practice:priority",
+  "practice:blocked",
+  "practice:definition_of_done",
+  "practice:triage",
+  "practice:sprint_planning",
+  "practice:retrospective",
+] as const;
+export type PracticeLesson = (typeof PRACTICE_LESSONS)[number];
+
+const waitsIn = (n: number, where: string) =>
+  `${issues(n)} ${n === 1 ? "waits" : "wait"} in ${where} now.`;
+
+const PRACTICE: Record<PracticeLesson, Lesson> = {
+  "practice:review": {
+    term: "Reviewing a change",
+    concept:
+      "A review reads the change against its acceptance criteria and the checks' results before anything reaches main. Read what changed and why, then Accept or Request changes; a review held to one issue at a time stays quick.",
+    source: ATLASSIAN_REVIEW,
+    yours: (f) => {
+      const r = f.practice?.reviews;
+      const waiting = f.practice?.inReview;
+      const queue = waiting === undefined ? "" : ` ${waitsIn(waiting, "In review")}`;
+      if (!r || r.decided === 0) return `You have not reviewed an issue here yet.${queue}`;
+      return `You reviewed ${issues(r.decided)} here: ${r.accepted} accepted, changes requested on ${r.requested}.${queue}`;
+    },
+  },
+  "practice:request_changes": {
+    term: "Request changes",
+    concept:
+      "Request changes returns the issue to To do with your note, and the note is the first thing the Agent reads next. A useful note names the file, the behaviour you expected and the check that should prove it.",
+    source: ATLASSIAN_REVIEW,
+    yours: (f) => {
+      const r = f.practice?.reviews;
+      if (!r || r.requested === 0) return "You have not requested changes here yet.";
+      return `You requested changes on ${r.requested} of your last ${plural(r.decided, "review")}; ${r.cameBackAccepted} of those came back and ${r.cameBackAccepted === 1 ? "was" : "were"} accepted on the next review.`;
+    },
+  },
+  "practice:criteria": {
+    term: "Acceptance criteria",
+    concept:
+      "Acceptance criteria are the testable statements that say when an issue is finished. Approving them before the Agent starts means the checks prove what you meant, not what was guessed.",
+    source: {
+      label: "Atlassian: acceptance criteria",
+      url: "https://www.atlassian.com/work-management/project-management/acceptance-criteria",
+    },
+    yours: (f) => {
+      const c = f.practice?.criteria;
+      if (!c || c.open === 0) return "No issue is open here yet.";
+      return `${c.withCriteria} of ${c.open} open ${c.open === 1 ? "issue" : "issues"} here ${c.withCriteria === 1 ? "has" : "have"} acceptance criteria.`;
+    },
+  },
+  "practice:priority": {
+    term: "Priority",
+    concept:
+      "Priority says what to do first when everything cannot be done at once, from Urgent to Low. Requirements use MoSCoW the same way: Must have, Should have, Could have and Won't have this time.",
+    source: { label: "Linear: priority", url: "https://linear.app/docs/priority" },
+    yours: (f) => {
+      const p = f.practice?.priorities;
+      if (!p) return "No issue is open here yet.";
+      return `Open issues here: ${p.urgent} Urgent, ${p.high} High, ${p.medium} Medium, ${p.low} Low and ${p.none} with no priority.`;
+    },
+  },
+  "practice:blocked": {
+    term: "Blocked work",
+    concept:
+      "An issue is blocked when it waits on another to finish first. Naming what blocks it lets the board order the work and shows where one late issue holds up others.",
+    source: { label: "Linear: issue relations", url: "https://linear.app/docs/issue-relations" },
+    yours: (f) => {
+      const b = f.practice?.blocked;
+      if (!b || b.open === 0) return "No issue is open here yet.";
+      return `${b.waiting} of ${b.open} open ${b.open === 1 ? "issue waits" : "issues wait"} on another issue to finish.`;
+    },
+  },
+  "practice:definition_of_done": {
+    term: "Definition of done",
+    concept:
+      "The Definition of done is the team's shared statement of when work is finished, the same for every issue. Here it is enforced, not only written: the checks must pass and a person must accept.",
+    source: {
+      label: "The Scrum Guide: Definition of Done",
+      url: `${SCRUM.url}#commitment-definition-of-done`,
+    },
+    yours: (f) => {
+      const n = f.practice?.checks;
+      const checks =
+        n === undefined ? "checks" : `${n} ${n === 1 ? "check passes" : "checks pass"}`;
+      return n === undefined
+        ? "Here an issue is done when its checks pass and a person the Accept rule names accepts it."
+        : `Here an issue is done when its ${checks} and a person the Accept rule names accepts it.`;
+    },
+  },
+  "practice:triage": {
+    term: "Triage",
+    concept:
+      "Triage is the first look at work filed by people outside the team, before it joins the Backlog. Accept it, mark it a duplicate, or close it as Won't do, so the Backlog holds only work the team means to do.",
+    source: { label: "Linear: triage", url: "https://linear.app/docs/triage" },
+    yours: (f) => {
+      const n = f.practice?.triage;
+      return n === undefined || n === 0 ? "Nothing waits in Triage now." : waitsIn(n, "Triage");
+    },
+  },
+  "practice:sprint_planning": {
+    term: "Sprint planning",
+    concept:
+      "Sprint planning chooses the issues the team commits to for the next sprint, and the goal they serve. Commit to what recent sprints show the team finishes, not to everything that is ready.",
+    source: { label: "The Scrum Guide: Sprint Planning", url: `${SCRUM.url}#sprint-planning` },
+    yours: (f) => {
+      const s = f.sprint;
+      if (s)
+        return `${s.name} has ${s.done} of ${plural(s.total, "issue")} done, with ${plural(s.daysLeft, "day")} left.`;
+      const ready = f.practice?.ready;
+      return ready === undefined
+        ? "No sprint is running."
+        : `No sprint is running; ${plural(ready, "issue")} ${ready === 1 ? "is" : "are"} in To do.`;
+    },
+  },
+  "practice:retrospective": {
+    term: "Retrospective",
+    concept:
+      "A retrospective looks back at how the work went, not at what was built, and picks one or two changes to try next. It works best right after a sprint or a release, while the facts are fresh.",
+    source: {
+      label: "The Scrum Guide: Sprint Retrospective",
+      url: `${SCRUM.url}#sprint-retrospective`,
+    },
+    yours: (f) => {
+      const done = f.practice?.done;
+      if (done === undefined) return "Nothing is Done here yet.";
+      const held = f.practice?.onHold ?? 0;
+      return `${plural(done, "issue")} ${done === 1 ? "is" : "are"} Done here and ${held} ${held === 1 ? "is" : "are"} on hold: what held them up is a place to start.`;
+    },
+  },
+};
+
+interface DecidedEvent {
+  seq: number;
+  cardId?: string;
+  principal?: string;
+  type?: string;
+  payload?: unknown;
+}
+
+/**
+ * This person's last ten reviews (`review/decided`), and of the changes they
+ * requested, how many were accepted at the issue's next review (DB-N13-2).
+ */
+export function reviewHistory(
+  events: readonly DecidedEvent[],
+  me: string,
+): { decided: number; accepted: number; requested: number; cameBackAccepted: number } {
+  const all = [...events]
+    .filter((e) => !e.type || e.type === "review/decided")
+    .sort((a, b) => a.seq - b.seq);
+  const body = (e: DecidedEvent) =>
+    (e.payload ?? {}) as { decision?: string; principal?: string; id?: string };
+  const decision = (e: DecidedEvent) => body(e).decision;
+  // The event's own principal, else the one `review/decided` records in its payload.
+  const who = (e: DecidedEvent) => e.principal ?? body(e).principal;
+  const card = (e: DecidedEvent) => e.cardId ?? body(e).id;
+  const mine = all.filter((e) => who(e) === me).slice(-10);
+  let requested = 0;
+  let cameBackAccepted = 0;
+  for (const e of mine) {
+    if (decision(e) !== "send_back") continue;
+    requested++;
+    const next = all.find((n) => n.seq > e.seq && card(n) === card(e));
+    if (next && decision(next) === "accept") cameBackAccepted++;
+  }
+  return {
+    decided: mine.length,
+    accepted: mine.filter((e) => decision(e) === "accept").length,
+    requested,
+    cameBackAccepted,
+  };
+}
+
+interface BoardCardLike {
+  status: string;
+  priority?: number;
+  acceptanceCriteria?: readonly unknown[];
+  display?: { waitsOn?: readonly unknown[] };
+}
+
+/** The practice lessons' board numbers: open issues' criteria, priorities, blocked work. */
+export function boardPracticeFacts(cards: readonly BoardCardLike[]): PracticeFacts {
+  const open = cards.filter((c) => c.status !== "done" && c.status !== "rejected");
+  const priorities = { urgent: 0, high: 0, medium: 0, low: 0, none: 0 };
+  const key = ["none", "urgent", "high", "medium", "low"] as const;
+  for (const c of open) priorities[key[c.priority ?? 0] ?? "none"]++;
+  return {
+    inReview: cards.filter((c) => c.status === "review").length,
+    criteria: {
+      open: open.length,
+      withCriteria: open.filter((c) => (c.acceptanceCriteria?.length ?? 0) > 0).length,
+    },
+    priorities,
+    blocked: {
+      open: open.length,
+      waiting: open.filter((c) => (c.display?.waitsOn?.length ?? 0) > 0).length,
+    },
+    ready: cards.filter((c) => c.status === "ready").length,
+    done: cards.filter((c) => c.status === "done").length,
+    onHold: cards.filter((c) => c.status === "parked").length,
+  };
+}
+
+/** The practice lessons already offered in this browser (DB-N13-3). */
+export const LESSONS_SEEN_KEY = "sekhemet-lessons-seen";
+
+function seenLessons(storage: StorageLike | undefined): string[] | undefined {
+  try {
+    const raw = storage?.getItem(LESSONS_SEEN_KEY);
+    const v = raw ? JSON.parse(raw) : [];
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether a practice lesson is still to be offered here, as its `?` marked
+ * new. A browser that keeps nothing never marks one new, so none stays new.
+ */
+export function lessonIsNew(storage: StorageLike | undefined, id: string): boolean {
+  const seen = seenLessons(storage);
+  return seen !== undefined && !seen.includes(id);
+}
+
+export function markLessonsSeen(storage: StorageLike | undefined, ids: readonly string[]): void {
+  const seen = seenLessons(storage);
+  if (!seen) return;
+  const next = [...new Set([...seen, ...ids])];
+  try {
+    storage?.setItem(LESSONS_SEEN_KEY, JSON.stringify(next));
+  } catch {}
+}
+
+/** A practice lesson's `?`: the Tip's button, marked new the first time (DB-N13-3). */
+export function practiceTipHtml(
+  on: boolean,
+  id: string,
+  term: string,
+  ctx = "",
+  isNew = false,
+): string {
+  const html = tipButtonHtml(on, id, isNew ? `${term}, new` : term, ctx);
+  return html && isNew ? html.replace("<button ", '<button data-new="true" ') : html;
+}
+
 function releaseLine(f: LearnFacts): string {
   const r = f.release;
   if (!r) return "No release is planned yet.";
@@ -643,7 +924,7 @@ export function columnLessonId(id: string): string {
 /** What a `?` opens: the concept, this project's line and the canonical link (DB-P4-3). */
 export function tipFor(id: string, facts: LearnFacts): TipView {
   if (id === "type") return kindTip(facts.card ?? {});
-  const l = LESSONS[id];
+  const l = LESSONS[id] ?? PRACTICE[id as PracticeLesson];
   if (!l) throw new Error(`No lesson for ${id}`);
   const more: TipView["more"] = [];
   if (id === "checks") {

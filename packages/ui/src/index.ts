@@ -31,6 +31,12 @@ export * from "./team_admin.js";
 export * from "./switcher.js";
 export * from "./readiness.js";
 export * from "./start.js";
+export * from "./sprints.js";
+export * from "./intake.js";
+export * from "./search.js";
+export * from "./issue_actions.js";
+export * from "./notify.js";
+export * from "./releases.js";
 
 /**
  * The dashboard's static ES modules and stylesheets (`packages/ui/web`).
@@ -39,7 +45,7 @@ export * from "./start.js";
 export const UI_WEB_DIR = fileURLToPath(new URL("../web/", import.meta.url));
 
 /**
- * Compiled pure modules the browser imports as-is (`vocabulary.js`, `icons.js`, `pm.js`, `nav.js`, `account.js`, `columns.js`, `tiles.js`, `storymap.js`, `burnup.js`, `create.js`, `reach.js`, `live.js`, `issue.js`, `review_desk.js`, `status.js`, `projects.js`, `seshat.js`, `learn.js`, `strip.js`, `settings.js`, `integrations_view.js`, `machine_tier.js`, `teammates.js`, `inbox.js`, `team_admin.js`, `switcher.js`, `readiness.js`, `start.js`),
+ * Compiled pure modules the browser imports as-is (`vocabulary.js`, `icons.js`, `pm.js`, `nav.js`, `account.js`, `columns.js`, `tiles.js`, `storymap.js`, `burnup.js`, `create.js`, `reach.js`, `live.js`, `issue.js`, `review_desk.js`, `status.js`, `projects.js`, `seshat.js`, `learn.js`, `strip.js`, `settings.js`, `integrations_view.js`, `machine_tier.js`, `teammates.js`, `inbox.js`, `team_admin.js`, `switcher.js`, `readiness.js`, `start.js`, `sprints.js`, `intake.js`, `search.js`, `issue_actions.js`, `notify.js`, `releases.js`),
  * so a label is computed by the same code on the server and in the page.
  */
 export const UI_LIB_DIR = fileURLToPath(new URL("./", import.meta.url));
@@ -73,4 +79,10 @@ export const UI_LIB_MODULES = [
   "switcher.js",
   "readiness.js",
   "start.js",
+  "sprints.js",
+  "intake.js",
+  "search.js",
+  "issue_actions.js",
+  "notify.js",
+  "releases.js",
 ] as const;

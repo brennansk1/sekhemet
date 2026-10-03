@@ -4,6 +4,7 @@ import { loadDetail } from "./data.js";
 import { aiBadge, esc, icon, kbd } from "./dom.js";
 import { failuresHeadline, failuresHtml } from "./failures.js";
 import { gatesStripHtml } from "./gates.js";
+import { issueMoreHtml, openIssueMenu } from "./issue_actions.js";
 import { checksTip } from "./learn.js";
 import { peekFacts } from "./lib/issue.js";
 import { EMPTY_SHA256, gateSummary, outcomeSentence, stopReasonLabel } from "./lib/vocabulary.js";
@@ -118,7 +119,7 @@ async function fill(id) {
   body.push(filesHtml(ev));
   node.querySelector(".body").innerHTML = body.join("");
   node.querySelector("footer").innerHTML =
-    `${triageBarHtml(card, ev, { hint: false }).replace(/^<div class="triage[^"]*"[^>]*>|<\/div>$/g, "")}<span class="hint">${kbd("↵")} open issue</span>`;
+    `${triageBarHtml(card, ev, { hint: false }).replace(/^<div class="triage[^"]*"[^>]*>|<\/div>$/g, "")}${issueMoreHtml(card)}<span class="hint">${kbd("↵")} open issue</span>`;
   current.evidence = ev;
   current.detail = detail;
   current.sig = signature(card) + store.state.connection;
@@ -205,6 +206,15 @@ export function openPeek(id, { returnFocus } = {}) {
       else if (t.closest("[data-accept]")) act("a");
       else if (t.closest("[data-back]")) act("r");
       else if (t.closest("[data-park]")) act("p");
+      // NEW-dashboard-21: Won't do, Reopen and Revert from the peek's `⋯`.
+      else if (t.closest("[data-issue-more]") && current) {
+        const card = store.card(current.id);
+        if (card)
+          void openIssueMenu(t.closest("[data-issue-more]"), card, {
+            detail: current.detail,
+            onDone: () => closePeek(),
+          });
+      }
     });
     current = { id, node, remove, returnFocus };
   } else {

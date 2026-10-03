@@ -1,3 +1,5 @@
+import { aiBadge, esc, icon } from "./dom.js";
+import { editField } from "./fields.js";
 // The issue page's properties rail (dashboard §2.6, NEW-dashboard-19,
 // DB-N19-1, -2; FINDINGS ISS-01): the approved Issue mockup's label/value
 // list — Assignee, Delegate, Reviewers, Reporter, Type, Priority, Points,
@@ -6,14 +8,17 @@
 // edit records the same event and offers the same Undo; a field the viewer's
 // level cannot change is read-only with the level note beside it. 288 px on
 // the right from 1280 px; a *Properties* disclosure under the header below.
-import { aiBadge, esc, icon } from "./dom.js";
-import { editField } from "./fields.js";
+import { practiceTip } from "./learn.js";
 import { noteFor } from "./level_gate.js";
 import { issueProperties } from "./lib/issue.js";
 import { fieldPermission } from "./lib/team_admin.js";
 import { actorLabel } from "./lib/vocabulary.js";
 import { getSession } from "./session.js";
 import { store } from "./store.js";
+
+/** §2.9.5 (NEW-dashboard-13): the rail rows a practice lesson sits beside, with Tips on. */
+const PRACTICE_ROWS = { Priority: "practice:priority", "Blocked by": "practice:blocked" };
+const PRACTICE_TERMS = { Priority: "Priority", "Blocked by": "Blocked work" };
 
 const WIDE = "(min-width: 1280px)";
 
@@ -109,7 +114,7 @@ export function mountProperties(host, ctx) {
     const next = `<dl class="iprops">${rows
       .map(
         (r) =>
-          `<div class="iprop" data-prop-row="${esc(r.label)}"><dt>${esc(r.label)}</dt><dd>${valueHtml(r, card, notes)}</dd></div>`,
+          `<div class="iprop" data-prop-row="${esc(r.label)}"><dt>${esc(r.label)}${PRACTICE_ROWS[r.label] ? practiceTip(PRACTICE_ROWS[r.label], PRACTICE_TERMS[r.label]) : ""}</dt><dd>${valueHtml(r, card, notes)}</dd></div>`,
       )
       .join("")}</dl>`;
     if (next === last) return;

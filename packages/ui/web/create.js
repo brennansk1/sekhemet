@@ -5,6 +5,7 @@
 import { esc, getJSON, icon, postJSON } from "./dom.js";
 import { noteFor } from "./level_gate.js";
 import { NEW_ISSUE_TYPES, QUICK_CREATE_COPY as T, quickCreateRequest } from "./lib/create.js";
+import { TRIAGE_COPY } from "./lib/intake.js";
 import { PRIORITY_LABELS, PRIORITY_ORDER, assigneeLabel } from "./lib/pm.js";
 import { ISSUE_TYPE_LABELS } from "./lib/vocabulary.js";
 import { pushOverlay, trapFocus } from "./overlay.js";
@@ -19,7 +20,7 @@ let open = null;
  * The issue's properties as pills (NEW-dashboard-15, DB-N15-1): the type in
  * DEC-31's words, then priority, sprint and assignee menus and the labels.
  */
-function propsHtml() {
+function propsHtml({ forTriage = false } = {}) {
   const s = store.state;
   const types = NEW_ISSUE_TYPES.map(
     (t, i) =>
@@ -40,8 +41,13 @@ function propsHtml() {
     .join("");
   const sel = (name, label, opts) =>
     `<label class="qc-pill qc-sel"><span>${esc(label)}</span><select name="${name}" aria-label="${esc(label)}">${opts}</select></label>`;
+  // DB-N10-1: a person who files for triage chooses the type and labels; a
+  // Member triages, then sets priority, sprint and assignee.
+  const props = forTriage
+    ? ""
+    : `<div class="qc-props">${sel("priority", T.priority, prio)}${sel("cycleId", T.sprint, `<option value="">${esc(T.noSprint)}</option>${cycles}`)}${sel("assignee", T.assignee, `<option value="">${esc(T.unassigned)}</option>${who}`)}</div>`;
   return `<fieldset class="qc-types"><legend>${esc(T.type)}</legend>${types}</fieldset>
-<div class="qc-props">${sel("priority", T.priority, prio)}${sel("cycleId", T.sprint, `<option value="">${esc(T.noSprint)}</option>${cycles}`)}${sel("assignee", T.assignee, `<option value="">${esc(T.unassigned)}</option>${who}`)}</div>
+${props}
 <label class="qc-f" for="qc-labels">${esc(T.labels)}</label>
 <input id="qc-labels" name="labels" type="text" autocomplete="off" aria-describedby="qc-labels-hint">
 <p class="qc-hint" id="qc-labels-hint">${esc(T.labelsHint)}</p>`;
@@ -107,12 +113,16 @@ export function closeCreate() {
  */
 export function openCreate({ epicId } = {}) {
   if (open) return;
-  // DB-N9-17: below Member the `c` key and the `+` say who can instead (the server refuses too).
-  const note = noteFor("issue.create", store.state.project?.id);
+  // DB-N9-17: a person who may not file is told who can instead (the server refuses too).
+  const projectId = store.state.project?.id;
+  const note = noteFor("issue.file", projectId);
   if (note) {
     toast({ tone: "parked", text: note });
     return;
   }
+  // DB-N10-1: below Member, the same form files the issue for triage
+  // through `issue.file`, with the project lead as its assignee.
+  const forTriage = Boolean(noteFor("issue.create", projectId)) && Boolean(projectId);
   const node = document.createElement("div");
   node.className = "scrim";
   node.innerHTML = `<form class="dialog qc" role="dialog" aria-modal="true" aria-labelledby="qc-h" aria-describedby="qc-note" novalidate>
@@ -122,12 +132,12 @@ export function openCreate({ epicId } = {}) {
 <label class="qc-f" for="qc-desc">${esc(T.description)}</label>
 <textarea id="qc-desc" name="description" rows="4" aria-describedby="qc-hint"></textarea>
 <p class="qc-hint" id="qc-hint">${esc(T.descriptionHint)}</p>
-${propsHtml()}
+${propsHtml({ forTriage })}
 ${reproHtml()}
 <fieldset class="qc-repro qc-form" hidden></fieldset>
 <p class="qc-err" id="qc-err" role="alert"></p>
-<p class="qc-note" id="qc-note">${icon("chat", 12, "ic s12")}<span>${esc(T.note)}</span></p>
-<footer><button class="btn ghost" type="button" data-close>${esc(T.cancel)}</button><button class="btn primary" type="submit">${esc(T.submit)}</button></footer>
+<p class="qc-note" id="qc-note">${icon(forTriage ? "inbox" : "chat", 12, "ic s12")}<span>${esc(forTriage ? TRIAGE_COPY.filedForTriage : T.note)}</span></p>
+<footer><button class="btn ghost" type="button" data-close>${esc(T.cancel)}</button><button class="btn primary" type="submit">${esc(forTriage ? TRIAGE_COPY.fileSubmit : T.submit)}</button></footer>
 </form>`;
   document.getElementById("overlay-root").append(node);
   const form = node.querySelector("form");
@@ -195,10 +205,9 @@ ${reproHtml()}
       title: title.value,
       description,
       type: f.type.value,
-      ...(Number(f.priority.value) ? { priority: Number(f.priority.value) } : {}),
+      ...(!forTriage && Number(f.priority.value) ? { priority: Number(f.priority.value) } : {}),
       labels: f.labels.value.split(","),
-      cycleId: f.cycleId.value,
-      assignee: f.assignee.value,
+      ...(forTriage ? {} : { cycleId: f.cycleId.value, assignee: f.assignee.value }),
       reproduction: active
         ? {}
         : {
@@ -219,13 +228,21 @@ ${reproHtml()}
       return;
     }
     submit.disabled = true;
-    const r = await postJSON("/api/pm/create-card", asked.body);
+    const r = await postJSON(
+      forTriage ? `/api/projects/${encodeURIComponent(projectId)}/cards` : "/api/pm/create-card",
+      asked.body,
+    );
     submit.disabled = false;
     if (!r.ok) {
       err.textContent = r.data?.error ?? `The server returned ${r.status || "no response"}.`;
       return;
     }
     closeCreate();
+    if (forTriage) {
+      toast({ tone: "info", text: TRIAGE_COPY.filed });
+      window.dispatchEvent(new CustomEvent("sekhemet:refresh"));
+      return;
+    }
     // The proposal waits in Seshat's thread for Apply.
     await loadThread();
     togglePmPanel(true);

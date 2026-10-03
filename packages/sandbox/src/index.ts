@@ -15,3 +15,4 @@ export * from "./browser.js";
 export { SRT_VERSION, srtUnavailableReason } from "./srt_engine.js";
 export * from "./network_policy.js";
 export { sandboxCopy } from "./copy.js";
+export * from "./isolation.js";

@@ -293,6 +293,11 @@ export interface CardRunOptions extends Omit<SessionOptions, "cardId"> {
   /** The card's configuration layer as `section.key = value` lines, for the evidence (SUR-40). */
   configOverrides?: string[] | undefined;
   repoRoot: string;
+  /**
+   * The workspace folder, where its ledger, blobs, evidence and transcripts
+   * live (kernel rule 38a); the card's project root otherwise.
+   */
+  stateRoot?: string | undefined;
   syncAdapter: GitSyncAdapter;
   lifecycle?: CardLifecycle | undefined;
   baseBranch?: string | undefined;
@@ -798,7 +803,7 @@ export class CardRunner {
    */
   private writeEvidence(evidence: EvidenceBundle): { path: string; sha256: string } | undefined {
     try {
-      const dir = join(this.options.repoRoot, ".sekhemet", "evidence");
+      const dir = join(this.options.stateRoot ?? this.options.repoRoot, ".sekhemet", "evidence");
       mkdirSync(dir, { recursive: true });
       const body = `${JSON.stringify(evidence, null, 2)}\n`;
       writeFileSync(join(dir, `${evidence.id}.json`), body, "utf8");
@@ -823,7 +828,7 @@ export class CardRunner {
    */
   private writeTranscript(cardId: string, turns: TurnResult[]): void {
     try {
-      const dir = join(this.options.repoRoot, ".sekhemet", "transcripts");
+      const dir = join(this.options.stateRoot ?? this.options.repoRoot, ".sekhemet", "transcripts");
       mkdirSync(dir, { recursive: true });
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const lines = turns.map((t) =>
@@ -858,7 +863,7 @@ export class CardRunner {
    * request: nothing reaches a model that the log cannot reconstruct.
    */
   private logPrompt(record: PromptRecord): string {
-    const blobs = new BlobStore(this.options.repoRoot);
+    const blobs = new BlobStore(this.options.stateRoot ?? this.options.repoRoot);
     // The exact definitions sent, stored once per distinct set (kernel rule 17).
     const toolSchemas = record.toolDefinitions
       ? blobs.put(JSON.stringify(record.toolDefinitions))

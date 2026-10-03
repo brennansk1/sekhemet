@@ -22,7 +22,13 @@ export type PmProposalKind =
   | "park"
   | "unpark"
   /** Plan a project through the one planner (PM-P1-1): `patch.brief` is the person's words. */
-  | "start_project";
+  | "start_project"
+  /**
+   * Complete the active sprint (planner-pm PM-N13-5): `patch {cycleId, carryTo:
+   * next | new | backlog}`. Seshat only proposes it; applying it runs Complete
+   * sprint with the applying person as actor (DEC-36).
+   */
+  | "close_cycle";
 
 export type PmProposalState = "open" | "applied" | "discarded" | "stale";
 
@@ -151,6 +157,13 @@ export interface PmMessage {
   principal?: string;
   /** For a reply: the senior-PM skill's version it was written under (PM-P6-4). */
   skillVersion?: string;
+  /**
+   * For a reply Seshat could not give (PM-01): why, as a cause the page links
+   * (`no_model` to Configuration › Models), and the messages it answered, so
+   * Retry sends the same text and context again.
+   */
+  cause?: "no_model" | "timeout" | "other";
+  replyTo?: string[];
 }
 
 export type PmPhase = "idle" | "waiting_for_step" | "loading_pm" | "thinking" | "resuming_worker";
@@ -172,6 +185,11 @@ export interface Cycle {
   endsOn: string;
   goal?: string;
   state: "planned" | "active" | "closed";
+  /**
+   * The project the sprint is in (DEC-57: one active sprint per project).
+   * A sprint from before many projects has none and spans the workspace.
+   */
+  projectId?: string;
 }
 
 /** Ledger event types the PM backend writes. */
@@ -182,6 +200,10 @@ export const PM_EVENTS = {
   proposalState: "pm/proposal_state",
   cycleCreated: "cycle/created",
   cycleUpdated: "cycle/updated",
+  /** A person started a sprint: the issues committed then (planner-pm PM-N13-1). */
+  cycleStarted: "cycle/started",
+  /** A person completed a sprint: the done issues and each carried one's destination (PM-N13-2). */
+  cycleCompleted: "cycle/completed",
   notify: "pm/notify",
   /** A notice past the day's budget, held for the next standup (INT-20a). */
   noticeHeld: "pm/notice_held",

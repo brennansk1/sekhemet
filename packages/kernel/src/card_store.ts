@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
+import { sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { assigneeTarget } from "./assignee.js";
 import { RequirementCandidateLedger } from "./candidates.js";
@@ -80,13 +81,30 @@ import {
  */
 export const MAX_CARD_DEPTH = 2;
 
+/** A folder's real path, or the path as given when it does not exist (tests, a moved repo). */
+function realPathOrSelf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
 /** Projects that may be active at once (B13, design: workspace cap, default 3). */
 export const DEFAULT_ACTIVE_PROJECT_CAP = 3;
 
 /** A structural rule the store refuses to break (hierarchy, dependency cycle, project cap). */
 export class CardStructureError extends Error {
   constructor(
-    public readonly code: "hierarchy_depth" | "dependency_cycle" | "unknown_card" | "project_cap",
+    public readonly code:
+      | "hierarchy_depth"
+      | "dependency_cycle"
+      | "unknown_card"
+      | "project_cap"
+      // kernel rule 38a, K-N12-3: a card in a workspace of several projects names one.
+      | "project_required"
+      // K-N12-6, TEAM-60: a project's root never lies inside another's or contains one.
+      | "project_nested",
     message: string,
     public readonly path?: string[],
   ) {
@@ -489,6 +507,12 @@ export class CardStore {
   public readonly documents: ProjectDocumentLedger;
   /** Active projects allowed at once (B13). */
   public activeProjectCap = DEFAULT_ACTIVE_PROJECT_CAP;
+  /**
+   * The workspace folder, the folder whose `.sekhemet/events.db` this ledger
+   * is (kernel rule 38a). A card recorded with no project is read as the
+   * project rooted here, else the first project (K-N12-3). Unset, the first.
+   */
+  public workspaceFolder: string | undefined;
 
   constructor(
     private db: DatabaseSync,
@@ -514,6 +538,58 @@ export class CardStore {
       )
       .get() as { id?: string } | undefined;
     return row?.id ?? null;
+  }
+
+  /** How many projects the workspace holds, archived ones included. */
+  private projectCount(): number {
+    return Number(
+      (this.db.prepare("SELECT COUNT(*) AS n FROM projects").get() as { n: number | bigint }).n,
+    );
+  }
+
+  /** The recorded project of a parent card, for a subtask created without one. */
+  private parentProjectId(parentId: string): string | undefined {
+    const row = this.db.prepare("SELECT project_id FROM cards WHERE id = ?").get(parentId) as
+      | { project_id: string | null }
+      | undefined;
+    return row?.project_id ?? undefined;
+  }
+
+  /**
+   * K-N12-3: the project a card recorded with no project is read as — the
+   * project rooted at the workspace folder, else the workspace's first — by
+   * the read, never by a rewrite. Null while the workspace has no project.
+   */
+  private unrecordedProjectId(): string | null {
+    if (this.workspaceFolder) {
+      const folder = realPathOrSelf(this.workspaceFolder);
+      const own = this.db
+        .prepare("SELECT id FROM projects WHERE root_path IN (?, ?) LIMIT 1")
+        .get(folder, this.workspaceFolder) as { id?: string } | undefined;
+      if (own?.id) return own.id;
+    }
+    const first = this.db
+      .prepare("SELECT id FROM projects ORDER BY created_at ASC, rowid ASC LIMIT 1")
+      .get() as { id?: string } | undefined;
+    return first?.id ?? null;
+  }
+
+  /** K-N12-3: a row's recorded project, else the one a card with none is read as. */
+  private projectOfRow(recorded: string | null): { projectId?: string } {
+    const id = recorded ?? this.unrecordedProjectId();
+    return id !== null ? { projectId: id } : {};
+  }
+
+  /** The project whose root lies inside `root` or contains it, other than `except`. */
+  private nestingProject(root: string, except?: string): ProjectRecord | undefined {
+    const inside = (child: string, parent: string): boolean =>
+      child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+    return this.listProjects().find(
+      (p) =>
+        p.id !== except &&
+        p.rootPath !== root &&
+        (inside(root, p.rootPath) || inside(p.rootPath, root)),
+    );
   }
 
   /** Nesting depth of a card: 1 for a top-level card, 2 for a subtask. */
@@ -602,7 +678,7 @@ export class CardStore {
       ...(row.cycle_id !== null ? { cycleId: row.cycle_id } : {}),
       ...(this.assigneeOf(row) ? { assignee: this.assigneeOf(row) as string } : {}),
       ...(row.due_date !== null ? { dueDate: row.due_date } : {}),
-      ...(row.project_id !== null ? { projectId: row.project_id } : {}),
+      ...this.projectOfRow(row.project_id),
       kind: row.kind as CardKind,
       change: row.change as CardChange,
       ...(row.split !== null ? { split: row.split as CardSplit } : {}),
@@ -702,6 +778,16 @@ export class CardStore {
       );
     }
 
+    // K-N12-3: once the workspace holds more than one project, a card names
+    // its own; refused before anything reaches the ledger. A subtask takes its
+    // parent's project.
+    if (!input.projectId && !input.parentId && this.projectCount() > 1) {
+      throw new CardStructureError(
+        "project_required",
+        `Cannot create ${id}: this workspace holds ${this.projectCount()} projects, so an issue names the project it belongs to.`,
+      );
+    }
+
     // K13: refused before anything reaches the append-only ledger.
     if (input.parentId) {
       if (!(await this.getCard(input.parentId))) {
@@ -765,7 +851,10 @@ export class CardStore {
       epicId: input.epicId ?? null,
       cycleId: input.cycleId ?? null,
       dueDate: input.dueDate ?? null,
-      projectId: input.projectId ?? this.defaultProjectId(),
+      projectId:
+        input.projectId ??
+        (input.parentId ? this.parentProjectId(input.parentId) : undefined) ??
+        this.defaultProjectId(),
       // K-N9-1, K-N9-3: resolved here, once; replay reads them as recorded.
       kind: input.kind ?? deriveCardKind(input),
       change: input.change ?? "feature",
@@ -1902,19 +1991,26 @@ export class CardStore {
     name: string;
     gitBranch?: string;
     reviewMinutesPerDay?: number;
+    /** TEAM-54, TEAM-56: a new folder made by New project, or an adopted repository. */
+    via?: "new_folder" | "adopted";
+    /** The person who approved the project, recorded as the event's principal. */
+    principal?: string;
   }): Promise<ProjectRecord> {
     // One project per folder: /tmp and /private/tmp are the same place on
     // macOS, and the dashboard once listed a project twice because of it.
-    let rootPath = input.rootPath;
-    try {
-      rootPath = realpathSync(input.rootPath);
-    } catch {
-      // A path that does not exist (tests, a moved repo) is kept as given.
-    }
+    const rootPath = realPathOrSelf(input.rootPath);
     const existing = this.db
       .prepare("SELECT * FROM projects WHERE root_path IN (?, ?)")
       .get(rootPath, input.rootPath) as Record<string, unknown> | undefined;
     if (existing) return this.mapProjectRow(existing);
+    // K-N12-6, TEAM-60: roots never nest; refused before appending.
+    const nest = this.nestingProject(rootPath);
+    if (nest) {
+      throw new CardStructureError(
+        "project_nested",
+        `${rootPath} ${rootPath.startsWith(nest.rootPath) ? "lies inside" : "contains"} the root of the project ${nest.name} (${nest.rootPath}); a project's folder never lies inside another project's folder or contains one.`,
+      );
+    }
     const now = new Date().toISOString();
     const active = this.listProjects().filter((p) => p.status === "active").length;
     const payload = {
@@ -1924,11 +2020,17 @@ export class CardStore {
       gitBranch: input.gitBranch ?? "main",
       status: (active < this.activeProjectCap ? "active" : "paused") as ProjectStatus,
       reviewMinutesPerDay: input.reviewMinutesPerDay ?? 60,
+      ...(input.via ? { via: input.via } : {}),
       createdAt: now,
       updatedAt: now,
     };
     await this.eventLog.append(
-      { actor: "system", type: "project/created", payload },
+      {
+        actor: input.principal ? "human" : "system",
+        type: "project/created",
+        payload,
+        ...(input.principal ? { principal: input.principal } : {}),
+      },
       { project: () => this.projectProjectCreated(payload) },
     );
     return this.getProject(payload.id) as ProjectRecord;
@@ -1964,6 +2066,50 @@ export class CardStore {
     const payload = { id, status, updatedAt: new Date().toISOString() };
     await this.eventLog.append(
       { actor, type: "project/updated", payload },
+      { project: () => this.projectProjectUpdated(payload) },
+    );
+    return this.getProject(id) as ProjectRecord;
+  }
+
+  /**
+   * K-N12-7: a person moved a project's repository. `check` is the caller's
+   * test that the new folder holds the same repository (every merge the ledger
+   * records for the project's accepted cards), returning the reason it fails;
+   * the root must not nest (K-N12-6). Records `project/updated {id, rootPath}`
+   * with the person's principal, or refuses and records nothing.
+   */
+  public async moveProject(
+    id: string,
+    newRoot: string,
+    options: {
+      principal: string;
+      check: (root: string, project: ProjectRecord) => string | undefined;
+    },
+  ): Promise<ProjectRecord> {
+    const project = this.getProject(id);
+    if (!project) throw new CardStructureError("unknown_card", `Project not found: ${id}`);
+    if (!options.principal?.trim()) {
+      throw new Error(
+        `A project's folder moves only by a person's recorded move (kernel rule 38a); no person named for ${project.name}.`,
+      );
+    }
+    const rootPath = realPathOrSelf(newRoot);
+    const nest = this.nestingProject(rootPath, id);
+    if (nest) {
+      throw new CardStructureError(
+        "project_nested",
+        `${rootPath} ${rootPath.startsWith(nest.rootPath) ? "lies inside" : "contains"} the root of the project ${nest.name} (${nest.rootPath}); a project's folder never lies inside another project's folder or contains one.`,
+      );
+    }
+    const clash = this.listProjects().find((p) => p.id !== id && p.rootPath === rootPath);
+    if (clash) {
+      throw new Error(`${rootPath} is already the folder of the project ${clash.name}.`);
+    }
+    const reason = options.check(rootPath, project);
+    if (reason) throw new Error(`${project.name} was not moved: ${reason}`);
+    const payload = { id, rootPath, updatedAt: new Date().toISOString() };
+    await this.eventLog.append(
+      { actor: "human", type: "project/updated", payload, principal: options.principal },
       { project: () => this.projectProjectUpdated(payload) },
     );
     return this.getProject(id) as ProjectRecord;
@@ -2091,10 +2237,23 @@ export class CardStore {
       );
   }
 
-  private projectProjectUpdated(p: { id: string; status: ProjectStatus; updatedAt: string }): void {
-    this.db
-      .prepare("UPDATE projects SET status = ?, updated_at = ? WHERE id = ?")
-      .run(p.status, p.updatedAt, p.id);
+  private projectProjectUpdated(p: {
+    id: string;
+    status?: ProjectStatus;
+    rootPath?: string;
+    updatedAt: string;
+  }): void {
+    if (p.status !== undefined) {
+      this.db
+        .prepare("UPDATE projects SET status = ?, updated_at = ? WHERE id = ?")
+        .run(p.status, p.updatedAt, p.id);
+    }
+    // K-N12-7: a recorded move changes the root.
+    if (p.rootPath !== undefined) {
+      this.db
+        .prepare("UPDATE projects SET root_path = ?, updated_at = ? WHERE id = ?")
+        .run(p.rootPath, p.updatedAt, p.id);
+    }
   }
 
   public async recordCheckpoint(cp: CheckpointRecord): Promise<void> {
@@ -2328,7 +2487,12 @@ export class CardStore {
         return true;
       case "project/updated":
         this.projectProjectUpdated(
-          event.payload as { id: string; status: ProjectStatus; updatedAt: string },
+          event.payload as {
+            id: string;
+            status?: ProjectStatus;
+            rootPath?: string;
+            updatedAt: string;
+          },
         );
         return true;
       default:

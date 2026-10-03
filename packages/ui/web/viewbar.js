@@ -2,9 +2,10 @@
 // saved views, filter chips over a GitHub-style query, grouping, and the
 // active sprint's progress (a sprint is the internal *cycle*, DEC-31). One
 // filter object, shared by board and list.
-import { esc, icon, kbd, tip } from "./dom.js";
+import { esc, getJSON, icon, kbd, tip } from "./dom.js";
 import { tip as learnTip } from "./learn.js";
 import { cycleHeaderShown } from "./lib/burnup.js";
+import { TRIAGE_COPY, triageModel } from "./lib/intake.js";
 import {
   PRIORITY_LABELS,
   PRIORITY_NAMES,
@@ -22,12 +23,15 @@ import {
   sprintHeaderText,
   termValues,
 } from "./lib/pm.js";
+import { searchWords } from "./lib/search.js";
+import { SPRINT_COPY, headerSprint, sprintLifecycle, sprintStateLabel } from "./lib/sprints.js";
 import { BOARD_COLUMN_ORDER, ISSUE_TYPE_LABELS, columnLabel } from "./lib/vocabulary.js";
 import { prioMark } from "./marks.js";
 import { openMenu } from "./overlay.js";
 import { openPicker, openPrompt } from "./picker.js";
 import { askMerit } from "./pm_panel.js";
 import { getSession } from "./session.js";
+import { sprintAction } from "./sprints.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
 
@@ -40,6 +44,8 @@ export const BUILTIN_VIEWS = [
   { id: "needs", name: "Needs you", query: "is:needs-you" },
   { id: "hot", name: "Urgent and high", query: "priority:urgent,high is:open" },
   { id: "unest", name: "Unestimated", query: "is:unestimated is:open" },
+  // DB-N10-2: the untriaged issues, with their four decisions (Team only).
+  { id: "triage", name: TRIAGE_COPY.view, query: "is:untriaged", route: "#/board/triage" },
 ];
 
 const GROUPS = [
@@ -107,10 +113,13 @@ export function savedViews() {
 }
 
 export function allViews() {
-  // *Unestimated* only when the team estimates (DB-N7-2).
-  const builtin = showsPoints(store.state.estimation)
-    ? BUILTIN_VIEWS
-    : BUILTIN_VIEWS.filter((v) => v.id !== "unest");
+  // *Unestimated* only when the team estimates (DB-N7-2); *Triage* only in
+  // the Team setup, where people below Member file issues (DB-N10-4).
+  const points = showsPoints(store.state.estimation);
+  const team = getSession().mode === "team";
+  const builtin = BUILTIN_VIEWS.filter(
+    (v) => (v.id !== "unest" || points) && (v.id !== "triage" || team),
+  );
   return [...builtin, ...savedViews()];
 }
 
@@ -125,19 +134,47 @@ export function effectiveFilter() {
   return { terms: vb.filter.terms, text };
 }
 
+/**
+ * DB-N12-1: the issues the server's full-text search found for the free
+ * words — description, acceptance criteria and comments as well as the
+ * title — read once per text, on this board's project.
+ */
+const textSearch = { text: "", project: "", ids: null, timer: 0 };
+
+function requestTextHits(text) {
+  const project = store.state.project?.id ?? "";
+  if (text === textSearch.text && project === textSearch.project) return;
+  textSearch.text = text;
+  textSearch.project = project;
+  textSearch.ids = null;
+  clearTimeout(textSearch.timer);
+  if (searchWords(text).length === 0) return;
+  textSearch.timer = setTimeout(async () => {
+    const q = new URLSearchParams({ q: text, limit: "500", ...(project ? { project } : {}) });
+    const r = await getJSON(`/api/search?${q}`).catch(() => ({ ok: false }));
+    if (!r.ok || textSearch.text !== text || textSearch.project !== project) return;
+    textSearch.ids = new Set((r.data?.hits ?? []).map((h) => h.id));
+    for (const fn of listeners) fn({ typing: true });
+  }, 150);
+}
+
 export function matchContext() {
   // DB-N5-5: `owner:@me` is the signed-in person (the install's person on Solo).
   const me = getSession().principal;
+  const text = effectiveFilter().text;
+  const hits = text && textSearch.text === text ? textSearch.ids : null;
   return {
     ...(me ? { me } : {}),
     cycles: store.state.cycles,
     epics: store.state.epics,
     statusLabel: columnLabel,
+    ...(hits ? { textHits: hits } : {}),
   };
 }
 
 export function filterCards(cards) {
   const f = effectiveFilter();
+  requestTextHits(f.text);
   if (isFilterEmpty(f)) return cards;
   const ctx = matchContext();
   return cards.filter((c) => matchCard(c, f, ctx));
@@ -162,13 +199,17 @@ export function cycleGroup() {
   toast({ text: `Grouped by ${GROUPS.find((g) => g.id === vb.group).label.toLowerCase()}` });
 }
 
-export function applyView(id) {
+export function applyView(id, { navigate = true } = {}) {
   const v = allViews().find((x) => x.id === id) ?? BUILTIN_VIEWS[0];
   vb.viewId = v.id;
   vb.filter = parseQuery(v.query);
   if (v.group) vb.group = v.group;
   vb.draft = "";
   changed();
+  // A view with a page of its own (Triage) opens it; any other leaves it for the board.
+  if (!navigate) return;
+  if (v.route) location.hash = v.route;
+  else if (location.hash.startsWith("#/board/triage")) location.hash = "#/board";
 }
 
 /** A short phrase for Seshat's context chip: `Current cycle · 2 filters`. */
@@ -342,23 +383,53 @@ export function viewBarHtml(layout) {
 <div class="lseg" role="tablist" aria-label="Layout"><a role="tab" href="#/board" aria-selected="${layout === "board"}" title="Board (v)">${icon("board", 14, "ic s14")}<span>Board</span></a><a role="tab" href="#/board/list" aria-selected="${layout === "list"}" title="List (v)">${icon("list", 14, "ic s14")}<span>List</span></a><a role="tab" href="#/board/map" aria-selected="${layout === "map"}" ${tip("Story map: epics across, releases beneath")}>${icon("layers", 14, "ic s14")}<span>Story map</span></a></div>
 <button class="vsel" type="button" data-view-menu aria-haspopup="dialog"><span class="sec">View:</span> <b>${esc(v.name)}</b>${icon("chevron-down", 12, "ic s12")}</button>
 <div class="chips">${chips}<button class="filter" type="button" data-add-filter aria-haspopup="menu">${icon("filter", 12, "ic s12")}Filter</button></div>
-<label class="q">${icon("search", 12, "ic s12")}<input type="text" data-q value="${esc([vb.filter.text, vb.draft].filter(Boolean).join(" "))}" placeholder="Filter by title, or type label:api" aria-label="Filter issues. Accepts priority:, label:, epic:, sprint:, owner:, delegate:, type:, is:" spellcheck="false">${kbd("/")}</label>
+<label class="q">${icon("search", 12, "ic s12")}<input type="text" data-q value="${esc([vb.filter.text, vb.draft].filter(Boolean).join(" "))}" placeholder="Search issues, or type label:api" aria-label="Filter issues. Free words search titles, descriptions, criteria and comments; accepts priority:, label:, epic:, sprint:, assignee:, delegate:, type:, is:" spellcheck="false">${kbd("/")}</label>
 <div class="vr"><button class="vsel" type="button" data-group-menu title="Group into swimlanes (⇧S)" aria-description="Group into swimlanes" aria-keyshortcuts="Shift+S">${icon("layers", 12, "ic s12")}<span class="sec">Group:</span> <b>${esc(group.label)}</b></button>${save}</div>
 </div>`;
 }
 
 /* ---------- Sprint header ---------- */
 
+/**
+ * The sprint the header shows: the one in force unless the filter points
+ * elsewhere (DB-P3-14), or the one sprint the filter names in any state, so
+ * a planned sprint offers Start and a completed one its report (DB-N11-1, -3).
+ */
+function shownSprint() {
+  const cycles = store.state.cycles;
+  const named = termValues(vb.filter, "cycle");
+  if (cycleHeaderShown(cycles, vb.filter, Date.now()) && named.length === 0)
+    return activeCycle(cycles);
+  return headerSprint(cycles, named, Date.now());
+}
+
 export function showsCycle() {
-  // Shown whenever a sprint is in force, unless the filter points elsewhere
-  // (another sprint, or sprint:none): the pure rule, DB-P3-14.
-  return cycleHeaderShown(store.state.cycles, vb.filter, Date.now());
+  return Boolean(shownSprint());
+}
+
+/** The header's sprint actions (DB-N11-1..3): Start, Complete, Sprint report. */
+function sprintButtons(cycle) {
+  const v = sprintLifecycle(cycle, store.state.cycles, store.state.cards);
+  const label = {
+    start: SPRINT_COPY.start,
+    complete: SPRINT_COPY.complete,
+    report: SPRINT_COPY.report,
+  };
+  return v.actions
+    .map((a) => {
+      const title =
+        a === "start" && v.blockedBy
+          ? ` title="${esc(`${v.blockedBy} is active. Complete it first.`)}"`
+          : "";
+      return `<button class="btn sm${a === "complete" ? " primary" : ""}" type="button" data-sprint-action="${a}"${title}>${esc(label[a])}</button>`;
+    })
+    .join("");
 }
 
 export function cycleHeaderHtml() {
-  if (!showsCycle()) return "";
+  const cycle = shownSprint();
+  if (!cycle) return "";
   const s = store.state;
-  const cycle = activeCycle(s.cycles);
   // Issues, or story points with Preferences → Estimation on (DB-N7-2).
   const p = cycleProgress(cycle, s.cards, s.now, s.estimation);
   const words = sprintHeaderText(p, s.estimation);
@@ -369,10 +440,10 @@ export function cycleHeaderHtml() {
   const leftTitle = words.pace;
   const unest = words.unestimated;
   return `<section class="cyc" aria-label="${esc(`${cycle.name} progress`)}">
-<div class="cyc-a"><b>${esc(cycle.name)}</b>${learnTip("sprint", "Sprint", { sprint: { name: cycle.name, done: pts.done, total: pts.total, daysLeft: p.daysLeft } })}${cycle.goal ? `<span class="goal">${esc(cycle.goal)}</span>` : ""}<span class="dates tnum">${esc(formatShortDate(cycle.startsOn))} – ${esc(formatShortDate(cycle.endsOn))} · <span class="${p.atRisk ? "risk" : ""}" title="${esc(leftTitle)}">${esc(left)}</span></span></div>
+<div class="cyc-a"><b>${esc(cycle.name)}</b>${cycle.state === "active" ? "" : `<span class="cyc-state">${esc(sprintStateLabel(cycle.state))}</span>`}${learnTip("sprint", "Sprint", { sprint: { name: cycle.name, done: pts.done, total: pts.total, daysLeft: p.daysLeft } })}${cycle.goal ? `<span class="goal">${esc(cycle.goal)}</span>` : ""}<span class="dates tnum">${esc(formatShortDate(cycle.startsOn))} – ${esc(formatShortDate(cycle.endsOn))} · <span class="${p.atRisk ? "risk" : ""}" title="${esc(leftTitle)}">${esc(left)}</span></span></div>
 <div class="cyc-b"><div class="cbar" role="img" aria-label="${esc(words.aria)}"><i class="d" style="width:${pct(pts.done)}"></i><i class="s" style="width:${pct(pts.started)}"></i><span class="pace" style="left:${(p.elapsedRatio * 100).toFixed(1)}%" title="${esc(`Where a straight line would be today. ${leftTitle}`)}"></span></div>
 <span class="cnums tnum"><b>${esc(words.done)}</b> · ${pts.started} in progress · ${pts.notStarted} not started${esc(unest)}</span>
-<button class="btn sm" type="button" data-plan-cycle>${icon("chat", 12, "ic s12")}Plan next sprint with Seshat</button></div>
+<span class="cyc-acts">${sprintButtons(cycle)}<button class="btn sm" type="button" data-plan-cycle>${icon("chat", 12, "ic s12")}Plan next sprint with Seshat</button></span></div>
 </section>`;
 }
 
@@ -475,7 +546,10 @@ export function bindViewBar(host) {
           ...allViews().map((v) => ({
             value: v.id,
             label: v.name,
-            detail: v.query || "Everything on the board",
+            detail:
+              v.id === "triage"
+                ? `${triageModel({ cards: store.state.cards, setup: getSession().mode }).count} waiting · ${v.query}`
+                : v.query || "Everything on the board",
             checked: v.id === vb.viewId,
           })),
           ...(saved.some((v) => v.id === vb.viewId)
@@ -530,6 +604,12 @@ export function bindViewBar(host) {
     }
     if (t.closest("[data-plan-cycle]")) {
       askMerit("Plan the next sprint");
+      return;
+    }
+    const act = t.closest("[data-sprint-action]");
+    if (act) {
+      const cycle = shownSprint();
+      if (cycle) sprintAction(act.dataset.sprintAction, cycle);
     }
   });
 }

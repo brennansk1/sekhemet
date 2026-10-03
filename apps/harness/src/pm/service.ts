@@ -19,6 +19,7 @@ import {
   answer,
   condenseNotes,
   documentsFitWhole,
+  isStatusShaped,
   ledgerStandup,
   readDocumentInParts,
   seshatThreadId,
@@ -28,6 +29,7 @@ import {
 import { type Audience, nameFor, soloAudience } from "./audience.js";
 import { capabilityReport, capabilitySummary } from "./capability.js";
 import { namedDecisions } from "./decisions.js";
+import { failureDetail, seshatFailure } from "./failure.js";
 import { guardProposals, judgementAnswer, judgementQuestion } from "./judgement.js";
 import {
   briefText,
@@ -320,13 +322,15 @@ async function chatStandup(
   scope: SnapshotScope,
   replyTo: string[],
   to: { to?: string },
+  /** A sentence before the standup (PM-02: why it comes from the log). */
+  lead?: string,
 ): Promise<void> {
   const person = scope.asker ?? deps.cardStore.localPrincipal();
   const snapshot = await standupSnapshot(deps, scope, person);
   const ids = snapshot.standup ? standupCardIds(snapshot.standup) : [];
   await deps.pmStore.appendReply({
     replyTo,
-    text: ledgerStandup(snapshot),
+    text: lead ? `${lead}\n\n${ledgerStandup(snapshot)}` : ledgerStandup(snapshot),
     ...(ids.length ? { cites: ids.map((cardId) => ({ cardId })) } : {}),
     model: "ledger",
     ...to,
@@ -938,10 +942,31 @@ async function answerFor(
       });
     }
   } catch (err) {
+    // PM-01: a plain sentence and its cause in the conversation; the
+    // exception's own text (paths, addresses, variables) to the server's log.
+    const failure = seshatFailure(err);
+    console.error(`Seshat could not reply (${failure.cause}): ${failureDetail(err)}`);
+    // PM-02: with no model, "How is it going?" is answered as /status is.
+    const statusShaped =
+      failure.cause === "no_model"
+        ? queued.filter((m) => !isDocument(m) && isStatusShaped(m.text))
+        : [];
+    if (statusShaped.length) {
+      await chatStandup(
+        deps,
+        scope,
+        statusShaped.map((m) => m.id),
+        to,
+        "No model is answering for Seshat right now, so this is the standup from the Activity log.",
+      );
+    }
+    const unanswered = queued.filter((m) => !statusShaped.includes(m));
+    if (unanswered.length === 0) return true;
     await deps.pmStore.appendReply({
-      replyTo: queued.map((m) => m.id),
-      text: `I could not answer: ${err instanceof Error ? err.message : String(err)}. Your message is kept; send it again once the model is available.`,
+      replyTo: unanswered.map((m) => m.id),
+      text: failure.text,
       error: true,
+      cause: failure.cause,
       model: deps.pmModel,
       ...to,
     });
