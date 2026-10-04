@@ -21,9 +21,35 @@ import { RESEARCH_HOSTS, UNLISTED_YES_HOSTS } from "../src/research_consent.js";
  * requests to the public hosts are redirected to it, and nothing leaves.
  */
 
+/**
+ * The product's research fetch sends through `policyFetch` (node:http, not
+ * the global fetch), so a stubbed global fetch never saw it and the survey
+ * asked the real npm registry: its result, and this file's verdict, followed
+ * the public internet. While `net.to` is set, each request the policy allows
+ * is sent, still through the real `policyFetch`, to the local server under
+ * its host's name; a refused one goes to the real `policyFetch` as it is, to
+ * be refused and recorded there.
+ */
+const net = vi.hoisted(() => ({
+  to: undefined as string | undefined,
+  seen: [] as string[],
+}));
+vi.mock("@sekhemet/sandbox", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@sekhemet/sandbox")>();
+  const policyFetch: typeof real.policyFetch = (policy, options) => {
+    const send = real.policyFetch(policy, options);
+    return (input, init) => {
+      const u = new URL(String(input));
+      if (net.to === undefined) return send(input, init);
+      net.seen.push(u.hostname);
+      if (real.policyRefusal(policy, u.hostname, options)) return send(input, init);
+      return send(`${net.to}/${u.hostname}${u.pathname}${u.search}`, init);
+    };
+  };
+  return { ...real, policyFetch };
+});
+
 const NOW = new Date("2026-09-27T00:00:00Z");
-/** The real fetch, for a stub that sends the registries to the local server. */
-const realFetch = globalThis.fetch;
 
 let server: Server;
 let base: string;
@@ -238,24 +264,23 @@ describe("deps.dev feeds the survey's floors (DEC-44)", () => {
     writeUser(
       `[network]\nresearch = "yes"\nresearch_hosts = ${listed(RESEARCH_HOSTS.filter((h) => h !== "api.deps.dev"))}\n`,
     );
-    // No fetch handed in: the survey uses researchFetch, whose global fetch
-    // answers the registries from the local server and must never see deps.dev.
-    const seen: string[] = [];
-    vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
-      const u = new URL(String(input));
-      seen.push(u.hostname);
-      if (u.hostname === "api.deps.dev") throw new Error("deps.dev reached");
-      const res = await realFetch(`${base}/${u.hostname}${u.pathname}${u.search}`, init);
-      return res;
-    });
+    // No fetch handed in: the survey uses researchFetch, whose requests the
+    // local server answers (net.to) and which must never send to deps.dev.
+    net.seen.length = 0;
+    net.to = base;
+    const seen = net.seen;
     try {
       const deps = await planResearch({ repoPath: repo, log, newProject: false, print });
       const [f] = await reuseSurvey(["sends email over smtp"], deps as never, { now: NOW });
+      // The registries were asked, here and nowhere else: the survey's result
+      // depends on no public host (the gate failed when npm answered otherwise).
+      expect(seen).toContain("registry.npmjs.org");
+      expect(hits.some((h) => h.startsWith("/registry.npmjs.org/"))).toBe(true);
       expect(seen).not.toContain("api.deps.dev");
       expect(f?.depsDevNotChecked).toMatch(/^api\.deps\.dev awaits a yes/);
       expect(f?.libraries.length).toBeGreaterThan(0);
     } finally {
-      vi.unstubAllGlobals();
+      net.to = undefined;
     }
   });
 

@@ -197,6 +197,8 @@ describe("a remedy or refusal names only tools its arm offers (review item 3)", 
     Object.entries(copy).map(([key, v]) => {
       if (typeof v !== "function") return [key, String(v)] as const;
       const f = v as (...a: unknown[]) => string;
+      const own = SAMPLE_FOR[key];
+      if (own) return [key, f(...own)] as const;
       try {
         return [key, f(...SAMPLE.slice(0, Math.max(f.length, 1)))] as const;
       } catch {
@@ -205,6 +207,13 @@ describe("a remedy or refusal names only tools its arm offers (review item 3)", 
     });
   /** Replies only tool_search gives: they exist only where it is offered. */
   const TOOL_SEARCH_REPLIES = new Set(["toolSearchSymbols", "symbolNotDeclared", "readSymbolCall"]);
+  /** Replies only browse gives; browseOwnPorts only where start_process is offered too. */
+  const BROWSE_REPLIES = new Set(["browseOwnPorts", "browsePublicOnly", "browseWebOnly"]);
+  /** Copy whose arguments the generic samples cannot fill. */
+  const SAMPLE_FOR: Record<string, unknown[]> = {
+    browseOwnPorts: [4321, [3000]],
+    browsePublicOnly: [4321],
+  };
 
   const arms = WRITING.flatMap((cls) =>
     [false, true].flatMap((scriptCapable) =>
@@ -220,7 +229,11 @@ describe("a remedy or refusal names only tools its arm offers (review item 3)", 
       const texts = [
         ...render(gateCopy),
         ...render(workerCopy).filter(
-          ([key]) => offered.includes("tool_search") || !TOOL_SEARCH_REPLIES.has(key),
+          ([key]) =>
+            (offered.includes("tool_search") || !TOOL_SEARCH_REPLIES.has(key)) &&
+            (offered.includes("browse") || !BROWSE_REPLIES.has(key)) &&
+            (key !== "browseOwnPorts" || offered.includes("start_process")) &&
+            (key !== "browsePublicOnly" || !offered.includes("start_process")),
         ),
       ];
       for (const [key, text] of texts) {

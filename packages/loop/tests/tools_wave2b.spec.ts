@@ -114,25 +114,49 @@ describe("loop tools, wave 2b (L12, L18, L19, L20, L23, L24)", () => {
     ).toContain("start_process");
   });
 
-  it("refuses web pages outside research cards but loads the card's own app (L19, L20)", async () => {
+  it("refuses web pages outside research cards, and loopback ports the card did not start (L19, L20, item 42a)", async () => {
     const outside = await run("browse", { url: "https://example.com/" });
     expect(outside.denied).toBe(true);
-    const server = createServer((_q, r) =>
-      r.end("<html><body><h1>Chronicle</h1><script>1</script><p>ok</p></body></html>"),
-    );
+    // A server this card did not start is something else on the host: refused,
+    // and never reached (injection run 3, 2026-10-04).
+    let requests = 0;
+    const server = createServer((_q, r) => {
+      requests++;
+      r.end("<html><body><h1>Chronicle</h1></body></html>");
+    });
     const port: number = await new Promise((r) =>
       server.listen(0, "127.0.0.1", () => r((server.address() as { port: number }).port)),
     );
     try {
       const page = await run("browse", { url: `http://127.0.0.1:${port}/` });
-      expect(page.ok).toBe(true);
-      expect(page.content).toContain("Chronicle");
-      expect(page.content).not.toContain("<script>");
+      expect(page.denied).toBe(true);
+      expect(page.content).not.toContain("Chronicle");
+      expect(requests).toBe(0);
     } finally {
       await new Promise((r) => server.close(() => r(undefined)));
     }
     expect(typeof findChrome()).toMatch(/string|undefined/);
   }, 60_000);
+
+  it.runIf(new ProcessSandbox().confinement !== "none")(
+    "loads the card's own app, started with start_process on its $PORT (L19, L20)",
+    async () => {
+      const started = await run("start_process", {
+        name: "app",
+        command:
+          "node -e \"require('http').createServer((q,r)=>r.end('<html><body><h1>Chronicle</h1><script>1</script><p>ok</p></body></html>')).listen(process.env.PORT)\"",
+      });
+      expect(started.ok).toBe(true);
+      const port = /PORT=(\d+)/.exec(started.content)?.[1];
+      await new Promise((r) => setTimeout(r, 800));
+      const page = await run("browse", { url: `http://127.0.0.1:${port}/` });
+      expect(page.ok).toBe(true);
+      expect(page.content).toContain("Chronicle");
+      expect(page.content).not.toContain("<script>");
+      await run("stop_process", { name: "app" });
+    },
+    60_000,
+  );
 
   // DEC-50: on Linux the server and each later command have their own network
   // namespace, and the port crosses both through relays.

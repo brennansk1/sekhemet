@@ -142,7 +142,9 @@ export interface SrtNetworkPosture {
  *   allows outbound connections to that loopback port only.
  * - otherwise: no domains allowed; srt's own proxy refuses every request.
  *
- * `localPorts` becomes `allowLocalBinding`, which srt cannot scope to ports.
+ * `localPorts` becomes `allowLocalBinding`, which srt cannot scope to ports;
+ * on macOS `localPortRules` scopes it back to the named ports (F29), and on
+ * Linux only the relayed ports cross srt's network namespace (DEC-50).
  */
 export function srtNetwork(options: SandboxOptions): SrtNetworkPosture {
   const local = (options.localPorts ?? []).length > 0;
@@ -360,7 +362,13 @@ export function srtWrap(
       platform() === "darwin"
         ? withKeychainRules(
             withSockets,
-            [trustRulesFor(options), isolationRules(options.denyPaths)].filter(Boolean).join("\n"),
+            [
+              trustRulesFor(options),
+              localPortRules(options, srtWrapped),
+              isolationRules(options.denyPaths),
+            ]
+              .filter(Boolean)
+              .join("\n"),
           )
         : withSockets;
     // `exec` again at the outer level: the spawned pid is the command itself.
@@ -393,6 +401,34 @@ export const TRUSTD_RULES = '(allow mach-lookup (global-name "com.apple.trustd.a
  */
 export function trustRulesFor(options: Pick<SandboxOptions, "allowNetwork">): string {
   return options.allowNetwork ? TRUSTD_RULES : "";
+}
+
+/**
+ * F29: srt maps a card's `localPorts` to `allowLocalBinding`, and its macOS
+ * profile (SRT_VERSION) then allows outbound to `localhost:*` — every
+ * loopback listener on the host (the model server, the dashboard, another
+ * card's app) for a command that was granted one port. These rules, placed
+ * after srt's own (the later rule wins), deny loopback outbound again and
+ * allow back only the named ports and the loopback ports srt's profile
+ * names itself (its proxy, or our egress proxy), as the native profile does
+ * (`seatbelt.ts` portRules). With the network open there is nothing to scope.
+ */
+export function localPortRules(
+  options: Pick<SandboxOptions, "allowNetwork" | "localPorts" | "egressProxyPort">,
+  profile: string,
+): string {
+  if (options.allowNetwork || (options.localPorts ?? []).length === 0) return "";
+  const named = (options.localPorts ?? []).map((p) => Math.floor(p));
+  const srts = [
+    ...profile.matchAll(/\(allow network-outbound \(remote ip "localhost:(\d+)"\)\)/g),
+  ].map((m) => Number(m[1]));
+  const proxy = options.egressProxyPort ? [Math.floor(options.egressProxyPort)] : [];
+  const ports = [...new Set([...named, ...srts, ...proxy])].sort((a, b) => a - b);
+  return [
+    ";; F29: a card's named loopback ports only (srt's allowLocalBinding allows localhost:*).",
+    '(deny network-outbound (remote ip "localhost:*"))',
+    ...ports.map((p) => `(allow network-outbound (remote ip "localhost:${p}"))`),
+  ].join("\n");
 }
 
 /** srt's open-network line in its macOS profile (SRT_VERSION), where the socket rules go. */

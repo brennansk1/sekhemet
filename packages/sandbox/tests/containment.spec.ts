@@ -488,14 +488,45 @@ describe.each(ENGINES)("@sekhemet/sandbox containment (%s engine)", (engine) => 
         egressProxyPort: proxy.port,
       });
       expect(noLocal.stdout).toContain("REFUSED");
-      if (engine === "native") {
-        // srt cannot scope local binding to ports: with any localPorts, every
-        // loopback port is reachable (reported gap, DEC-39).
-        const otherPort = await sandbox.execute(process.execPath, probe(other.port), o);
-        expect(otherPort.stdout).toContain("REFUSED");
-      }
+      // F29: under srt too, a card's named port opens no other loopback port
+      // (srt's allowLocalBinding allows localhost:*; srtWrap scopes it back).
+      const otherPort = await sandbox.execute(process.execPath, probe(other.port), o);
+      expect(otherPort.stdout).toContain("REFUSED");
+      expect(other.hits()).toBe(0);
     } finally {
       for (const s of [proxy, other, own]) s.server.close();
+    }
+  });
+
+  // F29: without an egress proxy, a command given a card's port reaches that
+  // port and no other loopback listener (the model server, the dashboard).
+  it.runIf(confines)("reaches its named loopback port and no other, with no proxy", async () => {
+    const listen = async (): Promise<{ server: Server; port: number; hits: () => number }> => {
+      let hits = 0;
+      const server = createServer((c) => {
+        hits++;
+        c.end("PONG");
+      });
+      const port = await new Promise<number>((r) =>
+        server.listen(0, "127.0.0.1", () => r((server.address() as AddressInfo).port)),
+      );
+      return { server, port, hits: () => hits };
+    };
+    const other = await listen();
+    const own = await listen();
+    const probe = (port: number): string[] => [
+      "-e",
+      `const s=require('net').connect(${port},'127.0.0.1');s.on('data',d=>{console.log(String(d));process.exit(0)});s.on('error',e=>{console.log('REFUSED '+e.code);process.exit(3)})`,
+    ];
+    try {
+      const o = { ...opts(), localPorts: [own.port] };
+      const ownPort = await sandbox.execute(process.execPath, probe(own.port), o);
+      expect(ownPort.stdout).toContain("PONG");
+      const otherPort = await sandbox.execute(process.execPath, probe(other.port), o);
+      expect(otherPort.stdout).toContain("REFUSED");
+      expect(other.hits()).toBe(0);
+    } finally {
+      for (const s of [other, own]) s.server.close();
     }
   });
 });

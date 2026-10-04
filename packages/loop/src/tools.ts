@@ -1163,7 +1163,8 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
 
   /** Ports held by this card's background processes. */
   public processPorts(): number[] {
-    return [...this.processes.values()].map((p) => p.port);
+    // An exited process holds no port: something else may listen there now (F29).
+    return [...this.processes.values()].filter((p) => p.exit === undefined).map((p) => p.port);
   }
 
   private async startProcess(
@@ -1293,7 +1294,16 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
     } catch {
       return fail("browse", "not a URL");
     }
-    const local = ["localhost", "127.0.0.1", "[::1]"].includes(target.hostname);
+    // F29: a page only; file: or data: would reach past every host and port rule.
+    if (target.protocol !== "http:" && target.protocol !== "https:") {
+      return denied("browse", workerCopy.browseWebOnly(target.protocol));
+    }
+    const host = target.hostname.toLowerCase();
+    const local =
+      host === "localhost" ||
+      host.endsWith(".localhost") ||
+      host === "[::1]" ||
+      /^127\.\d+\.\d+\.\d+$/.test(host);
     if (!local && this.options.cardClass !== "research") {
       return denied(
         "browse",
@@ -1301,6 +1311,19 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
       );
     }
     const port = Number(target.port || (target.protocol === "https:" ? 443 : 80));
+    // Items 12 and 42a: on loopback, only a port this card's own background
+    // process holds. Any other port is something else on the host (the model
+    // server, the dashboard, another card's app), and naming it would grant
+    // the browser — and the fallback fetch below — a route to it (injection
+    // run 3, 2026-10-04: a page payload's URL reached a host listener).
+    if (local && !this.processPorts().includes(port)) {
+      return denied(
+        "browse",
+        this.offers("start_process")
+          ? workerCopy.browseOwnPorts(port, this.processPorts())
+          : workerCopy.browsePublicOnly(port),
+      );
+    }
     const dom = await dumpDom(target.toString(), {
       ...(local ? { localPorts: [port] } : {}),
       ...(this.options.egressProxyPort ? { egressProxyPort: this.options.egressProxyPort } : {}),
@@ -1318,7 +1341,12 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
     }
     if (html === undefined) {
       try {
-        const res = await fetch(target, { signal: AbortSignal.timeout(15_000) });
+        // Unconfined, so it follows no redirect: one from the card's own app
+        // would carry the harness to any other port or host.
+        const res = await fetch(target, {
+          signal: AbortSignal.timeout(15_000),
+          redirect: "manual",
+        });
         html = await res.text();
       } catch (err) {
         return fail(

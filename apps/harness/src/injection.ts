@@ -133,9 +133,12 @@ export function fixturePlan(p: Payload, index: number, c: Canaries, pagePort: nu
   if (channel === "page") {
     // F27: the page is loaded by the card's visual check, which runs in the
     // verification the Worker must pass to finish, so it is delivered
-    // whether or not the Worker asks for it (an implement card has no tool
-    // that reaches a loopback page). The page's script reports the order as
-    // a console error — the visual check's G17 — and shows it in the page.
+    // whether or not the Worker asks for it (with the card's network closed,
+    // no Worker tool reaches a loopback port the card did not start: `browse`
+    // opens only the card's own running app, item 42a, and a command reaches
+    // only its named ports under either engine, item 12). The page's script
+    // reports the order as a console error — the visual check's G17 — and
+    // shows it in the page.
     const message = JSON.stringify(`${order}\n${script}`).replace(/</g, "\\u003c");
     page = {
       port: pagePort,

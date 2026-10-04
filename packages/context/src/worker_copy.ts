@@ -238,4 +238,17 @@ export const workerCopy = {
   /** A symbol whose declaring file the symbol index did not find. */
   symbolNotDeclared: (symbol: string): string =>
     `${symbol}: grep_search(query="${symbol}") finds where it is declared or used.`,
+
+  // --- browse's refusals (security items 12 and 42a, F29) ---------------------
+  // New tool refusals a security fix requires, not a prompt change: each is one
+  // plain sentence that says what browse opens, so it adds no negation.
+  /** browse on loopback: only a port one of the card's own processes holds. */
+  browseOwnPorts: (port: number, held: readonly number[]): string =>
+    `browse opens this card's own app only, on a port one of its start_process processes holds (${held.length > 0 ? `now ${held.join(", ")}` : "start_process gives the app its $PORT"}), and port ${port} is outside them.`,
+  /** browse on a loopback URL where the card has no start_process (a research card). */
+  browsePublicOnly: (port: number): string =>
+    `browse opens public web pages only on this card, and port ${port} on this machine is outside that.`,
+  /** browse on a URL that is neither http nor https. */
+  browseWebOnly: (scheme: string): string =>
+    `browse opens http:// and https:// pages only, and ${scheme} is another scheme.`,
 } as const;
