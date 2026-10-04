@@ -43,7 +43,7 @@ const CATALOG = [
     id: "jira",
     name: "Jira",
     mono: "JI",
-    does: "Import and export in Jira's own CSV columns: Summary, Issue Type, Priority, Story Points, Sprint, Epic Link, Labels, Description.",
+    does: "Import and export in Jira Cloud's own CSV columns: Issue Id, Parent, Summary, Issue Type, Status, Priority, Story Points, Sprint, Labels, Due Date, Description. An epic's issues name it as their Parent.",
     leaves: "Nothing. Export writes a file; you upload it to Jira yourself.",
   },
   {

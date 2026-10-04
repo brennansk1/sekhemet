@@ -102,7 +102,7 @@ No further model runs start until S1–S2 are fixed; nothing is offered to a use
 | T1 | One gate pipeline: every gate, built-in or project, runs through one path with one result shape | M | ◐ partial — `0c76973`, `160310d`, `eb6776f` (State rows in gates: 3 built, 2 partial, 1 not built) |
 | T2 | An AST-based source index replacing the eight regex parsers (exports, imports, symbols) | M | ◐ partial — `0c76973`, `160310d`, `eb6776f` (State rows in context, gates: 1 built, 1 partial) |
 | T3 | A verification controller and one stop-reason table shared by the loop, the runner and the evidence bundle | M | ◐ partial — `5b17ed1`, `028b592` (State rows in worker-loop: 1 built, 1 partial, 1 not built) |
-| T4 | `index.ts` as a command registry, with `queue` in its own module (strangler, between suite runs) | L | not started (B5) |
+| T4 | `index.ts` as a command registry, with `queue` in its own module (strangler, between suite runs) | L | ◐ partial (C2c, NAM-02): `run`, `resume`, `review`, `accept`, `doctor`, `status`, `egress` and `editors` in `commands/registry.ts` (SUR-17 for them, `cli_registry.spec.ts`); `queue` and the rest still in `main` |
 | T5 | The dashboard server's 1,045-line closure split by route group | M | ◐ partial, ahead of B5 (State rows in dashboard, runtime: 1 partial, 1 not built) |
 | T6 | The design rebuilt as `SPINE.md`, one specification per subsystem and a decisions log. *Process — no subsystem spec; done in design v3.* | L | ✅ done — design v3 (`24c1803`) |
 | T7 | Paired trials with statistics, and the planning measure | M | ◐ partial — `028b592`, `df72861` (State rows in measurement: 5 partial, 1 not built) |
@@ -339,20 +339,20 @@ The changes D1 wrote into the specs from [DESIGN_GAPS_C1](DESIGN_GAPS_C1.md) and
 | NEW-dashboard-21 | Won't do, Reopen and Revert in the dashboard ([DEC-51](../design/DECISIONS.md#dec-51--c1s-k3-list-decided)) | [dashboard](../design/specs/dashboard.md) | C2 | built (C2b): DB-N21-1..4 |
 | NEW-dashboard-22 | A notification when work waits ([DEC-53](../design/DECISIONS.md#dec-53--design_gaps-c-decided) c4) | [dashboard](../design/specs/dashboard.md) | C2 | built (C2b): DB-N22-1..7 |
 | NEW-dashboard-23 | The professional words on screen ([DEC-52](../design/DECISIONS.md#dec-52--the-professional-words-naming-amended)) | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
-| NEW-dashboard-24 | Network activity in Project configuration ([security](../design/specs/security.md) NEW-security-11) | [dashboard](../design/specs/dashboard.md) | C2 | not started (D1, DEC-56) |
+| NEW-dashboard-24 | Network activity in Project configuration ([security](../design/specs/security.md) NEW-security-11) | [dashboard](../design/specs/dashboard.md) | C2 | built (C2c): `network_activity_ui.spec.ts`, `egress_cli.spec.ts` |
 | NEW-design-stage-7 | Starting a project as a page with a live draft | [design-stage](../design/specs/design-stage.md) | C2 | not started (D1, DEC-56) |
-| NEW-extensibility-6 | the MCP gate run is a pre-check, not evidence ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [extensibility](../design/specs/extensibility.md) | C2 | not started (D1, DEC-56) |
-| NEW-extensibility-7 | editor snippets for VS Code, Cursor and Zed ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [extensibility](../design/specs/extensibility.md) | C2, C5 | not started (D1, DEC-56) |
+| NEW-extensibility-6 | the MCP gate run is a pre-check, not evidence ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [extensibility](../design/specs/extensibility.md) | C2 | built (C2c): `mcp.spec.ts` EXT-35, EXT-36 |
+| NEW-extensibility-7 | editor snippets for VS Code, Cursor and Zed ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [extensibility](../design/specs/extensibility.md) | C2, C5 | partial (C2c): the snippets, `sekhemet editors`, `editor_snippets.spec.ts` (EXT-37, EXT-37a); the guide page C5 |
 | NEW-extensibility-8 | Seshat's MCP tools pinned by their description (DEC-55) | [extensibility](../design/specs/extensibility.md) | v1.x (with Seshat\'s MCP tools, DEC-55) | not started (D1, DEC-56) |
-| NEW-integrations-5 | the Jira export in Jira Cloud's columns ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [integrations](../design/specs/integrations.md) | C2 | not started (D1, DEC-56) |
-| NEW-integrations-6 | Check Run annotations in batches of 50 ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [integrations](../design/specs/integrations.md) | C2 | not started (D1, DEC-56) |
+| NEW-integrations-5 | the Jira export in Jira Cloud's columns ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [integrations](../design/specs/integrations.md) | C2 | built (C2c): `jira_export.spec.ts` |
+| NEW-integrations-6 | Check Run annotations in batches of 50 ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [integrations](../design/specs/integrations.md) | C2 | built (already in `postCheckRun`; C2c tests INT-47, INT-47a in `remote.spec.ts`) |
 | NEW-kernel-11 | the power-loss window, stated and tested | [kernel](../design/specs/kernel.md) | C4 | not started (D1, DEC-56) |
 | NEW-models-15 | the Team server's engines, one per role | [models](../design/specs/models.md) | C3, C5 | not started (D1, DEC-56) |
 | NEW-models-16 | the first hour, with the engine found and both floors stated | [models](../design/specs/models.md) | C3, C5 | not started (D1, DEC-56) |
 | NEW-models-17 | two projects on one machine | [models](../design/specs/models.md) | C4 | not started (D1, DEC-56) |
 | NEW-models-18 | downloads that resume and fit | [models](../design/specs/models.md) | C3 | not started (D1, DEC-56) |
 | NEW-models-19 | Get the inference engine | [models](../design/specs/models.md) | C3 | not started (D1, DEC-56) |
-| NEW-models-20 | Ollama's cloud models refused | [models](../design/specs/models.md) | C2 | not started (D1, DEC-56) |
+| NEW-models-20 | Ollama's cloud models refused | [models](../design/specs/models.md) | C2 | partial (C2c): `ollama_cloud.spec.ts`, `config_api.spec.ts`, `doctor_ollama_cloud.spec.ts`; a remote-host model without the suffix is refused at its first load, not at assignment |
 | NEW-planner-pm-11 | The retrospective, as a report for people | [planner-pm](../design/specs/planner-pm.md) | C2b | built (C2b): PM-N11-1..4 |
 | NEW-planner-pm-12 | Maintenance releases, an open *Next release* | [planner-pm](../design/specs/planner-pm.md) | C2b | built (C2b): PM-N12-1..4, its CHANGELOG.md section and release notes committed before the tag (*Tag the release* in Needs you not built) |
 | NEW-planner-pm-13 | The sprint lifecycle (planner side) | [planner-pm](../design/specs/planner-pm.md) | C2b | partial (C2b): PM-N13-1, -2, -3, -5 built; PM-N13-4 (the bet's carry-over basis) and -6 (the tool, PROMPT_STANDARD rule 35) not yet |
@@ -363,12 +363,12 @@ The changes D1 wrote into the specs from [DESIGN_GAPS_C1](DESIGN_GAPS_C1.md) and
 | NEW-runtime-13 | a full disk is a named stop | [runtime](../design/specs/runtime.md) | C4 | not started (D1, DEC-56) |
 | NEW-runtime-14 | a health route for the Team server | [runtime](../design/specs/runtime.md) | C5 | not started (D1, DEC-56) |
 | NEW-runtime-15 | start the dashboard at login | [runtime](../design/specs/runtime.md) | C5 | not started (D1, DEC-56) |
-| NEW-security-11 | what leaves the machine, listed and shown | [security](../design/specs/security.md) | C2, C5 | not started (D1, DEC-56) |
-| NEW-security-12 | other coding agents' configuration flagged as running later ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [security](../design/specs/security.md) | C2 | not started (D1, DEC-56) |
+| NEW-security-11 | what leaves the machine, listed and shown | [security](../design/specs/security.md) | C2, C5 | partial (C2c): `sekhemet egress` and the view built; the guide page and its host-list test C5 |
+| NEW-security-12 | other coding agents' configuration flagged as running later ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [security](../design/specs/security.md) | C2 | built (C2c): `executes_later.spec.ts` |
 | NEW-surface-7 | upgrade and uninstall | [surface](../design/specs/surface.md) | C5 | not started (D1, DEC-56) |
 | NEW-surface-8 | `doctor`'s checks, each with its next step | [surface](../design/specs/surface.md) | C5 | not started (D1, DEC-56) |
 | NEW-surface-9 | learning that a release or a security fix exists | [surface](../design/specs/surface.md) | C5, C7 | not started (D1, DEC-56) |
-| NEW-surface-10 | `--json` for scripts | [surface](../design/specs/surface.md) | C2c | not started (D1, DEC-56) |
+| NEW-surface-10 | `--json` for scripts | [surface](../design/specs/surface.md) | C2c | built (C2c): `run`, `status`, `accept`, `doctor`, `egress`; schemas in `apps/harness/data/schemas/cli/` |
 | NEW-teams-12 | A Team install with no identity provider | [teams](../design/specs/teams.md) | C5 | not started (D1, DEC-56) |
 | NEW-teams-13 | When a member leaves | [teams](../design/specs/teams.md) | C2b | built (C2b): TEAM-49..52 |
 | NEW-worker-loop-11 | `disk_low`, the full-disk stop ([runtime.md](../design/specs/runtime.md) NEW-runtime-13) | [worker-loop](../design/specs/worker-loop.md) | C4 | not started (D1, DEC-56) |

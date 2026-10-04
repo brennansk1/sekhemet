@@ -5,6 +5,12 @@ import { assertKvType } from "./kv_policy.js";
 import { assertModelLoadAllowed } from "./load_guard.js";
 import { type Engine, type LoadOptions, checkOllamaQuantisation } from "./load_mechanics.js";
 import { currentMemoryPressure } from "./memory.js";
+import {
+  OllamaCloudRefusal,
+  isOllamaCloudTag,
+  ollamaCloudRefusal,
+  ollamaRemoteHost,
+} from "./ollama_cloud.js";
 import { parseToolCallsFromText, stripReasoning } from "./parser.js";
 import { type ModelRegistry, type TemplatePinResult, fetchChatTemplate } from "./registry.js";
 import {
@@ -743,6 +749,21 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
 
   private keepAliveOverride: string | undefined;
 
+  /** The remote host Ollama named for this model in its details, once seen (rule 14c). */
+  private cloudRemoteHost: string | undefined;
+
+  /**
+   * Rule 14c (NEW-models-20): refuse an Ollama cloud model — a `:cloud` or
+   * `-cloud` tag, or one whose details from Ollama named a remote host —
+   * before any request is sent.
+   */
+  private refuseOllamaCloud(role?: string): void {
+    const viaOllama = this.apiFormat === "ollama" || /:11434(\/|$)/.test(this.baseUrl);
+    if (!viaOllama) return;
+    if (this.cloudRemoteHost !== undefined || isOllamaCloudTag(this.modelId))
+      throw new OllamaCloudRefusal(this.modelId, role, this.cloudRemoteHost);
+  }
+
   /** Whether the server is on another machine: its base URL is not a loopback address. */
   public get remote(): boolean {
     const host = new URL(this.baseUrl).hostname.replace(/^\[|\]$/g, "");
@@ -794,6 +815,30 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     return Math.round(size + kv + 1.5 * 1024 ** 3);
   }
 
+  /**
+   * Rule 14c: the remote host Ollama's `/api/tags` names for this model, kept
+   * for `refuseOllamaCloud`. Nothing when the list cannot be read: the load
+   * then goes ahead and the health check reads it again.
+   */
+  private async readRemoteHost(signal?: AbortSignal): Promise<void> {
+    if (this.cloudRemoteHost !== undefined) return;
+    const timeout = AbortSignal.timeout(5000);
+    try {
+      const res = await fetch(`${this.baseUrl}/api/tags`, {
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      });
+      if (!res.ok) return;
+      const body = (await res.json()) as { models?: { name?: string; model?: string }[] };
+      const same = (n: string | undefined) =>
+        n !== undefined && normalizeTag(n) === normalizeTag(this.modelId);
+      const listed = (body.models ?? []).find((m) => same(m.name) || same(m.model));
+      const remote = ollamaRemoteHost(listed);
+      if (remote !== undefined) this.cloudRemoteHost = remote;
+    } catch {
+      // Unreachable: the load's own request reports it.
+    }
+  }
+
   /** The model's size on an Ollama server (`/api/tags`); undefined when unknown. */
   private async tagSize(): Promise<number | undefined> {
     if (this.apiFormat !== "ollama") return undefined;
@@ -823,6 +868,13 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
    */
   public async load(signal?: AbortSignal, _options?: LoadOptions): Promise<"loaded" | "adopted"> {
     if (this.apiFormat !== "ollama") return "adopted";
+    // Rule 14c, MD-N20-1: a cloud model is sent no load. The residency
+    // scheduler loads before it runs the health check, so the details Ollama
+    // lists for the model are read here first (a read of the local server's
+    // list, never a request for the model).
+    this.refuseOllamaCloud(this.options.role);
+    await this.readRemoteHost(signal);
+    this.refuseOllamaCloud(this.options.role);
     if (await this.isResident()) {
       await this.checkServedQuantisation();
       return "adopted";
@@ -1076,12 +1128,24 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
         const names = (tags.body as { models?: { name?: string; model?: string }[] }).models ?? [];
         const same = (n: string | undefined) =>
           n !== undefined && normalizeTag(n) === normalizeTag(this.modelId);
-        if (!names.some((m) => same(m.name) || same(m.model))) {
+        const listed = names.find((m) => same(m.name) || same(m.model));
+        if (!listed) {
           return done({
             ok: false,
             reachable: true,
             loaded: false,
             detail: `model ${this.modelId} is not available on the server`,
+          });
+        }
+        // Rule 14c, MD-N20-1: Ollama's details name a remote host for a cloud model.
+        const remote = ollamaRemoteHost(listed);
+        if (remote !== undefined) {
+          this.cloudRemoteHost = remote;
+          return done({
+            ok: false,
+            reachable: true,
+            loaded: false,
+            detail: ollamaCloudRefusal(this.modelId, this.options.role, remote),
           });
         }
         const ps = await getJson("/api/ps").catch(() => ({ ok: false, body: undefined }));
@@ -1146,6 +1210,8 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
 
   public async generate(req: InferenceRequest): Promise<InferenceResponse> {
     const start = performance.now();
+    // Rule 14c, MD-N20-2: an Ollama cloud model is sent no request.
+    this.refuseOllamaCloud(req.role ?? this.options.role);
     if (this.apiFormat === "ollama" && req.tools && req.tools.length > 0) {
       const kv = this.options.ollamaKvCacheType ?? process.env.OLLAMA_KV_CACHE_TYPE;
       if (kv) assertKvType(kv); // throws KvPolicyError for 4-bit (M16)

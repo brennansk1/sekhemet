@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, sep } from "node:path";
+import { RELAY_NAME, type RelaySpec, relayEnv, relayScript } from "./relay.js";
 import {
   homeToolchainPaths,
   ledgerReadDenies,
@@ -112,6 +113,10 @@ function maskOf(path: string): { path: string; argv: string[] } | undefined {
  * 4. any granted root inside a masked directory, bound again: the harness
  *    chose it (item 8a), so the run gets it and nothing beside it;
  * 5. each root's `.git` read-only and the ledger masks.
+ *
+ * DEC-50: with `relays`, the network namespace stays empty and the command
+ * starts through the inside half of its port relays (`relay.ts`), which
+ * listens on each named port, waits until it does, and execs the command.
  */
 export function bubblewrapArgv(
   options: SandboxOptions,
@@ -119,6 +124,8 @@ export function bubblewrapArgv(
   args: string[],
   /** File descriptor carrying the seccomp program (S3), when one is attached. */
   seccompFd?: number,
+  /** DEC-50: the egress proxy's and the named ports' relays, whose host half the caller runs. */
+  relays: readonly RelaySpec[] = [],
 ): string[] {
   const roots = [...options.allowedPaths, ...(options.scratchDir ? [options.scratchDir] : [])];
   // S2: no grant reaches the main checkout's dependency tree (item 24).
@@ -187,15 +194,22 @@ export function bubblewrapArgv(
     ...protectedGit.flatMap((p) => ["--ro-bind", p, p]),
     ...ledgerMasks.flatMap((m) => m.argv),
     // Item 10a: the card's view of other projects, masked after every bind.
-    ...isolationMasks.flatMap((m) => m.argv),
+    // A masked directory is an empty tmpfs mounted read-only: a write there
+    // is refused, as Seatbelt and a file mask refuse it, rather than landing
+    // in a private tmpfs nobody sees (R-C2c, the Linux run).
+    ...isolationMasks.flatMap((m) =>
+      m.argv[0] === "--tmpfs" ? [...m.argv, "--remount-ro", m.path] : m.argv,
+    ),
     "--unshare-pid",
     "--unshare-ipc",
     "--unshare-uts",
     ...(options.allowNetwork ? [] : ["--unshare-net"]),
     ...(seccompFd !== undefined ? ["--seccomp", String(seccompFd)] : []),
+    ...(relays.length > 0 ? ["--setenv", "SEKHEMET_RELAYS", relayEnv(relays)] : []),
     "--chdir",
     options.cwd,
     "--",
+    ...(relays.length > 0 ? ["/bin/sh", "-c", relayScript(), RELAY_NAME, "--"] : []),
     command,
     ...args,
   ];

@@ -215,6 +215,61 @@ describe("Y14: check runs with annotations in batches of 50", () => {
   });
 });
 
+describe("NEW-integrations-6: every annotation reaches the one Check Run (INT-47, INT-47a)", () => {
+  const failuresOf = (n: number) => [
+    {
+      rung: "lint",
+      errorExcerpt: Array.from({ length: n }, (_, i) => `src/b.ts:${i + 1}:1 E501 long ${i}`).join(
+        "\n",
+      ),
+    },
+  ];
+  const post = async (n: number) => {
+    const srv = await fake((s) =>
+      s.method === "POST" ? { status: 201, json: { id: 7 } } : { json: {} },
+    );
+    const r = await postCheckRun(
+      client(srv.url),
+      { owner: "o", repo: "r" },
+      { name: "sekhemet/lint", headSha: "h", passed: false, summary: "s", failures: failuresOf(n) },
+    );
+    const patches = srv.seen.filter((s) => s.method === "PATCH");
+    const sent = patches.map(
+      (p) => (p.body as { output: { annotations: { start_line: number }[] } }).output.annotations,
+    );
+    return { r, patches, sent, posts: srv.seen.filter((s) => s.method === "POST") };
+  };
+
+  it("INT-47: 120 annotations go to the same Check Run in requests of at most 50, all of them", async () => {
+    const { r, patches, sent, posts } = await post(120);
+    expect(r.annotations).toBe(120);
+    expect(posts).toHaveLength(1);
+    expect(patches.every((p) => p.url === "/repos/o/r/check-runs/7")).toBe(true);
+    expect(sent.map((a) => a.length)).toEqual([50, 50, 20]);
+    expect(
+      sent
+        .flat()
+        .map((a) => a.start_line)
+        .sort((x, y) => x - y),
+    ).toEqual(Array.from({ length: 120 }, (_, i) => i + 1));
+    // Completed only by the last request, once every annotation is posted.
+    expect(patches.map((p) => (p.body as { status?: string }).status)).toEqual([
+      undefined,
+      undefined,
+      "completed",
+    ]);
+  });
+
+  it("INT-47a: 50 annotations or fewer go in one request", async () => {
+    for (const n of [50, 3, 0]) {
+      const { patches, sent } = await post(n);
+      expect(patches).toHaveLength(1);
+      expect(sent[0]).toHaveLength(n);
+      expect(patches[0]?.body).toMatchObject({ status: "completed", conclusion: "failure" });
+    }
+  });
+});
+
 describe("Y15: SARIF upload", () => {
   it("gzips then base64-encodes the report", async () => {
     const srv = await fake(() => ({ status: 202, json: { id: "s1" } }));

@@ -42,6 +42,15 @@ export const CONFIG_ROUTES: readonly ConfigRoute[] = [
     module: "config_api",
     spec: "NEW-dashboard-4",
   },
+  // Network activity (security item 33a, NEW-security-11; dashboard
+  // NEW-dashboard-24): the project's recorded egress, read-only for everyone.
+  {
+    method: "GET",
+    path: "/api/config/egress",
+    permission: "read",
+    module: "config_api",
+    spec: "NEW-dashboard-24; SEC-N11-2",
+  },
   {
     method: "PUT",
     path: "/api/config/review",

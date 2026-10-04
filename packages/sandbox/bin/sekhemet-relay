@@ -1,0 +1,83 @@
+#!/bin/sh
+# DEC-50: the inside half of a card's port relays on Linux. The sandbox's
+# network namespace is empty, so each named port crosses it through a Unix
+# socket in the scratch directory, whose other end the harness holds
+# (packages/sandbox/src/relay.ts). SEKHEMET_RELAYS lists them, space-separated:
+#   f:PORT:SOCKET  the host listens on PORT: listen on 127.0.0.1:PORT (and
+#                  [::1]:PORT) here and pass each connection to SOCKET;
+#   r:PORT:SOCKET  the command will listen on PORT (a dev server): listen on
+#                  SOCKET and pass each connection to 127.0.0.1:PORT here.
+# Modes:
+#   sekhemet-relay -- COMMAND ARGS...  the native engine: start the relays,
+#                  wait until each listens, then exec the command;
+#   sekhemet-relay --wait              wait until each relay listens (srt runs
+#                  this inside its seccomp filter, before the command);
+#   sekhemet-relay SOCAT-ARGS...       srt's socatPath: when srt starts its
+#                  proxy listener inside the sandbox (TCP-LISTEN:3128), start
+#                  the relays first, while Unix sockets can still be made;
+#                  then, always, exec socat with srt's arguments.
+
+start() {
+  for spec in $SEKHEMET_RELAYS; do
+    kind=${spec%%:*}
+    rest=${spec#*:}
+    port=${rest%%:*}
+    sock=${rest#*:}
+    case $kind in
+      f)
+        (socat "TCP-LISTEN:$port,bind=127.0.0.1,fork,reuseaddr" "UNIX-CONNECT:$sock" </dev/null >/dev/null 2>&1 &)
+        (socat "TCP6-LISTEN:$port,bind=[::1],fork,reuseaddr" "UNIX-CONNECT:$sock" </dev/null >/dev/null 2>&1 &)
+        ;;
+      r)
+        (socat "UNIX-LISTEN:$sock,fork,unlink-early" "TCP:127.0.0.1:$port" </dev/null >/dev/null 2>&1 &)
+        ;;
+    esac
+  done
+}
+
+# A listening socket on 127.0.0.1:PORT in this network namespace.
+listening() {
+  hex=$(printf '%04X' "$1")
+  grep -q "^ *[0-9]*: 0100007F:$hex 00000000:0000 0A" /proc/net/tcp 2>/dev/null
+}
+
+wait_ready() {
+  tries=0
+  while [ "$tries" -lt 300 ]; do
+    ready=yes
+    for spec in $SEKHEMET_RELAYS; do
+      kind=${spec%%:*}
+      rest=${spec#*:}
+      port=${rest%%:*}
+      sock=${rest#*:}
+      case $kind in
+        f) listening "$port" || ready=no ;;
+        r) [ -S "$sock" ] || ready=no ;;
+      esac
+    done
+    [ "$ready" = yes ] && return 0
+    sleep 0.01
+    tries=$((tries + 1))
+  done
+  return 0
+}
+
+case "$1" in
+  --)
+    shift
+    start
+    wait_ready
+    unset SEKHEMET_RELAYS
+    exec "$@"
+    ;;
+  --wait)
+    wait_ready
+    ;;
+  TCP-LISTEN:3128,*)
+    start
+    exec socat "$@"
+    ;;
+  *)
+    exec socat "$@"
+    ;;
+esac

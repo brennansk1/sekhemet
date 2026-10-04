@@ -87,6 +87,12 @@ export class AcceptRefusedError extends Error {
       | "pr_unavailable"
       | "open_thread",
     message: string,
+    /**
+     * For `unacknowledged`: the findings (dossier entry ids) and the files
+     * still open, so a caller can name them its own way (the CLI numbers
+     * the findings, FINDINGS_C1 CLI-01).
+     */
+    public readonly remaining?: { findings: string[]; files: string[] },
   ) {
     super(message);
     this.name = "AcceptRefusedError";
@@ -509,6 +515,7 @@ export async function acceptPreconditions(
       throw new AcceptRefusedError(
         "unacknowledged",
         `Before accepting ${cardId}, ${parts.join(" and ")} (sekhemet review ${cardId} shows them)`,
+        remaining,
       );
     }
   }
@@ -884,10 +891,11 @@ async function revertAcceptIn(
   const accepted = (await ctx.cardStore.cardEvents(card.id, ["card/accepted"])).at(-1);
   const p = accepted?.payload as { sha?: string; integration?: string } | undefined;
   if (!p?.sha) throw new Error(`${card.id} has no accepted squash in the Activity log to revert`);
-  if (!revertVerdict(ctx.cardStore, principal, rule).may) {
+  const verdict = revertVerdict(ctx.cardStore, principal, rule);
+  if (!verdict.may) {
     throw new AcceptRefusedError(
       "not_permitted",
-      `${principal} does not hold the Accept permission; reverting an accept is for a person on the Accept rule`,
+      `${principal} does not hold the Accept permission; reverting an accept is for a person on the Accept rule. Who may revert: ${verdict.who.join(", ") || "no one yet — add a person to the Accept rule"}`,
     );
   }
   const target = p.integration ?? integrationBranch(ctx.repoPath);

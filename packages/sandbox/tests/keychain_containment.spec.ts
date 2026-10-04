@@ -1,10 +1,19 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:https";
+import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import { platform, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ProcessSandbox, type SandboxEngine } from "../src/executor.js";
 import { generateSeatbeltProfile, keychainRules } from "../src/seatbelt.js";
@@ -15,6 +24,7 @@ import {
   keychainFileDenies,
 } from "../src/secret_paths.js";
 import { srtReset, srtWrap, withKeychainRules } from "../src/srt_engine.js";
+import type { SandboxOptions } from "../src/types.js";
 
 /**
  * W2b finding (SEC-23b): a sandboxed command could read the items Sekhemet
@@ -39,6 +49,22 @@ const ENGINES: SandboxEngine[] = ["native", "srt"];
 const SECURITY = "/usr/bin/security";
 const SERVICE = "sekhemet-containment-probe";
 const PASSWORD = "test";
+
+/**
+ * Playwright, as a card's browser tests drive Chromium (security item 11a,
+ * C2c): the repository's own playwright-core and its cached headless shell.
+ * Undefined when either is missing, and the browser case is skipped.
+ */
+const playwright = (() => {
+  try {
+    const req = createRequire(join(__dirname, "..", "..", "..", "package.json"));
+    const main = req.resolve("playwright-core");
+    const { chromium } = req("playwright-core") as { chromium: { executablePath(): string } };
+    return existsSync(chromium.executablePath()) ? dirname(main) : undefined;
+  } catch {
+    return undefined;
+  }
+})();
 
 const sec = (...args: string[]) =>
   execFileSync(SECURITY, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -314,6 +340,84 @@ describe.runIf(darwin).each(ENGINES)(
       expect(r.stdout).toContain("verify=0");
       if (engine === "native") expect(r.stdout).toContain("root=0");
     });
+
+    // Security item 11a (C2c): a card's browser tests under these rules.
+    // Playwright starts Chromium with `--use-mock-keychain`, so the browser
+    // never asks the keychain for its storage key: it renders and keeps a
+    // cookie in its profile, and in the same command the planted item stays
+    // unreadable. Native engine only: srt's profile has no browser rules
+    // (Chromium cannot register its own Mach services there), so under srt
+    // the visual gates report "not run" and fail closed (item 11a).
+    it.runIf(engine === "native" && playwright !== undefined)(
+      "a Playwright-driven Chromium runs under these rules, and the planted item stays unreadable",
+      async () => {
+        work = realpathSync(mkdtempSync(join(tmpdir(), "sek-kc-work-")));
+        mkdirSync(join(work, "tmp"));
+        writeFileSync(
+          join(work, "browser.cjs"),
+          `const { chromium } = require(${JSON.stringify(playwright)});
+(async () => {
+  const c = await chromium.launchPersistentContext(require("node:path").join(process.cwd(), "profile"));
+  const p = await c.newPage();
+  await p.setContent('<p id="x">rendered</p>');
+  await c.addCookies([{ name: "a", value: "b", url: "http://localhost/", expires: Math.floor(Date.now() / 1000) + 3600 }]);
+  console.log("page=" + (await p.textContent("#x")) + " cookies=" + (await c.cookies()).length);
+  await c.close();
+})().catch((e) => { console.log("ERR=" + e); process.exit(2); });
+`,
+        );
+        const r = await sandbox.execute(
+          "/bin/sh",
+          [
+            "-c",
+            [
+              `'${process.execPath}' browser.cjs; echo "browser=$?"`,
+              `${SECURITY} find-generic-password -s ${SERVICE} -w '${dbKeychain}' 2>&1; echo "kc=$?"`,
+            ].join("\n"),
+          ],
+          {
+            allowedPaths: [work],
+            scratchDir: join(work, "tmp"),
+            allowNetwork: false,
+            browser: true,
+            timeoutMs: 60_000,
+            cwd: work,
+          },
+        );
+        expect(r.stdout).toContain("page=rendered cookies=1");
+        expect(r.stdout).toContain("browser=0");
+        expect(r.stdout).not.toContain("kc=0");
+        expectNoCanary(r);
+      },
+      90_000,
+    );
+
+    // C2c (security item 11a's srt cost): with the network open a
+    // certificate check reaches trustd, which holds no secret, so Go's and
+    // native-tls's verification works under srt as under the native engine.
+    // Only there: trustd fetches outside the sandbox, so with the network
+    // closed it would be an unrecorded route out. Nothing of the keychain
+    // opens with it (the cases above run with the network on too).
+    it("with the network on, a system root evaluates as trusted: certificate checks reach trustd", async () => {
+      work = mkdtempSync(join(tmpdir(), "sek-kc-work-"));
+      const pem = execFileSync(
+        SECURITY,
+        [
+          "find-certificate",
+          "-a",
+          "-p",
+          "/System/Library/Keychains/SystemRootCertificates.keychain",
+        ],
+        { encoding: "utf8" },
+      );
+      writeFileSync(
+        join(work, "root.pem"),
+        `${pem.slice(0, pem.indexOf("-----END CERTIFICATE-----") + 25)}\n`,
+      );
+      const verify = `${SECURITY} verify-cert -c root.pem -L -l -p basic > /dev/null 2>&1; echo "root=$?"`;
+      const r = await run(verify, true);
+      expect(r.stdout).toContain("root=0");
+    });
   },
 );
 
@@ -407,6 +511,32 @@ describe("SEC-23b: one keychain table, last in both engines' profiles", () => {
     );
     expect(() => withKeychainRules("/usr/bin/sandbox-exec -p '(version 1)")).toThrow(/did not end/);
   });
+
+  it.runIf(darwin)(
+    "srt's real command lets certificate trust reach trustd only with the network open (C2c review)",
+    async () => {
+      // trustd runs outside the sandbox and fetches the AIA, OCSP and CRL URLs
+      // a certificate names: with only the egress proxy or a loopback port
+      // granted it would be a route past the allowlist, never recorded
+      // (srt's own `enableWeakerNetworkIsolation`, SANDBOX_REUSE risk 7).
+      const trust = '(allow mach-lookup (global-name "com.apple.trustd.agent"))';
+      const cases: [Partial<SandboxOptions>, boolean][] = [
+        [{ allowNetwork: false }, false],
+        [{ allowNetwork: true }, true],
+        [{ allowNetwork: false, localPorts: [43210] }, false],
+        [{ allowNetwork: false, egressProxyPort: 43211 }, false],
+        [{ allowNetwork: false, egressProxyPort: 43211, localPorts: [43210] }, false],
+      ];
+      for (const [extra, reachable] of cases) {
+        const { argv } = await srtWrap("/bin/echo", ["hi"], { ...opts, ...extra });
+        const cmd = argv[1] as string;
+        expect(cmd.includes(trust)).toBe(reachable);
+        // The keychain rules still come last, after every allow.
+        expect(cmd.indexOf(keychainRules())).toBeGreaterThan(cmd.lastIndexOf("(allow "));
+        await srtReset();
+      }
+    },
+  );
 
   it.runIf(darwin)("srt's real command carries them after its own keychain allow", async () => {
     for (const allowNetwork of [false, true]) {

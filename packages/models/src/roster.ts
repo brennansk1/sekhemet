@@ -17,6 +17,7 @@ import {
   createGenericManaged,
   createQwen38Managed,
 } from "./llama_server.js";
+import { assertNotOllamaCloud } from "./ollama_cloud.js";
 import type { ModelRegistry } from "./registry.js";
 import type { ModelRole, UnloadableAdapter } from "./types.js";
 
@@ -215,6 +216,9 @@ export class ModelRoster {
 
   public resolve(name: string, role: ModelRole, want: ResolveOptions = {}): UnloadableAdapter {
     if (!isManagedModelName(name)) {
+      // Rule 14c, MD-N20-2: a role whose configuration names an Ollama cloud
+      // model is refused on every run, before any request.
+      assertNotOllamaCloud(name, role);
       const generic = this.resolveGeneric(name, role, want);
       if (generic) return generic;
       const profile = { ...ollamaProfileForRole(role, name), ...want };

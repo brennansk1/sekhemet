@@ -1,0 +1,133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "sekhemet accept --json",
+  "description": "The outcome of accepting one issue (surface item 20c; FINDINGS_C1 CLI-01).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["command", "ok", "exitCode", "message"],
+  "properties": {
+    "command": {
+      "const": "accept"
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "exitCode is 0."
+    },
+    "exitCode": {
+      "enum": [0, 1, 2],
+      "description": "The exit code the command gives, with or without --json: 0 success, 1 failure, 2 a usage error or a missing confirmation."
+    },
+    "message": {
+      "type": "string",
+      "description": "The outcome in one sentence."
+    },
+    "issue": {
+      "$ref": "#/definitions/issue"
+    },
+    "accepted": {
+      "type": "boolean"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "The squashed commit on the integration branch."
+    },
+    "pullRequest": {
+      "type": "string",
+      "description": "The pull request opened instead, when the project merges through one."
+    },
+    "notice": {
+      "type": "string"
+    },
+    "refusal": {
+      "enum": [
+        "usage",
+        "not_in_review",
+        "no_evidence",
+        "evidence_failed",
+        "ledger_invalid",
+        "changed_after_review",
+        "not_permitted",
+        "not_independent",
+        "unacknowledged",
+        "no_enabling_person",
+        "conflict",
+        "no_branch",
+        "not_code_owner",
+        "pr_unavailable",
+        "open_thread"
+      ]
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["number", "verdict", "text", "acknowledged"],
+        "properties": {
+          "number": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "As `sekhemet review` numbers it and `--ack` names it."
+          },
+          "verdict": {
+            "type": "string",
+            "description": "unmet, unclear or met."
+          },
+          "text": {
+            "type": "string"
+          },
+          "acknowledged": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Implementation files not yet looked at."
+    }
+  },
+  "definitions": {
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "status", "state"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The issue's key."
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "The stored state: backlog, ready, planning, in_progress, verify, review, done, parked or rejected."
+        },
+        "state": {
+          "type": "string",
+          "description": "The state in plain words, as Status says it."
+        }
+      }
+    },
+    "steps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["used", "budget"],
+      "properties": {
+        "used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "budget": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

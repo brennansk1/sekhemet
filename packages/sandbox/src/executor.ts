@@ -6,6 +6,7 @@ import { performance } from "node:perf_hooks";
 import { BWRAP_CANDIDATES, bubblewrapArgv, bubblewrapUnavailableReason } from "./bubblewrap.js";
 import { withCardIsolation } from "./isolation.js";
 import { signalGroup, trackGroup, untrackGroup } from "./process_registry.js";
+import { type HostRelays, commandRelayPlan, startHostRelays } from "./relay.js";
 import { generateSeatbeltProfile } from "./seatbelt.js";
 import { hostSeccompArch, seccompProgram } from "./seccomp.js";
 import { srtCleanup, srtFix, srtUnavailableReason, srtWrap } from "./srt_engine.js";
@@ -193,11 +194,13 @@ export function confinedSandbox(restricted: boolean): ProcessSandbox {
  */
 /**
  * The confinement wrapper's own message when it cannot exec the program
- * (sandbox-exec on macOS, bubblewrap on Linux): the program never started.
- * A program's own "No such file or directory" does not match.
+ * (sandbox-exec on macOS, bubblewrap on Linux, and the relay script bubblewrap
+ * starts first when ports are named, DEC-50, as dash or bash word it): the
+ * program never started. A program's own "No such file or directory" does
+ * not match.
  */
 const WRAPPER_EXEC_FAILED =
-  /^(?:sandbox-exec: execvp\(\) of '[^']*' failed|bwrap: execvp [^\n:]*): No such file or directory/m;
+  /^(?:(?:sandbox-exec: execvp\(\) of '[^']*' failed|bwrap: execvp [^\n:]*): No such file or directory|sekhemet-relay: (?:line )?\d+: (?:exec: )?[^\n]*: (?:not found|No such file or directory)$)/m;
 
 /**
  * srt's wrapper is bash's `exec <command>` (srt_engine.ts): its message when
@@ -275,19 +278,30 @@ export class ProcessSandbox implements ExecutionSandbox {
     return this.mode;
   }
 
-  /** Resolve the real argv, wrapping in `sandbox-exec` when confinement is active. */
+  /**
+   * Resolve the real argv, wrapping in `sandbox-exec` when confinement is
+   * active. Under bubblewrap the egress proxy and the named ports cross the
+   * empty network namespace through relays (DEC-50), whose host half is
+   * returned running: the caller closes it when the command exits.
+   */
   private wrap(
     command: string,
     args: string[],
     given: SandboxOptions,
     mode: ConfinementMode = this.mode,
-  ): { file: string; argv: string[] } {
+  ): { file: string; argv: string[]; relays?: HostRelays } {
     // Item 10a: the card whose worktree the command runs in sees only its project.
     const options = withCardIsolation(given);
     if (mode === "bubblewrap" && this.bwrap) {
       // The seccomp program travels on fd 3 (see `execute`).
       const seccomp = hostSeccompArch() !== undefined ? 3 : undefined;
-      return { file: this.bwrap, argv: bubblewrapArgv(options, command, args, seccomp) };
+      const plan = commandRelayPlan(options);
+      const argv = bubblewrapArgv(options, command, args, seccomp, plan);
+      return {
+        file: this.bwrap,
+        argv,
+        ...(plan.length > 0 ? { relays: startHostRelays(plan) } : {}),
+      };
     }
     if (mode !== "seatbelt") return { file: command, argv: args };
     const profile = generateSeatbeltProfile(options);
@@ -311,8 +325,8 @@ export class ProcessSandbox implements ExecutionSandbox {
     const mode = this.mode === "srt" ? this.nativeMode : this.mode;
     if (mode === "none" && this.mode === "srt") return null;
     const scratchDir = options.scratchDir ?? mkdtempSync(join(tmpdir(), "sekhemet-bg-"));
-    const { file, argv } = this.wrap(command, args, { ...options, scratchDir }, mode);
-    return this.startBackground(file, argv, options, scratchDir, mode);
+    const { file, argv, relays } = this.wrap(command, args, { ...options, scratchDir }, mode);
+    return this.startBackground(file, argv, options, scratchDir, mode, relays);
   }
 
   /** `spawnBackground` for either engine: srt must wrap asynchronously. */
@@ -328,14 +342,21 @@ export class ProcessSandbox implements ExecutionSandbox {
       if (options.scratchDir === undefined) rmSync(scratchDir, { recursive: true, force: true });
       return null;
     }
-    return this.startBackground(wrapped.file, wrapped.argv, options, scratchDir, this.mode);
+    return this.startBackground(
+      wrapped.file,
+      wrapped.argv,
+      options,
+      scratchDir,
+      this.mode,
+      wrapped.relays,
+    );
   }
 
   /**
    * Spawn a wrapped background process: its own process group (so
    * `stopProcessTree` reaches every descendant), the seccomp program on fd 3
    * under bubblewrap as `execute` hands it over, and its scratch directory
-   * removed when it exits.
+   * and its relays' host half (DEC-50) gone when it exits.
    */
   private startBackground(
     file: string,
@@ -343,6 +364,7 @@ export class ProcessSandbox implements ExecutionSandbox {
     options: SandboxOptions,
     scratchDir: string,
     mode: ConfinementMode,
+    relays?: HostRelays,
   ): import("node:child_process").ChildProcessWithoutNullStreams {
     const seccompFd = mode === "bubblewrap" ? openSeccompFd(scratchDir) : undefined;
     const child = spawn(file, argv, {
@@ -356,6 +378,10 @@ export class ProcessSandbox implements ExecutionSandbox {
     // A live group the harness's exit and the next start's reap reach (RUN-7, RUN-12).
     trackGroup(child.pid);
     child.once("exit", () => untrackGroup(child.pid));
+    if (relays) {
+      child.once("exit", () => relays.close());
+      child.once("error", () => relays.close());
+    }
     if (options.scratchDir === undefined) {
       child.once("exit", () => rmSync(scratchDir, { recursive: true, force: true }));
     }
@@ -388,7 +414,7 @@ export class ProcessSandbox implements ExecutionSandbox {
     command: string,
     args: string[],
     options: SandboxOptions,
-  ): Promise<{ file: string; argv: string[] } | { refusal: ExecutionResult }> {
+  ): Promise<{ file: string; argv: string[]; relays?: HostRelays } | { refusal: ExecutionResult }> {
     if (this.mode !== "srt") return this.wrap(command, args, options);
     try {
       return await srtWrap(command, args, withCardIsolation(options));
@@ -422,8 +448,10 @@ export class ProcessSandbox implements ExecutionSandbox {
       if (ownsScratch) rmSync(scratchDir, { recursive: true, force: true });
       return wrapped.refusal;
     }
-    const { file, argv } = wrapped;
+    const { file, argv, relays } = wrapped;
     const srt = this.mode === "srt";
+    // An outward relay's host port is bound a tick later (DEC-50).
+    await relays?.ready;
 
     return new Promise<ExecutionResult>((resolve) => {
       let stdout = "";
@@ -536,6 +564,7 @@ export class ProcessSandbox implements ExecutionSandbox {
         clearTimeout(timer);
         clearInterval(memoryTimer);
         if (killTimer) clearTimeout(killTimer);
+        relays?.close();
         if (srt) srtCleanup();
         if (ownsScratch) {
           try {

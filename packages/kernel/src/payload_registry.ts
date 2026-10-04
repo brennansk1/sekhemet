@@ -1505,6 +1505,9 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
   // design-stage DS-S8-3 (amended by the owner, 2026-09-28), DS-P7-7: the
   // labelled set surveyed with keyword queries and with one Planning model's;
   // `admitted` lets that model's queries leave the machine, for its prompt only.
+  // C2c: the paired test PROMPT_STANDARD rule 35.4 judges it by (the labelled
+  // needs each arm got right alone, the one-sided exact p) and that rule's
+  // name; optional, so the events recorded before it read, and never admit.
   "research/reuse_queries_measured": {
     model: s(ID),
     promptHash: s(SHA256),
@@ -1513,6 +1516,16 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     keywords: s(v.strictObject({ p1: SCORE, silence: SCORE, measured: COUNT })),
     modelQueries: s(v.strictObject({ p1: SCORE, silence: SCORE, measured: COUNT })),
     fromModel: s(COUNT),
+    paired: s(
+      v.strictObject({
+        needs: COUNT,
+        gained: COUNT,
+        lost: COUNT,
+        gainP: v.pipe(v.number(), v.minValue(0), v.maxValue(1)),
+      }),
+      true,
+    ),
+    admissionRule: s(v.picklist(["prompt-standard-35.4"]), true),
     admitted: s(v.boolean()),
   },
   // planner-pm PM-P6-13, PM-N9-4 (B4.8): one run of Seshat's scripted

@@ -291,9 +291,12 @@ export function loadRepoSkills(repoPath: string): SkillsRegistry {
   mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 });
   // Rule 13 (EXT-24): the person's own skills first, then the project's,
   // which override the person's by name. Both pinned in the user directory.
-  skills.loadFromDirectory(userPaths().skills, { lockPath, scope: "user" });
+  // Item 15, EXT-4 (FINDINGS_C1 SEC-02): no trust on first use — a skill
+  // loads only once a person approved its content (`sekhemet skills approve`).
+  const trust = { lockPath, trustOnFirstUse: false } as const;
+  skills.loadFromDirectory(userPaths().skills, { ...trust, scope: "user" });
   const personal = skills.getAllSkills();
-  skills.loadFromDirectory(join(repoPath, ".sekhemet", "skills"), { lockPath, scope: "project" });
+  skills.loadFromDirectory(join(repoPath, ".sekhemet", "skills"), { ...trust, scope: "project" });
   for (const s of personal) if (!skills.getSkill(s.name)) skills.registerSkill(s);
   return skills;
 }

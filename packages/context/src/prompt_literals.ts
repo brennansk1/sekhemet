@@ -102,6 +102,9 @@ const BUILDER = /(Prompt|PromptFor|Directive|Instructions?)$/;
  */
 const REFUSAL_BUILDER = /Refusal$|^refuse[A-Z]/;
 const PERSON_FACING_REFUSALS: ReadonlySet<string> = new Set([
+  // apps/harness/src/injection.ts: why a run's page fixtures cannot be delivered,
+  // printed by scripts/injection_fixtures.mjs to the person before any card runs.
+  "pageFixtureRefusal",
   // apps/harness/src/team/leaving.ts: "<name> is no longer a member of this workspace…",
   // the dashboard's refusal when work is assigned to a removed member (teams TEAM-52).
   "assignmentRefusal",
@@ -115,6 +118,10 @@ const PERSON_FACING_REFUSALS: ReadonlySet<string> = new Set([
   // packages/models/src/assignments.ts: "Refusing the assignment: … requires a recorded
   // bake-off …", printed by `sekhemet models assign` (models MD-N10-1).
   "bakeOffRefusal",
+  // packages/models/src/ollama_cloud.ts: "Refusing <model> as the <role>: it runs on Ollama's
+  // cloud service, so its prompts would leave this machine…", the dashboard's 409, `sekhemet
+  // models assign` and `doctor` (models rule 14c, MD-N20-1, MD-N20-2); no model is sent it.
+  "ollamaCloudRefusal",
   // apps/harness/src/reservation.ts: why the queue did not start a card while the
   // machine is reserved, in the queue's log for a person (models MD-N3-1).
   "unattendedStartRefusal",

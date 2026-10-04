@@ -258,7 +258,9 @@ const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "sekhemet_run_gates",
-    description: "Run the project's declared gates, in a card's worktree when given.",
+    // Extensibility item 19a, EXT-35 (DEC-55): a pre-check, never evidence.
+    description:
+      "A pre-check: runs the project's declared gates, in a card's worktree when given, and returns their verdict. The result is not evidence, is recorded on no card and moves no issue; only the card's own run decides.",
     inputSchema: { type: "object", properties: { card_id: str } },
     handler: async (a, ctx) => {
       const id = cardIdArg(a);

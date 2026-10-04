@@ -11,14 +11,18 @@ import {
   ROLE_WORDS,
   type WeightsReport,
   classifyMemoryPressure,
+  currentAssignment,
+  hostFingerprintHash,
+  isOllamaCloudTag,
   managedModelWeights,
+  ollamaCloudRefusal,
   probeModelWeights,
   readKernelPressureLevel,
 } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { plural } from "@sekhemet/ui";
 import { userConfigPath } from "./config.js";
-import { networkConfigs } from "./config_apply.js";
+import { effectiveConfig, networkConfigs, queueDefaults } from "./config_apply.js";
 import { configUpgradeCheck } from "./config_upgrade.js";
 import { toolProbeOptions } from "./init.js";
 import { pendingM0InRepo } from "./m0_path.js";
@@ -335,6 +339,7 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
     pluginsCheck(repoPath),
     m0PendingCheck(repoPath),
     modelVerificationCheck(),
+    ollamaCloudCheck(repoPath),
     userDirCheck(),
     // SUR-43: each renamed config key an upgrade rewrote, with its backup.
     configUpgradeCheck([join(repoPath, ".sekhemet", "config.toml"), userConfigPath()]),
@@ -536,6 +541,44 @@ export function modelVerificationCheck(
       )
       .join("; ")}`,
   );
+}
+
+/**
+ * Models rule 14c, MD-N20-2 (NEW-models-20): a role whose configuration names
+ * an Ollama cloud model — the person's assignment on this host, or the
+ * project's `[models]` — fails, in the words the run refuses it with.
+ */
+export function ollamaCloudCheck(
+  repoPath: string,
+  registry: ModelRegistry | undefined = hostRegistry(),
+  host: string = hostFingerprintHash(),
+): DiagnosticCheck {
+  const named: { role: ModelRole; model: string }[] = [];
+  for (const role of MODEL_ROLES) {
+    for (const scope of ["personal", "baseline", "default"] as const) {
+      const model = registry ? currentAssignment(registry, host, role, scope)?.model : undefined;
+      if (model) named.push({ role, model });
+    }
+  }
+  try {
+    const q = queueDefaults(effectiveConfig(repoPath).config, []);
+    if (q.worker) named.push({ role: "worker", model: q.worker });
+    if (q.manager) named.push({ role: "planner", model: q.manager });
+  } catch {
+    // An unreadable configuration is the configuration check's to report.
+  }
+  const refused = [
+    ...new Map(
+      named.filter((n) => isOllamaCloudTag(n.model)).map((n) => [`${n.role}|${n.model}`, n]),
+    ).values(),
+  ];
+  return refused.length === 0
+    ? check("Local models only", "pass", "no role names one of Ollama's cloud models")
+    : check(
+        "Local models only",
+        "fail",
+        refused.map((n) => ollamaCloudRefusal(n.model, n.role)).join(" "),
+      );
 }
 
 /** X17, X18: the provenance and research registers, when the repository keeps them. */

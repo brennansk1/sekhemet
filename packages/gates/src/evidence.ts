@@ -331,8 +331,8 @@ function supersededIn(
 
 /**
  * Files that run outside the sandbox later — on the user's next commit, in
- * their editor, or when a trusted hook or MCP server loads (security item 41,
- * SEC-32). A diff touching one is flagged for the person reviewing it.
+ * their editor, when a trusted hook or MCP server loads, or when another coding
+ * agent opens the repository (security item 41, SEC-32, NEW-security-12). A diff touching one is flagged for the person reviewing it.
  */
 const EXECUTES_LATER: readonly RegExp[] = [
   /^\.githooks\//i,
@@ -348,6 +348,14 @@ const EXECUTES_LATER: readonly RegExp[] = [
   /^\.sekhemet\/hooks\.toml$/i,
   /^\.sekhemet\/mcp\.json$/i,
   /^\.sekhemet\/skills\/[^/]+\/scripts\//i,
+  // Other coding agents' and tools' configuration, which that tool runs or
+  // obeys on the next developer's machine (item 41, DEC-55, SEC-N12-1): at any
+  // depth, since these tools also read nested copies.
+  /(^|\/)\.(claude|cursor|codex|windsurf|continue)\//i,
+  /(^|\/)\.mcp\.json$/i,
+  /(^|\/)\.github\/copilot-instructions\.md$/i,
+  /(^|\/)(agents|claude)\.md$/i,
+  /(^|\/)mise\.toml$/i,
 ];
 
 export function executesLater(files: readonly string[]): string[] {

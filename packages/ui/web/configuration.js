@@ -10,7 +10,8 @@
 // the project's minutes a day with the In review limit they give, disabled
 // with its reason for a person who may not change them, and every effective
 // value with the file it came from; above it, the Agent queue's per-person
-// cap (teams item 30, TEAM-30), an Admin's to save (`PUT /api/config/queue`).
+// cap (teams item 30, TEAM-30), an Admin's to save (`PUT /api/config/queue`);
+// last, Network activity (NEW-dashboard-24): what left the machine, read-only.
 import { esc, getJSON, sendJSON } from "./dom.js";
 import { practiceTip, setTips, storage, tipsOn } from "./learn.js";
 import { FIRST_RUN, readRole, writeRole } from "./lib/learn.js";
@@ -231,7 +232,65 @@ function projectHtml(cfg) {
   const where = cfg.project?.rootPath
     ? `<p class="sec">${esc(cfg.project.name)} · <span class="mono">${esc(cfg.project.rootPath)}</span></p>`
     : "";
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-project"><h3 id="cfg-h-project">Project configuration</h3>${where}${doneHtml(cfg.definitionOfDone)}${queueHtml(cfg)}${pushHtml(cfg)}<h4>Values in force</h4><p class="sec">The values in force, and the file each came from. Edit the files to change them.</p><div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">From</th></tr></thead><tbody>${rows}</tbody></table></div>${problems ? `<h4>Problems</h4><ul class="cfg-warn">${problems}</ul>` : ""}</section>`;
+  return `<section class="cfg-sec" aria-labelledby="cfg-h-project"><h3 id="cfg-h-project">Project configuration</h3>${where}${doneHtml(cfg.definitionOfDone)}${queueHtml(cfg)}${pushHtml(cfg)}<h4>Values in force</h4><p class="sec">The values in force, and the file each came from. Edit the files to change them.</p><div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">From</th></tr></thead><tbody>${rows}</tbody></table></div>${problems ? `<h4>Problems</h4><ul class="cfg-warn">${problems}</ul>` : ""}${networkHtml()}</section>`;
+}
+
+/**
+ * Network activity (NEW-dashboard-24, DB-N24-1..3; security item 33a; FINDINGS
+ * INS-08), the last card of Project configuration: what left the machine,
+ * newest first, from the ledger's `harness/egress`, `card/egress` and
+ * `model/downloaded` — the rows `sekhemet egress` prints. Read-only for
+ * everyone; its filters only narrow the list, and it records nothing.
+ */
+function networkHtml() {
+  return `<section class="cfg-net" aria-labelledby="cfg-h-net"><h4 id="cfg-h-net">Network activity</h4><p class="sec">Every request recorded leaving this machine, newest first: integrations, research, an issue's allowed network and model downloads.</p><form class="cfg-net-filters" data-net-form aria-label="Filter network activity"><label for="cfg-net-since">Since</label><input id="cfg-net-since" type="date" data-net-since><label class="cfg-net-chk"><input type="checkbox" data-net-refused> Refused only</label></form><div data-net-body aria-live="polite"><div class="sk" style="height:48px"></div></div><p class="sec">The user guide's <i>Privacy and network</i> page lists every host Sekhemet can reach, what it sends and the setting that turns it off.</p></section>`;
+}
+
+function netTime(at) {
+  return `${String(at ?? "")
+    .replace("T", " ")
+    .slice(0, 16)} UTC`;
+}
+
+function netCause(cause) {
+  if (cause?.kind === "issue")
+    return `<a href="#/card/${encodeURIComponent(cause.id)}">${esc(cause.id)} ${esc(cause.title)}</a>`;
+  if (cause?.kind === "person") return esc(cause.name);
+  return "Sekhemet";
+}
+
+function netRowHtml(r) {
+  const verdict = r.allowed
+    ? '<span class="net-verdict ok">Allowed</span>'
+    : '<span class="net-verdict no">Refused</span>';
+  const meta = [netTime(r.at), r.size ? esc(r.size) : "", netCause(r.cause)].filter(Boolean);
+  return `<li class="net-row">${verdict}<span class="net-what"><span class="mono net-host">${esc(r.host)}</span> <span class="net-purpose">${esc(r.purpose)}</span>${r.reason ? ` <span class="sec">— ${esc(r.reason)}</span>` : ""}${r.erased ? ' <span class="sec">(details erased)</span>' : ""}</span><span class="net-meta sec">${meta.join(" · ")}</span></li>`;
+}
+
+async function renderNetwork() {
+  const body = ui.root?.querySelector("[data-net-body]");
+  if (!body) return;
+  const since = ui.root.querySelector("[data-net-since]")?.value ?? "";
+  const refused = ui.root.querySelector("[data-net-refused]")?.checked === true;
+  const project = store.state.project?.id;
+  const q = new URLSearchParams();
+  if (project) q.set("project", project);
+  if (since) q.set("since", since);
+  if (refused) q.set("refused", "1");
+  const qs = q.toString();
+  const r = await getJSON(`/api/config/egress${qs ? `?${qs}` : ""}`).catch(() => ({
+    ok: false,
+    data: null,
+  }));
+  if (!ui.root?.contains(body)) return;
+  if (!r.ok) {
+    body.innerHTML = `<p class="why" role="alert">${esc(r.data?.error ?? "Network activity could not be read.")}</p>`;
+    return;
+  }
+  const rows = r.data?.rows ?? [];
+  body.innerHTML = rows.length
+    ? `<ul class="net-list" data-net-list>${rows.map(netRowHtml).join("")}</ul>`
+    : `<p class="sec" data-net-empty>${esc(r.data?.empty ?? "Nothing has left this machine.")}</p><ul class="net-list" data-net-list></ul>`;
 }
 
 /**
@@ -357,12 +416,21 @@ async function renderSection() {
     ).catch(() => ({ ok: false, data: null }));
     const cfg = r.ok ? r.data : { error: r.data?.error ?? "The configuration could not be read." };
     host.innerHTML = ui.section === "review" ? reviewHtml(cfg) : projectHtml(cfg);
-    if (ui.section === "project" && !cfg.error) void renderPush();
+    if (ui.section === "project" && !cfg.error) {
+      void renderPush();
+      void renderNetwork();
+    }
   }
 }
 
 async function onSubmit(e) {
   const form = e.target instanceof HTMLFormElement ? e.target : null;
+  if (form?.hasAttribute("data-net-form")) {
+    // Its filters apply as they change; Enter in Since sends nothing.
+    e.preventDefault();
+    void renderNetwork();
+    return;
+  }
   if (form?.hasAttribute("data-queue-form")) {
     e.preventDefault();
     await saveQueueCap(form);
@@ -412,6 +480,11 @@ function onChange(e) {
     saveEstimation(t.value === "points" ? "points" : "off");
   }
   if (t instanceof HTMLInputElement && t.hasAttribute("data-push-remote")) savePush(t.checked);
+  if (
+    t instanceof HTMLInputElement &&
+    (t.hasAttribute("data-net-since") || t.hasAttribute("data-net-refused"))
+  )
+    void renderNetwork();
   if (t instanceof HTMLInputElement && t.dataset.autoApplyProp) {
     saveAutoApply(t.dataset.autoApplyProp, t.checked);
   }

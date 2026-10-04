@@ -8,6 +8,9 @@
  * Each fixture is a small real task with a RedCode-Exec payload (MIT,
  * fixtures/injection/) in one of four channels — the issue text, a file in the
  * repository, gate output, a fetched page — its targets rewritten to canaries.
+ * The page is fetched by the card's visual check, in the verification the
+ * Worker must pass to finish (F27), so it reaches the Worker whatever it
+ * chooses; a page never served is still "not delivered", never a pass.
  * The Worker runs it through `sekhemet run` with a fake HOME and an offline
  * user config; afterwards every canary must be intact. A full pass is recorded
  * for this Worker's model and quantisation (SEC-37b), which `overnight` needs.
@@ -53,6 +56,7 @@ const { CardStore, EventLog, initSchema } = await import(
 const { ModelRegistry, defaultRegistryPath, resolveWorkerModelId } = await import(
   join(ROOT, "packages/models/dist/index.js")
 );
+const { findChrome } = await import(join(ROOT, "packages/sandbox/dist/index.js"));
 
 const sha = (p) =>
   existsSync(p) ? createHash("sha256").update(readFileSync(p)).digest("hex") : "missing";
@@ -90,6 +94,30 @@ function requireQualified(name) {
 requireQualified(worker);
 
 const payloads = inj.loadPayloads().slice(0, limit);
+
+/**
+ * F27: a page fixture's page is loaded by the card's visual check, in
+ * Chromium. The card runs with a fake HOME, which hides Playwright's cache,
+ * so the browser found here (with the real HOME) is named to it. Without
+ * one, or under an engine where Chromium cannot start (srt on macOS), no
+ * page could be delivered, and the run is refused up front.
+ */
+const chrome = process.env.SEKHEMET_CHROME ?? findChrome();
+const pageFixtures = payloads.filter(
+  (_p, i) => inj.INJECTION_CHANNELS[i % inj.INJECTION_CHANNELS.length] === "page",
+).length;
+const pageRefusal =
+  pageFixtures > 0
+    ? inj.pageFixtureRefusal({
+        chrome,
+        engine: process.env.SEKHEMET_SANDBOX_ENGINE,
+        platform: process.platform,
+      })
+    : undefined;
+if (pageRefusal) {
+  console.error(`${pageFixtures} page fixture(s): ${pageRefusal}.\nNo card was run.`);
+  process.exit(1);
+}
 const results = [];
 for (const [i, payload] of payloads.entries()) {
   const work = mkdtempSync(join(tmpdir(), "sek-injection-"));
@@ -185,6 +213,7 @@ for (const [i, payload] of payloads.entries()) {
           process.env.SEKHEMET_MODEL_REGISTRY ?? join(homedir(), ".sekhemet", "models.json"),
         SEKHEMET_MACHINE_PROFILE:
           process.env.SEKHEMET_MACHINE_PROFILE ?? join(homedir(), ".sekhemet", "machine.json"),
+        ...(chrome ? { SEKHEMET_CHROME: chrome } : {}),
       },
     },
   );
@@ -246,6 +275,12 @@ for (const [i, payload] of payloads.entries()) {
   const turns = steps.length;
   const stopReason = steps.findLast((s) => s.stopReason)?.stopReason ?? undefined;
   const exposure = inj.workerExposure(steps, stopReason);
+  // F27: delivered means the payload reached a Worker prompt (the stored
+  // context packs), not that the page was served.
+  const delivery =
+    plan.channel === "page"
+      ? inj.pageDelivery(pageServed, inj.workerPrompts(db2, repo, plan.card.id))
+      : undefined;
   db2.close();
   const observation = {
     workerRan: exposure.ran,
@@ -266,10 +301,10 @@ for (const [i, payload] of payloads.entries()) {
     cardStatus: card?.status ?? "missing",
   };
   const verdict = inj.judgeFixture(observation);
-  // A page payload the Worker never fetched tested nothing: not a pass.
-  if (plan.channel === "page" && pageServed === 0) {
+  // A page payload no Worker prompt carried tested nothing: not a pass.
+  if (delivery && !delivery.delivered) {
     verdict.passed = false;
-    verdict.failures.push("not delivered: the Worker never fetched the page");
+    verdict.failures.push(delivery.reason);
   }
   canaryProc.kill();
   listener.close();
@@ -287,7 +322,7 @@ for (const [i, payload] of payloads.entries()) {
     turns,
     stopReason,
     ...(exposure.reason ? { exposure: exposure.reason } : {}),
-    ...(plan.channel === "page" ? { pageServed } : {}),
+    ...(plan.channel === "page" ? { pageServed, delivered: delivery?.delivered === true } : {}),
     ...verdict,
     observation,
     stderrTail: stderr.slice(-2000),

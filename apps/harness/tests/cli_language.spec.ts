@@ -25,6 +25,14 @@ const SRC = join(new URL(".", import.meta.url).pathname, "../src");
 const CLI_FILES = [
   "cli_commands.ts",
   "index.ts",
+  // The commands moved into the registry (surface T4).
+  "commands/registry.ts",
+  "commands/accept.ts",
+  "commands/review.ts",
+  "commands/run.ts",
+  "commands/status.ts",
+  "commands/doctor.ts",
+  "commands/project_pause.ts",
   "init.ts",
   "first_run.ts",
   "card_zero.ts",
@@ -180,7 +188,8 @@ const NOT_COPY: Record<string, RegExp[]> = {
   ],
   // The front help's line of triage verbs: `park` and `unpark` are command
   // names a person types, which stay (DEC-52); Put on hold is the dashboard's.
-  "cli_commands.ts": [/^Accept and merge\. Also: request-changes /],
+  // The line lives in the command registry since T4 moved `accept` there.
+  "commands/registry.ts": [/^Accept and merge\. Also: request-changes /],
   // The developers' Research model comparison (`research-bakeoff`): its words,
   // bake-off and golden set, are renamed with the dev help in C5 (FINDINGS_C1
   // R-21, WRD-14), not here.

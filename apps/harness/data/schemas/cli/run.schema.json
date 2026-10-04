@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "sekhemet run --json",
+  "description": "The outcome of running one issue (surface item 20c).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["command", "ok", "exitCode", "message"],
+  "properties": {
+    "command": {
+      "const": "run"
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "exitCode is 0."
+    },
+    "exitCode": {
+      "enum": [0, 1, 2],
+      "description": "The exit code the command gives, with or without --json: 0 success, 1 failure, 2 a usage error or a missing confirmation."
+    },
+    "message": {
+      "type": "string",
+      "description": "The outcome in one sentence."
+    },
+    "issue": {
+      "$ref": "#/definitions/issue"
+    },
+    "passed": {
+      "type": "boolean",
+      "description": "Every blocking check passed and the issue reached Review."
+    },
+    "stopReason": {
+      "type": "string"
+    },
+    "steps": {
+      "$ref": "#/definitions/steps"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "passed"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "skipped": {
+            "type": "boolean"
+          },
+          "unavailable": {
+            "type": "boolean",
+            "description": "The check could not give a verdict; never a pass."
+          }
+        }
+      }
+    },
+    "model": {
+      "type": "string",
+      "description": "The Coding model the issue ran on."
+    }
+  },
+  "definitions": {
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "status", "state"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The issue's key."
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "The stored state: backlog, ready, planning, in_progress, verify, review, done, parked or rejected."
+        },
+        "state": {
+          "type": "string",
+          "description": "The state in plain words, as Status says it."
+        }
+      }
+    },
+    "steps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["used", "budget"],
+      "properties": {
+        "used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "budget": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

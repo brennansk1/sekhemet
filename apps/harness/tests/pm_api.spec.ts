@@ -196,7 +196,10 @@ describe("PM and board-practice API", () => {
       /attachment; filename="sekhemet-.*-jira-csv\.csv"/,
     );
     const [header, row] = parseCsv(await res.text());
-    expect(header?.slice(0, 5)).toEqual([
+    // Jira Cloud's columns since DEC-55 (NEW-integrations-5): Issue Id and Parent lead.
+    expect(header?.slice(0, 7)).toEqual([
+      "Issue Id",
+      "Parent",
       "Summary",
       "Issue Type",
       "Status",
@@ -204,8 +207,8 @@ describe("PM and board-practice API", () => {
       "Story Points",
     ]);
     // The SPIDR suffix is ours, not the team's: it is stripped on export.
-    expect(row?.[0]).toBe("Implement append-only ledger");
-    expect(row?.[3]).toBe("High");
+    expect(row?.[2]).toBe("Implement append-only ledger");
+    expect(row?.[5]).toBe("High");
   });
 
   it("imports a Linear CSV as proposals, never directly", async () => {

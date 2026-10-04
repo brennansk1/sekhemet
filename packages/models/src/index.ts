@@ -25,6 +25,7 @@ export * from "./bakeoff.js";
 export * from "./chat_template.js";
 export * from "./quantisation.js";
 export * from "./assignments.js";
+export * from "./ollama_cloud.js";
 export * from "./tool_index.js";
 export * from "./planner_copy.js";
 export * from "./headroom.js";

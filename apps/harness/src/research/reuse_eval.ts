@@ -1,7 +1,9 @@
+import { MIN_ADMITTED_GAIN, binomialTailAtLeast } from "@sekhemet/eval";
 import type { EventLog } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import {
   type QueryOrigin,
+  REUSE_ADMISSION_RULE,
   REUSE_QUERIES_MEASURED,
   reuseQueriesPromptHash,
 } from "./capability_queries.js";
@@ -231,8 +233,25 @@ export interface ReuseQueriesMeasurement {
   modelQueries: ReuseQueriesArm;
   /** Needs the model's own queries were sent for (the rest fell back to keywords). */
   fromModel: number;
+  /**
+   * PROMPT_STANDARD rule 35.4's paired test over the labelled needs: those
+   * only the model's queries got right (`gained`), those only the keywords
+   * did (`lost`), and the one-sided exact p of the gain.
+   */
+  paired: { needs: number; gained: number; lost: number; gainP: number };
+  admissionRule: typeof REUSE_ADMISSION_RULE;
   admitted: boolean;
 }
+
+/**
+ * PROMPT_STANDARD rule 35.4, the suite's resolution: a gain is admitted only
+ * on at least 30 paired items, by at least 20 points (`MIN_ADMITTED_GAIN`),
+ * by a one-sided exact test at 0.05. The other route of 35.4 — adopting an
+ * inconclusive change that is simpler or cheaper — does not apply: the
+ * model's queries add a model call and change no token count of a card.
+ */
+export const REUSE_ADMISSION_MIN_NEEDS = 30;
+const REUSE_ADMISSION_ALPHA = 0.05;
 
 const pct = (x: number | null) => (x === null ? "not measured" : `${(x * 100).toFixed(0)}%`);
 
@@ -243,7 +262,9 @@ const pct = (x: number | null) => (x === null ? "not measured" : `${(x * 100).to
  * model's (`capabilityQueries`), and one `research/reuse_queries_measured`
  * is recorded. The model is admitted — its queries may then leave the
  * machine in `plan` — only when every need was measured in both runs, its
- * precision@1 beats the keywords' and its correct silence does not fall.
+ * precision@1 gains on the keywords' by PROMPT_STANDARD rule 35.4 (at least
+ * 20 points over at least 30 paired labelled needs, by a one-sided exact
+ * test at 0.05) and its correct silence does not fall.
  * Consent is checked before the model is loaded (`loadPlanner`).
  */
 export async function measureReuseQueries(o: {
@@ -283,13 +304,38 @@ export async function measureReuseQueries(o: {
   const k = scores(keywords);
   const m = scores(withModel);
   const n = keywords.needs;
-  const admitted =
-    k.measured === n &&
-    m.measured === n &&
-    k.p1 !== null &&
-    m.p1 !== null &&
-    m.p1 > k.p1 &&
-    (k.silence === null || (m.silence !== null && m.silence >= k.silence));
+  // Paired per labelled need, as the suite pairs cards (rule 35.4).
+  const labelled = new Set(
+    (o.set ?? REUSE_LABELLED_SET).filter((x) => x.expect !== "none").map((x) => x.id),
+  );
+  const modelRight = new Map(withModel.perNeed.map((p) => [p.id, p.correct]));
+  let gained = 0;
+  let lost = 0;
+  let pairedNeeds = 0;
+  for (const p of keywords.perNeed) {
+    if (!labelled.has(p.id)) continue;
+    pairedNeeds++;
+    const mr = modelRight.get(p.id) === true;
+    if (mr && !p.correct) gained++;
+    if (!mr && p.correct) lost++;
+  }
+  const gainP = gained + lost > 0 ? binomialTailAtLeast(gained, gained + lost) : 1;
+  const points = pairedNeeds > 0 ? (gained - lost) / pairedNeeds : 0;
+  const allMeasured = k.measured === n && m.measured === n;
+  const silenceHolds = k.silence === null || (m.silence !== null && m.silence >= k.silence);
+  // Why it is not admitted, the first reason that applies; none when it is.
+  const why = !allMeasured
+    ? "a need could not be measured in both runs"
+    : pairedNeeds < REUSE_ADMISSION_MIN_NEEDS
+      ? `${pairedNeeds} labelled needs cannot resolve a gain: PROMPT_STANDARD 35.4 needs at least ${REUSE_ADMISSION_MIN_NEEDS}`
+      : points < MIN_ADMITTED_GAIN - 1e-9
+        ? `a gain of ${Math.round(points * 100)} points is under the ${Math.round(MIN_ADMITTED_GAIN * 100)} the set can resolve`
+        : gainP >= REUSE_ADMISSION_ALPHA
+          ? `${gained} gained and ${lost} lost is not significant (one-sided exact p = ${gainP.toFixed(2)})`
+          : !silenceHolds
+            ? "its correct silence is lower"
+            : undefined;
+  const admitted = why === undefined;
   const fromModel = withModel.perNeed.filter((p) => p.origin === "planning-model").length;
   const result: ReuseQueriesMeasurement = {
     model: planner.modelId,
@@ -299,6 +345,8 @@ export async function measureReuseQueries(o: {
     keywords: k,
     modelQueries: m,
     fromModel,
+    paired: { needs: pairedNeeds, gained, lost, gainP },
+    admissionRule: REUSE_ADMISSION_RULE,
     admitted,
   };
   await o.log.append({ actor: "harness", type: REUSE_QUERIES_MEASURED, payload: { ...result } });
@@ -307,9 +355,12 @@ export async function measureReuseQueries(o: {
   o.print(line("Keyword queries", k));
   o.print(`${line(label, m)} The model wrote the queries for ${fromModel} needs.`);
   o.print(
+    `Paired over ${pairedNeeds} labelled needs: ${gained} right only with the model's queries, ${lost} only with the keywords (one-sided exact p = ${gainP.toFixed(3)}).`,
+  );
+  o.print(
     admitted
       ? `${planner.modelId} is admitted: plan now sends its queries to the registries.`
-      : `${planner.modelId} is not admitted: plan keeps sending the keyword queries. It is admitted only when every need is measured in both runs, its precision@1 is higher and its correct silence is no lower.`,
+      : `${planner.modelId} is not admitted: ${why}. plan keeps sending the keyword queries. It is admitted only when every need is measured in both runs, its precision@1 gains at least ${Math.round(MIN_ADMITTED_GAIN * 100)} points over at least ${REUSE_ADMISSION_MIN_NEEDS} labelled needs by a one-sided exact test at 0.05 (PROMPT_STANDARD 35.4), and its correct silence is no lower.`,
   );
   return result;
 }

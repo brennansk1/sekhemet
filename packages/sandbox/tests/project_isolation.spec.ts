@@ -142,6 +142,8 @@ describe("item 10a: a card sees only its own project (NEW-security-13)", () => {
     expect(bind).toBeGreaterThan(0);
     const mask = argv.indexOf(l.b);
     expect(argv[mask - 1]).toBe("--tmpfs");
+    // An empty directory mask is read-only: a write there is refused, not kept in a private tmpfs.
+    expect(argv.slice(mask + 1, mask + 3)).toEqual(["--remount-ro", l.b]);
     expect(mask).toBeGreaterThan(bind);
     expect(argv[argv.indexOf(l.canaries.ledger) - 1]).toBe("/dev/null");
     const fs = srtFilesystem(options);

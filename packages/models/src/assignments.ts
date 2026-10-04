@@ -1,3 +1,4 @@
+import { isOllamaCloudTag, ollamaCloudRefusal } from "./ollama_cloud.js";
 import type { ModelRegistry, QualificationLookup, RoleAssignmentRecord } from "./registry.js";
 import type { ModelRole } from "./types.js";
 
@@ -121,6 +122,10 @@ export function assignRole(
   registry: ModelRegistry,
   input: AssignInput,
 ): { assignment: RoleAssignmentRecord; previous?: RoleAssignmentRecord } {
+  // Rule 14c, MD-N20-1: an Ollama cloud model sends its prompts off the
+  // machine; no evidence admits it for any role.
+  if (isOllamaCloudTag(input.model))
+    throw new AssignmentRefusal(ollamaCloudRefusal(input.model, input.role));
   const qualified =
     input.qualification === "qualified" ||
     (input.role === "worker" && input.qualification === "overridden");
@@ -171,6 +176,10 @@ export function restoreRole(
     ? [...all.slice(0, -1)].reverse().find((a) => a.model !== replaced.model)
     : undefined;
   if (!earlier) throw new AssignmentRefusal(`There is no earlier ${role} assignment to restore.`);
+  // Rule 14c, MD-N20-1: an earlier assignment of an Ollama cloud model (one
+  // recorded before the rule) is never restored.
+  if (isOllamaCloudTag(earlier.model))
+    throw new AssignmentRefusal(ollamaCloudRefusal(earlier.model, role));
   const assignment: RoleAssignmentRecord = {
     ...earlier,
     by: options.by,

@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { skillSha256 } from "@sekhemet/context";
+import { approveSkill, skillSha256 } from "@sekhemet/context";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { main } from "../src/index.js";
 import { openLocalLedger } from "../src/ledger_cmds.js";
@@ -22,6 +22,7 @@ import {
   gatedFiles,
   loadRepoSkills,
   setInvocationTrust,
+  skillsLockPath,
   trustFiles,
   untrustedFiles,
 } from "../src/workspace_trust.js";
@@ -154,7 +155,9 @@ describe("S9: workspace trust", () => {
   });
 
   it("SEC-31: a trust file or skills lock the repository ships is ignored for trust decisions", async () => {
-    // First use pins the skill in the user directory's lock.
+    // A person's approval pins the skill in the user directory's lock
+    // (no trust on first use: FINDINGS_C1 SEC-02).
+    approveSkill(join(repo, ".sekhemet", "skills"), "deploy", "human", skillsLockPath(repo));
     expect(loadRepoSkills(repo).getSkill("deploy")).toBeDefined();
     // The repository then changes the skill and ships a lock pinning the
     // change, and a trust file claiming its hooks are trusted.

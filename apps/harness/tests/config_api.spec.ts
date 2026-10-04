@@ -355,6 +355,27 @@ describe("roles (DB-N6-4, DB-N6-5, MD-N12-4, MD-N12-5)", () => {
     expect(await events("models/restored")).toHaveLength(1);
   });
 
+  it("MD-N20-1: refuses an Ollama cloud model for every role, even marked verified, and records nothing", async () => {
+    f.registry.upsert("gpt-oss:120b-cloud", {
+      family: "gpt-oss",
+      qualification: { suiteVersion: "q1", passRate: 1, date: "2026-09-26", status: "qualified" },
+    });
+    const before = f.registry.roleAssignments(HOST).length;
+    for (const role of ["worker", "planner", "reviewer", "researcher"]) {
+      for (const path of [`/api/config/roles/${role}`, `/api/config/roles/${role}/qualify`]) {
+        const r = await call(path.endsWith("/qualify") ? "POST" : "PUT", path, {
+          model: "gpt-oss:120b-cloud",
+        });
+        expect(r.status).toBe(409);
+        expect(r.body.needs).toBe("local-model");
+        expect(r.body.error).toContain("gpt-oss:120b-cloud");
+        expect(r.body.error).toMatch(/prompts would leave this machine/);
+      }
+    }
+    expect(f.registry.roleAssignments(HOST).length).toBe(before);
+    expect(await events("models/assigned")).toEqual([]);
+  });
+
   it("refuses a Reviewer of the Worker's family, saying why", async () => {
     await call("POST", "/api/config/models/folders", { path: f.models });
     f.registry.upsert("tiny-llama", {

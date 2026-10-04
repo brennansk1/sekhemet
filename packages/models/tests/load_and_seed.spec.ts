@@ -178,7 +178,8 @@ describe("an eager Ollama load is a cold load (models rule 20c, MD-N14-1)", () =
       });
       req.on("end", () => {
         res.setHeader("content-type", "application/json");
-        if (req.url === "/api/ps") {
+        // Ollama's lists answer at once; a load reads /api/tags first (rule 14c).
+        if (req.url === "/api/ps" || req.url === "/api/tags") {
           res.end(JSON.stringify({ models: [] }));
           return;
         }

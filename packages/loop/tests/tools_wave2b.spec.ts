@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { platform, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { findChrome } from "@sekhemet/sandbox";
+import { ProcessSandbox, findChrome } from "@sekhemet/sandbox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TOOL_CATALOG, cardClassFor, toolsForClass } from "../src/tool_catalog.js";
 import { ToolExecutor } from "../src/tools.js";
@@ -51,6 +51,46 @@ describe("loop tools, wave 2b (L12, L18, L19, L20, L23, L24)", () => {
     expect(spin.content).toMatch(/timed out/i);
   }, 60_000);
 
+  it.runIf(process.platform === "linux")(
+    "runs a script under bubblewrap's private /tmp, where its own directory is granted (L12, the Linux run)",
+    async () => {
+      // A card's worktree is under the repository (`.sekhemet/worktrees`), never /tmp.
+      const repoRoot = mkdtempSync(join(import.meta.dirname, ".run-script-"));
+      try {
+        mkdirSync(join(repoRoot, "src"));
+        writeFileSync(join(repoRoot, "src", "a.ts"), "// TODO: a\n");
+        const native = new ToolExecutor({
+          worktreePath: repoRoot,
+          scopeFiles: ["src/**"],
+          sandbox: new ProcessSandbox({ engine: "native" }),
+        });
+        try {
+          const obs = await native.execute({
+            id: "t",
+            name: "run_script",
+            arguments: { code: 'return grep("TODO").length;' },
+          });
+          expect(obs.content).not.toMatch(/chdir/);
+          expect(obs.ok, obs.content).toBe(true);
+          expect(obs.content).toBe("1");
+          const write = await native.execute({
+            id: "t",
+            name: "run_script",
+            arguments: {
+              code: 'require("node:fs").writeFileSync("src/a.ts", "pwned"); return "wrote";',
+            },
+          });
+          expect(write.ok).toBe(false);
+        } finally {
+          native.dispose();
+        }
+      } finally {
+        rmSync(repoRoot, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
+
   it("gives each card class its fixed tool list (L18, L19)", () => {
     // Tool sets are selected by the card's kind, from the kernel's single
     // definition. A SPIDR spike is `spike`, not a second word for it.
@@ -94,7 +134,9 @@ describe("loop tools, wave 2b (L12, L18, L19, L20, L23, L24)", () => {
     expect(typeof findChrome()).toMatch(/string|undefined/);
   }, 60_000);
 
-  it.runIf(platform() === "darwin")(
+  // DEC-50: on Linux the server and each later command have their own network
+  // namespace, and the port crosses both through relays.
+  it.runIf(new ProcessSandbox().confinement !== "none")(
     "runs a background server on its own port that later commands can reach, with interactive input (L23, L24)",
     async () => {
       const started = await run("start_process", {

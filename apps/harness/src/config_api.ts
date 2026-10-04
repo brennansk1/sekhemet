@@ -57,10 +57,12 @@ import {
   freeBytesAt,
   hashModels,
   hostFingerprintHash,
+  isOllamaCloudTag,
   lookupPublishedFile,
   matchOnHub,
   measureHeadroom,
   memoryBreakdown,
+  ollamaCloudRefusal,
   predictDecode,
   rankCombinations,
   recommendRole,
@@ -88,6 +90,7 @@ import { type ModelFolderSetting, resolveConfig, userConfigPath } from "./config
 import { networkConfigs } from "./config_apply.js";
 import { CONFIG_ROUTES, type ConfigRoute } from "./config_routes.js";
 import { egressEvent } from "./egress_event.js";
+import { type EgressContext, NOTHING_LEFT, egressRows } from "./egress_view.js";
 import { networkHint } from "./github_transport.js";
 import { swapHistory } from "./model_access.js";
 import { rolePromptVersion } from "./prompt_versions.js";
@@ -200,6 +203,12 @@ export interface ConfigApiDeps {
    * names. Read-only: it enforces nothing (DB-N14-3).
    */
   definitionOfDone?: (project: string | undefined) => DoneFacts;
+  /**
+   * Network activity (security item 33a, DB-N24-3): who the reader is, as
+   * the rows' visibility and their causes' names need. Default: everything,
+   * the install's own person.
+   */
+  egressContext?: (req: IncomingMessage) => EgressContext;
   /** The hashes already computed, by path, size and modification time; `<user dir>/model-hashes.json`. */
   hashCachePath?: string;
   /** Where a copy to internal storage goes: `~/AI-Models/llm` by default. */
@@ -1977,6 +1986,27 @@ export function createConfigApi(deps: ConfigApiDeps) {
           });
           return true;
         }
+        case "GET /api/config/egress": {
+          // DB-N24-1..3: the rows `sekhemet egress` prints, read-only, newest first.
+          const project = query.get("project") ?? undefined;
+          const ctx = deps.egressContext?.(req) ?? {};
+          const titles = new Map<string, { title: string; projectId?: string }>();
+          for (const c of (await deps.cardStore?.listCards()) ?? [])
+            titles.set(c.id, {
+              title: c.title,
+              ...(c.projectId ? { projectId: c.projectId } : {}),
+            });
+          const rows = await egressRows(
+            deps.log,
+            {
+              ...(query.get("since") ? { since: query.get("since") as string } : {}),
+              refusedOnly: query.get("refused") === "1" || query.get("refused") === "true",
+            },
+            { issue: (id) => titles.get(id), ...ctx, ...(project ? { project } : {}) },
+          );
+          deps.json(res, 200, { rows, empty: NOTHING_LEFT });
+          return true;
+        }
         case "PUT /api/config/review": {
           // Review capacity (dashboard §2.16 item 3, review-git §2.2.3):
           // above 0, recorded per project (`project/review_hours`) with the
@@ -2142,6 +2172,11 @@ export function createConfigApi(deps: ConfigApiDeps) {
           const id = m ? modelKey(m) : wanted;
           if (!id) {
             deps.json(res, 400, { error: "Name the model to assign." });
+            return true;
+          }
+          // Models rule 14c, MD-N20-1: refused before any check that would send it a request.
+          if (isOllamaCloudTag(id)) {
+            deps.json(res, 409, { error: ollamaCloudRefusal(id, role), needs: "local-model" });
             return true;
           }
           if (m && m.fits[role] === "no") {

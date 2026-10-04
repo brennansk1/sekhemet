@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 70 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 71 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,52 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 71 — 2026-10-04 (C2c: CLI, trust and Linux. CLI accept with AI findings, `--json`, a command registry, DEC-55's fixes, Network activity, the Linux relays (DEC-50), the injection page fixtures, the fix-round leftovers)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. One workflow: 11 agents, 2.32M tokens, none failed. Four builders ran one at a time, followed by three reviews in parallel, a fixer, a blocker re-check, a sweep and a gate. The lead then fixed the gate's one failure.
+
+- **The CLI:**
+  - **CLI-01 (severity 4):** `sekhemet review` numbers the AI review's findings and prints the `sekhemet accept <id> --ack 1,2` line. `accept --ack` goes through the same `acceptCard` checks; a refusal names what is still open (exit 2).
+  - **The review diff is against the merge base (CLI-08),** and a skipped check reads as skipped.
+  - **`--json` on run, status, accept and doctor:** one result type, a JSON schema per command, only the object on stdout, and the same exit codes (NEW-surface-10).
+  - **NAM-02, T4:** run, resume, review, accept, doctor and status moved into `commands/registry.ts`, with flags parsed per command; `index.ts` went from 3,999 to 3,781 lines.
+  - **CLI-05 and CLI-06:** the commands refuse in a folder with no project. CLI-04 and CLI-07 are partly fixed.
+- **Trust and integrations (DEC-55):**
+  - Review flags other agents' configuration as code that runs later, at any depth and in any letter case (NEW-security-12);
+  - Ollama `:cloud` and `-cloud` tags are refused before any request at four places, a `remote_host` model fails its health check, and `doctor` has *Local models only* (NEW-models-20);
+  - the Jira CSV writes `Issue Id`, `Parent` and the board's types, with no `Epic Link` (NEW-integrations-5);
+  - Check Run annotations go in 50s; this was already built, and tests were added and shown to fail at 200 (NEW-integrations-6);
+  - the MCP gate-run tool is described as a pre-check (NEW-extensibility-6), and editor snippets ship (NEW-extensibility-7, the product side);
+  - Network activity in Project configuration and `sekhemet egress` (NEW-security-11, NEW-dashboard-24);
+  - SEC-02 (no trust on first use for skills) and SEC-03.
+- **The Linux relays (DEC-50, security item 14b):** each port a command may use gets a Unix socket in its scratch folder, with socat inside and the harness's host half in process. A port nobody named has no listener.
+  - **Linux evidence** (the Lima VM, Ubuntu 24.04, bubblewrap 0.9.0, socat 1.8.0.0): the four tests R9 left failing now pass unchanged. `packages/sandbox/tests` plus `tools_wave2b` and `restricted`: native 237 passed, 2 failed; srt 238 passed, 1 failed (43 skipped each, macOS-only). macOS: 269 passed, 13 skipped, each engine.
+  - The native engine now mounts item 10a's masked folders read-only on Linux. A write there had "succeeded" into an invisible private mount.
+- **The leftovers:**
+  - **The reuse-queries admission follows PROMPT_STANDARD 35.4:** need by need, at least 30 needs, ≥ 20 points of precision@1, a one-sided exact test at p < 0.05, and no loss of correct silence. An admission recorded under the old rule never counts.
+  - **srt's TLS trust on macOS:** one lookup of `com.apple.trustd.agent`, only when the command can connect, with nothing else widened.
+  - Sekhemet's two browser launches pass `--use-mock-keychain`.
+  - **F27:** an implement card had no tool to reach a loopback page. The page fixture now has a `[visual]` check the Worker must pass, so the payload reaches it whatever it chooses. A page never served still counts as not delivered.
+- **Review:** 3 blockers, fixed and confirmed by the re-check.
+  - **(security) An outward relay could be turned into a sandbox escape:** a planted symlink made the unconfined harness connect for the card. It now opens the socket with `O_PATH | O_NOFOLLOW`, checks that it is a socket owned by the harness's own user, and connects through `/proc/self/fd`.
+  - **The srt TLS fix spliced srt's rule in by hand;** that was corrected.
+  - **SEC-02 left personal skills with no approval route.** `skills approve` now reads the person's own skills folder too (`--user`).
+  - There were 7 majors, all fixed.
+- **The gate's one failure:** `pageFixtureRefusal()` is printed by the injection script to the person before any card runs, so the lead added it to the prompt-literal scanner's named person-facing list.
+- **Left, with reasons:**
+  - **srt and a masked folder (`project_isolation.spec.ts`, srt case, Linux):** srt keeps its read-deny mounts writable by design. A write at the top of a masked folder exits 0 into srt's private copy; no real file changes and reads are refused. The test stays failing rather than weakened. It is in the containment suite, so **B1 on Linux cannot pass under srt** until it is resolved, and srt cannot become the default (DEC-39) while it fails.
+  - **`run_script` under the native engine on Linux (`tools_wave2b` L12), broken before C2c:** its script lives in the host's `/tmp`, which bubblewrap hides. A Worker tool fails on Linux; the fix belongs in `packages/loop/src/tools.ts` (C4).
+  - **`doctor` does not check for socat;** without it, named ports quietly get no route (C5, with doctor's checks).
+  - **An outward relay connects to `127.0.0.1` only,** so a dev server on `::1` alone is not reached.
+  - CLI-02 and CLI-03 (C5), the rest of CLI-04 and CLI-07, and `queue` and `board` into the registry.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1731 files), vitest 766 files, 6,016 passed, 60 skipped.
+- **Where the cards stop:**
+  - C2c is done.
+  - **Next:**
+    - the injection re-run from a frozen snapshot, with the page fixtures now deliverable;
+    - B1 with the VM; on Linux it still faces the srt masked-folder case and item 15's native residual;
+    - then C3.
 
 ### Entry 70 — 2026-10-03 (C2b: the team process. A workspace of many projects, sprints, intake and triage, search, Won't do / Reopen / Revert, a member leaving, retrospectives, maintenance releases, push to remote; and the injection re-run)
 

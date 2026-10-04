@@ -11,7 +11,7 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { findChrome } from "@sekhemet/sandbox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parseVisualConfig, runVisualGates } from "../src/visual.js";
+import { CdpBrowser, parseVisualConfig, runVisualGates } from "../src/visual.js";
 
 /** The environment a confined process may see (security item 6), plus what the gate names. */
 const ALLOWED = new Set([
@@ -98,6 +98,27 @@ http.createServer((q, r) => { r.setHeader("content-type", "text/html"); r.end('<
       const why = r.failures.find((f) => f.gate === "visual-confinement")?.errorExcerpt ?? "";
       expect(why).toContain("Chromium exited");
       expect(why).toMatch(/sandbox engine: (native|srt)/);
+    },
+    30_000,
+  );
+
+  // Security item 11a (C2c): the visual gate's browser never asks the macOS
+  // keychain for its storage key, which the keychain rules deny in the
+  // sandbox; Playwright passes the same flag to the browsers it starts.
+  it.runIf(platform() === "darwin")(
+    "the visual gate's browser is started with a mock keychain",
+    async () => {
+      const fake = join(outside, "fake-chrome.sh");
+      writeFileSync(fake, `#!/bin/sh\necho "args: $*" >&2\nexit 1\n`);
+      chmodSync(fake, 0o755);
+      let reason = "";
+      const b = await CdpBrowser.launch(fake, {
+        onFailure: (r) => {
+          reason = r;
+        },
+      });
+      expect(b).toBeUndefined();
+      expect(reason).toContain("--use-mock-keychain");
     },
     30_000,
   );

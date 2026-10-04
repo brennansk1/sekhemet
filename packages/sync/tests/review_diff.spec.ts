@@ -151,3 +151,27 @@ describe("SEC-19a: programs over worktree content outside a card's sandbox", () 
     expect(existsSync(runs)).toBe(false);
   }, 60_000);
 });
+
+describe("FINDINGS_C1 CLI-08: the review diff is the change being accepted", () => {
+  it("with the worktree live, diffs against where the branch started, not the integration branch's head", async () => {
+    const repo = tmp("merge-base-repo-");
+    const git = (...a: string[]) => execFileSync("git", a, { cwd: repo, stdio: "ignore" });
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "t@t.t");
+    git("config", "user.name", "T");
+    writeFileSync(join(repo, "a.ts"), "export const a = 1;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "seed");
+    const adapter = new NodeGitSyncAdapter(repo);
+    const wt = await adapter.createWorktree("m1", "main", "M1");
+    writeFileSync(join(wt, "b.ts"), "export const b = 2;\n");
+    // Later work on main, after the branch was cut.
+    writeFileSync(join(repo, "brief.md"), "# The brief\n");
+    git("add", "brief.md");
+    git("commit", "-q", "-m", "brief");
+    const d = await adapter.structuralDiff("m1", "main", { programs: { difft: [] } });
+    expect(d.text).toContain("b.ts");
+    expect(d.text).not.toContain("brief.md");
+    expect(Object.values(d.groups).flat()).toEqual(["b.ts"]);
+  });
+});

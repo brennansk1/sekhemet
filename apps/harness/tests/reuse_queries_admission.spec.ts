@@ -147,8 +147,52 @@ const measure = (
   return { run, loads };
 };
 
+/**
+ * A labelled set of `n` invented needs ("parse zorbaa documents", …), each
+ * labelled with its own package. npm answers the model's query
+ * ("zorbaa parser") and the keyword query ("parse zorbaa documents") with the
+ * right package for the words named in `modelRight` and `keywordRight`, and
+ * with a wrong one otherwise, so each arm's per-need outcome is chosen.
+ */
+function pairedSet(
+  n: number,
+  modelRight: (i: number) => boolean,
+  keywordRight: (i: number) => boolean,
+) {
+  const word = (i: number) =>
+    `zorb${String.fromCharCode(97 + Math.floor(i / 26))}${String.fromCharCode(97 + (i % 26))}`;
+  const set: LabelledNeed[] = [];
+  const answers: Record<string, string[]> = {};
+  const right = new Map<string, { model: boolean; keywords: boolean }>();
+  for (let i = 0; i < n; i++) {
+    const w = word(i);
+    const need = `parse ${w} documents`;
+    set.push({ id: w, need, stack: "typescript", expect: [w] });
+    answers[need] = [`${w} parser`];
+    right.set(w, { model: modelRight(i), keywords: keywordRight(i) });
+  }
+  const pkg = (name: string, w: string) => ({
+    package: { name, version: "1.0.0", description: `Parse ${w} documents`, license: "MIT" },
+    downloads: { weekly: 5_000_000 },
+  });
+  const f = async (input: string | URL) => {
+    const url = String(input);
+    if (url.includes("registry.npmjs.org")) {
+      const text = new URL(url).searchParams.get("text") ?? "";
+      const w = text.split(" ").find((t) => right.has(t));
+      if (!w) return Response.json({ objects: [] });
+      const r = right.get(w) as { model: boolean; keywords: boolean };
+      const ok = text === `${w} parser` ? r.model : r.keywords;
+      return Response.json({ objects: [pkg(ok ? w : `${w}-wrong`, w)] });
+    }
+    if (url.includes("api.github.com")) return Response.json({ items: [] });
+    return new Response("[]", { status: 200 });
+  };
+  return { set, model: plannerFor(answers), fetch: { f, urls: [] as string[] } };
+}
+
 describe("the measurement: keyword queries against the Planning model's, on the labelled set", () => {
-  it("scores both, admits the model when precision@1 rises and silence holds, and records one event", async () => {
+  it("scores both arms and records one event; three needs cannot resolve a gain, so the model is not admitted", async () => {
     research("yes");
     const lines: string[] = [];
     const { run, loads } = measure({ print: (l) => lines.push(l) });
@@ -157,7 +201,10 @@ describe("the measurement: keyword queries against the Planning model's, on the 
     expect(r.keywords).toMatchObject({ p1: 0.5, silence: 1, measured: 3 });
     expect(r.modelQueries).toMatchObject({ p1: 1, silence: 1, measured: 3 });
     expect(r.fromModel).toBe(2);
-    expect(r.admitted).toBe(true);
+    // PROMPT_STANDARD rule 35.4: a gain is admitted only where the set can
+    // resolve it — 30 paired needs, 20 points, a one-sided exact test at 0.05.
+    expect(r.paired).toMatchObject({ needs: 2, gained: 1, lost: 0 });
+    expect(r.admitted).toBe(false);
     const events = await log.getEventsByTypes([REUSE_QUERIES_MEASURED]);
     expect(events).toHaveLength(1);
     expect(events[0]?.payload).toMatchObject({
@@ -167,14 +214,65 @@ describe("the measurement: keyword queries against the Planning model's, on the 
       keywords: { p1: 0.5, silence: 1, measured: 3 },
       modelQueries: { p1: 1, silence: 1, measured: 3 },
       fromModel: 2,
-      admitted: true,
+      paired: { needs: 2, gained: 1, lost: 0 },
+      admissionRule: "prompt-standard-35.4",
+      admitted: false,
     });
     // Neither arm is recorded as the survey's own measurement.
     expect(await log.getEventsByTypes(["research/reuse_eval"])).toEqual([]);
     const said = lines.join("\n");
     expect(said).toMatch(/Keyword queries: precision@1 50%.*correct silence 100%/);
     expect(said).toMatch(/planner-a's queries: precision@1 100%.*correct silence 100%/);
-    expect(said).toMatch(/admitted/i);
+    expect(said).toMatch(/not admitted.*2 labelled needs.*at least 30/);
+  });
+
+  it("admits the model on a gain the set resolves: 30 labelled needs, at least 20 points, exact p under 0.05", async () => {
+    research("yes");
+    // Keywords right on 15 of 30; the model on those 15 and 7 more: 23 points,
+    // 7 gained and none lost (p = 1/128).
+    const { set, model, fetch } = pairedSet(
+      30,
+      (i) => i < 22,
+      (i) => i < 15,
+    );
+    const lines: string[] = [];
+    const r = (await measure({ set, model, fetch, print: (l) => lines.push(l) })
+      .run) as ReuseQueriesMeasurement;
+    expect(r.keywords.p1).toBe(0.5);
+    expect(r.modelQueries.p1).toBeCloseTo(22 / 30);
+    expect(r.paired).toMatchObject({ needs: 30, gained: 7, lost: 0 });
+    expect(r.paired.gainP).toBeCloseTo(1 / 128);
+    expect(r.admitted).toBe(true);
+    expect(lines.join("\n")).toMatch(/planner-a is admitted/);
+    expect(await reuseQueriesAdmitted(log, "planner-a")).toBe(true);
+  });
+
+  it("does not admit a gain the set cannot resolve: 28% against 22% (DEV_LOG Entry 63's run), or 20 points that are not significant", async () => {
+    research("yes");
+    // Entry 63: 6 points over the keywords. Here 9 against 7 of 32, all gains.
+    const small = pairedSet(
+      32,
+      (i) => i < 9,
+      (i) => i < 7,
+    );
+    const r1 = (await measure(small).run) as ReuseQueriesMeasurement;
+    expect(r1.paired).toMatchObject({ needs: 32, gained: 2, lost: 0 });
+    expect(r1.modelQueries.p1 ?? 0).toBeGreaterThan(r1.keywords.p1 ?? 1);
+    expect(r1.admitted).toBe(false);
+    // 10 gained and 4 lost on 30: 20 points, but one-sided exact p ≈ 0.09.
+    const noisy = pairedSet(
+      30,
+      (i) => i >= 4 && i < 14,
+      (i) => i < 4,
+    );
+    const lines: string[] = [];
+    const r2 = (await measure({ ...noisy, print: (l) => lines.push(l) })
+      .run) as ReuseQueriesMeasurement;
+    expect(r2.paired).toMatchObject({ needs: 30, gained: 10, lost: 4 });
+    expect(r2.paired.gainP).toBeGreaterThan(0.05);
+    expect(r2.admitted).toBe(false);
+    expect(lines.join("\n")).toMatch(/not admitted.*exact p = 0\.09/);
+    expect(await reuseQueriesAdmitted(log, "planner-a")).toBe(false);
   });
 
   it("does not admit a model whose correct silence falls, even with a better precision@1", async () => {
@@ -264,7 +362,12 @@ describe("plan sends the Planning model's queries only once its admission is rec
     return { repoPath, log: klog, cardStore: new CardStore(kdb, klog) };
   }
 
-  const measured = (model: string, admitted: boolean, promptHash = reuseQueriesPromptHash()) => ({
+  const measured = (
+    model: string,
+    admitted: boolean,
+    promptHash = reuseQueriesPromptHash(),
+    judgedBy35_4 = true,
+  ) => ({
     actor: "harness",
     type: REUSE_QUERIES_MEASURED,
     payload: {
@@ -275,6 +378,14 @@ describe("plan sends the Planning model's queries only once its admission is rec
       keywords: { p1: 0.5, silence: 1, measured: 44 },
       modelQueries: { p1: admitted ? 0.7 : 0.4, silence: 1, measured: 44 },
       fromModel: 30,
+      ...(judgedBy35_4
+        ? {
+            paired: admitted
+              ? { needs: 34, gained: 7, lost: 0, gainP: 1 / 128 }
+              : { needs: 34, gained: 1, lost: 4, gainP: 31 / 32 },
+            admissionRule: "prompt-standard-35.4",
+          }
+        : {}),
       admitted,
     },
   });
@@ -334,6 +445,15 @@ describe("plan sends the Planning model's queries only once its admission is rec
     expect(sent.length).toBeGreaterThan(0);
     expect(sent.every((q) => q === "subscription billing")).toBe(true);
     expect(origins).toEqual(["planning-model"]);
+  });
+
+  it("an admission recorded under the earlier, looser rule (no PROMPT_STANDARD 35.4 test) does not count", async () => {
+    const k = kernel();
+    await k.log.append(measured("planner-a", true, reuseQueriesPromptHash(), false));
+    expect(await reuseQueriesAdmitted(k.log, "planner-a")).toBe(false);
+    const { sent, origins } = await planWith(k);
+    expect(sent).not.toContain("subscription billing");
+    expect(origins).toEqual(["keywords"]);
   });
 
   it("another model's admission, or one measured on a different prompt, does not count", async () => {

@@ -1220,7 +1220,13 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     const { git } = live
       ? this.worktreeGit(cardId)
       : { git: (args: string[], tolerant?: boolean) => this.runGit(args, this.repoRoot, tolerant) };
-    const range = live ? ["--staged", baseBranch] : [`${baseBranch}...${branch}`];
+    // FINDINGS_C1 CLI-08: a live worktree is diffed against where its branch
+    // started (the merge base), not the integration branch's head, so work
+    // that landed there since is never shown as deleted by this change.
+    const liveBase = live
+      ? git(["merge-base", baseBranch, "HEAD"], true).trim() || baseBranch
+      : undefined;
+    const range = live ? ["--staged", liveBase as string] : [`${baseBranch}...${branch}`];
     if (live) git(["add", "-A"]);
     const files = git(["diff", "--name-only", "--no-ext-diff", ...range], true)
       .split("\n")
@@ -1230,7 +1236,9 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     let text: string | undefined;
     const difft = resolveReviewProgram("difft", options.programs);
     if (difft) {
-      const base = live ? baseBranch : git(["merge-base", baseBranch, branch as string], true);
+      const base = live
+        ? (liveBase as string)
+        : git(["merge-base", baseBranch, branch as string], true);
       const sides = files.map((path) => ({
         path,
         before: git(["show", `${base}:${path}`], true),

@@ -213,6 +213,9 @@ export class CdpBrowser {
         "--disable-gpu",
         "--no-first-run",
         "--no-default-browser-check",
+        // Security item 11a: never the macOS keychain for its storage key —
+        // the sandbox denies it — as Playwright starts its browsers.
+        "--use-mock-keychain",
         "--hide-scrollbars",
         `--remote-debugging-port=${cdpPort}`,
         `--user-data-dir=${b.profile}`,

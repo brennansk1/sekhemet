@@ -216,6 +216,9 @@ describe("plan hands the Planning model to the survey (wave2 planCommand)", () =
         keywords: { p1: 0.5, silence: 1, measured: 44 },
         modelQueries: { p1: 0.7, silence: 1, measured: 44 },
         fromModel: 40,
+        // Judged by PROMPT_STANDARD 35.4 (C2c): 7 of 34 labelled needs gained, none lost.
+        paired: { needs: 34, gained: 7, lost: 0, gainP: 1 / 128 },
+        admissionRule: "prompt-standard-35.4",
         admitted: true,
       },
     });

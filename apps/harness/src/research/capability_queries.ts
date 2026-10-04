@@ -98,6 +98,13 @@ export async function capabilityQueries(
 export const REUSE_QUERIES_MEASURED = "research/reuse_queries_measured";
 
 /**
+ * The rule an admission is judged by: PROMPT_STANDARD rule 35.4's, the
+ * suite's resolution (C2c; DEV_LOG Entry 63 found the earlier "higher is
+ * enough" looser than it). An event recorded without it never admits.
+ */
+export const REUSE_ADMISSION_RULE = "prompt-standard-35.4";
+
+/**
  * The `planner.reuse_queries` prompt's hash: an admission holds for the
  * prompt it was measured with only (PROMPT_STANDARD rule 37).
  */
@@ -111,13 +118,20 @@ export function reuseQueriesPromptHash(): string {
 
 /**
  * True when the latest `research/reuse_queries_measured` for exactly this
- * model says admitted, measured on the current prompt; otherwise the survey
+ * model says admitted, measured on the current prompt and judged by
+ * PROMPT_STANDARD rule 35.4 (`REUSE_ADMISSION_RULE`); otherwise the survey
  * sends the keywords (DS-S8-3 as the owner amended it on 2026-09-28).
  */
 export async function reuseQueriesAdmitted(log: EventLog, modelId: string): Promise<boolean> {
   const latest = (await log.getEventsByTypes([REUSE_QUERIES_MEASURED]))
     .filter((e) => (e.payload as { model?: unknown }).model === modelId)
     .at(-1);
-  const p = latest?.payload as { admitted?: unknown; promptHash?: unknown } | undefined;
-  return p?.admitted === true && p.promptHash === reuseQueriesPromptHash();
+  const p = latest?.payload as
+    | { admitted?: unknown; promptHash?: unknown; admissionRule?: unknown }
+    | undefined;
+  return (
+    p?.admitted === true &&
+    p.promptHash === reuseQueriesPromptHash() &&
+    p.admissionRule === REUSE_ADMISSION_RULE
+  );
 }

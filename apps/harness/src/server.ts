@@ -519,6 +519,17 @@ export function startDashboardServer(
         accepters: holders ? holders.map((p) => personName(options.db, p) ?? "a teammate") : null,
       };
     },
+    // Network activity (security item 33a, DB-N24-3): each reader sees only
+    // the rows their level lets them read, and the people by their names.
+    egressContext: (req) => {
+      const who = principalOf(req);
+      const audience = audienceFromAccess(() => access, options.db);
+      return {
+        canSee: (project) => audience.canSee(who, project),
+        personName: (p) => personName(options.db, p),
+        localPrincipal: log.localPrincipal(),
+      };
+    },
     mayChangeReviewCapacity: (req, project) => {
       const name = options.cardStore?.getProject(project)?.name;
       const d = access.decide(principalOf(req), "review.capacity", project, name, ceilingOf(req));

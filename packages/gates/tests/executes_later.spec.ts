@@ -45,6 +45,46 @@ describe("files that execute later (SEC-32)", () => {
     ]);
   });
 
+  it("flags other coding agents' configuration at any depth and in any case (SEC-N12-1)", () => {
+    const agents = [
+      ".claude/settings.json",
+      "packages/web/.claude/commands/ship.md",
+      ".cursor/rules/style.mdc",
+      ".Cursor/mcp.json",
+      ".mcp.json",
+      "tools/.mcp.json",
+      ".codex/config.toml",
+      ".windsurf/rules/a.md",
+      ".continue/config.yaml",
+      ".github/copilot-instructions.md",
+      "AGENTS.md",
+      "packages/api/AGENTS.md",
+      "agents.md",
+      "CLAUDE.md",
+      "sub/claude.md",
+      "mise.toml",
+      "apps/x/MISE.TOML",
+    ];
+    expect(executesLater(agents)).toEqual(agents);
+  });
+
+  it("does not flag paths that merely resemble those names (SEC-N12-2)", () => {
+    expect(
+      executesLater([
+        "src/claude.ts",
+        "docs/agents.md.bak",
+        "cursor/index.ts",
+        "src/claude/settings.json",
+        "docs/AGENTS.mdx",
+        "my.mcp.json",
+        "notes/CLAUDE.md.orig",
+        "mise.toml.example",
+        "github/copilot-instructions.md",
+        ".continuerc",
+      ]),
+    ).toEqual([]);
+  });
+
   it("records them in the evidence bundle", () => {
     const ev = compileEvidence({
       cardId: "c",

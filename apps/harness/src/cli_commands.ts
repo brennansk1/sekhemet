@@ -1,3 +1,4 @@
+import { COMMAND_REGISTRY, findCommand, helpRow } from "./commands/registry.js";
 import { DEV_COMMANDS } from "./wave2.js";
 
 /**
@@ -10,19 +11,17 @@ import { DEV_COMMANDS } from "./wave2.js";
 export const PRIMARY_COMMANDS: readonly { usage: string; what: string }[] = [
   { usage: "sekhemet", what: "Set up on first run, then open the board" },
   { usage: 'sekhemet "<spec>"', what: "Plan the work and run it" },
-  { usage: "sekhemet run [issue]", what: "Run an issue, resume a stopped one, or run the queue" },
-  { usage: "sekhemet review", what: "Show the next issue waiting on you" },
-  {
-    usage: "sekhemet accept <issue>",
-    what: 'Accept and merge. Also: request-changes <issue> "<reason>", park / unpark <issue>, reject <issue> "<reason>", reopen <issue>, revert <issue>; sekhemet card message|pause|hand-back|take-over <issue> for a running one',
-  },
+  // T4: the moved commands' rows come from the command registry.
+  helpRow("run"),
+  helpRow("review"),
+  helpRow("accept"),
   // NEW-surface-6 (O23, approved under DEC-42): `ask` in place of `board`,
   // which the bare `sekhemet` opens; `board --terminal` is under `dev`.
   {
     usage: 'sekhemet ask "<question>"',
     what: "Ask Seshat from the terminal; the reply prints here",
   },
-  { usage: "sekhemet doctor", what: "Check the install, including the model weights" },
+  helpRow("doctor"),
   { usage: "sekhemet dev <command>", what: "Everything for developing Sekhemet itself" },
 ];
 
@@ -75,6 +74,12 @@ export const COMMANDS = [
   "erase",
   // `sekhemet project list|move` (surface item 20d, NEW-surface-11).
   "project",
+  // `sekhemet status [--json]`: the board for a script (surface item 20c, NEW-surface-10).
+  "status",
+  // `sekhemet egress [--since] [--refused] [--json]`: what left the machine (security item 33a).
+  "egress",
+  // `sekhemet editors [vscode|cursor|zed]`: the editor snippets (extensibility item 25a).
+  "editors",
   ...DEV_COMMANDS,
 ] as const;
 
@@ -90,9 +95,19 @@ const TRIAGE = [
   "revert",
 ] as const;
 
+/** What `sekhemet dev <word>` runs: every command, the triage verbs and `card`. */
+const DEV_RUNNABLE: ReadonlySet<string> = new Set<string>([
+  ...COMMANDS,
+  ...TRIAGE,
+  ...COMMAND_REGISTRY.map((c) => c.name),
+  "ui",
+]);
+
 /** Flags that take a value, so the value is not mistaken for a command or spec. */
 const VALUED = new Set([
   "--repo",
+  // `accept <issue> --ack 1,2` (FINDINGS_C1 CLI-01).
+  "--ack",
   "--model",
   "--worker",
   "--manager",
@@ -124,6 +139,7 @@ const VALUED = new Set([
  */
 export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--ab-entry",
+  "--ack",
   "--activate",
   "--adopt",
   "--adopt-from",
@@ -235,6 +251,8 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--reason",
   "--rebuild",
   "--record",
+  // `sekhemet egress --refused` (security item 33a, NEW-security-11).
+  "--refused",
   "--release",
   "--repo",
   "--researcher",
@@ -278,6 +296,8 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--trust",
   "--until",
   "--urgent",
+  // `skills approve|revoke <name> --user`: the person's own skill (EXT-24, SEC-02).
+  "--user",
   "--validate-tools",
   "--verbose",
   "--verify",
@@ -323,6 +343,8 @@ export type FrontDoorRoute =
   | { kind: "version" }
   | { kind: "unknown-flag"; flag: string }
   | { kind: "dev-help" }
+  /** `sekhemet <command> --help` for a command the registry holds (T4). */
+  | { kind: "command-help"; name: string }
   | { kind: "spec"; spec: string; flags: string[] }
   | { kind: "unknown"; word: string; suggest?: string }
   | { kind: "review"; cardId?: string; flags: string[] }
@@ -357,6 +379,20 @@ function split(argv: readonly string[]): { positional: string[]; flags: string[]
   return { positional, flags };
 }
 
+/** Whether the person asked for `--json` (`--json=<value>` included, which is then a usage error). */
+export function wantsJson(argv: readonly string[]): boolean {
+  const end = argv.indexOf("--");
+  return (end < 0 ? argv : argv.slice(0, end)).some(
+    (a) => a === "--json" || a.startsWith("--json="),
+  );
+}
+
+/** The command a command line names, `dev` skipped: `dev status --frob` → `status`. */
+export function firstWord(argv: readonly string[]): string | undefined {
+  const { positional } = split(argv);
+  return positional[0] === "dev" ? positional[1] : positional[0];
+}
+
 /** Edit distance, for "did you mean". */
 function distance(a: string, b: string): number {
   const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
@@ -380,16 +416,33 @@ export function routeFrontDoor(argv: readonly string[]): FrontDoorRoute {
   if (argv[0] === "--version" || argv[0] === "-v") return { kind: "version" };
   const bad = unknownFlag(argv);
   if (bad) return { kind: "unknown-flag", flag: bad };
-  if ((argv.includes("--help") || argv.includes("-h")) && argv[0] !== "dev")
-    return { kind: "help" };
   const { positional, flags } = split(argv);
   const [first, ...rest] = positional;
+  if (argv.includes("--help") || argv.includes("-h")) {
+    const named = first === "dev" ? rest[0] : first;
+    if (findCommand(named)) return { kind: "command-help", name: named as string };
+    if (first !== "dev") return { kind: "help" };
+  }
   if (first === undefined) return { kind: "home", flags };
   if (first === "help") return { kind: "help" };
 
   if (first === "dev") {
     const [cmd] = rest;
-    if (!cmd || argv.includes("--help")) return { kind: "dev-help" };
+    if (!cmd || cmd === "help" || argv.includes("--help")) return { kind: "dev-help" };
+    // The board's decisions route as they do without `dev`.
+    if ((TRIAGE as readonly string[]).includes(cmd) || cmd === "card") {
+      const at = argv.indexOf("dev");
+      return routeFrontDoor([...argv.slice(0, at), ...argv.slice(at + 1)]);
+    }
+    // FINDINGS_C1 CLI-04: a word that is no command is a usage error, never the help and exit 0.
+    if (!DEV_RUNNABLE.has(cmd)) {
+      const best = [...DEV_RUNNABLE]
+        .map((c) => ({ c, d: distance(cmd, c) }))
+        .sort((a, b) => a.d - b.d)[0];
+      return best && best.d <= 2
+        ? { kind: "unknown", word: cmd, suggest: `dev ${best.c}` }
+        : { kind: "unknown", word: cmd };
+    }
     return { kind: "argv", argv: argv.slice(argv.indexOf("dev") + 1) };
   }
 

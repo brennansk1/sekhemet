@@ -5,6 +5,14 @@ import { dirname, join } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { BWRAP_CANDIDATES, bubblewrapUnavailableReason } from "./bubblewrap.js";
 import {
+  type HostRelays,
+  type RelaySpec,
+  commandRelayPlan,
+  relayEnv,
+  relayScriptPath,
+  startHostRelays,
+} from "./relay.js";
+import {
   homeToolchainPaths,
   isolationRules,
   keychainRules,
@@ -96,8 +104,11 @@ export function srtFilesystem(
   // the granted roots excepted, as the native profile does.
   const homeDeny = options.denyHomeReads ? [realPath(home)] : [];
   const vendor = options.denyHomeReads ? srtVendorDir() : undefined;
+  // DEC-50: on Linux srt runs the relay script as its socat, inside.
+  const relayDir =
+    options.denyHomeReads && platform() === "linux" ? [realPath(dirname(relayScriptPath()))] : [];
   const homeAllow = options.denyHomeReads
-    ? [...homeToolchainPaths(home).map(realPath), ...(vendor ? [vendor] : [])]
+    ? [...homeToolchainPaths(home).map(realPath), ...(vendor ? [vendor] : []), ...relayDir]
     : [];
   return {
     denyRead: [
@@ -190,6 +201,17 @@ export function srtProxyUrl(
   return `http://127.0.0.1:${port}`;
 }
 
+/**
+ * DEC-50: what srt's command runs inside its seccomp filter before the
+ * command when a card's ports are relayed: wait until each relay listens
+ * (they were started before the filter, by the relay script srt runs as its
+ * socat), then drop the variable that named them.
+ */
+export function srtRelayInner(plan: readonly RelaySpec[], script = relayScriptPath()): string {
+  if (plan.length === 0) return "";
+  return `/bin/sh ${shellQuote(script)} --wait; unset SEKHEMET_RELAYS;`;
+}
+
 /** Why srt cannot confine on this host, or undefined when it can. */
 let supportCache: { reason: string | undefined } | undefined;
 export function srtUnavailableReason(): string | undefined {
@@ -244,6 +266,10 @@ async function ensurePosture(posture: SrtNetworkPosture): Promise<void> {
   const config = {
     network: posture.network,
     filesystem: { denyRead: [], allowWrite: [], denyWrite: [] },
+    // DEC-50: srt starts its proxy listener inside the sandbox through its
+    // socat, before its seccomp filter refuses Unix sockets; the relay
+    // script starts a card's port relays there too, then execs socat.
+    ...(platform() === "linux" ? { socatPath: relayScriptPath() } : {}),
   } as SandboxRuntimeConfig;
   await SandboxManager.initialize(config);
   currentKey = posture.key;
@@ -259,13 +285,16 @@ let commandSeq = 0;
 /**
  * Wrap `command args` for srt. Returns the argv to spawn with the caller's
  * already-filtered environment: srt passes the environment through, so the
- * allowlist in `buildEnv` still decides what the command sees.
+ * allowlist in `buildEnv` still decides what the command sees. On Linux a
+ * card's named ports cross srt's empty network namespace through relays
+ * (DEC-50; srt relays the proxy itself), whose host half is returned
+ * running: the caller closes it when the command exits.
  */
 export function srtWrap(
   command: string,
   args: string[],
   options: SandboxOptions,
-): Promise<{ file: string; argv: string[] }> {
+): Promise<{ file: string; argv: string[]; relays?: HostRelays }> {
   const posture = srtNetwork(options);
   const filesystem = srtFilesystem(options);
   // srt sets TMPDIR=/tmp/claude when writes are restricted; the private
@@ -275,7 +304,17 @@ export function srtWrap(
   // as under the native engine: srt's NO_PROXY would send loopback and
   // private addresses direct, where the profile refuses them unrecorded.
   const proxy = srtProxyUrl(options);
+  const plan =
+    platform() === "linux"
+      ? commandRelayPlan({
+          allowNetwork: options.allowNetwork,
+          ...(options.localPorts ? { localPorts: options.localPorts } : {}),
+          ...(options.scratchDir ? { scratchDir: options.scratchDir } : {}),
+        })
+      : [];
+  const relayInner = srtRelayInner(plan);
   const inner = [
+    ...(relayInner ? [relayInner] : []),
     ...(options.scratchDir ? [`export TMPDIR=${shellQuote(options.scratchDir)};`] : []),
     ...(proxy
       ? [
@@ -316,13 +355,44 @@ export function srtWrap(
         : srtWrapped;
     // SEC-23b: srt's allowlist names the keychain's services itself.
     // Item 10a: a card's denies placed last too, where no srt allow reopens them.
+    // Item 11a (C2c): certificate trust only with the network open.
     const wrapped =
       platform() === "darwin"
-        ? withKeychainRules(withSockets, isolationRules(options.denyPaths))
+        ? withKeychainRules(
+            withSockets,
+            [trustRulesFor(options), isolationRules(options.denyPaths)].filter(Boolean).join("\n"),
+          )
         : withSockets;
     // `exec` again at the outer level: the spawned pid is the command itself.
-    return { file: shell, argv: [flag, `exec ${wrapped}`] };
+    if (plan.length === 0) return { file: shell, argv: [flag, `exec ${wrapped}`] };
+    return {
+      file: shell,
+      argv: [flag, `export SEKHEMET_RELAYS=${shellQuote(relayEnv(plan))}; exec ${wrapped}`],
+      relays: startHostRelays(plan),
+    };
   });
+}
+
+/**
+ * Security item 11a (C2c): srt's allowlist leaves out trustd, so under srt a
+ * certificate check (`SecTrustEvaluateWithError`: Go, `native-tls`, the
+ * `security` tool) never trusts a system root. trustd holds no secret (the
+ * keychain's services stay denied, last, by `keychainRules`), but it runs
+ * outside the sandbox and fetches the AIA, OCSP and CRL URLs a certificate
+ * names: this one lookup is srt's own `enableWeakerNetworkIsolation`, which
+ * srt calls an exfiltration route and SANDBOX_REUSE risk 7 keeps off.
+ */
+export const TRUSTD_RULES = '(allow mach-lookup (global-name "com.apple.trustd.agent"))';
+
+/**
+ * trustd's lookup only where it opens no route the command lacks: the
+ * network is open (C2c review). With only the egress proxy or a named
+ * loopback port granted — a card's usual posture — it stays off, since
+ * trustd's fetches would pass the allowlist unrecorded; TLS verification
+ * through the system's trust store then fails under srt (item 11a's cost).
+ */
+export function trustRulesFor(options: Pick<SandboxOptions, "allowNetwork">): string {
+  return options.allowNetwork ? TRUSTD_RULES : "";
 }
 
 /** srt's open-network line in its macOS profile (SRT_VERSION), where the socket rules go. */

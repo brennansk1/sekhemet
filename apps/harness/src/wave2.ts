@@ -139,6 +139,7 @@ import {
   withPriorArt,
 } from "./research/reuse.js";
 import { RESEARCH_GOLDEN_RUN } from "./research_bakeoff.js";
+import { userPaths } from "./user_dir.js";
 import { workerFloorRefusal } from "./watchdog_actions.js";
 import { realPath } from "./workspace_locator.js";
 import { loadRepoSkills, skillsLockPath } from "./workspace_trust.js";
@@ -1407,11 +1408,25 @@ export async function runDevCommand(
       return anyQualified ? 0 : 1;
     }
     case "skills": {
-      // `sekhemet skills [list] | approve <name> | revoke <name>` (C10).
-      const dir = join(k.repoPath, ".sekhemet", "skills");
+      // `sekhemet skills [list] | approve <name> [--user] | revoke <name> [--user]` (C10).
       // S9, SEC-31: the lock lives in the user directory, never the repository.
       const lockPath = skillsLockPath(k.repoPath);
-      const [sub, name] = args;
+      const [sub, name] = args.filter((a) => !a.startsWith("--"));
+      // Rule 13 (EXT-24, SEC-02): a skill is the project's (`<repo>/.sekhemet/skills`)
+      // or the person's own (`~/.sekhemet/skills`); neither loads until approved,
+      // so both are approved here. The project's wins a name both hold, as it
+      // does when they load; `--user` names the person's own.
+      const projectDir = join(k.repoPath, ".sekhemet", "skills");
+      const personalDir = userPaths().skills;
+      const has = (d: string) => Boolean(name) && existsSync(join(d, name as string, "SKILL.md"));
+      const personal = args.includes("--user") || (!has(projectDir) && has(personalDir));
+      const dir = personal ? personalDir : projectDir;
+      const whose = personal ? " (your own skill)" : "";
+      if (sub === "approve" && name && !has(dir))
+        return done(
+          `No skill ${name} in ${projectDir} or ${personalDir} (each skill is a folder with a SKILL.md)`,
+          1,
+        );
       if (sub === "approve" && name) {
         // EXT-27: a skill whose scripts would write a gate file, the loop
         // driver or sandbox configuration is rejected before anything runs.
@@ -1451,12 +1466,12 @@ export async function runDevCommand(
         // The approval must pin the very content that was verified (B1 review).
         const e = approveVerifiedSkill(dir, name, lockPath, gate.sha256);
         if (!e.ok) return done(`${name} changed while it was being approved; approve it again.`, 1);
-        print(`Approved ${name} at ${e.sha256.slice(0, 12)}.`);
+        print(`Approved ${name}${whose} at ${e.sha256.slice(0, 12)}.`);
         return 0;
       }
       if (sub === "revoke" && name) {
         revokeSkill(dir, name, lockPath);
-        print(`Revoked ${name}; it will not load until approved again.`);
+        print(`Revoked ${name}${whose}; it will not load until approved again.`);
         return 0;
       }
       const lock = readSkillLock(lockPath);

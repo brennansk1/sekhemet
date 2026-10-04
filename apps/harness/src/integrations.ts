@@ -21,6 +21,7 @@ import {
   type SyncAdapter,
   openIssues,
 } from "@sekhemet/sync";
+import { ISSUE_TYPE_LABELS, issueTypeOf } from "@sekhemet/ui";
 import {
   type SyncDirection,
   forgejoFromEnv,
@@ -469,32 +470,43 @@ export function exportBoard(
   const work = cards.filter((c) => c.tier !== "epic");
 
   if (format === "jira-csv") {
+    // NEW-integrations-5 (DEC-55): Jira Cloud reads `Issue Id` and `Parent`
+    // since it retired *Epic Link* in 2024; a Parent names a row of this file.
+    const inFile = new Set(cards.map((c) => c.id));
+    const parentOf = (c: CardRecord) => {
+      const p = c.parentId ?? (c.tier === "epic" ? undefined : c.epicId);
+      return p && inFile.has(p) ? p : "";
+    };
+    // The type the board shows (DEC-31, `issueTypeOf`); a subtask is Jira's
+    // own sub-task type, the only one Jira files under an issue that is not an epic.
+    const typeOf = (c: CardRecord) =>
+      c.parentId ? "Subtask" : ISSUE_TYPE_LABELS[issueTypeOf(c)].label;
     const rows = [
       [
+        "Issue Id",
+        "Parent",
         "Summary",
         "Issue Type",
         "Status",
         "Priority",
         "Story Points",
         "Sprint",
-        "Epic Link",
         "Labels",
         "Due Date",
         "Description",
-        "Sekhemet ID",
       ],
       ...cards.map((c) => [
+        c.id,
+        parentOf(c),
         cleanTitle(c.title),
-        c.tier === "epic" ? "Epic" : "Story",
+        typeOf(c),
         JIRA_STATUS[c.status] ?? c.status,
         JIRA_PRIORITY[c.priority ?? 0] ?? "",
         c.estimate !== undefined ? String(c.estimate) : "",
         cycleName(c.cycleId),
-        epicTitle(c.epicId),
         labelsOf(c).join(" "),
         c.dueDate ?? "",
         describe(c),
-        c.id,
       ]),
     ];
     return { body: toCsv(rows), contentType: "text/csv; charset=utf-8", ext: "csv" };

@@ -232,3 +232,74 @@
   color: var(--text-primary);
   font-size: var(--text-sm);
 }
+
+/* Configuration › Project › Network activity (NEW-dashboard-24, DB-N24-1):
+   one row per recorded request, wrapping at a phone's width. */
+.cfg-net {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+}
+.cfg-net-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  font-size: var(--text-sm);
+}
+.cfg-net-chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.net-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+}
+.net-list:empty {
+  display: none;
+}
+.net-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  align-items: baseline;
+  padding: 8px 12px;
+  font-size: var(--text-sm);
+}
+.net-row + .net-row {
+  border-top: 1px solid var(--border-subtle);
+}
+.net-what {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.net-meta {
+  text-align: right;
+  white-space: nowrap;
+}
+.net-verdict {
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.net-verdict.ok {
+  color: var(--state-pass);
+}
+.net-verdict.no {
+  color: var(--state-fail);
+}
+@media (max-width: 767px) {
+  .net-row {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+  .net-meta {
+    grid-column: 2;
+    text-align: left;
+    white-space: normal;
+  }
+}

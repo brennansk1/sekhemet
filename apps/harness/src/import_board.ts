@@ -118,10 +118,13 @@ function csvRows(format: string, content: string): { rows: Row[]; system?: "jira
   const due = col("due date", "duedate", "due");
   const sekhemet = col("sekhemet id");
   // The row's key: Jira's issue key, Linear's identifier; our own export's
-  // Jira CSV carries only the Sekhemet id, which is then the key.
+  // Jira CSV carries the card's id as its `Issue Id` (NEW-integrations-5,
+  // INT-46a) — or, written before DEC-55, as its Sekhemet id — which is then the key.
   const key =
     system === "jira"
-      ? col("issue key", "key")
+      ? col("issue key", "key") >= 0
+        ? col("issue key", "key")
+        : col("issue id")
       : system === "linear"
         ? col("id", "identifier")
         : -1;

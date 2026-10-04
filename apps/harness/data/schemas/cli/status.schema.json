@@ -1,0 +1,152 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "sekhemet status --json",
+  "description": "The board for a script: each column's issues, what the queue runs next, and what waits on a person (surface item 20c).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["command", "ok", "exitCode", "message"],
+  "properties": {
+    "command": {
+      "const": "status"
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "exitCode is 0."
+    },
+    "exitCode": {
+      "enum": [0, 1, 2],
+      "description": "The exit code the command gives, with or without --json: 0 success, 1 failure, 2 a usage error or a missing confirmation."
+    },
+    "message": {
+      "type": "string",
+      "description": "The outcome in one sentence."
+    },
+    "columns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "issues"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The board's column: Backlog, To do, In progress, In review, Done, On hold."
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "title", "status", "state"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "The issue's key."
+                },
+                "title": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "The stored state: backlog, ready, planning, in_progress, verify, review, done, parked or rejected."
+                },
+                "state": {
+                  "type": "string",
+                  "description": "The state in plain words, as Status says it."
+                },
+                "steps": {
+                  "$ref": "#/definitions/steps"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "next": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/issue"
+      },
+      "description": "The Ready issues in the order the queue takes them."
+    },
+    "waiting": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "status", "state", "why"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The issue's key."
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "The stored state: backlog, ready, planning, in_progress, verify, review, done, parked or rejected."
+          },
+          "state": {
+            "type": "string",
+            "description": "The state in plain words, as Status says it."
+          },
+          "why": {
+            "enum": ["review", "on_hold"]
+          }
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Decisions waiting, each naming its person."
+    },
+    "reviewFull": {
+      "type": "boolean",
+      "description": "In review is full: finished issues wait for a person."
+    }
+  },
+  "definitions": {
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "status", "state"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The issue's key."
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "The stored state: backlog, ready, planning, in_progress, verify, review, done, parked or rejected."
+        },
+        "state": {
+          "type": "string",
+          "description": "The state in plain words, as Status says it."
+        }
+      }
+    },
+    "steps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["used", "budget"],
+      "properties": {
+        "used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "budget": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

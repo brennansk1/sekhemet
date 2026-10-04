@@ -108,6 +108,31 @@ describe("research/reuse_queries_measured is registered (kernel rule 33)", () =>
     ).not.toThrow();
   });
 
+  it("carries PROMPT_STANDARD 35.4's paired test and the rule it was judged by (C2c)", () => {
+    const judged = {
+      ...measured(),
+      paired: { needs: 34, gained: 7, lost: 0, gainP: 1 / 128 },
+      admissionRule: "prompt-standard-35.4",
+    };
+    expect(() =>
+      checkEventPayload("research/reuse_queries_measured", judged, undefined),
+    ).not.toThrow();
+    expect(() =>
+      checkEventPayload(
+        "research/reuse_queries_measured",
+        { ...judged, admissionRule: "higher-is-enough" },
+        undefined,
+      ),
+    ).toThrow();
+    expect(() =>
+      checkEventPayload(
+        "research/reuse_queries_measured",
+        { ...judged, paired: { ...judged.paired, gainP: 2 } },
+        undefined,
+      ),
+    ).toThrow();
+  });
+
   it("refuses a query's words in the payload and a rate above one", () => {
     const withQueries = { ...measured(), queries: ["email sending"] };
     expect(() =>

@@ -62,6 +62,7 @@ import {
 } from "@sekhemet/sync";
 import { plural } from "@sekhemet/ui";
 import {
+  AcceptRefusedError,
   checkoutNotice,
   enableAutoAccept,
   implementationFiles,
@@ -86,10 +87,32 @@ import {
   COMMANDS,
   type FrontDoorRoute,
   PRIMARY_COMMANDS,
+  firstWord,
   routeFrontDoor,
   runExitCode,
+  wantsJson,
 } from "./cli_commands.js";
 import { handBack, postCardMessage, requestPause, takeOver } from "./collaborate.js";
+import { acceptRuleFor } from "./commands/accept.js";
+import {
+  type CliCommandName,
+  type CliExit,
+  type CliResult,
+  baseResult,
+  enterJsonMode,
+  jsonFatal,
+  printJsonResult,
+} from "./commands/cli_result.js";
+import { setProjectRunning } from "./commands/project_pause.js";
+import {
+  COMMAND_REGISTRY,
+  type CommandEnv,
+  type CommandSpec,
+  commandHelpLines,
+  findCommand,
+  parseCommandArgs,
+} from "./commands/registry.js";
+import { gateStartStop } from "./commands/run.js";
 import { resolveConfig, userConfigPath } from "./config.js";
 import {
   cardStepCap,
@@ -284,6 +307,7 @@ import { readWorkspaces, runningServerFor } from "./workspaces.js";
 
 export interface CliConfig {
   command:
+    | "status"
     | "backup"
     | "restore"
     | "reserve"
@@ -442,14 +466,19 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
 }
 
 /**
- * SUR-12: a derived test gate that cannot start (its script missing or
- * wrong, its program absent) stops the run before any card or model,
- * naming the file to edit; the lines to print, or none.
+ * Why the queue would refuse its Coding model here, or undefined (MD-N8-1):
+ * the model the queue resolves — `--worker`, else the person's assignment,
+ * else `config.toml`, else the default — not verified on this machine for
+ * its exact combination. Nothing loads.
  */
-function gateStartStop(repoPath: string): string[] {
-  return gateStartProblems(loadGatesConfig(repoPath), repoPath).map(
-    (p) => `The ${p.gate} check cannot start: ${p.reason}. Edit ${p.file}; no issue was run.`,
-  );
+function queueWorkerRefusal(repoPath: string, argv: string[]): string | undefined {
+  const registry = modelRegistry();
+  const flagged = argv.includes("--worker") ? argv[argv.indexOf("--worker") + 1] : undefined;
+  const name =
+    roleModelName("worker", flagged, { registry }) ??
+    queueDefaults(effectiveConfig(repoPath, argv).config, []).worker ??
+    defaultWorkerName();
+  return gateWorker(registry, describeModel(name, "worker", { registry }), name).refusal;
 }
 
 /** The repository's measurement marker, as the board's option (rule 24). */
@@ -459,16 +488,6 @@ function measurementOption(repoPath: string): { measurementMarker?: { purpose: s
 }
 
 /** A project named by id or by name (`dev pause|resume <project>`). */
-function findProject(cardStore: CardStore, ref: string | undefined) {
-  if (!ref) return undefined;
-  return cardStore.listProjects().find((p) => p.id === ref || p.name === ref);
-}
-
-/** Whether `resume <ref>` names a project rather than a card (RUN-48). */
-function isProjectRef(cardStore: CardStore, ref: string | undefined): boolean {
-  return findProject(cardStore, ref) !== undefined;
-}
-
 /**
  * Surface item 8a, NEW-surface-11: the folder a command acts on. In a
  * workspace it is the project whose root holds the folder (or the workspace
@@ -478,10 +497,13 @@ function isProjectRef(cardStore: CardStore, ref: string | undefined): boolean {
 export function cliWorkspace(
   repoPath: string,
   command?: string,
-): { repoPath: string; workspaceFolder: string; projectId?: string } | { refused: string } {
+):
+  | { repoPath: string; workspaceFolder: string; projectId?: string; firstRun?: true }
+  | { refused: string } {
   const found = resolveWorkspace(repoPath);
   if (found.kind === "refused") return { refused: found.message };
-  if (found.kind === "first-run") return { repoPath, workspaceFolder: repoPath };
+  // No ledger here or above: a first run (FINDINGS_C1 CLI-05 reads it).
+  if (found.kind === "first-run") return { repoPath, workspaceFolder: repoPath, firstRun: true };
   const target =
     command === "serve" || command === "daemon" || command === "ui" || command === "board"
       ? found.workspaceFolder
@@ -536,6 +558,90 @@ function belongsElsewhere(repoPath: string): string | undefined {
 function refuseWorkspace(message: string): void {
   console.error(`sekhemet: ${message}`);
   process.exitCode = 1;
+}
+
+/**
+ * FINDINGS_C1 CLI-05: a command that reads or changes a project's board, in
+ * a folder that holds no ledger and belongs to no workspace, says so in one
+ * line and exits 2, before anything is opened or written.
+ */
+function noProjectLine(folder: string): string {
+  return `${folder} is not a Sekhemet project yet, so nothing was read or written. Run \`sekhemet\` there to set it up, or pass --repo <project folder>.`;
+}
+function refuseNoProject(folder: string): void {
+  console.error(`sekhemet: ${noProjectLine(folder)}`);
+  process.exitCode = 2;
+}
+
+/**
+ * Run a command the registry holds (surface item 17, T4): its flags parsed
+ * from its own schema (a usage error exits 2), the workspace found as for
+ * every command (item 8a), a project required where the entry says so
+ * (CLI-05), then its handler. Under `--json` (item 20c, NEW-surface-10)
+ * stdout holds only the one result object; everything else goes to stderr.
+ */
+async function runRegistered(spec: CommandSpec, argv: string[]): Promise<void> {
+  // SUR-70: `--json=<value>` asks for the object too (and is a usage error, as an object).
+  const json = spec.json && wantsJson(argv);
+  if (json) enterJsonMode();
+  const finish = (outcome: CliResult | CliExit): void => {
+    if (typeof outcome === "number") {
+      // SUR-70: under --json every outcome is the one object, a bare exit code too.
+      if (json)
+        printJsonResult(
+          baseResult(
+            spec.name as CliCommandName,
+            outcome,
+            outcome === 0 ? "Done." : `Exited ${outcome}; what happened is on stderr.`,
+          ),
+        );
+      process.exitCode = outcome;
+      return;
+    }
+    if (json) printJsonResult(outcome);
+    process.exitCode = outcome.exitCode;
+  };
+  const refused = (exitCode: CliExit, message: string): void => {
+    console.error(`sekhemet: ${message}`);
+    finish(json ? baseResult(spec.name as CliCommandName, exitCode, message) : exitCode);
+  };
+  const parsed = parseCommandArgs(spec, argv);
+  if ("error" in parsed) return refused(2, parsed.error);
+  const config = parseCliArgs(argv);
+  const at = cliWorkspace(config.repoPath, spec.name);
+  if ("refused" in at) return refused(1, at.refused);
+  if (spec.needsProject && at.firstRun) return refused(2, noProjectLine(at.repoPath));
+  // S9, item 40: `--trust` trusts the repository's configuration for this invocation only.
+  setInvocationTrust(parsed.values.trust === true);
+  let opened: ReturnType<typeof initLocalKernel> | undefined;
+  let recorded = false;
+  const env: CommandEnv = {
+    command: spec.name,
+    argv,
+    repoPath: at.repoPath,
+    workspaceFolder: at.workspaceFolder,
+    ...(at.projectId ? { projectId: at.projectId } : {}),
+    restrictedMode: config.restrictedMode,
+    json,
+    kernel: async (mode) => {
+      opened ??= initLocalKernel(at.repoPath);
+      if (mode === "write" && !recorded) {
+        recorded = true;
+        // The repository is a project (K14); cards created without one join it.
+        const project = await ensureRepoProject(opened.cardStore, at.repoPath).catch(
+          () => undefined,
+        );
+        // ReviewWIP from this person's measured review minutes (B3).
+        if (project) {
+          await opened.boardService
+            .calibrateReviewWip(project.reviewMinutesPerDay)
+            .catch(() => undefined);
+        }
+      }
+      return opened;
+    },
+  };
+  finish(await (await spec.load())(parsed, env));
 }
 
 export function initLocalKernel(repoPath: string): {
@@ -669,13 +775,25 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   }
   // SUR-15: an unknown flag is named, never ignored.
   if (route.kind === "unknown-flag") {
-    console.error(`sekhemet: unknown flag ${route.flag}. \`sekhemet --help\` lists the commands.`);
+    const message = `unknown flag ${route.flag}. \`sekhemet --help\` lists the commands.`;
+    console.error(`sekhemet: ${message}`);
+    // SUR-70: a command that takes --json, asked for it, gets its object for a usage error too.
+    const named = findCommand(firstWord(rawArgv));
+    if (named?.json && wantsJson(rawArgv)) {
+      enterJsonMode();
+      printJsonResult(baseResult(named.name as CliCommandName, 2, message));
+    }
     process.exitCode = 2;
     return;
   }
   hardenGitForProcess();
   if (route.kind === "help") return printHelp();
   if (route.kind === "dev-help") return printDevHelp();
+  if (route.kind === "command-help") {
+    const spec = findCommand(route.name);
+    if (spec) for (const line of commandHelpLines(spec)) console.log(line);
+    return;
+  }
   if (route.kind === "unknown") {
     console.error(
       route.suggest
@@ -685,15 +803,49 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     process.exitCode = 2;
     return;
   }
+  // Surface item 20c: `--json` is one issue's outcome (`run <issue>`); the
+  // queue (`run` with no issue, or a spec planned then run) has no object
+  // yet, so it is refused before anything runs rather than printing prose
+  // where a script expects JSON.
+  if (
+    (route.kind === "spec" ||
+      (route.kind === "argv" && parseCliArgs(route.argv).command === "queue")) &&
+    rawArgv.includes("--json")
+  ) {
+    enterJsonMode();
+    const message =
+      "--json needs an issue: `sekhemet run <issue> --json`; the queue (`sekhemet run` with no issue) prints no JSON";
+    console.error(`sekhemet: ${message}`);
+    printJsonResult(baseResult("run", 2, message));
+    process.exitCode = 2;
+    return;
+  }
   if (route.kind === "spec") {
+    // FINDINGS_C1 CLI-07: the Coding model the queue would run is checked
+    // first, as the queue checks it (MD-N8-1), so a spec whose issues cannot
+    // run writes none.
+    const at = cliWorkspace(parseCliArgs(route.flags).repoPath);
+    const refusal = "refused" in at ? undefined : queueWorkerRefusal(at.repoPath, route.flags);
+    if (refusal) {
+      console.error(refusal);
+      process.exitCode = 1;
+      return;
+    }
     // One verb for "plan this and build it": the plan, then the queue.
     await main(["plan", route.spec, ...route.flags]);
     if (process.exitCode) return;
     return main(["queue", ...route.flags]);
   }
   if (route.kind === "home") return openHome(route.flags);
+  if (route.kind === "review") {
+    // T4: `review` runs from the command registry (commands/review.ts).
+    return runRegistered(findCommand("review") as CommandSpec, [
+      "review",
+      ...(route.cardId ? [route.cardId] : []),
+      ...route.flags,
+    ]);
+  }
   if (
-    route.kind === "review" ||
     route.kind === "send-back" ||
     route.kind === "park" ||
     route.kind === "unpark" ||
@@ -703,15 +855,20 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   ) {
     const at = cliWorkspace(parseCliArgs(route.flags).repoPath);
     if ("refused" in at) return refuseWorkspace(at.refused);
+    if (at.firstRun) return refuseNoProject(at.repoPath);
     return runTriage(route, at.repoPath);
   }
   if (route.kind === "card") {
     const at = cliWorkspace(parseCliArgs(route.flags).repoPath);
     if ("refused" in at) return refuseWorkspace(at.refused);
+    if (at.firstRun) return refuseNoProject(at.repoPath);
     return runCardVerb(route, at.repoPath);
   }
   const argv = route.argv;
   const config = parseCliArgs(argv);
+  // T4 (surface item 17, NAM-02): a command the registry holds runs from it.
+  const registered = findCommand(config.command);
+  if (registered) return runRegistered(registered, argv);
   // Surface item 8a (SUR-73, SUR-80): the workspace and project this folder
   // belongs to, found from its ledger or its project's locator; a locator its
   // ledger does not confirm is refused before anything opens.
@@ -721,6 +878,15 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   // S9, item 40: `--trust` trusts the repository's configuration for this
   // invocation only; nothing is ever trusted implicitly.
   setInvocationTrust(argv.includes("--trust"));
+  // FINDINGS_C1 CLI-06: the checks of a folder that is no project, and
+  // declares none, are not run (they would be a package manager's errors).
+  if (
+    config.command === "gate" &&
+    workspace.firstRun &&
+    !existsSync(join(config.repoPath, ".sekhemet", "gates.toml"))
+  ) {
+    return refuseNoProject(config.repoPath);
+  }
 
   if (config.command === "traces") {
     // `sekhemet traces [--since-hours N] [--out f.json] [--otlp http://host:4318]` (H22).
@@ -935,32 +1101,6 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         `Applied ${applied.id}: ${applied.stepBudget} steps, ${applied.maxFailedChecks} failed checks${applied.clamped ? " (clamped to +-15%)" : ""}. The queue uses it when --max-turns is not given.`,
       );
     }
-    return;
-  }
-
-  if (config.command === "doctor") {
-    if (argv.includes("--airgap")) {
-      // X14: the air-gap self-test, written to the audit log.
-      const { airgapCommand } = await import("./airgap.js");
-      const { log } = initLocalKernel(config.repoPath);
-      process.exitCode = await airgapCommand(
-        config.repoPath,
-        ["selftest", ...argv.slice(argv.indexOf("--airgap") + 1)],
-        {
-          log,
-          print: (l) => console.log(l),
-        },
-      );
-      return;
-    }
-    const report = await runDoctor(config.repoPath);
-    console.log("\n=== Sekhemet Doctor Diagnostics ===");
-    for (const c of report.checks) {
-      const mark = c.status === "pass" ? "\u2713" : c.status === "warn" ? "!" : "\u2717";
-      console.log(`  ${mark} ${c.name}: ${c.detail}`);
-    }
-    console.log(report.ok ? "\nAll critical checks passed.\n" : "\nOne or more checks FAILED.\n");
-    if (!report.ok) process.exitCode = 1;
     return;
   }
 
@@ -1352,31 +1492,9 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     return;
   }
 
-  if (
-    config.command === "pause" ||
-    (config.command === "resume" && isProjectRef(cardStore, config.targetArg))
-  ) {
-    // `sekhemet dev pause|resume <project>` (item 17a, RUN-48): no new card of
-    // a paused project starts; a running one finishes. Recorded, with the person.
-    const project = findProject(cardStore, config.targetArg);
-    if (!project) {
-      console.error(`Usage: sekhemet dev ${config.command} <project id or name>`);
-      process.exitCode = 2;
-      return;
-    }
-    const status = config.command === "pause" ? "paused" : "active";
-    try {
-      await cardStore.setProjectStatus(project.id, status, "human");
-    } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
-      process.exitCode = 1;
-      return;
-    }
-    console.log(
-      status === "paused"
-        ? `Project ${project.name} is paused: no new issue of it starts until you resume it; a running issue finishes.`
-        : `Project ${project.name} is active again.`,
-    );
+  if (config.command === "pause") {
+    // `sekhemet dev pause <project>` (item 17a, RUN-48); `resume` is the registry's.
+    process.exitCode = await setProjectRunning(cardStore, "pause", config.targetArg);
     return;
   }
 
@@ -2067,292 +2185,6 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     );
     console.log(`Matrix: ${recorded.matrix} (${plural(recorded.recorded, "record")})`);
     for (const m of recorded.inadmissible) console.log(`   inadmissible: ${m}`);
-    return;
-  }
-
-  if (config.command === "accept") {
-    const cardId = config.targetArg;
-    if (!cardId) {
-      console.error("Usage: sekhemet accept <card-id>");
-      process.exit(1);
-    }
-    const card = await cardStore.getCard(cardId);
-    if (!card) {
-      console.error(`Issue not found: ${cardId}`);
-      process.exit(1);
-    }
-    try {
-      const sha = await acceptCard(
-        {
-          repoPath: config.repoPath,
-          restrictedMode: config.restrictedMode,
-          cardStore,
-          boardService,
-          // DS-N3-1: the project documents follow the accept.
-          eventLog: log,
-        },
-        card,
-      );
-      const target = integrationBranch(config.repoPath);
-      const notice = sha.startsWith("http")
-        ? undefined
-        : checkoutNotice(config.repoPath, target, sha);
-      console.log(
-        sha.startsWith("http")
-          ? `\nAccepted ${cardId} — pull request ${sha} opened; the issue reaches Done when it merges.`
-          : `\nAccepted ${cardId} — squashed onto ${target} as ${sha.slice(0, 10)}, issue moved to Done. Your files were not touched.`,
-      );
-      if (notice) console.log(notice);
-    } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
-      process.exit(1);
-    }
-    return;
-  }
-
-  if (config.command === "run" || config.command === "resume") {
-    // `resume` is `run` on a card that stopped part-way: the runner restarts
-    // from its last checkpoint with the steps replayed from the log (H17).
-    const cardId = config.targetArg;
-    if (!cardId) {
-      console.error("Usage: sekhemet run <card-id>");
-      process.exit(1);
-    }
-    const card = await cardStore.getCard(cardId);
-    if (!card) {
-      console.error(`Issue not found: ${cardId}`);
-      process.exit(1);
-    }
-    // Runtime item 2a, SUR-75: the card runs in its own project's root,
-    // wherever in the workspace the command was started.
-    const cardRoot = projectRootOf(cardStore, card) ?? config.repoPath;
-    // SUR-12: a derived test gate that cannot start stops the run, naming the file.
-    const cannotStart = gateStartStop(cardRoot);
-    if (cannotStart.length) {
-      for (const line of cannotStart) console.error(line);
-      process.exitCode = 1;
-      return;
-    }
-
-    // One recorded RunProfile (measurement MS-M9-4/5): resolved once from the
-    // settings file, the experiment switches and the flags, written into the
-    // card's evidence, and the switches the card runs with are read from it.
-    let runProfile: RunProfile;
-    try {
-      runProfile = profileForRun(argv, process.env);
-      applyProfileSwitches(runProfile);
-    } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
-      process.exitCode = 2;
-      return;
-    }
-
-    // One runner at a time (runtime item 3, RUN-3): a second is refused
-    // naming the holder, and runs nothing.
-    const leased = acquireRunnerLease(config.repoPath, { kind: "run", cardId });
-    if ("holder" in leased) {
-      console.error(leaseRefusal(leased.holder));
-      process.exitCode = 1;
-      return;
-    }
-    const releaseRunLease = leased.release;
-    // The supervisor's start-up pass (items 10, 33, 34), as `queue` makes it:
-    // under the lease, before the card is read again to run.
-    for (const line of describeSupervisorStart(
-      await supervisorStart({ repoPath: config.repoPath, cardStore, log, boardService }),
-    )) {
-      console.log(line);
-    }
-    const swept = await cardStore.getCard(cardId);
-    if (swept) Object.assign(card, swept);
-    console.log(`\nRunning issue ${cardId}: "${card.title}"`);
-    console.log(`Scope: [${card.scopeFiles.join(", ") || "unrestricted"}]`);
-    console.log(`Budget: ${card.stepBudget} steps\n`);
-    // SUR-40: the card's layer of the configuration, between the project's
-    // and the command line's, shown and applied.
-    const overrideLines = configOverrideLines(card.configOverrides);
-    if (overrideLines.length) console.log(`Issue config overrides: ${overrideLines.join(", ")}`);
-    const profileCap = runProfile.policies.stepCap ?? undefined;
-    const runCap = cardStepCap(
-      card,
-      runProfile.sources["policies.stepCap"] === "flag"
-        ? { flag: profileCap }
-        : { otherwise: profileCap },
-    );
-
-    // --worker was parsed by the suite runner and the queue but ignored here:
-    // every `run` used the Nail adapter, whatever it was asked for. A managed
-    // name (cyber-tiel, served by its own llama-server with its MTP head)
-    // resolves through the roster; an Ollama tag keeps the Nail profile's
-    // settings; no flag is the default Worker, as before.
-    const workerIdx = argv.indexOf("--worker");
-    const workerName = workerIdx !== -1 ? argv[workerIdx + 1]?.replace(/^ollama\//, "") : undefined;
-    // Through the roster, as `qualify` and the queue build it, so the three
-    // agree on the combination (B2.2 confirmation): one registry, read once.
-    const registry = modelRegistry();
-    // MD-N10-3: no --worker runs the person's assigned Worker, else the default;
-    // MD-N9-4: its model comes from the scheduler (nothing loads here).
-    const access = ModelAccess.forQueues(
-      [
-        {
-          queue: "worker",
-          role: "worker",
-          name: roleModelName("worker", workerName, { registry }) ?? defaultWorkerName(),
-        },
-      ],
-      { registry, ledger: log },
-    );
-    const model = access.adapterFor("worker");
-    console.log(`Coding model: ${model.modelId}`);
-    // review-git RG-P8-1, -10: the AI review reads the change before Review,
-    // on a Review model outside the Coding model's family, or says why not.
-    const runReviewer = resolveReviewerRole({
-      reviewer: roleModelName("reviewer", undefined, { registry }),
-      planner: roleModelName("planner", undefined, { registry }),
-      worker: model.modelId,
-      familyOf: (m) => familyOf(m, registry),
-    });
-    // MD-N8-1: the Worker runs cards only once its exact combination (engine,
-    // model build, host, settings) has qualified on this host. Nothing loads.
-    // Rule 27, MD-N4-4: a person's override runs the failed combination, and
-    // every bundle and card/repro of this run says so (the adapter is marked).
-    const gate = gateWorker(
-      registry,
-      model,
-      roleModelName("worker", workerName, { registry }) ?? model.modelId,
-    );
-    if (gate.refusal) {
-      console.error(gate.refusal);
-      process.exitCode = 1;
-      releaseRunLease();
-      return;
-    }
-    if (gate.override)
-      console.log(`Coding model ${model.modelId}: ${describeOverride(gate.override)}`);
-    // MD-N2-3: below the overnight throughput floor `run` refuses, as the queue does.
-    const floorRefusal = workerFloorRefusal(model.modelId);
-    if (floorRefusal) {
-      console.error(floorRefusal);
-      process.exitCode = 1;
-      releaseRunLease();
-      return;
-    }
-    // MD-N2-2: the memory watchdog runs for the card's duration; at critical
-    // no new step starts (the runner checks it before every turn).
-    const pressure = new PressureControls({
-      adapters: () => [model],
-      lspPool: () => runLspPool(),
-      // The one path to a model releases it too (minor 6).
-      releaseModels: () => access.releaseAll(),
-      log: (line) => console.log(`   ${line}`),
-    });
-    // MD-N9-3: the Worker loads only once its footprint is shown to fit.
-    await access.measure();
-    try {
-      // Kept synchronous (`acquire`): `run` owns this scheduler and serves one
-      // card on one model; no other queue exists for `decide()` to weigh.
-      await access.use("worker");
-    } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
-      process.exitCode = 1;
-      releaseRunLease();
-      return;
-    }
-    const cardWatchdog = createCardWatchdog(pressure, {
-      log: (line) => console.log(`   ${line}`),
-    });
-    // TEAM-16: in the Team setup the Agent stops if its person may no longer start it here.
-    const runAccess =
-      setupFor(config.repoPath) === "team"
-        ? new Access({ db, setup: "team", localPrincipal: () => log.localPrincipal() })
-        : undefined;
-    const ctx = {
-      repoPath: cardRoot,
-      workspaceFolder: workspace.workspaceFolder,
-      restrictedMode: config.restrictedMode,
-      cardStore,
-      boardService,
-      runProfile,
-      watchdog: cardWatchdog.watchdog,
-      ...(runAccess ? { agentRefusal: agentRefusalFor(runAccess, cardStore) } : {}),
-    };
-    let result: Awaited<ReturnType<typeof executeCard>>;
-    // Ctrl+C stops the card cleanly before its next turn (L25); a second exits.
-    const stop = new AbortController();
-    const onSigint = () => {
-      if (stop.signal.aborted) process.exit(130);
-      console.log("\nStopping after the current turn (Ctrl+C again to quit now)...");
-      stop.abort("stopped from the terminal");
-    };
-    process.on("SIGINT", onSigint);
-    try {
-      result = await executeCard(ctx, card, model, undefined, {
-        signal: stop.signal,
-        ...(runCap ? { maxSteps: runCap } : {}),
-        // Models rule 20e: each step is a step boundary on the scheduler.
-        beginStep: () => access.beginStep("worker"),
-        reviewFirst: async (id) => {
-          if (runReviewer.state === "filled") return REVIEW_WAIT;
-          await recordNotReviewed(ctx, id, runReviewer.reason).catch(() => undefined);
-          return undefined;
-        },
-      });
-    } finally {
-      process.off("SIGINT", onSigint);
-      cardWatchdog.stop();
-      // Release the weights on every exit path, including a crash mid-card:
-      // a resident 13GB checkpoint left behind by a failed run is how the host
-      // ran out of memory overnight.
-      await access.releaseAll();
-      releaseRunLease();
-    }
-
-    // RG-P8-1: the Coding model has left; the Review model reads the change,
-    // then the issue moves to Review. `run` owns this scheduler, so it loads
-    // the Review model directly (`use`), as it loaded the Coding model.
-    const waiting = await cardStore.getCard(cardId);
-    if (
-      runReviewer.state === "filled" &&
-      waiting?.status === "verify" &&
-      waiting.blockedReason === REVIEW_WAIT
-    ) {
-      console.log(`AI review on ${runReviewer.model}...`);
-      access.ensureQueue({
-        queue: runReviewer.queue,
-        role: runReviewer.queue === "reviewer" ? "reviewer" : "planner",
-        name: runReviewer.model,
-      });
-      try {
-        await access.measure();
-        const reviewer = await access.use(runReviewer.queue);
-        const review = await reviewAndRelease(
-          ctx,
-          cardId,
-          reviewer,
-          await learnedFrom(new LearningStore(log)),
-        );
-        if (review) console.log(`${review.coverage}`);
-      } catch (err) {
-        await releaseUnreviewed(ctx, cardId, err);
-      } finally {
-        await access.releaseAll();
-      }
-      if (result.passed)
-        result = {
-          ...result,
-          finalStatus: (await cardStore.getCard(cardId))?.status ?? result.finalStatus,
-        };
-    }
-
-    console.log(`\n${summarizeEvidence(result.evidence)}\n`);
-    console.log(
-      result.passed
-        ? `Issue ${cardId}: all checks passed; moved to Review for a person's acceptance.`
-        : `Issue ${cardId} stopped: ${result.stopReason}. Left in ${result.finalStatus} for inspection.`,
-    );
-
-    // SUR-16: scripts read the card's outcome from the exit status.
-    if (runExitCode(result.finalStatus) !== 0) process.exitCode = 1;
     return;
   }
 
@@ -3685,7 +3517,6 @@ function printDevHelp(): void {
       "Show the project's Type, or choose one (Prototype, Internal tool, Production, Regulated)",
     ],
     ["queue [--worker m] [--manager m]", "Run Ready issues"],
-    ["resume <issue>", "Continue an issue that stopped part-way"],
     ["gate [issue]", "Run the checks"],
     ["gates init", "Write the checks template for this project's language"],
     ["replay <issue>", "Replay an issue's trajectory from the log"],
@@ -3709,6 +3540,11 @@ function printDevHelp(): void {
     ["mcp / acp", "Stdio servers for editors"],
     ["calibrate / tune / explore / daemon / traces / init", "Machine and runtime tooling"],
     [`${DEV_COMMANDS.join(" / ")}`, "Planning model, evaluation and sync tooling"],
+    // T4: the registry's dev entries (surface item 17), each in this screen only.
+    ...COMMAND_REGISTRY.filter((c) => c.visibility === "dev").map((c): [string, string] => [
+      c.usage,
+      c.what,
+    ]),
   ];
   console.log("sekhemet dev <command> — harness development. These also run without `dev`.\n");
   for (const [u, w] of lines) console.log(`  ${u}\n      ${w}`);
@@ -3768,7 +3604,7 @@ async function openHome(flags: string[]): Promise<void> {
 
 type TriageRoute = Extract<
   ReturnType<typeof routeFrontDoor>,
-  { kind: "review" | "send-back" | "park" | "unpark" | "reopen" | "reject" | "revert" }
+  { kind: "send-back" | "park" | "unpark" | "reopen" | "reject" | "revert" }
 >;
 
 /** The board's decisions, from the command line (triage.ts is shared with it). */
@@ -3776,41 +3612,6 @@ async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
   const { db, log, cardStore, boardService } = initLocalKernel(repoPath);
   const ctx = { repoPath, cardStore, boardService, log };
   try {
-    if (route.kind === "review") {
-      const card = route.cardId
-        ? ((await cardStore.getCard(route.cardId)) ?? undefined)
-        : await nextForReview(ctx);
-      if (!card) {
-        console.log(
-          route.cardId ? `sekhemet: no issue ${route.cardId}` : "Nothing is waiting on you.",
-        );
-        return;
-      }
-      console.log(`${card.id} — ${card.title}`);
-      // The evidence the ledger names (K-S7-7), and each Implementation file's
-      // diff, shown once and recorded as shown (review-git §2.4.3, RG-S6-6).
-      const e = await ledgerBundle(ctx, card.id);
-      if (e) {
-        const gates = (e.rungResults ?? []).map((r) => `${r.passed ? "✓" : "✗"} ${r.gate}`);
-        console.log(`  checks: ${gates.join("  ") || "none recorded"}`);
-        console.log(
-          `  changed: ${(e.filesTouched ?? []).join(", ") || "nothing"} (+${e.linesAdded ?? 0} −${e.linesRemoved ?? 0})`,
-        );
-        const files = implementationFiles(e);
-        if (files.length > 0 && card.status === "review") {
-          const diff = await new NodeGitSyncAdapter(repoPath).structuralDiff(
-            card.id,
-            integrationBranch(repoPath),
-          );
-          console.log(`\n${diff.text}`);
-          await recordReviewOpened(ctx, card, files);
-        }
-      }
-      console.log(
-        `\n  sekhemet accept ${card.id}\n  sekhemet request-changes ${card.id} "<what to change>"\n  sekhemet park ${card.id}`,
-      );
-      return;
-    }
     const card = await cardStore.getCard(route.cardId);
     if (!card) {
       console.error(`sekhemet: no issue ${route.cardId}`);
@@ -3844,7 +3645,20 @@ async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
       await reject(ctx, card, route.reason);
       console.log(`${card.id} is rejected. Undo: sekhemet reopen ${card.id}`);
     } else if (route.kind === "revert") {
-      const sha = await revertAccept(ctx, card, route.reason);
+      // SEC-03, surface rule 16: the reversal verbs share the dashboard's
+      // who-may-accept rule — the card's project's Accept rule, as `accept` reads it.
+      const { acceptHolders } = acceptRuleFor(db, log, cardStore, card, repoPath);
+      const sha = await revertAccept(ctx, card, route.reason, undefined, acceptHolders).catch(
+        (err: unknown) => {
+          if (err instanceof AcceptRefusedError) {
+            console.error(`sekhemet: ${err.message}`);
+            process.exitCode = 1;
+            return undefined;
+          }
+          throw err;
+        },
+      );
+      if (sha === undefined) return;
       console.log(
         `${card.id}'s accept is reverted (${sha.slice(0, 10)} on ${integrationBranch(repoPath)}); the issue is back in Ready.`,
       );
@@ -3975,6 +3789,8 @@ if (process.argv[1]?.endsWith("index.js") || process.argv[1]?.endsWith("sekhemet
     // Resolved only when a report is written; it may throw, and then the
     // one line still prints (G4, SUR-57).
     userDir,
+    // Surface item 20c: under --json, stdout's object carries the same line.
+    onFatalLine: jsonFatal,
   });
   installProcessErrorHandlers(errorContext);
   // SUR-26: an older install's ~/.config/sekhemet moves into the one user

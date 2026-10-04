@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "sekhemet doctor --json",
+  "description": "Every check of the install with its status (surface item 20c).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["command", "ok", "exitCode", "message"],
+  "properties": {
+    "command": {
+      "const": "doctor"
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "exitCode is 0."
+    },
+    "exitCode": {
+      "enum": [0, 1, 2],
+      "description": "The exit code the command gives, with or without --json: 0 success, 1 failure, 2 a usage error or a missing confirmation."
+    },
+    "message": {
+      "type": "string",
+      "description": "The outcome in one sentence."
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status", "detail"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "enum": ["pass", "warn", "fail"]
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

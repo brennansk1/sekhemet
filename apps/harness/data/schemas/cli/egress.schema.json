@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "sekhemet egress --json",
+  "description": "What has left this machine: every recorded harness/egress, card/egress and model/downloaded event, newest first (security item 33a, NEW-security-11).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["command", "ok", "exitCode", "message"],
+  "properties": {
+    "command": {
+      "const": "egress"
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "exitCode is 0."
+    },
+    "exitCode": {
+      "enum": [0, 1, 2],
+      "description": "The exit code the command gives, with or without --json: 0 success, 1 failure, 2 a usage error or a missing confirmation."
+    },
+    "message": {
+      "type": "string",
+      "description": "The outcome in one sentence."
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["at", "host", "purpose", "allowed", "cause"],
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "The recorded time, ISO."
+          },
+          "host": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string",
+            "description": "Its purpose in plain words."
+          },
+          "allowed": {
+            "type": "boolean",
+            "description": "Allowed, or refused by the network policy."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it was refused."
+          },
+          "size": {
+            "type": "string",
+            "description": "The size in plain units, when recorded."
+          },
+          "erased": {
+            "const": true,
+            "description": "The record's private part was erased."
+          },
+          "cause": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "id", "title"],
+                "properties": {
+                  "kind": {
+                    "const": "issue"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "name"],
+                "properties": {
+                  "kind": {
+                    "const": "person"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind"],
+                "properties": {
+                  "kind": {
+                    "const": "sekhemet"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

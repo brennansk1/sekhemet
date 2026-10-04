@@ -81,6 +81,9 @@ export async function dumpDom(
         "--disable-gpu",
         "--no-first-run",
         "--no-default-browser-check",
+        // Security item 11a: never the macOS keychain for its storage key —
+        // the sandbox denies it — as Playwright starts its browsers.
+        "--use-mock-keychain",
         `--user-data-dir=${profile}`,
         ...(options.egressProxyPort
           ? [`--proxy-server=http://127.0.0.1:${options.egressProxyPort}`]

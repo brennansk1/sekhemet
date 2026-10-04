@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -218,6 +218,37 @@ describe("MCP tools beyond the basics (H10)", () => {
     const r = await call("sekhemet_run_gates");
     expect(r.error).toBe(false);
     expect(r.text).toContain('"passed": true');
+  });
+
+  it("EXT-35: describes the gate run, in at most two sentences, as a pre-check that is not evidence and moves no issue", async () => {
+    const res = await handleMcpRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" }, ctx);
+    const tool = (res?.result as { tools: { name: string; description: string }[] }).tools.find(
+      (t) => t.name === "sekhemet_run_gates",
+    );
+    const d = tool?.description ?? "";
+    expect(d).toMatch(/pre-check/i);
+    expect(d).toMatch(/not evidence/i);
+    expect(d).toMatch(/moves no issue/i);
+    expect(d.split(/(?<=[.!?])\s+/).filter(Boolean).length).toBeLessThanOrEqual(2);
+  });
+
+  it("EXT-36: a gate run on a card returns the verdict and records no gate result, no evidence, no move", async () => {
+    mkdirSync(join(repo, ".sekhemet"), { recursive: true });
+    writeFileSync(
+      join(repo, ".sekhemet", "gates.toml"),
+      '[[gate]]\nid = "ok"\nrung = "test"\ncommand = "true"\n',
+    );
+    const events = () =>
+      (ctx.db.prepare("SELECT type FROM events ORDER BY rowid").all() as { type: string }[]).map(
+        (e) => e.type,
+      );
+    const before = events();
+    const r = await call("sekhemet_run_gates", { card_id: "card_a" });
+    expect(r.error).toBe(false);
+    expect(r.text).toContain('"passed": true');
+    expect(events()).toEqual(before);
+    expect(existsSync(join(repo, ".sekhemet", "evidence"))).toBe(false);
+    expect((await cardStore.getCard("card_a"))?.status).toBe("backlog");
   });
 
   it("queues a message for Seshat and shows it in the thread", async () => {

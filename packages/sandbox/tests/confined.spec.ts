@@ -191,6 +191,18 @@ describe("runConfined (S3a)", () => {
     expect(Date.now() - started).toBeLessThan(10_000);
   });
 
+  // Security item 11a (C2c): the browser never asks the macOS keychain for
+  // its storage key ("Chromium Safe Storage"), which the keychain rules deny
+  // in the sandbox; Playwright passes the same flag to the browsers it starts.
+  it.runIf(confines)("the browse tool's browser is started with a mock keychain", async () => {
+    const fake = join(outside, "fake-chrome.sh");
+    writeFileSync(fake, `#!/bin/sh\necho "<html><body>$*</body></html>"\n`);
+    chmodSync(fake, 0o755);
+    vi.stubEnv("SEKHEMET_CHROME", fake);
+    const dom = await dumpDom("http://127.0.0.1:9/");
+    expect(dom).toContain("--use-mock-keychain");
+  });
+
   it.runIf(confines)(
     "SEC-17: the browse tool's browser runs confined (a fake Chrome that writes outside)",
     async () => {

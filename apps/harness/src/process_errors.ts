@@ -96,6 +96,11 @@ export interface ReportContext {
    */
   userDir: string | (() => string);
   now?: Date;
+  /**
+   * Told the one line once it is printed: under `--json` it is also the
+   * stdout object's `error` (surface item 20c, `cli_result.ts` `jsonFatal`).
+   */
+  onFatalLine?: (line: string) => void;
 }
 
 /**
@@ -175,8 +180,14 @@ export function reportFatal(
   const path = writeErrorReport(err, kind, ctx);
   if (reported) return;
   reported = true;
-  writeStderr(`${fatalLine(err, path)}\n`);
+  const line = fatalLine(err, path);
+  writeStderr(`${line}\n`);
   if (ctx.debug) writeStderr(`${errorDetails(err)}\n`);
+  try {
+    ctx.onFatalLine?.(line);
+  } catch {
+    // The line is printed; nothing else may stop the exit.
+  }
 }
 
 /**
