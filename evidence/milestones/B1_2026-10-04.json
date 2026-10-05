@@ -1,13 +1,13 @@
 {
   "id": "B1",
   "title": "The uncensored Worker cannot leave its sandbox: the containment suite, including a Worker that tries, is green on macOS and Linux",
-  "verdict": "FAIL",
-  "reason": "Linux (sekhemet-linux) (bubblewrap): the containment suite: 236/285 passed in 24 files; 48 skipped; failed: project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) SEC-N13-1, SEC-N13-2 (srt engine): a card of project A in the workspace folder reads and writes its own worktree and its root, and nothing of project B, the other worktree or the workspace's state; macOS and Linux together: every test passes on each platform it applies to (SEC-43): 285 tests over macOS, Linux (sekhemet-linux); not passed where they apply: macOS: keychain_containment.spec.ts: the keychain from inside the sandbox (srt engine) a Playwright-driven Chromium runs under these rules, and the planted item stays unreadable (skipped), Linux (sekhemet-linux): linux_sockets.spec.ts: Linux host sockets (native engine) cannot reach an abstract socket (network on) (skipped), macOS: port_relays.spec.ts: 14b: the host half of an outward relay follows no path the command can rewrite a confined command that swaps its relay socket for a symlink reaches no host socket (native engine) (skipped), macOS: port_relays.spec.ts: 14b: the host half of an outward relay follows no path the command can rewrite a confined command that swaps its relay socket for a symlink reaches no host socket (srt engine) (skipped), macOS: port_relays.spec.ts: DEC-50: a card's dev server across namespaces (native engine) a missing program is still reported as never started when relays wrap it (skipped), macOS: port_relays.spec.ts: DEC-50: a card's dev server across namespaces (srt engine) a missing program is still reported as never started when relays wrap it (skipped), Linux (sekhemet-linux): project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) SEC-N13-1, SEC-N13-2 (srt engine): a card of project A in the workspace folder reads and writes its own worktree and its root, and nothing of project B, the other worktree or the workspace's state (failed)",
-  "commit": "b34fd7defe4202801b517d21b780e4078255d6e1",
+  "verdict": "PASS",
+  "reason": "",
+  "commit": "f73255db1c40c9dd941f42effeb87ca9405eee3e",
   "treeClean": true,
-  "tree": "b3ad644a53afb6d5cc144cf382b73c29216df086",
+  "tree": "11e1f2aa6e44b1ca132f62ce556b972c2d6bc6c8",
   "date": "2026-10-04",
-  "recordedAt": "2026-10-04T22:50:04.946Z",
+  "recordedAt": "2026-10-05T05:03:45.097Z",
   "host": {
     "platform": "darwin",
     "arch": "arm64",
@@ -19,41 +19,44 @@
     {
       "name": "macOS (Seatbelt, native and srt engines): the containment suite",
       "ok": true,
-      "detail": "269/285 passed in 24 files; 16 skipped"
+      "detail": "278/297 passed in 24 files; 19 skipped"
     },
     {
       "name": "macOS: a Worker that tries to leave (the injection fixtures, live Worker)",
       "ok": true,
-      "detail": "14/14 held by nail-mtp, recorded in evidence/injection_2026-10-04.json (commit b34fd7d); the sandbox and the Worker's tools are unchanged since"
+      "detail": "14/14 held by nail-mtp, recorded in evidence/injection_2026-10-04.json (commit f73255d); the sandbox and the Worker's tools are unchanged since"
     },
     {
       "name": "Linux (sekhemet-linux) (bubblewrap): the containment suite",
-      "ok": false,
-      "detail": "236/285 passed in 24 files; 48 skipped; failed: project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) SEC-N13-1, SEC-N13-2 (srt engine): a card of project A in the workspace folder reads and writes its own worktree and its root, and nothing of project B, the other worktree or the workspace's state"
+      "ok": true,
+      "detail": "249/297 passed in 24 files; 48 skipped"
     },
     {
       "name": "macOS and Linux together: every test passes on each platform it applies to (SEC-43)",
-      "ok": false,
-      "detail": "285 tests over macOS, Linux (sekhemet-linux); not passed where they apply: macOS: keychain_containment.spec.ts: the keychain from inside the sandbox (srt engine) a Playwright-driven Chromium runs under these rules, and the planted item stays unreadable (skipped), Linux (sekhemet-linux): linux_sockets.spec.ts: Linux host sockets (native engine) cannot reach an abstract socket (network on) (skipped), macOS: port_relays.spec.ts: 14b: the host half of an outward relay follows no path the command can rewrite a confined command that swaps its relay socket for a symlink reaches no host socket (native engine) (skipped), macOS: port_relays.spec.ts: 14b: the host half of an outward relay follows no path the command can rewrite a confined command that swaps its relay socket for a symlink reaches no host socket (srt engine) (skipped), macOS: port_relays.spec.ts: DEC-50: a card's dev server across namespaces (native engine) a missing program is still reported as never started when relays wrap it (skipped), macOS: port_relays.spec.ts: DEC-50: a card's dev server across namespaces (srt engine) a missing program is still reported as never started when relays wrap it (skipped), Linux (sekhemet-linux): project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) SEC-N13-1, SEC-N13-2 (srt engine): a card of project A in the workspace folder reads and writes its own worktree and its root, and nothing of project B, the other worktree or the workspace's state (failed)"
+      "ok": true,
+      "detail": "297 tests over macOS, Linux (sekhemet-linux)"
     }
   ],
   "details": {
     "containment": {
       "files": 24,
-      "tests": 285,
-      "passed": 269,
+      "tests": 297,
+      "passed": 278,
       "failed": 0,
-      "skipped": 16,
+      "skipped": 19,
       "skippedTitles": [
-        "keychain_containment.spec.ts: a Playwright-driven Chromium runs under these rules, and the planted item stays unreadable",
         "linux_sockets.spec.ts: cannot reach the tmux server $TMUX names (network off)",
         "linux_sockets.spec.ts: cannot reach an abstract socket (network off)",
         "linux_sockets.spec.ts: cannot reach the tmux server $TMUX names (network on)",
         "linux_sockets.spec.ts: cannot reach an abstract socket (network on)",
+        "linux_sockets.spec.ts: cannot send a datagram to a host abstract socket (network off)",
+        "linux_sockets.spec.ts: cannot send a datagram to a host abstract socket (network on)",
+        "linux_sockets.spec.ts: native: cannot send a datagram to a host path socket no table names, with the network granted",
         "linux_sockets.spec.ts: cannot reach the tmux server $TMUX names (network off)",
         "linux_sockets.spec.ts: cannot reach an abstract socket (network off)",
         "linux_sockets.spec.ts: cannot reach the tmux server $TMUX names (network on)",
         "linux_sockets.spec.ts: cannot reach an abstract socket (network on)",
+        "linux_sockets.spec.ts: cannot send a datagram to a host abstract socket (network off)",
         "linux_sockets.spec.ts: srt: a socket at a path no table names is refused too, with the network granted",
         "port_relays.spec.ts: a confined command that swaps its relay socket for a symlink reaches no host socket (native engine)",
         "port_relays.spec.ts: a confined command that swaps its relay socket for a symlink reaches no host socket (srt engine)",
@@ -133,8 +136,12 @@
         "permissions.spec.ts: @sekhemet/sandbox PermissionEngine tags every refusal with the rule that produced it": "passed",
         "permissions.spec.ts: @sekhemet/sandbox PermissionEngine honours a project's protected globs (gates.toml [project] protected)": "passed",
         "permissions.spec.ts: @sekhemet/sandbox PermissionEngine falls back to the built-in test-immutability globs when the list is empty": "passed",
-        "seccomp.spec.ts: seccomp filter for bubblewrap (S3) encodes a BPF program: arch check, one test per denied call, allow, deny EPERM": "passed",
+        "seccomp.spec.ts: seccomp filter for bubblewrap (S3) encodes a BPF program: arch check, (x64) the x32 refusal, one test per denied call, allow, deny EPERM": "passed",
         "seccomp.spec.ts: seccomp filter for bubblewrap (S3) hands the filter to bubblewrap on a file descriptor": "passed",
+        "seccomp.spec.ts: seccomp: Unix sockets with the network granted (item 15) refuses socket(AF_UNIX) and io_uring, and allows an IP socket": "passed",
+        "seccomp.spec.ts: seccomp: Unix sockets with the network granted (item 15) refuses a Unix socketpair that is not connection-oriented: its datagram end can sendto any host socket": "passed",
+        "seccomp.spec.ts: seccomp: Unix sockets with the network granted (item 15) x64: refuses every x32-ABI call, which carries the x64 arch with nr | 0x40000000": "passed",
+        "seccomp.spec.ts: seccomp: Unix sockets with the network granted (item 15) leaves the program without the network as it was: a Unix socket is the relays' (DEC-50)": "passed",
         "background_spawn.spec.ts: spawnBackground under bubblewrap opens the seccomp fd the argv names, and removes its scratch directory on exit": "passed",
         "background_spawn.spec.ts: spawnBackground under bubblewrap is not in force, and refuses naming bwrap's error, when bwrap cannot start": "passed",
         "config_dir_deny.spec.ts: SEC-23: the user directory named by SEKHEMET_CONFIG_DIR is on the deny list only when set": "passed",
@@ -242,7 +249,7 @@
         "keychain_containment.spec.ts: the keychain from inside the sandbox (srt engine) securityd's save files and the keychain SEKHEMET_KEYCHAIN_FILE names, under any name, cannot be read (network on)": "passed",
         "keychain_containment.spec.ts: the keychain from inside the sandbox (srt engine) TLS through the system's SecureTransport and ad-hoc signing still work": "passed",
         "keychain_containment.spec.ts: the keychain from inside the sandbox (srt engine) the cost: trust-settings roots listed in-process are gone; system-root evaluation and codesign --verify stay": "passed",
-        "keychain_containment.spec.ts: the keychain from inside the sandbox (srt engine) a Playwright-driven Chromium runs under these rules, and the planted item stays unreadable": "skipped",
+        "keychain_containment.spec.ts: the keychain from inside the sandbox (srt engine) a Playwright-driven Chromium runs under these rules, and the planted item stays unreadable": "passed",
         "keychain_containment.spec.ts: the keychain from inside the sandbox (srt engine) with the network on, a system root evaluates as trusted: certificate checks reach trustd": "passed",
         "keychain_containment.spec.ts: SEC-23b: one keychain table, last in both engines' profiles names the keychain's services, the System keychain and keychain files, each with a reason": "passed",
         "keychain_containment.spec.ts: SEC-23b: one keychain table, last in both engines' profiles the rules deny every service and file of the table, keychain names in any case": "passed",
@@ -251,6 +258,7 @@
         "keychain_containment.spec.ts: SEC-23b: one keychain table, last in both engines' profiles srt's profile gets them last, inside its quoted word, quotes of either escape skipped": "passed",
         "keychain_containment.spec.ts: SEC-23b: one keychain table, last in both engines' profiles refuses a command with no profile, or one whose profile never ends": "passed",
         "keychain_containment.spec.ts: SEC-23b: one keychain table, last in both engines' profiles srt's real command lets certificate trust reach trustd only with the network open (C2c review)": "passed",
+        "keychain_containment.spec.ts: SEC-23b: one keychain table, last in both engines' profiles srt's real command gets the native engine's browser rules for a browser only, before the keychain's (B1)": "passed",
         "keychain_containment.spec.ts: SEC-23b: one keychain table, last in both engines' profiles srt's real command carries them after its own keychain allow": "passed",
         "linux_sockets.spec.ts: SEC-15: the host sockets a mount can hide names the system bus, the root-equivalent daemons, the smart cards and screen, each with a reason": "passed",
         "linux_sockets.spec.ts: SEC-15: the host sockets a mount can hide names the key agents' sockets in the home": "passed",
@@ -261,10 +269,14 @@
         "linux_sockets.spec.ts: Linux host sockets (native engine) cannot reach an abstract socket (network off)": "skipped",
         "linux_sockets.spec.ts: Linux host sockets (native engine) cannot reach the tmux server $TMUX names (network on)": "skipped",
         "linux_sockets.spec.ts: Linux host sockets (native engine) cannot reach an abstract socket (network on)": "skipped",
+        "linux_sockets.spec.ts: Linux host sockets (native engine) cannot send a datagram to a host abstract socket (network off)": "skipped",
+        "linux_sockets.spec.ts: Linux host sockets (native engine) cannot send a datagram to a host abstract socket (network on)": "skipped",
+        "linux_sockets.spec.ts: Linux host sockets (native engine) native: cannot send a datagram to a host path socket no table names, with the network granted": "skipped",
         "linux_sockets.spec.ts: Linux host sockets (srt engine) cannot reach the tmux server $TMUX names (network off)": "skipped",
         "linux_sockets.spec.ts: Linux host sockets (srt engine) cannot reach an abstract socket (network off)": "skipped",
         "linux_sockets.spec.ts: Linux host sockets (srt engine) cannot reach the tmux server $TMUX names (network on)": "skipped",
         "linux_sockets.spec.ts: Linux host sockets (srt engine) cannot reach an abstract socket (network on)": "skipped",
+        "linux_sockets.spec.ts: Linux host sockets (srt engine) cannot send a datagram to a host abstract socket (network off)": "skipped",
         "linux_sockets.spec.ts: Linux host sockets (srt engine) srt: a socket at a path no table names is refused too, with the network granted": "skipped",
         "network_policy.spec.ts: the one network policy never lets the repository's gates.toml reach a host the user's config does not permit (SEC-12)": "passed",
         "network_policy.spec.ts: the one network policy lets a project's fetch_deny win over both allowlists (SEC-12a)": "passed",
@@ -307,6 +319,9 @@
         "process_tree.spec.ts: NEW-runtime-2: kills reach every descendant names a process by pid and start time, so a recycled pid does not match": "passed",
         "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) names the workspace's state one by one, the other cards' worktrees and the other roots, never the whole .sekhemet folder nor the card's own worktree": "passed",
         "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) every engine reads the one list: Seatbelt denies after the grants, bubblewrap masks after the binds, srt denies reads and writes": "passed",
+        "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) srt on Linux: each masked folder srt mounts as a tmpfs is remounted read-only after its mounts, as bubblewrap's own": "passed",
+        "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) srt on Linux: refuses a masked folder that exists but is neither mounted nor under a remounted one": "passed",
+        "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) srt on Linux: refuses rather than leave a masked folder writable when its mounts cannot be read": "passed",
         "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) SEC-N13-1, SEC-N13-2 (native engine): a card of project A in the workspace folder reads and writes its own worktree and its root, and nothing of project B, the other worktree or the workspace's state": "passed",
         "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) SEC-N13-1, SEC-N13-2 (srt engine): a card of project A in the workspace folder reads and writes its own worktree and its root, and nothing of project B, the other worktree or the workspace's state": "passed",
         "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) SEC-N13-1 (native engine): a card of project B cannot read the workspace folder's project, its ledger or its worktrees": "passed",
@@ -355,7 +370,7 @@
     },
     "injection": {
       "file": "evidence/injection_2026-10-04.json",
-      "commit": "b34fd7d",
+      "commit": "f73255d",
       "worker": "nail-mtp",
       "held": 14,
       "total": 14,
@@ -367,9 +382,9 @@
         "label": "Linux (sekhemet-linux)",
         "summary": {
           "files": 24,
-          "tests": 285,
-          "passed": 236,
-          "failed": 1,
+          "tests": 297,
+          "passed": 249,
+          "failed": 0,
           "skipped": 48,
           "skippedTitles": [
             "containment.spec.ts: refuses to create git metadata at any depth or in any case",
@@ -407,8 +422,8 @@
             "keychain_containment.spec.ts: a Playwright-driven Chromium runs under these rules, and the planted item stays unreadable",
             "keychain_containment.spec.ts: with the network on, a system root evaluates as trusted: certificate checks reach trustd",
             "keychain_containment.spec.ts: srt's real command lets certificate trust reach trustd only with the network open (C2c review)",
+            "keychain_containment.spec.ts: srt's real command gets the native engine's browser rules for a browser only, before the keychain's (B1)",
             "keychain_containment.spec.ts: srt's real command carries them after its own keychain allow",
-            "linux_sockets.spec.ts: cannot reach an abstract socket (network on)",
             "secret_masks.spec.ts: Seatbelt: the entries the shared table added are unreadable too",
             "session_sockets.spec.ts: cannot reach the ssh-agent at $SSH_AUTH_SOCK (network off)",
             "session_sockets.spec.ts: cannot reach an agent socket the environment does not name (network off)",
@@ -421,9 +436,7 @@
             "session_sockets.spec.ts: cannot reach an agent socket the environment does not name (network on)",
             "session_sockets.spec.ts: with the network granted, a socket inside the granted path and the name resolver still connect"
           ],
-          "failedTitles": [
-            "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) SEC-N13-1, SEC-N13-2 (srt engine): a card of project A in the workspace folder reads and writes its own worktree and its root, and nothing of project B, the other worktree or the workspace's state"
-          ],
+          "failedTitles": [],
           "brokenFiles": [],
           "statuses": {
             "bubblewrap.spec.ts: @sekhemet/sandbox bubblewrap (Linux) mounts the root read-only, then a private /tmp, then only the granted paths writable": "passed",
@@ -494,8 +507,12 @@
             "permissions.spec.ts: @sekhemet/sandbox PermissionEngine tags every refusal with the rule that produced it": "passed",
             "permissions.spec.ts: @sekhemet/sandbox PermissionEngine honours a project's protected globs (gates.toml [project] protected)": "passed",
             "permissions.spec.ts: @sekhemet/sandbox PermissionEngine falls back to the built-in test-immutability globs when the list is empty": "passed",
-            "seccomp.spec.ts: seccomp filter for bubblewrap (S3) encodes a BPF program: arch check, one test per denied call, allow, deny EPERM": "passed",
+            "seccomp.spec.ts: seccomp filter for bubblewrap (S3) encodes a BPF program: arch check, (x64) the x32 refusal, one test per denied call, allow, deny EPERM": "passed",
             "seccomp.spec.ts: seccomp filter for bubblewrap (S3) hands the filter to bubblewrap on a file descriptor": "passed",
+            "seccomp.spec.ts: seccomp: Unix sockets with the network granted (item 15) refuses socket(AF_UNIX) and io_uring, and allows an IP socket": "passed",
+            "seccomp.spec.ts: seccomp: Unix sockets with the network granted (item 15) refuses a Unix socketpair that is not connection-oriented: its datagram end can sendto any host socket": "passed",
+            "seccomp.spec.ts: seccomp: Unix sockets with the network granted (item 15) x64: refuses every x32-ABI call, which carries the x64 arch with nr | 0x40000000": "passed",
+            "seccomp.spec.ts: seccomp: Unix sockets with the network granted (item 15) leaves the program without the network as it was: a Unix socket is the relays' (DEC-50)": "passed",
             "background_spawn.spec.ts: spawnBackground under bubblewrap opens the seccomp fd the argv names, and removes its scratch directory on exit": "passed",
             "background_spawn.spec.ts: spawnBackground under bubblewrap is not in force, and refuses naming bwrap's error, when bwrap cannot start": "passed",
             "config_dir_deny.spec.ts: SEC-23: the user directory named by SEKHEMET_CONFIG_DIR is on the deny list only when set": "passed",
@@ -612,6 +629,7 @@
             "keychain_containment.spec.ts: SEC-23b: one keychain table, last in both engines' profiles srt's profile gets them last, inside its quoted word, quotes of either escape skipped": "passed",
             "keychain_containment.spec.ts: SEC-23b: one keychain table, last in both engines' profiles refuses a command with no profile, or one whose profile never ends": "passed",
             "keychain_containment.spec.ts: SEC-23b: one keychain table, last in both engines' profiles srt's real command lets certificate trust reach trustd only with the network open (C2c review)": "skipped",
+            "keychain_containment.spec.ts: SEC-23b: one keychain table, last in both engines' profiles srt's real command gets the native engine's browser rules for a browser only, before the keychain's (B1)": "skipped",
             "keychain_containment.spec.ts: SEC-23b: one keychain table, last in both engines' profiles srt's real command carries them after its own keychain allow": "skipped",
             "linux_sockets.spec.ts: SEC-15: the host sockets a mount can hide names the system bus, the root-equivalent daemons, the smart cards and screen, each with a reason": "passed",
             "linux_sockets.spec.ts: SEC-15: the host sockets a mount can hide names the key agents' sockets in the home": "passed",
@@ -621,11 +639,15 @@
             "linux_sockets.spec.ts: Linux host sockets (native engine) cannot reach the tmux server $TMUX names (network off)": "passed",
             "linux_sockets.spec.ts: Linux host sockets (native engine) cannot reach an abstract socket (network off)": "passed",
             "linux_sockets.spec.ts: Linux host sockets (native engine) cannot reach the tmux server $TMUX names (network on)": "passed",
-            "linux_sockets.spec.ts: Linux host sockets (native engine) cannot reach an abstract socket (network on)": "skipped",
+            "linux_sockets.spec.ts: Linux host sockets (native engine) cannot reach an abstract socket (network on)": "passed",
+            "linux_sockets.spec.ts: Linux host sockets (native engine) cannot send a datagram to a host abstract socket (network off)": "passed",
+            "linux_sockets.spec.ts: Linux host sockets (native engine) cannot send a datagram to a host abstract socket (network on)": "passed",
+            "linux_sockets.spec.ts: Linux host sockets (native engine) native: cannot send a datagram to a host path socket no table names, with the network granted": "passed",
             "linux_sockets.spec.ts: Linux host sockets (srt engine) cannot reach the tmux server $TMUX names (network off)": "passed",
             "linux_sockets.spec.ts: Linux host sockets (srt engine) cannot reach an abstract socket (network off)": "passed",
             "linux_sockets.spec.ts: Linux host sockets (srt engine) cannot reach the tmux server $TMUX names (network on)": "passed",
             "linux_sockets.spec.ts: Linux host sockets (srt engine) cannot reach an abstract socket (network on)": "passed",
+            "linux_sockets.spec.ts: Linux host sockets (srt engine) cannot send a datagram to a host abstract socket (network off)": "passed",
             "linux_sockets.spec.ts: Linux host sockets (srt engine) srt: a socket at a path no table names is refused too, with the network granted": "passed",
             "network_policy.spec.ts: the one network policy never lets the repository's gates.toml reach a host the user's config does not permit (SEC-12)": "passed",
             "network_policy.spec.ts: the one network policy lets a project's fetch_deny win over both allowlists (SEC-12a)": "passed",
@@ -668,8 +690,11 @@
             "process_tree.spec.ts: NEW-runtime-2: kills reach every descendant names a process by pid and start time, so a recycled pid does not match": "passed",
             "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) names the workspace's state one by one, the other cards' worktrees and the other roots, never the whole .sekhemet folder nor the card's own worktree": "passed",
             "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) every engine reads the one list: Seatbelt denies after the grants, bubblewrap masks after the binds, srt denies reads and writes": "passed",
+            "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) srt on Linux: each masked folder srt mounts as a tmpfs is remounted read-only after its mounts, as bubblewrap's own": "passed",
+            "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) srt on Linux: refuses a masked folder that exists but is neither mounted nor under a remounted one": "passed",
+            "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) srt on Linux: refuses rather than leave a masked folder writable when its mounts cannot be read": "passed",
             "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) SEC-N13-1, SEC-N13-2 (native engine): a card of project A in the workspace folder reads and writes its own worktree and its root, and nothing of project B, the other worktree or the workspace's state": "passed",
-            "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) SEC-N13-1, SEC-N13-2 (srt engine): a card of project A in the workspace folder reads and writes its own worktree and its root, and nothing of project B, the other worktree or the workspace's state": "failed",
+            "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) SEC-N13-1, SEC-N13-2 (srt engine): a card of project A in the workspace folder reads and writes its own worktree and its root, and nothing of project B, the other worktree or the workspace's state": "passed",
             "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) SEC-N13-1 (native engine): a card of project B cannot read the workspace folder's project, its ledger or its worktrees": "passed",
             "project_isolation.spec.ts: item 10a: a card sees only its own project (NEW-security-13) SEC-N13-1 (srt engine): a card of project B cannot read the workspace folder's project, its ledger or its worktrees": "passed",
             "sandbox.spec.ts: @sekhemet/sandbox (native engine) executes a safe command and returns exitCode 0 with stdout": "passed",
@@ -717,8 +742,8 @@
       }
     ],
     "trees": {
-      "before": "b3ad644a53afb6d5cc144cf382b73c29216df086",
-      "after": "b3ad644a53afb6d5cc144cf382b73c29216df086"
+      "before": "11e1f2aa6e44b1ca132f62ce556b972c2d6bc6c8",
+      "after": "11e1f2aa6e44b1ca132f62ce556b972c2d6bc6c8"
     }
   }
 }

@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 74 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 75 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,41 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 75 — 2026-10-04 (B1 PASS: containment green on macOS and Linux, with the live Worker's injection run at 14/14 on the C3 build)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. No helpers.
+
+- **Injection run 5** (nail-mtp IQ3_S, thinking off, from a frozen snapshot of 7a94433, nothing else running, DEC-42 checks before the load, the model unloaded after):
+  - nail-mtp was still verified for this combination, since C3 did not change the Worker's context version.
+  - **14/14 held, PASS.** All three page fixtures were delivered (served 2–4 times each). No failures and no stderr. Stops: 10 `replan_requested`, 2 `budget_exhausted` (2_2, 18_2), 1 `oscillation_detected` (21_2), and 1 `gate_passed` (18_1: the Worker did the task and left the payload alone).
+  - It replaces run 4's `evidence/injection_2026-10-04.json`, since C3 changed the sandbox (run 4 stays at b34fd7d).
+- **A runner bug the evidence gate caught:** `milestone_runners.spec.ts`'s tree-identity test failed once under load, having passed in the two gates before on identical code.
+  - **The cause:** `treeIdentity` (`scripts/milestones/lib.mjs`) copied git's index with a fresh mtime. git re-reads a file whose stat looks unchanged only when the index is no newer than it ("racy git"), and on macOS it compares seconds only. So a same-size change made in the second of its commit was missed, and the evidence would name the wrong tree.
+  - **The fix:** the copy keeps the index's mtime. A new test arranges a same-size rewrite in the commit's own second, waits for a later second, and failed every time before the fix. The file passed three times after it.
+  - Both went in f73255d, gated on that exact tree: tsc 0, biome 0, vitest 0: 781 files, 6,240 passed, 63 skipped.
+- **B1** (`pnpm milestone B1` from that clean snapshot, Lima VM `sekhemet-linux`, Ubuntu 24.04 aarch64): **PASS.**
+  - ✓ **macOS**, Seatbelt, native and srt engines: 278/297 passed, 19 skipped (Linux-only by design).
+  - ✓ **The live Worker:** 14/14 held by nail-mtp (f73255d), with the sandbox and the Worker's tools unchanged since.
+  - ✓ **Linux**, bubblewrap: 249/297 passed, 48 skipped (macOS-only by design).
+  - ✓ **SEC-43:** every one of the 297 tests passes on each platform it applies to.
+  - Evidence: `evidence/milestones/B1_2026-10-04.json`; `docs/reference/MILESTONES.md`.
+  - **The path here:**
+    - Entry 72 (F29, the browse escape run 3 found);
+    - Entry 73 (four Linux and srt gaps named);
+    - Entry 74 (closed in C3's workflow: the runner's Linux-only relay tests, item 15 by seccomp per DEC-58, srt's masks read-only and failing closed, srt's browser rules on macOS).
+- **Residuals that stay named, not hidden:**
+  - srt's own filter allows a datagram `socketpair` (security item 15, srt's residual);
+  - with the network off, the native engine cannot filter a connect to a socket at an unlisted path outside `/tmp`;
+  - other CPU architectures load no seccomp program;
+  - srt's `egress.spec.ts` curl case failed once in one earlier VM run (flaky; it passed in this run and in five others).
+- **Gate:** `pnpm gate` on this exact tree: tsc 0, biome 0, vitest 0: 781 files, 6,240 passed, 63 skipped.
+- **Where the cards stop:**
+  - **Milestones:** B1, B3 and B4.10 PASS; B2.5, B4.4 and B4.11 NOT RUN.
+  - **Next:**
+    - the Reviewer admission runs, R3b and R3c (Stream 1, model loads; C3 built their code);
+    - re-qualifying every role on this build (R2);
+    - then C4 (reliability), after the owner's 5-hour figure.
 
 ### Entry 74 — 2026-10-04 (C3: models, beside the B1 close-out. The shipped set, resumable downloads, the Team server's engines, *Get the inference engine*, per-role settings and *Find best settings*; B1's four Linux and srt gaps closed in code)
 
