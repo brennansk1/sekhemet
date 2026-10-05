@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -96,6 +96,38 @@ describe("a template that cannot turn reasoning off (F25, MD-N4-2)", () => {
     const qwen = writeGguf(join(dir, "q.gguf"), { architecture: "qwen3moe", name: "Q" });
     const q = await registerModelFile(registry, qwen);
     expect(registry.get(q.id)?.reasoning).toBeUndefined();
+  });
+
+  // The R3b run (2026-10-04): gpt-oss-20b was registered before F25, so its
+  // record has the header's architecture but no `reasoning`. Every review then
+  // asked for "none", which gpt-oss ignores, and thought until its answer
+  // allowance was gone: 0 answer tokens, every review failed.
+  it("applies the floor to a model registered before F25, from its recorded architecture", async () => {
+    const file = join(dir, "old.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        models: [{ id: "gpt-oss-20b", header: { architecture: "gpt-oss", contextLength: 131072 } }],
+      }),
+    );
+    const old = new ModelRegistry(file);
+    expect(old.get("gpt-oss-20b")?.reasoning).toMatchObject({ cannotDisable: true, floor: "low" });
+    const { srv, posts } = await openAi(300);
+    const a = adapterFor(srv.url, "gpt-oss-20b", old);
+    expect(a.reasoningFor({ reasoning: "off" })).toBe("low");
+    await a.generate({
+      prompt: "review",
+      toolArm: "arm_b_json",
+      maxTokens: 1200,
+      reasoning: "off",
+      reasoningBudgetTokens: 2048,
+    });
+    expect(posts()[0]).toMatchObject({
+      reasoning_effort: "low",
+      max_tokens: 1200 + 2048,
+      thinking_budget_tokens: 2048,
+    });
   });
 
   it("resolves a request for no reasoning to the floor, and budgets its thinking", async () => {

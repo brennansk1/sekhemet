@@ -639,6 +639,19 @@ export function reasoningFromArchitecture(architecture?: string): ModelReasoning
     : undefined;
 }
 
+/**
+ * An entry as read from the file, with its architecture's reasoning when it
+ * records none: an entry added before F25 has the header's architecture but
+ * no `reasoning`, so gpt-oss was asked for none, ignored it and thought until
+ * its answer allowance was gone (the 2026-10-04 Reviewer run). A recorded
+ * `reasoning` always wins.
+ */
+function withArchitectureReasoning(e: ModelEntry): ModelEntry {
+  if (e.reasoning) return e;
+  const derived = reasoningFromArchitecture(e.header?.architecture);
+  return derived ? { ...e, reasoning: derived } : e;
+}
+
 /** SHA-256 of a chat template, hex. */
 export function templateChecksum(template: string): string {
   return createHash("sha256").update(template, "utf8").digest("hex");
@@ -736,7 +749,7 @@ export class ModelRegistry {
   ) {
     this.seen = this.stamp();
     const raw = this.readFile();
-    for (const e of raw.models ?? []) this.entries.set(e.id, e);
+    for (const e of raw.models ?? []) this.entries.set(e.id, withArchitectureReasoning(e));
     this.root = rootOf(raw);
   }
 
@@ -762,7 +775,7 @@ export class ModelRegistry {
     if (now === undefined || now === this.seen) return;
     this.seen = now;
     const raw = this.readFile();
-    this.entries = new Map((raw.models ?? []).map((e) => [e.id, e]));
+    this.entries = new Map((raw.models ?? []).map((e) => [e.id, withArchitectureReasoning(e)]));
     this.root = rootOf(raw);
   }
 
@@ -1399,7 +1412,7 @@ export class ModelRegistry {
     mkdirSync(dirname(this.path), { recursive: true });
     const disk = this.readFile();
     for (const e of disk.models ?? []) {
-      if (!this.dirty.has(e.id)) this.entries.set(e.id, e);
+      if (!this.dirty.has(e.id)) this.entries.set(e.id, withArchitectureReasoning(e));
     }
     const diskRoot = rootOf(disk);
     const root: RegistryRoot = { ...diskRoot };

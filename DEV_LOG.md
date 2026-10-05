@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 75 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 76 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,23 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 76 — 2026-10-04 (F30: a model registered before F25 never got its reasoning floor, so gpt-oss Reviewer runs thought until their answer allowance ran out)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. No helpers.
+
+- **The evidence:** R3b's first run, `sekhemet measure reviewer --method prove --model gpt-oss-20b` from a frozen snapshot of 77e20bb (DEC-42 checks first), was stopped by the lead after its first seeded defect.
+  - Both arms failed, and the ledger showed why: `model/usage` with `thinkingTokens` 1,200 and then 3,248, and `answerTokens` 0. gpt-oss thought until its whole answer allowance was gone.
+  - All 22 would have failed in both arms, so the A/B would have compared nothing. Stopping it is the live-testing ladder's "stop early on harness errors". The model unloaded.
+- **The cause (F30):** F25 records a model's reasoning floor at `models add`, from its GGUF architecture (`reasoningFromArchitecture`: gpt-oss cannot turn reasoning off; its floor is low).
+  - The owner's registry entry for `gpt-oss-20b` was added before F25. It has `header.architecture: "gpt-oss"` but no `reasoning`.
+  - So `reasoningFor` resolved "off" and sent `reasoning_effort: "none"`. gpt-oss ignores that and thinks anyway, with no thinking allowance added to `max_tokens`.
+  - **Consequence:** every gpt-oss Reviewer result recorded since F25 on this host ran without its floor, so those results do not count. The admission needs fresh runs.
+- **The fix:** `ModelRegistry` derives a missing `reasoning` from the recorded architecture wherever it loads entries: the constructor, the reload and the merge on save (`withArchitectureReasoning`). A recorded `reasoning` always wins. `reasoning_floor.spec.ts` gained a pre-F25 registry file whose gpt-oss entry now resolves "off" to low and sends `reasoning_effort: "low"` with the 2,048-token thinking cap added to `max_tokens`; the test failed first. `packages/models/tests`: 71 files, 591 tests pass.
+- **Gate:** `pnpm gate` on this exact tree: tsc 0, biome 0, vitest 0: 781 files, 6,241 passed, 63 skipped.
+- **Where the cards stop:**
+  - F30 is fixed.
+  - **Next:** R3b on gpt-oss-20b and on GLM-4.7-Flash, then R3c on gpt-oss-20b, from a frozen snapshot of this commit.
 
 ### Entry 75 — 2026-10-04 (B1 PASS: containment green on macOS and Linux, with the live Worker's injection run at 14/14 on the C3 build)
 
