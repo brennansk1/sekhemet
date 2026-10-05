@@ -88,7 +88,7 @@
     - **thousands of test temp folders** older than an hour;
     - **eight old gate snapshots.**
 
-    That freed 3 GB to 6.3 GB. The owner's own data fills the rest, which was reported to the owner. **Finding F31, routed to C5:** slot saves accumulate in the temp folder with no cap or cleanup, and many tests leave their temp folders behind.
+    That freed 3 GB to 6.3 GB. The next gate still failed only on the floor: 16 tests, every one `DiskLowError` at 4.9–5.0 GB free, since the suite itself writes up to about 1.5 GB. On the owner's instruction the lead then moved the eight largest Hugging Face cache models Sekhemet does not use (about 22 GB: MiniCheck, the BGE embedders and reranker, Stable Diffusion, Whisper and others) to the external drive. Each was verified file by file before its original was replaced by a symlink, leaving 27 GB free. **Finding F31, routed to C5:** slot saves accumulate in the temp folder with no cap or cleanup, and many tests leave their temp folders behind.
   - **Three refusals** (`newerDatabaseRefusal`, `refuseWhileInUse`, `configParseRefusal`) are printed to a person, never sent to a model, so they join the scanner's person-facing list.
   - **SEC-18:** `disk_space.ts` (`du -sk`), `sleep_assertion.ts` (`caffeinate`, `systemd-inhibit`) and `model_lease.ts` (`ps -o lstart=`) join the allowlist with their reasons. `injection.ts`'s fixture git ran outside the hardened environment, so it now uses `gitEnvFor` before joining the list.
   - **The schema fixtures** were hidden by `.gitignore`'s `*.db`. An exception now keeps `packages/kernel/tests/fixtures/schemas/*.db`.
@@ -104,7 +104,7 @@
 - **Research, designed with the owner** (`lead-work/research_design.md`): research like a software engineer, adapted to agents.
   - **Scope:** B plus Go and Rust, as its own workflow after C4 and before C2d.
   - **DEC-59, approved by the owner:** research notes are ledger events plus the existing cache, and they are cited data, not learned rules. It is recorded with that workflow.
-- **Gate:** GATE_LINE.
+- **Gate:** `pnpm gate` on this exact tree: tsc 0, biome 0, vitest 0: 816 files, 6,418 passed, 70 skipped.
 - **Where the cards stop:**
   - C4 is done.
   - The sandbox changed (`readOnlyPaths`), so B1's injection run is stale again. **Next:**
