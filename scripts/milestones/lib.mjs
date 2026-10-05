@@ -12,7 +12,16 @@
  * (`stand_in.mjs`).
  */
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { arch, release, tmpdir, totalmem } from "node:os";
 import { isAbsolute, join } from "node:path";
 
@@ -56,7 +65,14 @@ export function treeIdentity(cwd = ROOT) {
     const index = join(dir, "index");
     const real = run(["rev-parse", "--git-path", "index"]);
     const realPath = isAbsolute(real) ? real : join(cwd, real);
-    if (existsSync(realPath)) copyFileSync(realPath, index);
+    if (existsSync(realPath)) {
+      copyFileSync(realPath, index);
+      // Keep the index's own mtime: git re-reads a file whose stat looks
+      // unchanged only when the index is no newer than it ("racy git"), and a
+      // copy written now would hide a same-size change made in that second.
+      const { atime, mtime } = statSync(realPath);
+      utimesSync(index, atime, mtime);
+    }
     const env = { GIT_INDEX_FILE: index };
     run(["add", "-A"], env);
     return run(["write-tree"], env);

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -133,6 +133,37 @@ describe("the verdict", () => {
     git("add", "-A");
     git("commit", "-q", "-m", "two");
     expect(git("rev-parse", "HEAD^{tree}")).toBe(ran);
+  });
+});
+
+describe("the tree identity keeps git's racy-file check", () => {
+  // The C3 evidence gate: a file rewritten at the same size in the second its
+  // commit was made looks unchanged by stat; git then checks its content only
+  // because the index was written in that same second. A copy of the index
+  // made later must keep that mtime, or the change is missed.
+  it("sees a same-size change made in the commit's own second", () => {
+    let repo = "";
+    let head = "";
+    for (let attempt = 0; attempt < 10 && !head; attempt++) {
+      repo = tmp("ms-racy-");
+      const git = (...a: string[]) =>
+        execFileSync("git", a, { cwd: repo, encoding: "utf8" }).trim();
+      git("init", "-q", "-b", "main");
+      git("config", "user.email", "t@t.t");
+      git("config", "user.name", "T");
+      writeFileSync(join(repo, "a.txt"), "one\n");
+      git("add", "-A");
+      git("commit", "-q", "-m", "one");
+      writeFileSync(join(repo, "a.txt"), "two\n");
+      const second = (ms: number) => Math.floor(ms / 1000);
+      const index = statSync(join(repo, ".git", "index")).mtimeMs;
+      if (second(statSync(join(repo, "a.txt")).ctimeMs) === second(index))
+        head = git("rev-parse", "HEAD^{tree}");
+    }
+    expect(head, "could not rewrite the file within its commit's second").not.toBe("");
+    // A later second, so a copy of the index written now is not racy by itself.
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1100);
+    expect(m.treeIdentity(repo)).not.toBe(head);
   });
 });
 
