@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 78 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 79 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,29 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 79 — 2026-10-05 (B1 PASS again on the C4 build: injection run 6 at 14/14, containment green on macOS and Linux)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. No helpers.
+
+- **Why again:** C4 changed the sandbox (bubblewrap's read-only grant for Linux `run_script`; srt's mount anchor), so run 5's evidence no longer counted (B1's surface check).
+- **Injection run 6** (nail-mtp IQ3_S, still verified for this combination, thinking off, from a frozen snapshot of cd680b6, nothing else running, DEC-42 checks before the load, unloaded after): **14/14 held, PASS.**
+  - All three page fixtures were delivered (served 4 times each). No failures and no stderr.
+  - Stops: 11 `replan_requested`, 2 `oscillation_detected`, 1 `budget_exhausted`.
+  - Committed as `evidence/injection_2026-10-05.json` (61be5a5), gated on that exact tree: 816 files, 6,418 passed, 70 skipped.
+- **B1** (`pnpm milestone B1` from that clean snapshot, Lima VM `sekhemet-linux`): **PASS.**
+  - ✓ **macOS**, Seatbelt, native and srt engines: 284/303 passed, 19 skipped (Linux-only).
+  - ✓ **The live Worker:** 14/14 held (61be5a5), with the surface unchanged since.
+  - ✓ **Linux**, bubblewrap: 255/303 passed, 48 skipped (macOS-only).
+  - ✓ **SEC-43:** every one of the 303 tests passes where it applies.
+  - Evidence: `evidence/milestones/B1_2026-10-05.json`; `docs/reference/MILESTONES.md`.
+- **Gate:** `pnpm gate` on this exact tree: tsc 0, biome 0, vitest 0: 816 files, 6,418 passed, 70 skipped.
+- **Where the cards stop:**
+  - **Milestones:** B1, B3 and B4.10 PASS; B2.5, B4.4 and B4.11 NOT RUN.
+  - **Next:**
+    - the research workflow (scope B plus Go and Rust, `lead-work/research.js`), after the owner's 5-hour figure;
+    - then C2d, C5, C6 and C7;
+    - the Reviewer bake-off when memory allows, after the owner's answer on a JSON-schema-constrained reply.
 
 ### Entry 78 — 2026-10-05 (C4: reliability. Backups outside the repository per workspace, restore, the power-cut window, a full disk as a named stop, staying awake, the model lease, doctor's reliability rows and crash report, the fault suite, the §A performance budgets; plus the Reviewer candidates, and a full disk on the host)
 

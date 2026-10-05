@@ -672,7 +672,7 @@ Until one passes RG-P8-13, the Review role ships unfilled (DEC-47).
 
 | Milestone | Today | Turns PASS when |
 | --- | --- | --- |
-| B1 containment, macOS and Linux | **PASS** (f73255d, 2026-10-04; DEV_LOG Entry 75) | Re-run on the RC; a change to the sandbox or the Worker's tools makes the injection run stale again |
+| B1 containment, macOS and Linux | **PASS** (61be5a5, 2026-10-05; DEV_LOG Entry 79; first passed f73255d, Entry 75) | Re-run on the RC; a change to the sandbox or the Worker's tools makes the injection run stale again |
 | B2.5 baseline | NOT RUN (planning measure) | The planning measure is recorded (golden-brief labels) |
 | B3 safe accept, crash and upgrade | PASS | Re-run on the RC |
 | B4.4 starting a project by conversation | NOT RUN | A live-model run after C2a and C3 |

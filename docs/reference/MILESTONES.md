@@ -6,7 +6,7 @@ Run one with `pnpm milestone <id>` (for example `pnpm milestone B3`), or `pnpm m
 
 | Milestone | Verdict | Date | Commit |
 | --- | --- | --- | --- |
-| [B1](#b1) | PASS | 2026-10-04 | `f73255db1c` |
+| [B1](#b1) | PASS | 2026-10-05 | `61be5a5eb3` |
 | [B2.5](#b25) | NOT RUN | 2026-09-29 | `4747051a6d` |
 | [B3](#b3) | PASS | 2026-10-02 | `73532310b1` |
 | [B4.4](#b44) | NOT RUN | 2026-09-28 | `150b7f8ebd` |
@@ -20,16 +20,16 @@ Run one with `pnpm milestone <id>` (for example `pnpm milestone B3`), or `pnpm m
 
 **PASS**
 
-- Evidence: `evidence/milestones/B1_2026-10-04.json`
-- Commit: `f73255db1c`
-- Tree: tree `11e1f2aa6e44b1ca132f62ce556b972c2d6bc6c8`, the files it ran on (the commit that holds them has this tree; `git diff 11e1f2aa6e <commit>` shows any difference)
-- Date: 2026-10-04, on darwin arm64 with 24 GB
+- Evidence: `evidence/milestones/B1_2026-10-05.json`
+- Commit: `61be5a5eb3`
+- Tree: tree `91df3631bd0d597e0c71c41bbb0151b6e866438b`, the files it ran on (the commit that holds them has this tree; `git diff 91df3631bd <commit>` shows any difference)
+- Date: 2026-10-05, on darwin arm64 with 24 GB
 - Runner: `scripts/milestones/b1.mjs`
 
-- ✓ macOS (Seatbelt, native and srt engines): the containment suite: 278/297 passed in 24 files; 19 skipped
-- ✓ macOS: a Worker that tries to leave (the injection fixtures, live Worker): 14/14 held by nail-mtp, recorded in evidence/injection_2026-10-04.json (commit f73255d); the sandbox and the Worker's tools are unchanged since
-- ✓ Linux (sekhemet-linux) (bubblewrap): the containment suite: 249/297 passed in 24 files; 48 skipped
-- ✓ macOS and Linux together: every test passes on each platform it applies to (SEC-43): 297 tests over macOS, Linux (sekhemet-linux)
+- ✓ macOS (Seatbelt, native and srt engines): the containment suite: 284/303 passed in 25 files; 19 skipped
+- ✓ macOS: a Worker that tries to leave (the injection fixtures, live Worker): 14/14 held by nail-mtp, recorded in evidence/injection_2026-10-05.json (commit 61be5a5); the sandbox and the Worker's tools are unchanged since
+- ✓ Linux (sekhemet-linux) (bubblewrap): the containment suite: 255/303 passed in 25 files; 48 skipped
+- ✓ macOS and Linux together: every test passes on each platform it applies to (SEC-43): 303 tests over macOS, Linux (sekhemet-linux)
 
 How it ran: the containment suite is `packages/sandbox/tests`, run here with one worker. The Worker that tries to leave is the recorded live injection run (14 RedCode-Exec fixtures across four channels), read from its evidence file, not re-run; it counts only while the sandbox (`packages/sandbox/src`) and the Worker's tools (`packages/loop/src/tools.ts`, `tool_catalog.ts`, `tool_schema.ts`) are unchanged since the commit that recorded it, and is NOT RUN otherwise, naming what changed. Linux waits on the Lima VM the owner approved.
 
