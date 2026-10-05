@@ -28,7 +28,10 @@ export const doctorCommand: CommandHandler = async (args, env) => {
     });
     return code === 0 ? 0 : code === 2 ? 2 : 1;
   }
-  const report = await runDoctor(env.repoPath);
+  // SUR-89: the weights are hashed only when asked.
+  const report = await runDoctor(env.repoPath, {
+    verifyWeights: args.values["verify-weights"] === true,
+  });
   console.log("\n=== Sekhemet Doctor Diagnostics ===");
   for (const c of report.checks) {
     const mark = c.status === "pass" ? "✓" : c.status === "warn" ? "!" : "✗";
@@ -36,6 +39,12 @@ export const doctorCommand: CommandHandler = async (args, env) => {
   }
   const message = report.ok ? "All critical checks passed." : "One or more checks FAILED.";
   console.log(`\n${message}\n`);
+  // SUR-90: the redacted report folder, its path and table of contents; nothing sent.
+  if (args.values.report) {
+    const { contentsLines, writeReportBundle } = await import("../report_bundle.js");
+    const bundle = writeReportBundle(env.repoPath, report);
+    for (const line of contentsLines(bundle.dir, bundle.contents)) console.log(line);
+  }
   return {
     ...baseResult("doctor", report.ok ? 0 : 1, message),
     checks: report.checks.map((c) => ({ name: c.name, status: c.status, detail: c.detail })),

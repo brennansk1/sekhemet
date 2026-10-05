@@ -39,6 +39,14 @@ export function userPaths() {
     skills: join(d, "skills"),
     /** The workspaces this machine's person has used (runtime item 23c, DEC-57). */
     workspaces: join(d, "workspaces.json"),
+    /** Backup sets and the erasure register, per workspace (runtime item 35a, NEW-runtime-18). */
+    backups: join(d, "backups"),
+    /** The credential store per workspace, and the user config's audit key (security item 35a). */
+    identity: join(d, "identity"),
+    /** This install's id: a backup set's `writtenBy`, so only its own sets are pruned (RUN-60). */
+    installId: join(d, "install-id"),
+    /** Diagnostic logs per workspace: the lost-record log (runtime item 29a, RUN-89). */
+    logs: join(d, "logs"),
   };
 }
 

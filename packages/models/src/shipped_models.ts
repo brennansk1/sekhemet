@@ -308,6 +308,13 @@ export const SHIPPED_ROLE_PORTS: Readonly<Record<Exclude<ShippedRole, "review">,
 };
 
 /**
+ * The port of a shipped model serving the Review role, which ships unfilled
+ * (C4): clear of the shipped roles' ports, the Researchers' (8101–8103) and
+ * the generic range (8110–8189).
+ */
+export const SHIPPED_REVIEW_PORT = 8100;
+
+/**
  * The launch a shipped row runs under (rule 26a): the Research model's
  * managed profile; any other its generic managed profile for the role
  * (MD-N12-10), as the roster launches a registered GGUF; each on its role's
@@ -318,7 +325,10 @@ export const SHIPPED_ROLE_PORTS: Readonly<Record<Exclude<ShippedRole, "review">,
  * asks for (the roster's `ResolveOptions`: ModelAccess resolves shared
  * weights once, at the largest window their queues need), honoured by the
  * generic profile as for any registered GGUF; the Research model keeps its
- * managed, host-sized window.
+ * managed, host-sized window. `role` is the role it serves, when a person
+ * assigned it to one other than its shipped role (C4, from C3's review): it
+ * then runs at that role's window and on that role's port
+ * (`SHIPPED_REVIEW_PORT` for Review), never its shipped role's.
  */
 export function shippedAdapter(
   model: ShippedModel,
@@ -328,24 +338,26 @@ export function shippedAdapter(
     registry?: ModelRegistry;
     slotCacheDir?: string;
     want?: { contextTokens?: number; maxTokens?: number };
+    role?: ShippedRole;
   },
 ): ManagedLlamaServerAdapter {
   if (!model.id || model.role === "review")
     throw new Error(`The ${model.role} role is unfilled: ${model.note}`);
+  const serves = opts.role ?? model.role;
   const entry = opts.registry?.get(model.id);
   const base =
-    model.id === "apodex-1.1-mini"
+    model.id === "apodex-1.1-mini" && serves === "research"
       ? createApodexResearcher(opts.modelPath, undefined, opts.totalBytes)
       : createGenericManaged({
           modelId: model.id,
           modelPath: opts.modelPath,
-          role: SHIPPED_ROLE_MODEL_ROLE[model.role],
+          role: SHIPPED_ROLE_MODEL_ROLE[serves],
           ...(entry ? { entry } : {}),
           ...(opts.want ? { want: opts.want } : {}),
         });
   return new ManagedLlamaServerAdapter({
     ...base.launchProfile,
-    port: SHIPPED_ROLE_PORTS[model.role],
+    port: serves === "review" ? SHIPPED_REVIEW_PORT : SHIPPED_ROLE_PORTS[serves],
     ...(opts.totalBytes !== undefined ? { cache: cacheProfileForHost(opts.totalBytes) } : {}),
     ...(opts.slotCacheDir !== undefined ? { slotCacheDir: opts.slotCacheDir } : {}),
   });

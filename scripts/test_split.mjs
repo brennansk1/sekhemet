@@ -25,6 +25,8 @@ export const INTEGRATION_SIGNALS = [
   /\.listen\(/,
   /DeterministicGateRunner\(/,
   /ProcessSandbox\(/,
+  // The C.6 fault suite: real processes, volumes and ledgers through its fixture.
+  /from "\.\/fault_fixture\.js"/,
 ];
 
 /** Is this spec's source an integration test? */

@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initLocalKernel } from "../src/index.js";
 import { planResearch } from "../src/research/plan_research.js";
 import { configWriter, recordConfigAtStart } from "../src/team/config_audit.js";
-import { identityDir } from "../src/team/credential_store.js";
+import { identityRoot } from "../src/team/credential_store.js";
 
 /**
  * B4.11 close-out C2, teams TEAM-44 and TEAM-27: every writer of the user
@@ -139,7 +139,12 @@ describe("TEAM-44: the start's renamed-key upgrade is Sekhemet's own", () => {
       // First sight of the file: its keys were recorded as found, before the write.
       expect(keysOf(rows(k.db, "config/changed_outside")[0])).toEqual(["machine.hours"]);
       expect(
-        recordConfigAtStart({ db: k.db, log: k.log, path: userConfig, identityDir: identityDir() }),
+        recordConfigAtStart({
+          db: k.db,
+          log: k.log,
+          path: userConfig,
+          identityDir: identityRoot(),
+        }),
       ).toEqual([]);
       // Nothing to rename: a later start writes and records nothing.
       k.db.close();

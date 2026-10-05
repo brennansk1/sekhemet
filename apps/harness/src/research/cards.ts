@@ -9,7 +9,12 @@ import {
   loadGatesConfig,
   runBuiltinGates,
 } from "@sekhemet/gates";
-import type { CardRecord, CardStatus, CardStore } from "@sekhemet/kernel";
+import {
+  type CardRecord,
+  type CardStatus,
+  type CardStore,
+  isModelUnavailableError,
+} from "@sekhemet/kernel";
 import { plural } from "@sekhemet/ui";
 import { recordLedgerRun } from "../ledger_evidence.js";
 import { type Claim, renderDisagreements, reviewEligible } from "./claims.js";
@@ -196,7 +201,36 @@ export async function runResearchCard(
     }
     await move("in_progress", "research: the Research model started");
   }
-  const answer = await ask(researchQuestion(card), card.id);
+  let answer: ResearchAnswer;
+  try {
+    answer = await ask(researchQuestion(card), card.id);
+  } catch (err) {
+    // C.6's network drop during research: the issue is never left In
+    // Progress with nothing said. Its stop is recorded — `model_unavailable`
+    // when the Research model or the connection went away (WL-N12-2), else
+    // `error` — and it is held in Ready for the next run; then the caller
+    // hears the error as before.
+    const stopReason = isModelUnavailableError(err) ? "model_unavailable" : "error";
+    const message = err instanceof Error ? err.message : String(err);
+    await cardStore.recordEvent({
+      type: "research/stopped",
+      cardId: card.id,
+      actor: "researcher",
+      payload: { id: card.id, stopReason },
+      private: { error: message.slice(0, 500) },
+    });
+    await cardStore.updateCard(card.id, { stopReason }, "researcher");
+    const now = await cardStore.getCard(card.id);
+    if (now?.status === "in_progress")
+      await board.transitionCard({
+        cardId: card.id,
+        fromStatus: "in_progress",
+        toStatus: "ready",
+        actor: "harness",
+        reason: `research stopped (${stopReason}): ${message.slice(0, 200)}; the next run asks again`,
+      });
+    throw err;
+  }
   const dir = join(repoPath, ".sekhemet", "research");
   mkdirSync(dir, { recursive: true });
   const notePath = join(dir, `${card.id}.md`);

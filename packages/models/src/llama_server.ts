@@ -24,6 +24,7 @@ import {
   loadModeArgs,
   prereadSequential,
 } from "./load_mechanics.js";
+import { acquireModelLease, modelLeasePath, tryModelLease } from "./model_lease.js";
 import { type ModelsDirOptions, resolveModelPath } from "./models_dir.js";
 import type { SpeculativeSetting } from "./qualification_key.js";
 import { readQuantisation } from "./quantisation.js";
@@ -49,6 +50,22 @@ import type {
  * weights"); `--models-dir` decides where they are, and a user with the
  * weights elsewhere passes `modelPath` directly.
  */
+
+/**
+ * A managed engine that could not start: its weights' file is gone (a
+ * models volume detached during the load, C.6), or the server exited or
+ * never became healthy. Coded like a refused connection, so a card stops
+ * with `model_unavailable` — held in Ready, not counted against the Worker,
+ * the queue halted (worker-loop WL-N12-2) — rather than `error`.
+ */
+export class EngineUnavailableError extends Error {
+  public readonly code = "ENGINE_UNAVAILABLE";
+  constructor(message: string) {
+    super(message);
+    this.name = "EngineUnavailableError";
+  }
+}
+
 export const MANAGED_MODEL_FILES = {
   worker: "Cyber-Tiel-Coder-35B-A3B-GGUF-MTP/Cyber-Tiel-Coder-35B-A3B-MTP-UD-IQ3_XXS.gguf",
   researcher: "Apodex-1.1-mini-GGUF/Apodex-1.1-mini-IQ3_M.gguf",
@@ -202,6 +219,12 @@ export interface LlamaServerProfile {
   /** Ollama endpoint to evict models from before loading. */
   ollamaBaseUrl?: string;
   startupTimeoutMs?: number;
+  /** The machine-wide model lease (MD-N17-1); default `<user dir>/model.lock`. */
+  modelLeasePath?: string;
+  /** How long a start waits for another process's model lease (MD-N17-2); default 30 minutes. */
+  modelLeaseWaitMs?: number;
+  /** Told once which project holds which model when a start must wait; default the standard error. */
+  onModelLeaseWait?: (line: string) => void;
 }
 
 /** A live session on a server slot (rule 20i). */
@@ -732,8 +755,29 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     this.adoptedAt = undefined;
     const why = await this.foreignServer();
     if (why) throw new Error(why);
+    this.holdAdoptedLease();
     this.adoptedAt = Date.now();
     await this.recordQuantisation();
+  }
+
+  /** The lease this adapter took for a server it adopted (MD-N17-5), until its unload. */
+  private adoptedLease: (() => void) | undefined;
+
+  /**
+   * MD-N17-5: a server this adapter adopted — one a person started on its
+   * port, the way this host runs its Worker — is a model resident on the
+   * machine, so the adopting process takes the model lease for it when the
+   * lease is free, and another project's load of another model waits. Held
+   * by another process, the lease is left as it is: its holder answers for
+   * what it loaded, and the same profile attaches as before.
+   */
+  private holdAdoptedLease(): void {
+    if (this.adoptedLease || this.child) return;
+    const got = tryModelLease(
+      { model: this.profile.modelId, port: this.profile.port ?? 8098 },
+      this.profile.modelLeasePath ?? modelLeasePath(),
+    );
+    if ("release" in got) this.adoptedLease = got.release;
   }
 
   /**
@@ -787,60 +831,111 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
           `Refusing to load ${this.profile.modelId}: ${drive.reason}`,
         );
       if (!existsSync(this.profile.modelPath)) {
-        throw new Error(`Model file not found: ${this.profile.modelPath}`);
+        throw new EngineUnavailableError(`Model file not found: ${this.profile.modelPath}`);
       }
       const options = this.loadOptions;
       const args = this.launchArgs(options);
-      await evictOllamaModels(this.profile.ollamaBaseUrl);
-      if (this.profile.slotCacheDir) mkdirSync(this.profile.slotCacheDir, { recursive: true });
-      if (signal?.aborted) throw new Error("llama-server load aborted");
-
-      const spawnedAt = Date.now();
-      // Rule 20h: a sequential pre-read puts the weights in the file cache before mmap reads them.
-      if (options.loadMode === "preread_mmap")
-        await prereadSequential(this.profile.modelPath, signal ? { signal } : {});
-      this.metalReported = false;
-      // Rule 6b, MD-N19-5: the profile's binary, else the one resolution order;
-      // the guard judges the program that would start.
-      const binary = this.profile.binary ?? llamaServerBinary();
-      assertModelLoadAllowed({ binary });
-      this.child = spawn(binary, args, {
-        stdio: ["ignore", "ignore", "pipe"],
-      });
-      this.bindToParentLifetime(this.child);
-      let stderr = "";
-      this.child.stderr?.on("data", (chunk: Buffer) => {
-        const text = chunk.toString();
-        stderr = (stderr + text).slice(-4000);
-        // MD-N14-33: the server's log shows a Metal command-buffer timeout.
-        this.noteMetalTimeout(text);
-      });
-
-      const deadline = Date.now() + (this.profile.startupTimeoutMs ?? 600_000);
-      while (Date.now() < deadline) {
-        if (this.child.exitCode !== null || this.child.signalCode !== null) {
-          throw new Error(`llama-server exited during startup: ${stderr.slice(-800)}`);
-        }
-        if (await this.healthy()) {
-          // MS-T7-1: the load, apart from the cards' time.
-          this.lastStartup = {
-            spawnToHealthyMs: Date.now() - spawnedAt,
-            at: new Date(spawnedAt).toISOString(),
-          };
-          this.startupUnreported = true;
-          await this.refuseShrunkContext();
-          await this.restoreLiveSlots();
-          this.adoptedAt = Date.now();
-          await this.recordQuantisation();
-          return;
-        }
-        await new Promise((r) => setTimeout(r, 1000));
+      // MD-N17-1, MD-N17-2: the machine-wide model lease, before anything is
+      // evicted or loaded, kept while this server runs. Held by another
+      // process, the start attaches to an engine already serving this exact
+      // profile, or waits and says which project holds which model.
+      const lease = await acquireModelLease(
+        { model: this.profile.modelId, port: this.profile.port ?? 8098 },
+        {
+          ...(this.profile.modelLeasePath ? { path: this.profile.modelLeasePath } : {}),
+          ...(this.profile.modelLeaseWaitMs !== undefined
+            ? { waitMs: this.profile.modelLeaseWaitMs }
+            : {}),
+          ...(this.profile.onModelLeaseWait ? { onWait: this.profile.onModelLeaseWait } : {}),
+          ...(signal ? { signal } : {}),
+          attach: async () =>
+            (await this.healthState()) === "ok" && (await this.foreignServer()) === undefined,
+        },
+      );
+      if ("attached" in lease) {
+        this.adoptedAt = Date.now();
+        await this.recordQuantisation();
+        return;
       }
-      throw new Error(`llama-server did not become healthy in time: ${stderr.slice(-800)}`);
+      // Given up when the server this start spawns exits (an unload, a crash),
+      // or now when nothing was spawned.
+      let spawned = false;
+      try {
+        await this.spawnHeld(options, args, signal, lease.release, () => {
+          spawned = true;
+        });
+      } catch (err) {
+        if (!spawned) lease.release();
+        throw err;
+      }
     })().finally(() => {
       this.starting = undefined;
     });
     return this.starting;
+  }
+
+  /** The start's spawn and health wait, under the model lease `release` gives up. */
+  private async spawnHeld(
+    options: LoadOptions,
+    args: string[],
+    signal: AbortSignal | undefined,
+    release: () => void,
+    onSpawn: () => void,
+  ): Promise<void> {
+    await evictOllamaModels(this.profile.ollamaBaseUrl);
+    if (this.profile.slotCacheDir) mkdirSync(this.profile.slotCacheDir, { recursive: true });
+    if (signal?.aborted) throw new Error("llama-server load aborted");
+
+    const spawnedAt = Date.now();
+    // Rule 20h: a sequential pre-read puts the weights in the file cache before mmap reads them.
+    if (options.loadMode === "preread_mmap")
+      await prereadSequential(this.profile.modelPath, signal ? { signal } : {});
+    this.metalReported = false;
+    // Rule 6b, MD-N19-5: the profile's binary, else the one resolution order;
+    // the guard judges the program that would start.
+    const binary = this.profile.binary ?? llamaServerBinary();
+    assertModelLoadAllowed({ binary });
+    this.child = spawn(binary, args, {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    onSpawn();
+    // The weights stay resident until this process exits: the lease with them.
+    this.child.once("exit", release);
+    this.child.once("error", release);
+    this.bindToParentLifetime(this.child);
+    let stderr = "";
+    this.child.stderr?.on("data", (chunk: Buffer) => {
+      const text = chunk.toString();
+      stderr = (stderr + text).slice(-4000);
+      // MD-N14-33: the server's log shows a Metal command-buffer timeout.
+      this.noteMetalTimeout(text);
+    });
+
+    const deadline = Date.now() + (this.profile.startupTimeoutMs ?? 600_000);
+    while (Date.now() < deadline) {
+      if (this.child.exitCode !== null || this.child.signalCode !== null) {
+        throw new EngineUnavailableError(
+          `llama-server exited during startup: ${stderr.slice(-800)}`,
+        );
+      }
+      if (await this.healthy()) {
+        // MS-T7-1: the load, apart from the cards' time.
+        this.lastStartup = {
+          spawnToHealthyMs: Date.now() - spawnedAt,
+          at: new Date(spawnedAt).toISOString(),
+        };
+        this.startupUnreported = true;
+        await this.refuseShrunkContext();
+        await this.restoreLiveSlots();
+        this.adoptedAt = Date.now();
+        await this.recordQuantisation();
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    throw new EngineUnavailableError(
+      `llama-server did not become healthy in time: ${stderr.slice(-800)}`,
+    );
   }
 
   public override async generate(
@@ -1188,6 +1283,10 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
   public override async unload(): Promise<void> {
     // Whatever happens to this server, the next use checks the port again (A9).
     this.adoptedAt = undefined;
+    // MD-N17-5: an adopted server's lease goes with the adoption; a server
+    // this adapter did not start is left running.
+    this.adoptedLease?.();
+    this.adoptedLease = undefined;
     const child = this.child;
     if (!child || child.exitCode !== null || child.signalCode !== null) {
       this.child = undefined;

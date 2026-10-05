@@ -27,6 +27,7 @@ import {
 import { plural } from "@sekhemet/ui";
 import { networkConfigs } from "./config_apply.js";
 import { egressEvent } from "./egress_event.js";
+import { reportLostRecord } from "./lost_records.js";
 import { type TextFetch, docRoot, sitemapUrls } from "./research/docs.js";
 import { ResearchCache } from "./research/polite.js";
 
@@ -798,10 +799,20 @@ export async function airgapSelfTest(
           : `stale: ${stale.join(", ")}`,
     });
   }
-  const ok = checks.every((c) => c.ok);
-  await opts.log
-    ?.append({ actor: "system", type: "airgap/selftest", payload: { ok, checks } })
-    .catch(() => undefined);
+  let ok = checks.every((c) => c.ok);
+  // RUN-90: the self-test's record is the air-gap's evidence: one that
+  // cannot be written fails the self-test rather than vanish.
+  try {
+    await opts.log?.append({ actor: "system", type: "airgap/selftest", payload: { ok, checks } });
+  } catch (err) {
+    reportLostRecord("airgap/selftest", err, { workspaceId: opts.log?.workspaceId() });
+    checks.push({
+      name: "self-test recorded on the Activity log",
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+    });
+    ok = false;
+  }
   return { ok, checks };
 }
 
@@ -961,9 +972,16 @@ export async function airgapCommand(
       });
       print(r.detail);
       if (r.backup) print(`Activity log backed up to ${r.backup}.`);
-      await deps.log
-        ?.append({ actor: "system", type: "airgap/update", payload: r })
-        .catch(() => undefined);
+      // RUN-90: an update whose record cannot be written fails the command.
+      try {
+        await deps.log?.append({ actor: "system", type: "airgap/update", payload: r });
+      } catch (err) {
+        reportLostRecord("airgap/update", err, { workspaceId: deps.log?.workspaceId() });
+        print(
+          `The update's record could not be written to the Activity log: ${err instanceof Error ? err.message : String(err)}.`,
+        );
+        return 1;
+      }
       return r.applied ? 0 : 1;
     }
     case "selftest": {

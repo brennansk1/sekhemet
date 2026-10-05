@@ -145,6 +145,9 @@ describe("stopReasonLabel", () => {
       error: ["Sekhemet error", "fail"],
       memory_pressure: ["Paused for memory", "parked"],
       quota_suspended: ["Paused for quota", "parked"],
+      // WL-N11-1, WL-N12-1: the machine's stops, never the Agent's fault.
+      disk_low: ["Disk nearly full", "parked"],
+      model_unavailable: ["Coding model not running", "parked"],
       scope_violation: ["Out of scope", "fail"],
       capability_ceiling: ["Too hard for this model", "fail"],
       // ISS-03: no fixed "you": the stop names no viewer.

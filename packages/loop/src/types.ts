@@ -152,6 +152,12 @@ export interface ToolCallEvent {
 
 export interface SessionOptions {
   cardId: string;
+  /**
+   * Runtime item 29a (RUN-89): a ledger or dossier write that failed — a
+   * question, an answer, a note — for the lost-record log. Absent, one warn
+   * line is printed. Never fails the step.
+   */
+  onLostRecord?: ((kind: string, err: unknown) => void) | undefined;
   stepBudget: number;
   worktreePath: string;
   modelAdapter: LocalInferenceAdapter;

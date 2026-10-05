@@ -14,6 +14,7 @@ import {
   MEASUREMENT_BASELINE,
   SHIPPED_ENGINE_FLOOR,
   SHIPPED_MODELS,
+  SHIPPED_REVIEW_PORT,
   SHIPPED_ROLE_PORTS,
   SUPPORTED_HARDWARE,
   codingModelWindowTokens,
@@ -258,5 +259,58 @@ describe("a shipped id resolved with a wanted window (ResolveOptions)", () => {
   it("without a wanted window, the role's own", () => {
     const a = shippedAdapter(shippedModel("planning"), { modelPath: "/models/q.gguf" });
     expect(a.launchProfile.contextTokens).toBe(GENERIC_ROLE_WINDOWS.planner.contextTokens);
+  });
+});
+
+/**
+ * C4 (C3's review minor): a shipped id assigned to another role runs at that
+ * role's window and on that role's port, not its shipped role's: nail-mtp as
+ * the Planning model had kept the Coding window (16,384) and port (8098).
+ */
+describe("a shipped id serving another role", () => {
+  it("takes the role's window and port in the shipped profile", () => {
+    const asPlanner = shippedAdapter(shippedModel("coding"), {
+      modelPath: "/models/n.gguf",
+      role: "planning",
+    });
+    expect(asPlanner.launchProfile.modelId).toBe("nail-mtp");
+    expect(asPlanner.totalContextTokens()).toBe(GENERIC_ROLE_WINDOWS.planner.contextTokens);
+    expect(asPlanner.launchProfile.port).toBe(SHIPPED_ROLE_PORTS.planning);
+    // The Research model as the Coding model: the Coding window, not Apodex's profile.
+    const asCoder = shippedAdapter(shippedModel("research"), {
+      modelPath: "/models/a.gguf",
+      role: "coding",
+    });
+    expect(asCoder.totalContextTokens()).toBe(GENERIC_ROLE_WINDOWS.worker.contextTokens);
+    expect(asCoder.launchProfile.port).toBe(SHIPPED_ROLE_PORTS.coding);
+    // Review has no shipped model, so it has its own port, clear of the others.
+    const asReviewer = shippedAdapter(shippedModel("coding"), {
+      modelPath: "/models/n.gguf",
+      role: "review",
+    });
+    expect(asReviewer.totalContextTokens()).toBe(GENERIC_ROLE_WINDOWS.reviewer.contextTokens);
+    expect(asReviewer.launchProfile.port).toBe(SHIPPED_REVIEW_PORT);
+    expect(Object.values(SHIPPED_ROLE_PORTS)).not.toContain(SHIPPED_REVIEW_PORT);
+  });
+
+  it("through the roster: each role it serves gets its own window and port", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sek-other-role-"));
+    dirs.push(dir);
+    const registry = new ModelRegistry(join(dir, "m.json"));
+    const weights = join(dir, "n.gguf");
+    writeFileSync(weights, "x");
+    registry.recordWeights("nail-mtp", {
+      path: weights,
+      volume: "internal",
+      sha256: "d".repeat(64),
+    });
+    const roster = new ModelRoster({ registry });
+    type Launch = { launchProfile: { contextTokens: number; port: number } };
+    const planner = roster.resolve("nail-mtp", "planner") as unknown as Launch;
+    expect(planner.launchProfile.contextTokens).toBe(GENERIC_ROLE_WINDOWS.planner.contextTokens);
+    expect(planner.launchProfile.port).toBe(SHIPPED_ROLE_PORTS.planning);
+    const worker = roster.resolve("nail-mtp", "worker") as unknown as Launch;
+    expect(worker.launchProfile.contextTokens).toBe(GENERIC_ROLE_WINDOWS.worker.contextTokens);
+    expect(worker.launchProfile.port).toBe(SHIPPED_ROLE_PORTS.coding);
   });
 });

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 15,
+  "events": 9,
+  "head": "d4d38e3c5f7de6bbd28db789dfd62bacbc1442eed078f03590f99a4f305d4951",
+  "cards": [
+    {
+      "id": "card_a",
+      "status": "in_progress",
+      "title": "Record a shift"
+    },
+    {
+      "id": "card_b",
+      "status": "ready",
+      "title": "Overtime after 40 hours"
+    },
+    {
+      "id": "card_c",
+      "status": "ready",
+      "title": "Export the week to CSV"
+    },
+    {
+      "id": "card_epic",
+      "status": "ready",
+      "title": "Timesheets"
+    }
+  ],
+  "recorded": ["project", "edit", "dependency", "ready", "in progress", "checkpoint", "ready again"]
+}

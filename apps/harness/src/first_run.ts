@@ -10,7 +10,7 @@ import {
 import { cpus, totalmem } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { EventLog, initSchema } from "@sekhemet/kernel";
+import { EventLog, RestoreRefused, initSchema } from "@sekhemet/kernel";
 import {
   type ConfigRole,
   type FoundModel,
@@ -18,6 +18,8 @@ import {
   resolveModelPath,
 } from "@sekhemet/models";
 import { HARDENED_GIT_CONFIG, HARDENED_GIT_PINS, withGitConfig } from "@sekhemet/sync";
+import { plural } from "@sekhemet/ui";
+import { restoreBackupSet, setsNaming, verifyBackupSet } from "./backup_sets.js";
 import {
   type Check,
   type DerivedGates,
@@ -341,6 +343,57 @@ export async function queueStartProject(repo: string, sentence: string): Promise
   } finally {
     db.close();
   }
+}
+
+/**
+ * RUN-62 (runtime item 35a): `sekhemet` started in a folder with no ledger
+ * while a backup set's manifest names that folder — as its workspace folder
+ * or one of its projects' roots — offers to restore that whole workspace
+ * before an empty ledger is created. At a terminal it asks; restored, the
+ * board opens on it. Under `--yes` or with no terminal it says so and the
+ * command that does it, and restores nothing. `none` when no set that
+ * verifies names the folder.
+ */
+export async function offerWorkspaceRestore(
+  folder: string,
+  options: Pick<RunFirstRunOptions, "yes" | "interactive" | "ask" | "say">,
+): Promise<"restored" | "declined" | "offered" | "none"> {
+  const say = options.say ?? ((l: string) => console.log(l));
+  const set = setsNaming(folder).find((s) => verifyBackupSet(s.path).ok);
+  if (!set) return "none";
+  const m = set.manifest;
+  const what = `A backup of the workspace ${m.workspaceFolder} names this folder: ${set.path}, written ${m.writtenAt.slice(0, 16).replace("T", " ")}, through entry ${m.seq}, ${m.projects.length === 1 ? "1 project" : `${m.projects.length} projects`}.`;
+  say(what);
+  if (options.yes === true || !options.interactive || !options.ask) {
+    say("To restore it instead of starting an empty board, run `sekhemet restore --latest` here.");
+    return "offered";
+  }
+  if (
+    !(await options.ask("Restore that workspace now, instead of starting an empty board? [Y/n] "))
+  ) {
+    say("Not restored; `sekhemet restore --latest` restores it later.");
+    return "declined";
+  }
+  let report: Awaited<ReturnType<typeof restoreBackupSet>>;
+  try {
+    report = await restoreBackupSet(set.path);
+  } catch (err) {
+    // RUN-92: a server or runner still writing the workspace is named, not overrun.
+    if (!(err instanceof RestoreRefused)) throw err;
+    say(err.message);
+    return "offered";
+  }
+  say(
+    `Restored ${m.workspaceFolder} through entry ${report.backupSeq}, re-applying ${plural(report.reapplied.length, "erasure")} from the register.`,
+  );
+  if (report.credentialsKeptAt)
+    say(`The credential store it replaced is kept at ${report.credentialsKeptAt}.`);
+  for (const p of report.projects.filter((x) => x.state === "missing")) {
+    say(
+      `${p.name}: repository missing — expected at ${p.root}; name its folder with \`sekhemet project move ${p.id} <folder>\`.`,
+    );
+  }
+  return "restored";
 }
 
 /** The first run (P10): plan, one confirmation, the writes, and where to open. */

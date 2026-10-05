@@ -1,8 +1,9 @@
 import { mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BlobStore } from "../src/blobs.js";
 import { CardStore, CardStructureError } from "../src/card_store.js";
-import { EventLog } from "../src/log.js";
+import { EventLog, ledgerErasures } from "../src/log.js";
 import { type DiskDb, openDiskDb } from "./support/disk_db.js";
 
 // kernel rule 38a, NEW-kernel-12 (C2b's part): a card names its project once a
@@ -139,5 +140,82 @@ describe("a workspace of many projects (K-N12-3, K-N12-6, K-N12-7)", () => {
     await store.rebuildProjections();
     expect(store.getProject(a.id)?.rootPath).toBe(target);
     expect(store.getProject(a.id)?.status).toBe("active");
+  });
+});
+
+// kernel rule 38a, NEW-kernel-12 (C4's part): one erasure covers every
+// project's events, and a replay of either project's step names its gap
+// (K-N12-5). Real SQLite files and a real blob store.
+describe("K-N12-5: one ledger/erased across the workspace's projects", () => {
+  let disk: DiskDb;
+  afterEach(() => disk.dispose());
+
+  it("erases a person's data from both projects' events in one event, and each project's step replay names that gap", async () => {
+    disk = openDiskDb("sekhemet-workspace-erase-");
+    const ws = realpathSync(disk.dir);
+    const log = new EventLog(disk.db);
+    const owner = log.localPrincipal();
+    log.ensureLocalPerson({ name: "Ada" });
+    const store = new CardStore(disk.db, log);
+    const blobs = new BlobStore(ws);
+    const root = (name: string): string => {
+      mkdirSync(join(ws, name), { recursive: true });
+      return realpathSync(join(ws, name));
+    };
+    const projects = [
+      await store.ensureProject({ rootPath: root("a"), name: "A" }),
+      await store.ensureProject({ rootPath: root("b"), name: "B" }),
+    ];
+    const notes: string[] = [];
+    const packs: string[] = [];
+    for (const [i, p] of projects.entries()) {
+      const cardId = `card_${i}`;
+      await store.createCard({ id: cardId, tier: "task", title: `T${i}`, projectId: p.id });
+      const attempt = await store.runs.startAttempt({ cardId, attemptNumber: 1, modelId: "m" });
+      const pack = blobs.put(JSON.stringify({ prompt: `Ada's phone, project ${p.name}` }));
+      packs.push(pack);
+      await store.runs.recordStep({
+        attemptId: attempt.id,
+        cardId,
+        stepIndex: 1,
+        calls: [],
+        contextPackId: pack,
+        promptTokens: 1,
+        completionTokens: 1,
+        durationMs: 1,
+      });
+      const note = await log.append({
+        actor: "human",
+        type: "card/note",
+        cardId,
+        payload: {},
+        private: { text: `Ada's phone, project ${p.name}` },
+      });
+      notes.push(note.id);
+    }
+    const report = await log.erase({
+      eventIds: notes,
+      blobIds: packs,
+      blobs,
+      reason: "erasure",
+      principal: owner,
+    });
+    expect(await log.getEventsByTypes(["ledger/erased"])).toHaveLength(1);
+    expect(report.eventIds.sort()).toEqual([...notes].sort());
+    for (const id of notes) expect(log.erasureOf(id)).toBe(report.erasedBySeq);
+    expect(log.findPrivate("Ada's phone")).toEqual([]);
+    // What a step replay reads (`step_replay.ts`): each project's pack is a named gap.
+    const index = ledgerErasures(disk.db);
+    const stepPacks = disk.db
+      .prepare(
+        "SELECT s.context_pack_id AS id, c.project_id AS project FROM steps s JOIN cards c ON c.id = s.card_id",
+      )
+      .all() as { id: string; project: string }[];
+    expect(new Set(stepPacks.map((s) => s.project))).toEqual(new Set(projects.map((p) => p.id)));
+    for (const s of stepPacks) {
+      expect(blobs.get(s.id)).toBeUndefined();
+      expect(index.byBlob.get(s.id)).toBe(report.erasedBySeq);
+    }
+    expect(log.verifyHashChainSync({ full: true }).valid).toBe(true);
   });
 });

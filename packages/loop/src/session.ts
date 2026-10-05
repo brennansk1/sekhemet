@@ -577,7 +577,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       .catch(() => undefined);
     // Every question goes into the card's dossier, so the next attempt and
     // the reviewer see what was unclear (integration review item 6).
-    const questionEntryId = await this.options.recordQuestion?.(q).catch(() => undefined);
+    const questionEntryId = await this.options.recordQuestion?.(q).catch(this.lost("question"));
     if (scored.length === 0 && this.options.askTeam) {
       // Not in the contract: ask the team. Seshat answers now if it is
       // resident; otherwise the question waits for its next turn on the host.
@@ -585,7 +585,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         .askTeam(q, questionEntryId ? { questionEntryId } : {})
         .catch(() => undefined);
       if (reply) {
-        await this.options.recordAnswer?.(reply, questionEntryId).catch(() => undefined);
+        await this.options.recordAnswer?.(reply, questionEntryId).catch(this.lost("answer"));
         return {
           tool: "ask",
           ok: true,
@@ -622,6 +622,21 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     };
   }
 
+  /**
+   * Runtime item 29a (RUN-89): a question, answer or note that could not be
+   * recorded is reported, never swallowed; the step goes on.
+   */
+  private lost(kind: string): (err: unknown) => undefined {
+    return (err) => {
+      if (this.options.onLostRecord) this.options.onLostRecord(kind, err);
+      else
+        console.warn(
+          `sekhemet: ${kind} not recorded: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      return undefined;
+    };
+  }
+
   /** Questions posted to a person, waiting for an answer (WL-N4-1). */
   private waitingQuestions: {
     decisionId: string;
@@ -642,7 +657,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     assumption: string,
     questionEntryId: string | undefined,
   ): Promise<ToolObservation | undefined> {
-    const id = await this.options.postDecision?.(question, assumption).catch(() => undefined);
+    const id = await this.options
+      .postDecision?.(question, assumption)
+      .catch(this.lost("worker question decision"));
     if (!id) return undefined;
     this.waitingQuestions.push({ decisionId: id, question, assumption, questionEntryId });
     return {
@@ -678,7 +695,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
           continue;
         }
         this.deliverMessage(workerCopy.askReply(w.question, reply), workerCopy.askAnswerFrom);
-        await this.options.recordAnswer?.(reply, w.questionEntryId).catch(() => undefined);
+        await this.options.recordAnswer?.(reply, w.questionEntryId).catch(this.lost("answer"));
         continue;
       }
       const contradicts = d.optionIndex !== 0;
@@ -690,8 +707,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         workerCopy.askAnswerFrom,
       );
       // PM-P2-7: the answer has reached the asker.
-      await this.options.onAnswerDelivered?.(w.decisionId).catch(() => undefined);
-      await this.options.recordAnswer?.(answer, w.questionEntryId).catch(() => undefined);
+      await this.options.onAnswerDelivered?.(w.decisionId).catch(this.lost("answer delivered"));
+      await this.options.recordAnswer?.(answer, w.questionEntryId).catch(this.lost("answer"));
       if (contradicts && !reply) still.push({ ...w, awaitingReply: true });
     }
     this.waitingQuestions = still;
@@ -2049,7 +2066,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         this.hookNotes(turnIndex, [...(preTool?.messages ?? []), ...post.messages]);
       }
       if (call.name === "note" && observation.ok && typeof call.arguments.message === "string") {
-        await this.options.onNote?.(call.arguments.message).catch(() => undefined);
+        await this.options.onNote?.(call.arguments.message).catch(this.lost("note"));
         // GT-M6-5: a note that names a gate says the gate is wrong.
         if (typeof call.arguments.gate === "string") {
           suspected = {

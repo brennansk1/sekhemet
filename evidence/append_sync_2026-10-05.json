@@ -1,0 +1,39 @@
+{
+  "measuredAt": "2026-10-05T14:21:27.454Z",
+  "platform": "darwin arm64",
+  "node": "26.0.0",
+  "dir": "/var/folders/xz/jpx8j5rx1d5ccsww3k7r5mn40000gn/T",
+  "appendsPerRound": 600,
+  "rounds": 3,
+  "modes": {
+    "NORMAL": {
+      "synchronousPragma": 1,
+      "n": 1800,
+      "p50Ms": 0.06,
+      "p95Ms": 0.087,
+      "p99Ms": 1.129,
+      "maxMs": 4.502
+    },
+    "FULL": {
+      "synchronousPragma": 2,
+      "n": 1800,
+      "p50Ms": 3.08,
+      "p95Ms": 4.042,
+      "p99Ms": 7.063,
+      "maxMs": 10.689
+    }
+  },
+  "medianWorkerStep": {
+    "seconds": 9.17,
+    "from": "evidence/injection_2026-10-04.json",
+    "cards": 14
+  },
+  "appendsPerStep": 10,
+  "addedPerMedianStepMs": 39.55,
+  "addedShareOfMedianStep": 0.431,
+  "bound": {
+    "p95MsAtMost": 25,
+    "addedShareBelowPercent": 1
+  },
+  "adoptFull": true
+}

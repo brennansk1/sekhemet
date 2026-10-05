@@ -1,0 +1,10 @@
+# The configuration this release read, with the key names of its day.
+[machine]
+hours = "09:00-17:00 Mon-Fri"
+power_budget_kwh_day = 2
+
+[review]
+review_minutes_per_day = 45
+
+[network]
+mode = "offline"

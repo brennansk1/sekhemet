@@ -556,6 +556,11 @@ export interface EngineInstalled {
   binary: string;
   /** The build the unpacked llama-server reports. */
   build: number;
+  /**
+   * An earlier folder for this build with no llama-server in it (an install
+   * that stopped), moved here, kept, before the download started (C4).
+   */
+  movedAside?: string;
 }
 
 /**
@@ -578,6 +583,18 @@ export async function getEngine(opts: GetEngineOptions): Promise<EngineInstalled
     throw new EngineRefused(
       `llama.cpp ${pin.release} is already installed in ${dir}; nothing was downloaded.`,
     );
+  // C4 (C3's review): a folder for this build with no llama-server in it is
+  // what an install that stopped leaves. It would fail the install only at
+  // the rename, after the whole download, so it is moved aside first, kept
+  // and named, never deleted.
+  let movedAside: string | undefined;
+  if (existsSync(dir)) {
+    movedAside = join(
+      root,
+      `.broken-llama.cpp-b${pin.build}-${new Date().toISOString().replace(/[:.]/g, "-")}`,
+    );
+    renameSync(dir, movedAside);
+  }
   const downloads = join(root, ".downloads");
   mkdirSync(downloads, { recursive: true, mode: 0o700 });
   // A verified archive left by an install that stopped is fetched again.
@@ -642,6 +659,7 @@ export async function getEngine(opts: GetEngineOptions): Promise<EngineInstalled
       dir,
       binary: join(dir, server.slice(staging.length + 1)),
       build,
+      ...(movedAside ? { movedAside } : {}),
     };
   } finally {
     rmSync(staging, { recursive: true, force: true });

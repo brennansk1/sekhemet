@@ -12,8 +12,12 @@ import {
   truncateSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { join } from "node:path";
+import { liveModelLease, modelLeaseHolderWords, modelLeasePath } from "@sekhemet/models";
 import { processStartTime, sameProcess } from "@sekhemet/sandbox";
+import { userPaths } from "./user_dir.js";
+import { readWorkspaces } from "./workspaces.js";
 
 /**
  * `sekhemet daemon start|stop|status` (H1): the dashboard server running in
@@ -142,7 +146,7 @@ function defaultLaunch(args: string[], logPath: string): number {
 
 export async function daemonStart(
   repoPath: string,
-  port: number,
+  asked: number,
   deps: DaemonDeps = {},
 ): Promise<{ started: boolean; info: DaemonInfo; message: string }> {
   const running = readDaemon(repoPath);
@@ -156,10 +160,14 @@ export async function daemonStart(
   mkdirSync(join(repoPath, ".sekhemet"), { recursive: true });
   const log = join(repoPath, ".sekhemet", "daemon.log");
   rotateLog(log);
+  // MD-N17-3: the port asked for, else the next free one, chosen before the
+  // launch so this record and the health check name the port it serves on.
+  const port = await freePortFrom(asked);
   const pid = (deps.launch ?? defaultLaunch)(
     ["serve", "--repo", repoPath, "--port", String(port)],
     log,
   );
+  const moved = port !== asked ? `: port ${asked} was in use, so it serves` : "";
   const processStart = processStartTime(pid);
   const info: DaemonInfo = {
     pid,
@@ -175,7 +183,7 @@ export async function daemonStart(
       return {
         started: true,
         info,
-        message: `Started (pid ${pid}) at http://127.0.0.1:${port}; log ${log}`,
+        message: `Started (pid ${pid})${moved} at http://127.0.0.1:${port}; log ${log}`,
       };
     }
     if (!alive(pid) && !deps.launch) break;
@@ -206,4 +214,67 @@ export async function daemonStatus(repoPath: string, deps: DaemonDeps = {}): Pro
   if (!info) return "Not running.";
   const ok = await healthy(info.port, deps.fetch);
   return `Running (pid ${info.pid}) since ${info.startedAt} at http://127.0.0.1:${info.port}; ${ok ? "answering" : "NOT answering"}. Live stream: ws://127.0.0.1:${info.port}/api/ws (or SSE /api/stream).`;
+}
+
+/** How many ports from the one asked for `serve` tries before it refuses (MD-N17-3). */
+export const SERVE_PORT_TRIES = 10;
+
+/** Whether nothing listens on this loopback port: it can be bound now. */
+function portFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = createServer();
+    probe.once("error", () => resolve(false));
+    probe.listen(port, "127.0.0.1", () => probe.close(() => resolve(true)));
+  });
+}
+
+/**
+ * The first free port from `port`, within the range `serve` itself tries
+ * (MD-N17-3); the port asked for when none is free, so the server's own
+ * refusal names the range.
+ */
+export async function freePortFrom(port: number): Promise<number> {
+  if (port === 0) return 0;
+  for (let p = port; p < port + SERVE_PORT_TRIES; p++) if (await portFree(p)) return p;
+  return port;
+}
+
+/** Whether any HTTP server answers at this address (Team's sign-in answers too). */
+async function answers(address: string, fetchFn: typeof fetch = fetch): Promise<boolean> {
+  try {
+    await fetchFn(`${address}/api/board`, { signal: AbortSignal.timeout(1500) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `sekhemet daemon status --all` (MD-N17-3): every workspace this machine's
+ * person has served, from `<user dir>/workspaces.json` — its name, the
+ * address and port its server bound, whether that server answers now, and
+ * its folder — and who holds the machine's model lease (MD-N17-1). A read:
+ * it starts, stops and writes nothing.
+ */
+export async function daemonStatusAll(
+  opts: { workspacesPath?: string; modelLeasePath?: string; fetch?: typeof fetch } = {},
+): Promise<string> {
+  const list = readWorkspaces(opts.workspacesPath ?? userPaths().workspaces);
+  const lines: string[] = [];
+  if (list.length === 0) lines.push("No workspace has been served on this machine yet.");
+  else {
+    const width = Math.max(...list.map((w) => w.name.length));
+    const rows = await Promise.all(
+      list.map(async (w) => {
+        const up = await answers(w.address, opts.fetch);
+        const projects =
+          (w.projectRoots?.length ?? 0) > 1 ? ` (${w.projectRoots?.length} projects)` : "";
+        return `  ${w.name.padEnd(width)}  ${w.address}  ${up ? "answering" : "not answering"}${w.folder ? `  ${w.folder}${projects}` : ""}`;
+      }),
+    );
+    lines.push("Workspaces on this machine:", ...rows);
+  }
+  const holder = liveModelLease(opts.modelLeasePath ?? modelLeasePath());
+  lines.push(`Model lease: ${holder ? `${modelLeaseHolderWords(holder)}.` : "free."}`);
+  return lines.join("\n");
 }

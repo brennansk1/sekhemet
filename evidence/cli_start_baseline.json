@@ -1,0 +1,9 @@
+{
+  "medianMs": 539,
+  "runsMs": [535, 537, 537, 538, 539, 541, 541, 542, 546],
+  "node": "v26.0.0",
+  "platform": "darwin-arm64",
+  "cpu": "Apple M4",
+  "memoryGb": 24,
+  "date": "2026-10-05T18:04:06.163Z"
+}

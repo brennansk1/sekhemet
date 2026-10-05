@@ -30,6 +30,7 @@ import {
   CardStore,
   DEFAULT_STEP_BUDGET,
   EventLog,
+  STOP_REASONS,
   initSchema,
 } from "@sekhemet/kernel";
 import { planRepair } from "@sekhemet/loop";
@@ -113,7 +114,7 @@ import {
   parseCommandArgs,
 } from "./commands/registry.js";
 import { gateStartStop } from "./commands/run.js";
-import { resolveConfig, userConfigPath } from "./config.js";
+import { configParseRefusal, resolveConfig, userConfigPath } from "./config.js";
 import {
   cardStepCap,
   configOverrideLines,
@@ -124,7 +125,8 @@ import {
   reviewLimit,
 } from "./config_apply.js";
 import { configRenamesDue, upgradeConfigKeys } from "./config_upgrade.js";
-import { daemonStart, daemonStatus, daemonStop, rotateLog } from "./daemon.js";
+import { daemonStart, daemonStatus, daemonStatusAll, daemonStop, rotateLog } from "./daemon.js";
+import { DiskLowError } from "./disk_space.js";
 import { type DoctorReport, runDoctor } from "./doctor.js";
 import { egressEvent } from "./egress_event.js";
 import {
@@ -139,6 +141,7 @@ import {
   nextAttemptNumber,
   plannerDifficulty,
   queueEntryOf,
+  queueHaltReason,
   recordDependencies,
   recordQueueProgress,
   recordQueueReport,
@@ -148,7 +151,12 @@ import {
   runLspPool,
 } from "./execute.js";
 import { externalReviewerFor, reviewPosterFromEnv, runExternalReviews } from "./external_review.js";
-import { homeDestination, roleWeightsFinder, runFirstRun } from "./first_run.js";
+import {
+  homeDestination,
+  offerWorkspaceRestore,
+  roleWeightsFinder,
+  runFirstRun,
+} from "./first_run.js";
 import { runDependencyVerifications } from "./github_sync.js";
 import { deriveGates, runInit } from "./init.js";
 import { notifySlack } from "./integrations.js";
@@ -164,6 +172,7 @@ import {
   openLocalLedger,
 } from "./ledger_cmds.js";
 import { cardBranchHead, ledgerEvidenceSummary } from "./ledger_evidence.js";
+import { effectiveLogLevel, installLogLevels } from "./log_levels.js";
 import { runMcpStdioServer } from "./mcp.js";
 import { McpHub, loadMcpConfig, plannerToolsOf } from "./mcp_client.js";
 import {
@@ -235,6 +244,7 @@ import {
 } from "./runner_lease.js";
 import { isReserved, parseHours } from "./scheduler.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
+import { awakeReport, sleptNote, startRunClock } from "./sleep_assertion.js";
 import { qualifiedSlotCapacity } from "./slot_lease.js";
 import { SlotPool } from "./slot_pool.js";
 import {
@@ -249,11 +259,16 @@ import {
   refreshPlan,
 } from "./smart_swap.js";
 import { bakeOffOnSuitePath } from "./suite_path.js";
-import { describeSupervisorStart, removeWorktreesOnClose, supervisorStart } from "./supervisor.js";
+import {
+  automaticBackup,
+  describeSupervisorStart,
+  removeWorktreesOnClose,
+  supervisorStart,
+} from "./supervisor.js";
 import { Access } from "./team/access.js";
 import { agentRefusalFor, runnableByTheirPeople } from "./team/ai_teammates.js";
 import { configWriter, recordConfigWrite } from "./team/config_audit.js";
-import { identityDir } from "./team/credential_store.js";
+import { identityRoot } from "./team/credential_store.js";
 import { fairOrder } from "./team/fair_queue.js";
 import { newSetupTokenCommand, recordSwitchToSolo } from "./team/serve.js";
 import { terminalBoardLines } from "./terminal_board.js";
@@ -551,7 +566,7 @@ function belongsElsewhere(repoPath: string): string | undefined {
     });
   const where = home
     ? `its workspace is in ${home}: open it there (\`sekhemet\` in that folder), or add this clone to it from New project`
-    : "its workspace is not on this machine: restore its backup (`sekhemet dev restore`)";
+    : "its workspace is not on this machine: restore its backup (`sekhemet restore --latest`)";
   return `This repository belongs to a Sekhemet workspace already (its history carries Ledger-Head trailers), so nothing was written: ${where}. To start a new workspace here anyway, run \`sekhemet --new-workspace\`.`;
 }
 
@@ -612,6 +627,11 @@ async function runRegistered(spec: CommandSpec, argv: string[]): Promise<void> {
   const at = cliWorkspace(config.repoPath, spec.name);
   if ("refused" in at) return refused(1, at.refused);
   if (spec.needsProject && at.firstRun) return refused(2, noProjectLine(at.repoPath));
+  // SUR-92 (REL-06): a config.toml that does not parse starts no work.
+  if (spec.name === "run" || spec.name === "resume") {
+    const unparsed = configParseRefusal(at.repoPath);
+    if (unparsed) return refused(2, unparsed);
+  }
   // S9, item 40: `--trust` trusts the repository's configuration for this invocation only.
   setInvocationTrust(parsed.values.trust === true);
   let opened: ReturnType<typeof initLocalKernel> | undefined;
@@ -670,7 +690,7 @@ export function initLocalKernel(repoPath: string): {
   // it as a change made outside Sekhemet. Keys only, never a value.
   const userConfig = userConfigPath();
   if (configRenamesDue(userConfig).length > 0) {
-    recordConfigWrite({ db, log, path: userConfig, identityDir: identityDir() }, () =>
+    recordConfigWrite({ db, log, path: userConfig, identityDir: identityRoot() }, () =>
       upgradeConfigKeys(userConfig),
     );
   }
@@ -896,7 +916,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   }
 
   if ((LEDGER_COMMANDS as readonly string[]).includes(config.command)) {
-    // `sekhemet dev backup|restore|export`, `sekhemet erase` (kernel NEW-kernel-7,
+    // `sekhemet dev export`, `sekhemet erase` (kernel NEW-kernel-7,
     // runtime NEW-runtime-8, security NEW-security-7).
     process.exitCode = await ledgerCommand(
       config.command as (typeof LEDGER_COMMANDS)[number],
@@ -907,9 +927,12 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   }
 
   if (config.command === "daemon") {
-    // `sekhemet daemon start|stop|status [--port N]` (H1): the dashboard in the background.
+    // `sekhemet daemon start|stop|status [--port N]` (H1): the dashboard in the background;
+    // `daemon status --all` (MD-N17-3): every workspace's server and the model lease.
     const action = argv[argv.indexOf("daemon") + 1] ?? "status";
-    if (action === "start") {
+    if (argv.includes("--all")) {
+      console.log(await daemonStatusAll());
+    } else if (action === "start") {
       const r = await daemonStart(config.repoPath, config.port);
       console.log(r.message);
       if (!r.started && !r.message.startsWith("Already")) process.exitCode = 1;
@@ -1245,6 +1268,16 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     return;
   }
 
+  if (config.command === "overnight" || config.command === "queue") {
+    // SUR-92 (REL-06): a config.toml that does not parse starts no work.
+    const unparsed = configParseRefusal(config.repoPath);
+    if (unparsed) {
+      console.error(`sekhemet: ${unparsed}`);
+      process.exitCode = 2;
+      return;
+    }
+  }
+
   if (config.command === "overnight") {
     // `sekhemet overnight [--until 07:00] [--idle-min 20] [--max-failures 3] [queue flags...]`:
     // queue rounds while the machine is free and every breaker holds (H21, H23).
@@ -1263,10 +1296,17 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       return;
     }
     process.env[LEASE_TOKEN_ENV] = nightLease.lease.token;
+    // RUN-66: said once for the night when nothing can keep the machine awake.
+    await nightLease.awake.settled;
+    if (!nightLease.awake.held) console.log(awakeReport(nightLease.awake));
     // The supervisor's start-up pass under the night's lease, before M0 and
     // the first round (items 10, 33, 34); each round's queue makes its own.
     for (const line of describeSupervisorStart(
-      await supervisorStart({ repoPath: config.repoPath, cardStore, log, boardService }),
+      await supervisorStart(
+        { repoPath: config.repoPath, cardStore, log, boardService },
+        // RUN-59: the night's start writes the day's backup when it is due.
+        { backup: { db } },
+      ),
     )) {
       console.log(line);
     }
@@ -1336,6 +1376,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         }
       })(),
     });
+    // RUN-59: the end of every overnight writes a backup, due or not.
+    const nightBackup = await automaticBackup({
+      workspaceFolder: workspace.workspaceFolder,
+      db,
+      log,
+      kind: "overnight",
+    });
+    if (nightBackup) console.log(nightBackup);
     nightLease.release();
     if (summary.passed < summary.cardsRun) process.exitCode = 1;
     return;
@@ -1572,7 +1620,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       repoPath: config.repoPath,
       port: config.port,
     });
-    const url = `http://127.0.0.1:${server.port}/#/${homePage}`;
+    const url = `${server.address}/#/${homePage}`;
+    // RUN-59: the board is the dashboard server: its day's first start backs up.
+    const boardBackup = await automaticBackup({
+      workspaceFolder: workspace.workspaceFolder,
+      db,
+      log,
+    });
+    if (boardBackup) console.log(boardBackup);
     console.log(
       homePage === "configuration"
         ? `Sekhemet Configuration: ${url}  (no model is set up yet; Ctrl+C to stop)`
@@ -1624,6 +1679,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   }
 
   if (config.command === "serve") {
+    // Surface item 21a, SUR-91: started by `daemon start`, the server's console
+    // is daemon.log, each line with its time and level, below the level unwritten.
+    if (process.env.SEKHEMET_DAEMON_LOG) {
+      installLogLevels(
+        effectiveLogLevel(resolveConfig({ repoPath: config.repoPath }).config.log.level),
+      );
+    }
     // teams TEAM-31: a new setup token, voiding the old, while no Admin
     // exists; with an Admin, nothing is written and serve does not start.
     if (argv.includes("--new-setup-token")) {
@@ -1665,9 +1727,17 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     if (daemonLog) setInterval(() => rotateLog(daemonLog), 60_000).unref();
     console.log("\n=================================================");
     console.log(" Sekhemet Visual Dashboard running at:");
-    console.log(`   http://127.0.0.1:${server.port}`);
+    // MD-N17-3: the address it bound, which may not be the port asked for.
+    console.log(`   ${server.address}`);
     console.log(" Press Ctrl+C to stop.");
     console.log("=================================================\n");
+    // RUN-59: the day's first serve writes the automatic backup.
+    const served = await automaticBackup({
+      workspaceFolder: workspace.workspaceFolder,
+      db,
+      log,
+    });
+    if (served) console.log(served);
     return;
   }
 
@@ -1736,7 +1806,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         db,
         log,
         path: userConfigPath(),
-        identityDir: identityDir(),
+        identityDir: identityRoot(),
         principal: log.localPrincipal(),
       }),
       offline,
@@ -2286,15 +2356,22 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       return;
     }
     const releaseLease = queueLease.release;
+    // RUN-66, RUN-67: what keeps the machine awake, said once; and the run's
+    // two clocks, so a sleep is reported rather than charged.
+    const runClock = startRunClock();
+    // A tool refused its assertion exits at once: not "kept awake" (RUN-66).
+    await queueLease.awake.settled;
+    const awake = awakeReport(queueLease.awake);
+    if (!queueLease.awake.held) console.log(awake);
     // The supervisor's start (items 10, 33, 34): reap what a killed runner
     // left, sweep crashed attempts back to Ready, and prune by retention as a
     // recorded erasure — before the Ready cards are read.
-    const startPass = await supervisorStart({
-      repoPath: config.repoPath,
-      cardStore,
-      log,
-      boardService,
-    });
+    const startPass = await supervisorStart(
+      { repoPath: config.repoPath, cardStore, log, boardService },
+      // RUN-59: the day's first queue writes the automatic backup (an
+      // overnight round's queue too; its night already wrote today's).
+      { backup: { db } },
+    );
     for (const line of describeSupervisorStart(startPass)) console.log(line);
     const measurement = argv.includes("--auto-accept")
       ? readMeasurementMarker(config.repoPath)
@@ -2867,6 +2944,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const entries: QueueEntry[] = [];
     const failed: { card: CardRecord; result: Awaited<ReturnType<typeof executeCard>> }[] = [];
     let halted = false;
+    /** RUN-69: why the round ended before a card started, for the run report. */
+    let diskLow: string | undefined;
 
     let workerModelId = workerModel ?? defaultWorkerName();
     // --max-turns caps every card's step budget (the tuner's recommendation).
@@ -2971,16 +3050,29 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       // absences count against its floor of each rolling hour.
       router.setHomeBacklog(true);
       await refreshPlan(router, cardStore).catch(() => undefined);
-      const result = await executeCard(ctx, rawCard, worker, guidance, {
-        attempt: attemptNo,
-        signal: queueStop.signal,
-        ...(cap ? { maxSteps: cap } : {}),
-        ...(serverSlot !== undefined ? { serverSlot } : {}),
-        // Models rule 20e, C8: each step is admitted at the drain barrier.
-        beginStep: () => router.beginStep(role),
-        // RG-P8-1: a passing card waits in Verify for its AI review.
-        reviewFirst: (id) => reviewFlow.decide(id),
-      });
+      let result: Awaited<ReturnType<typeof executeCard>>;
+      try {
+        result = await executeCard(ctx, rawCard, worker, guidance, {
+          attempt: attemptNo,
+          signal: queueStop.signal,
+          ...(cap ? { maxSteps: cap } : {}),
+          ...(serverSlot !== undefined ? { serverSlot } : {}),
+          // Models rule 20e, C8: each step is admitted at the drain barrier.
+          beginStep: () => router.beginStep(role),
+          // RG-P8-1: a passing card waits in Verify for its AI review.
+          reviewFirst: (id) => reviewFlow.decide(id),
+        });
+      } catch (err) {
+        // RUN-69, RUN-83: a volume below the free-space floor: the card did
+        // not start (it stays Ready, `machine/disk_low` names the volume) and
+        // the round ends with no further card.
+        if (!(err instanceof DiskLowError)) throw err;
+        console.log(`\n--- ${rawCard.id} not started: ${err.message} ---`);
+        console.log("   queue halted: the disk is nearly full");
+        halted = true;
+        diskLow = err.message;
+        return undefined;
+      }
       await refreshPlan(router, cardStore).catch(() => undefined);
       if (result.passed) {
         const passedCard = { card, diff: result.evidence.diff ?? "" };
@@ -3044,8 +3136,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       }
       // The learning guard observes every card once, in the card runner
       // (`learnFromOutcome`); observing here too counted each card twice.
-      if (result.stopReason === "memory_pressure") {
-        console.log("   queue halted: memory pressure");
+      // Memory pressure, and the machine's stops (WL-N11-2, WL-N12-2): the
+      // round ends and no further card starts.
+      const halt = queueHaltReason(result.stopReason);
+      if (halt) {
+        console.log(`   queue halted: ${halt}`);
         halted = true;
       }
       if (queueStop.signal.aborted) {
@@ -3201,9 +3296,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         }
         slots.start(card.id, claim, async () => {
           const result = await attempt(card, n, plans?.get(card.id), claim.slot);
+          // RUN-69: not started for space; the round is over.
+          if (!result) return;
           // A parked card (repair rung 4, vacuous tests) waits for a person; it
-          // is not re-planned automatically.
-          if (!result.passed && !result.parked) failed.push({ card, result });
+          // is not re-planned automatically. The machine's stops are not the
+          // Worker's to repair (WL-N11-2, WL-N12-2).
+          if (!result.passed && !result.parked && !STOP_REASONS[result.stopReason].holdsInReady)
+            failed.push({ card, result });
         });
         await (alone ? slots.drain() : slots.whileFull());
       }
@@ -3483,6 +3582,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const eventually = cardIds.filter((id) =>
       entries.some((e) => e.cardId === id && e.passed),
     ).length;
+    const slept = sleptNote(runClock.sleptMs());
+    if (slept) console.log(`\nDuring this run ${slept}.`);
     const report: QueueReport = {
       startedAt: new Date(started).toISOString(),
       model: workerModelId,
@@ -3500,6 +3601,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       memory: { level: watchdog.state.level, reason: watchdog.state.reason },
       // RUN-57: every blob retention pruned at this run's start, with its card.
       ...(startPass.retention ? { retention: startPass.retention } : {}),
+      machine: {
+        awake,
+        ...(slept ? { slept } : {}),
+        ...(diskLow ? { diskLow } : {}),
+      },
     };
     // RUN-56: the report is a ledger event; the files are its cache.
     const path = await recordQueueReport(log, config.repoPath, report);
@@ -3575,10 +3681,9 @@ function printDevHelp(): void {
     ["rewind <issue> <n> / fork <issue> <n>", "Back to, or branch from, step n"],
     ["log", "The Activity log and its hash chain"],
     [
-      "backup <path> / restore <path>",
-      "Back the Activity log up; restore it, re-applying erasures",
+      "export --ledger [--no-private] | export --out <dir>",
+      "The Activity log as NDJSON a verifier checks alone; with --out <dir>, its projections, blobs and evidence beside it",
     ],
-    ["export --ledger [--no-private]", "The Activity log as NDJSON a verifier checks alone"],
     ["erase --secret --rotated", "Erase a secret found after the fact (stdin or --secret-file)"],
     ['research "<q>" [--deep]', "Ask the Research model directly"],
     [
@@ -3624,6 +3729,19 @@ async function openHome(flags: string[]): Promise<void> {
   // workspace already, so its first run is refused unless --new-workspace (SUR-79).
   const found = resolveWorkspace(repoPath);
   if (found.kind === "refused") return refuseWorkspace(found.message);
+  // RUN-62: a folder with no ledger that a backup set names is offered its
+  // workspace back before anything empty is created.
+  if (found.kind === "first-run") {
+    const offer = await offerWorkspaceRestore(repoPath, {
+      yes,
+      interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+      ...firstRunPrompts(),
+    });
+    if (offer === "restored") {
+      homePage = await homeDestination(findRoleWeights);
+      return main(["board", ...flags]);
+    }
+  }
   const firstRun =
     found.kind === "first-run" && !existsSync(join(repoPath, ".sekhemet", "config.toml"));
   if (firstRun && !flags.includes("--new-workspace")) {

@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 77 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 78 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,98 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 78 — 2026-10-05 (C4: reliability. Backups outside the repository per workspace, restore, the power-cut window, a full disk as a named stop, staying awake, the model lease, doctor's reliability rows and crash report, the fault suite, the §A performance budgets; plus the Reviewer candidates, and a full disk on the host)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. The owner launched C4 at under 30% of the 5-hour limit. One workflow: 12 agents, 3.44M tokens, none failed. A read-only scoper split it into four builders run one at a time (A durable state, B models/sandbox/ports, C runtime stops, D observability and faults), followed by three reviews in parallel (durability, runtime, sandbox and loop), a fixer, a blocker re-check, a sweep and a gate. The lead then fixed the gate's failures.
+
+- **Durable state (A):**
+  - **Backup sets (NEW-runtime-11, -18):** written to `<user dir>/backups/<workspace>/<date>/` through a `.partial` folder, then verified and renamed into place. They hold the ledger (VACUUM INTO), the blobs and evidence it names, each project's configuration, the credential file and a manifest. 7 daily and 4 weekly sets are kept, and only this install's own sets are deleted. The erasure register is carried across.
+  - **Restore:** `restore <set>` and `restore --latest` refuse a set that does not verify and re-apply erasures first.
+  - **Restore while open (RUN-92):** `restore` refuses while a server or runner holds the ledger, with a real second process appending in the test.
+  - **The credential store on restore (RUN-93):** the replaced store is kept at mode 0600.
+  - **First run:** in a folder with no ledger it offers the restore.
+  - **A missing repository:** a project whose repository is gone is listed as missing.
+  - **Export (SPEC-02):** `dev export --out` writes the NDJSON, the projections, the blobs and the evidence.
+  - **A newer database (REL-18):** its refusal names the backup to restore.
+  - **Identity per workspace (NEW-security-14):** each workspace's identity lives under `<user dir>/identity/<workspace>/`, moved once with its file modes.
+  - **One ledger per workspace (NEW-kernel-12):** one `sekhemet log` pass verifies every project, and the Ledger-Head anchor reads across project roots.
+  - **The power-cut window (K-N11):** the WAL is truncated at a random frame, and the chain verifies to the last intact event. The append cost was measured, and `synchronous` follows the recorded decision.
+  - **Schema fixtures:** a recorded database of each earlier schema backs the upgrade tests (C-18).
+- **Models, sandbox, ports (B):**
+  - **Linux `run_script`:** proven in the Lima VM. The worktree is now granted read-only (`--ro-bind`), never writable.
+  - **srt's mount anchor:** parsed word by word under srt's own quoting, so it fails closed.
+  - **F28:** an injection page is delivered at the card's start, and the review's blocker is fixed: a page cut at the dossier's 400-character line no longer counts as delivered.
+  - **The machine-wide model lease (NEW-models-17):** `<user dir>/model.lock`, held around every load and while weights are resident. An adopted engine takes it too (MD-N17-5). A second process attaches or waits and names the holder, and the wait's end stops the issue as `model_unavailable`.
+  - **Ports and status:** `serve` takes the next free port, and `daemon status --all` lists every server.
+  - **REL-08:** a stale edit gets 409 with the current values (ETag and If-Match).
+  - **C3's routed minors:** fixed or tested.
+- **Runtime stops (C):**
+  - **A full disk (RUN-69, -70, -83):** a named stop. The 5 GB floor, or twice the largest worktree, is checked before each card on both volumes and before each backup, with real disk images filled to ENOSPC. `SQLITE_FULL` was being hidden by a second ROLLBACK, and is not now.
+  - **Staying awake (RUN-65..67):** `caffeinate` or `systemd-inhibit` is held with the lease. A tool that exits at once is reported, not counted as awake.
+  - **Backup triggers:** the backup runs at queue and overnight.
+  - **Accept reconciliation (RG-N8-5):** it now also runs when `serve` starts.
+- **Observability and faults (D):**
+  - **doctor rows (SUR-83..92):** backup age, staying awake, battery, free space per volume, credential store, model-lease holder and lost records.
+  - **Weights:** hashed only with `--verify-weights`, and otherwise stated as unverified.
+  - **`doctor --report`:** writes a redacted crash bundle on disk and sends nothing.
+  - **Log levels:** `[log] level` and `SEKHEMET_LOG_LEVEL`.
+  - **REL-06:** a configuration parse error names its line and column.
+  - **The C.6 fault suite:** ten real faults.
+- **W9 (the §A budgets):** the review found it missing, and the fixer built it: `apps/harness/tests/perf/` (PerformanceObserver), release-gate rung 11 with `SEKHEMET_PERF=1`. On a seeded 500-issue board at 1440 px every budget holds:
+
+  | Page | LCP median | CLS | Interaction p75 |
+  | --- | --- | --- | --- |
+  | Board | 920 ms | 0.037 | 24 ms |
+  | Issue | 904 ms | — | — |
+  | Review | 924 ms | — | — |
+
+  CLI start is 539 ms on this machine. DB-N12-3's 10,000-issue search is measured in the gate.
+- **Review:** 4 blockers and 16 majors, all fixed; the re-check confirmed the blockers.
+  - **Blockers:**
+    - F28 counted a truncated page;
+    - `restore` ran while the ledger was open;
+    - retired words in new output;
+    - W9 missing.
+  - **Majors:**
+    - Linux `run_script`;
+    - a false "kept awake" on Linux;
+    - weights reported verified unread;
+    - the adopted engine held no lease;
+    - Accept reconciliation on `serve`;
+    - `daemon status --all` unreachable;
+    - an erased blob's restore guard untested;
+    - and others.
+- **The gate's failures, fixed by the lead:**
+  - **The host's disk was full**, 3.4 GB free against the new 5 GB floor, so the floor (rightly) stopped about 90 tests. The lead removed Sekhemet's own leftovers:
+    - **2.0 GB of llama-server slot saves** (`$TMPDIR/sekhemet-slots`) from the night's model runs;
+    - **thousands of test temp folders** older than an hour;
+    - **eight old gate snapshots.**
+
+    That freed 3 GB to 6.3 GB. The owner's own data fills the rest, which was reported to the owner. **Finding F31, routed to C5:** slot saves accumulate in the temp folder with no cap or cleanup, and many tests leave their temp folders behind.
+  - **Three refusals** (`newerDatabaseRefusal`, `refuseWhileInUse`, `configParseRefusal`) are printed to a person, never sent to a model, so they join the scanner's person-facing list.
+  - **SEC-18:** `disk_space.ts` (`du -sk`), `sleep_assertion.ts` (`caffeinate`, `systemd-inhibit`) and `model_lease.ts` (`ps -o lstart=`) join the allowlist with their reasons. `injection.ts`'s fixture git ran outside the hardened environment, so it now uses `gitEnvFor` before joining the list.
+  - **The schema fixtures** were hidden by `.gitignore`'s `*.db`. An exception now keeps `packages/kernel/tests/fixtures/schemas/*.db`.
+  - **`disk_low.spec.ts`** compared free space read twice on a live disk, which was flaky (8,192 bytes apart). It now checks the volume by its mount and size; what it proves is unchanged.
+  - **PM-06, a real regression:** applying Seshat's proposal showed "Changed “…”" and lost it when the thread refreshed. `upsert` and `loadThread` replaced each message whole, and the server's copy carries no `result`. `keepResults` now keeps a proposal's result while its state is the same. The existing browser test was the failing test.
+  - **PM-01 at 400 px** failed in about one full-file run of three: the widths share one thread, so a late reply from the 1440 px test was picked. The test now waits until every earlier message has its reply, and counts before it sends. The assertions are unchanged, and it passed seven full-file runs.
+- **The Reviewer, continued (Stream 1, owner's choices):**
+  - **Gemma-4-26B-A4B** (downloaded on the owner's yes, SHA-256 verified): 0/16 caught and 1 failed, before the lead stopped it under DEC-42 at item 17 (swap 4.27 GB, C4 testing alongside). It cannot reach 0.30 even with the last five, so it is not admitted.
+  - **The owner asked to try Qwen3.8-27B.** This was measured only, since review-git rule 2.3.7 keeps a Qwen Reviewer from being assigned while the Coding model is Qwen. Smoke: 1/1 caught and 1 failed. The full run was stopped by the swap guard at item 3.
+  - **Answer lengths, from the recorded usage:** gpt-oss, GLM and Gemma failed on malformed JSON well under the 1,200-token cap (longest replies 629, 847 and 324 tokens). Only Qwen 3.8 reaches it (1,158). The lead's earlier guess that the cap caused most failures is withdrawn.
+  - **Proposed to the owner:** a JSON-schema-constrained Reviewer reply before a bake-off.
+  - **Downloaded on the owner's yes** (SHA-256 verified, Apache-2.0, non-Qwen) and registered: Devstral Small 2 (IQ4_XS), Muse Glimmer 30B (UD-Q3_K_XL) and Ministral-3-14B-Reasoning (Q6_K). With Mistral Small 3.2 and Qwen 3.8, they wait for a bake-off when memory allows.
+- **Research, designed with the owner** (`lead-work/research_design.md`): research like a software engineer, adapted to agents.
+  - **Scope:** B plus Go and Rust, as its own workflow after C4 and before C2d.
+  - **DEC-59, approved by the owner:** research notes are ledger events plus the existing cache, and they are cited data, not learned rules. It is recorded with that workflow.
+- **Gate:** GATE_LINE.
+- **Where the cards stop:**
+  - C4 is done.
+  - The sandbox changed (`readOnlyPaths`), so B1's injection run is stale again. **Next:**
+    - injection run 6 and B1;
+    - then the research workflow (scope B + Go/Rust);
+    - then C2d (entry-point tests; skipped earlier, still owed), C5, C6 and C7;
+    - the Reviewer bake-off when memory allows.
 
 ### Entry 77 — 2026-10-05 (R3b and R3c, the Reviewer's admission runs: no method or setting is adopted, no candidate reaches the recall bar, and the Review role ships unfilled)
 

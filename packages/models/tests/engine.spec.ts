@@ -333,6 +333,32 @@ describe("Get the inference engine (MD-N19-1..4)", () => {
     expect(found.engine).toMatchObject({ origin: "downloaded", build: 10809 });
   });
 
+  // C4 (C3's review minor): an earlier install that stopped after its folder
+  // was made left no llama-server in it, and the next install failed only
+  // after the whole download, at the rename. The folder is now moved aside,
+  // kept and named, before any request.
+  it("moves aside an earlier engine folder with no llama-server before downloading, and names it", async () => {
+    const user = tmp("eng-broken-");
+    const broken = join(user, "engines", "llama.cpp-b10809");
+    mkdirSync(broken, { recursive: true });
+    writeFileSync(join(broken, "half.txt"), "left by an install that stopped");
+    let movedBeforeRequest: boolean | undefined;
+    const done = await getEngine({
+      pin: pinFor(),
+      platform,
+      userDir: user,
+      fetch: (url, init) => {
+        movedBeforeRequest ??= !existsSync(join(broken, "half.txt"));
+        return fetch(url, init);
+      },
+    });
+    expect(movedBeforeRequest).toBe(true);
+    expect(done.dir).toBe(broken);
+    expect(existsSync(done.binary)).toBe(true);
+    expect(done.movedAside).toMatch(/engines\/\.broken-llama\.cpp-b10809-/);
+    expect(readFileSync(join(done.movedAside as string, "half.txt"), "utf8")).toMatch(/stopped/);
+  });
+
   it("refuses a hop to a host the pin does not name, before asking it", async () => {
     const user = tmp("eng-hop-");
     await expect(

@@ -133,11 +133,11 @@ export async function getJSON(path, { timeout = READ_TIMEOUT_MS } = {}) {
  * shown), never one the person asked for — a refusal of it is never
  * announced page-wide, so no toast blames them for it (FINDINGS SEC-01).
  */
-export async function sendJSON(method, path, body, { background = false } = {}) {
+export async function sendJSON(method, path, body, { background = false, headers = {} } = {}) {
   try {
     const res = await fetch(path, {
       method,
-      headers: actionHeaders({ "Content-Type": "application/json" }),
+      headers: actionHeaders({ "Content-Type": "application/json", ...headers }),
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     const data = await readBody(res);

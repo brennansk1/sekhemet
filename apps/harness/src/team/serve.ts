@@ -3,7 +3,12 @@ import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { EventLog } from "@sekhemet/kernel";
 import { type SekhemetConfig, resolveConfig, userConfigError, userConfigPath } from "../config.js";
-import { CREDENTIALS_FILE, identityDir } from "./credential_store.js";
+import {
+  CREDENTIALS_FILE,
+  identityDir,
+  identityRoot,
+  workspaceIdentityDir,
+} from "./credential_store.js";
 import { Identity } from "./identity.js";
 import { Sso } from "./oidc.js";
 import { Passkeys } from "./passkeys.js";
@@ -13,7 +18,8 @@ import { type IdentitySettings, identitySettings } from "./settings.js";
 /**
  * The identity a server runs with (teams §2.1, §2.3): settings from the
  * user config, the credential store in the install's own directory
- * (`~/.sekhemet/identity`, which the sandbox denies, security item 10), and
+ * (`~/.sekhemet/identity/<workspace id>/`, which the sandbox denies, security
+ * items 10 and 35a), and
  * passkeys and OIDC when an Admin turned them on.
  */
 export { identityDir };
@@ -57,14 +63,27 @@ export function serverSettings(repoPath: string): IdentitySettings {
  * which answers every request as the install's person at Admin — starts only
  * after a switch back recorded later than the last member joined.
  */
+/**
+ * The workspace's credential store (security item 35a, NEW-security-14):
+ * `<user dir>/identity/<workspace id>/`. A ledger with no event yet has no
+ * workspace id — no server serves one, `openLocalLedger` records the
+ * install's person first — and keeps the old place until it has one, from
+ * where the store moves on the next start (SEC-N14-2).
+ */
+function storeDirOf(db: DatabaseSync): string {
+  return workspaceIdentityDir(db) ?? identityRoot();
+}
+
 export function soloStartBlocked(
   db: DatabaseSync,
-  dir: string = identityDir(),
+  dir: string | undefined = workspaceIdentityDir(db),
 ): string | undefined {
   const member = db
     .prepare("SELECT MAX(seq) AS seq FROM events WHERE type = 'member/joined'")
     .get() as { seq: number | null };
-  const store = existsSync(join(dir, CREDENTIALS_FILE)) || existsSync(join(dir, "setup-token"));
+  const store =
+    dir !== undefined &&
+    (existsSync(join(dir, CREDENTIALS_FILE)) || existsSync(join(dir, "setup-token")));
   if (member.seq === null && !store) return undefined;
   const switched = db
     .prepare(
@@ -105,7 +124,7 @@ export function createServerIdentity(
     db,
     log,
     settings,
-    dir: options.dir ?? identityDir(),
+    dir: options.dir ?? storeDirOf(db),
     now,
     ...(options.passwordList ? { passwordList: options.passwordList } : {}),
   });
@@ -168,7 +187,7 @@ export function newSetupTokenCommand(
     db,
     log,
     settings,
-    dir: options.dir ?? identityDir(),
+    dir: options.dir ?? storeDirOf(db),
     ...(options.now ? { now: options.now } : {}),
   });
   const result = identity.newSetupToken();

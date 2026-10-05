@@ -9,7 +9,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { userDir } from "../user_dir.js";
+import type { DatabaseSync } from "node:sqlite";
+import { EventLog } from "@sekhemet/kernel";
+import { userPaths } from "../user_dir.js";
 
 /**
  * The credential store (security item 35a, teams item 16, TEAM-11): what
@@ -78,12 +80,151 @@ export interface CredentialFile {
 export const CREDENTIALS_FILE = "credentials.json";
 
 /**
- * The credential store's directory: the install's own directory
- * (`~/.sekhemet/identity`, or under `SEKHEMET_CONFIG_DIR`), which the
- * sandbox denies (security items 10, 35a) — one store for the workspace.
+ * The identity root, `<user dir>/identity/` (security item 35a): it holds
+ * one folder per workspace, the user config's audit key (`config-audit.key`,
+ * which belongs to the user config, one per operating-system user — TEAM-44),
+ * and the record of the one-time move (`moved.json`). The sandbox denies it
+ * with the rest of the user directory (item 10).
  */
-export function identityDir(): string {
-  return join(userDir(), "identity");
+export function identityRoot(): string {
+  return userPaths().identity;
+}
+
+/**
+ * The credential store's directory for one workspace (security item 35a,
+ * NEW-security-14; DEC-57): `<user dir>/identity/<workspace id>/`, so two
+ * servers of one operating-system user never share a store or a setup token.
+ */
+export function identityDir(workspaceId: string): string {
+  if (!/^ws_[0-9a-f]{12}$/.test(workspaceId)) throw new Error(`Not a workspace id: ${workspaceId}`);
+  return join(identityRoot(), workspaceId);
+}
+
+/** The files of a store, as the old single store kept them at the identity root. */
+const STORE_FILES = [CREDENTIALS_FILE, "setup-token"];
+
+/** What the one-time move did (SEC-N14-2), for `doctor`. */
+export interface IdentityMove {
+  /** The old place, `<user dir>/identity/`. */
+  from: string;
+  /** The workspace whose folder the store moved into. */
+  workspaceId: string;
+  to: string;
+  at: string;
+  /** The files moved, with their modes kept. */
+  moved: string[];
+}
+
+/** The ledger event that records the move (SEC-N14-2; the spine: the event log is the only durable channel). */
+export const STORE_MOVED_EVENT = "credentials/store_moved";
+
+/** The move the workspace's ledger records, if it ran. */
+export function readIdentityMove(db: DatabaseSync): IdentityMove | undefined {
+  const row = db
+    .prepare("SELECT payload, created_at FROM events WHERE type = ? ORDER BY seq DESC LIMIT 1")
+    .get(STORE_MOVED_EVENT) as { payload: string; created_at: string } | undefined;
+  if (!row) return undefined;
+  const p = JSON.parse(row.payload) as {
+    workspaceId: string;
+    from: string;
+    to: string;
+    files: string[];
+  };
+  return { workspaceId: p.workspaceId, from: p.from, to: p.to, at: row.created_at, moved: p.files };
+}
+
+/**
+ * The principals and references a store names: whose passwords, tokens,
+ * passkeys, links and identity-provider subjects it holds.
+ */
+function storeReferences(file: Partial<CredentialFile>): Set<string> {
+  const refs = new Set<string>();
+  for (const k of Object.keys(file.passwords ?? {})) refs.add(k);
+  for (const t of Object.values(file.tokens ?? {})) refs.add(t.principal);
+  for (const [k, list] of Object.entries(file.passkeys ?? {})) {
+    refs.add(k);
+    for (const p of list) refs.add(p.ref);
+  }
+  for (const l of [...Object.values(file.invites ?? {}), ...Object.values(file.resets ?? {})]) {
+    refs.add(l.ref);
+    if (l.principal) refs.add(l.principal);
+  }
+  for (const v of Object.values(file.subjects ?? {})) refs.add(v);
+  return refs;
+}
+
+/**
+ * Move a store kept at the old place, `<user dir>/identity/`, into the
+ * folder of the workspace whose ledger names its references, once
+ * (SEC-N14-2): every file renamed with its mode kept, nothing lost, the move
+ * recorded in the workspace's ledger (`credentials/store_moved`), which
+ * `doctor` reads. A store naming no one yet (a setup token alone)
+ * goes to the first workspace that opens it. A store this ledger does not
+ * name is left where it is for the workspace that does. Returns the move,
+ * or undefined when nothing moved.
+ */
+export function moveLegacyStore(
+  workspaceId: string,
+  ledgerNames: (refs: readonly string[]) => boolean,
+  record: (move: Omit<IdentityMove, "at">) => void,
+): IdentityMove | undefined {
+  const from = identityRoot();
+  const present = STORE_FILES.filter((f) => existsSync(join(from, f)));
+  if (present.length === 0) return undefined;
+  let file: Partial<CredentialFile> = {};
+  if (present.includes(CREDENTIALS_FILE)) {
+    try {
+      file = JSON.parse(
+        readFileSync(join(from, CREDENTIALS_FILE), "utf8"),
+      ) as Partial<CredentialFile>;
+    } catch {
+      return undefined; // unreadable: left for a person, never guessed at
+    }
+  }
+  const refs = [...storeReferences(file)];
+  if (refs.length > 0 && !ledgerNames(refs)) return undefined;
+  const to = identityDir(workspaceId);
+  mkdirSync(to, { recursive: true, mode: 0o700 });
+  const moved: string[] = [];
+  for (const name of present) {
+    if (existsSync(join(to, name))) continue; // never overwrite the workspace's own
+    renameSync(join(from, name), join(to, name));
+    moved.push(name);
+  }
+  if (moved.length === 0) return undefined;
+  record({ from, workspaceId, to, moved });
+  return { from, workspaceId, to, at: new Date().toISOString(), moved };
+}
+
+/**
+ * The credential store's directory for the workspace whose ledger `db` is
+ * (security item 35a): its id from the first event (kernel K-N12-1), with an
+ * old single store moved into it first (SEC-N14-2). Undefined on a ledger
+ * with no event yet, which no server serves: `openLocalLedger` records the
+ * install's person before anything else.
+ */
+export function workspaceIdentityDir(db: DatabaseSync): string | undefined {
+  const log = new EventLog(db);
+  const workspaceId = log.workspaceId();
+  if (!workspaceId) return undefined;
+  moveLegacyStore(
+    workspaceId,
+    (refs) => {
+      const named = db.prepare(
+        "SELECT 1 AS x FROM events WHERE principal = ? OR instr(payload, ?) > 0 LIMIT 1",
+      );
+      return refs.some((r) => named.get(r, JSON.stringify(r)) !== undefined);
+    },
+    // A security-relevant change to where credentials live, recorded in the
+    // ledger it belongs to (the spine); `doctor` reads it from there.
+    (m) =>
+      log.appendNow({
+        actor: "system",
+        type: STORE_MOVED_EVENT,
+        payload: { workspaceId: m.workspaceId, from: m.from, to: m.to, files: m.moved },
+      }),
+  );
+  return identityDir(workspaceId);
 }
 
 function empty(): CredentialFile {
@@ -158,11 +299,49 @@ export function backupCredentials(identityDir: string, backupPath: string): stri
   return target;
 }
 
-/** Restore the credential store saved beside a ledger backup; false when the backup has none. */
-export function restoreCredentials(identityDir: string, backupPath: string): boolean {
+/**
+ * Restore the credential store saved beside a ledger backup; false when the
+ * backup has none. `keptLedger` is where the restore moved the replaced
+ * ledger: the replaced store is kept beside it (RUN-93).
+ */
+export function restoreCredentials(
+  identityDir: string,
+  backupPath: string,
+  keptLedger?: string,
+): { keptAt?: string } | false {
   const source = credentialBackupPath(backupPath);
   if (!existsSync(source)) return false;
+  const keptAt = replaceCredentialStore(identityDir, readFileSync(source, "utf8"), keptLedger);
+  return keptAt ? { keptAt } : {};
+}
+
+/**
+ * Write `text` as the workspace's credential store, keeping the store it
+ * replaces when that differs (RUN-93): a restore must not undo a password
+ * change or a revocation for good. The copy goes beside the ledger the
+ * restore moved aside (`<that file>.credentials.json`, so restoring that file
+ * brings the store back with it), or, with none, into the identity folder as
+ * `credentials.json.before-restore-<time>`; mode 0600 either way. Returns
+ * the copy's path, or undefined when nothing differed.
+ */
+export function replaceCredentialStore(
+  identityDir: string,
+  text: string,
+  keptLedger?: string,
+): string | undefined {
+  mkdirSync(identityDir, { recursive: true, mode: 0o700 });
   tightenModes(identityDir, []);
-  writePrivateFile(join(identityDir, CREDENTIALS_FILE), readFileSync(source, "utf8"));
-  return true;
+  const live = join(identityDir, CREDENTIALS_FILE);
+  let keptAt: string | undefined;
+  if (existsSync(live)) {
+    const current = readFileSync(live, "utf8");
+    if (current !== text) {
+      keptAt = keptLedger
+        ? credentialBackupPath(keptLedger)
+        : `${live}.before-restore-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+      writePrivateFile(keptAt, current);
+    }
+  }
+  writePrivateFile(live, text);
+  return keptAt;
 }

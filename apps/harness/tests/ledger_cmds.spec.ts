@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -7,6 +15,7 @@ import { BlobStore, CardStore, EventLog, initSchema, verifyLedgerExport } from "
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { initLocalKernel, main } from "../src/index.js";
 import { checkLedgerAnchor, erasureRegisterPath, ledgerHeadTrailer } from "../src/ledger_cmds.js";
+import { registerProject } from "../src/workspace_locator.js";
 
 // kernel.md NEW-kernel-1 (K-N1-5), NEW-kernel-2 (K-N2-7), NEW-kernel-7;
 // security.md NEW-security-7 (SEC-50); runtime.md NEW-runtime-8 (RUN-39,
@@ -119,6 +128,8 @@ describe("RUN-39, RUN-40: backup and restore", () => {
     const r = repo();
     const target = join(r, "..", `${r.split("/").at(-1)}-b1.db`);
     dirs.push(target);
+    // A project with a ledger: backing up a folder that is none is refused (CLI-05).
+    initLocalKernel(r).db.close();
     output();
     await main(["dev", "backup", target, "--repo", r]);
     expect(process.exitCode ?? 0).toBe(0);
@@ -355,5 +366,69 @@ describe("RUN-44: a schema newer than the harness", () => {
     db.close();
     output();
     await expect(main(["log", "--repo", r])).rejects.toThrow(/schema version 99.*version \d+/);
+  });
+});
+
+describe("NEW-kernel-12: one ledger, several projects (K-N12-2, K-N12-4)", () => {
+  async function twoProjects(): Promise<{ a: string; b: string }> {
+    const a = repo();
+    const b = repo();
+    const { db, log } = initLocalKernel(a);
+    const store = new CardStore(db, log);
+    const alpha = await store.ensureProject({ rootPath: a, name: "Alpha" });
+    const beta = await registerProject(store, log, a, { rootPath: b, name: "Beta" });
+    await store.createCard({ id: "a1", tier: "task", title: "A", projectId: alpha.id });
+    await store.createCard({ id: "b1", tier: "task", title: "B", projectId: beta.id });
+    await log.append({ actor: "system", type: "x", cardId: "b1", payload: { n: 1 } });
+    db.close();
+    return { a, b };
+  }
+
+  it("K-N12-2: both projects' events are one sequence and one chain, which one `sekhemet log` pass verifies — a change to either is caught", async () => {
+    const { a, b } = await twoProjects();
+    const db = new DatabaseSync(join(a, ".sekhemet", "events.db"));
+    const rows = db
+      .prepare(
+        "SELECT e.seq, c.project_id AS project FROM events e JOIN cards c ON c.id = e.card_id ORDER BY e.seq",
+      )
+      .all() as { seq: number; project: string }[];
+    expect(new Set(rows.map((r) => r.project)).size).toBe(2);
+    db.close();
+    output();
+    await main(["log", "--repo", b]);
+    expect(process.exitCode ?? 0).toBe(0);
+    // Tamper with an event of project Beta; the pass run from Alpha's folder fails.
+    const raw = new DatabaseSync(join(a, ".sekhemet", "events.db"));
+    raw.exec("DROP TRIGGER IF EXISTS events_no_update");
+    const tampered = raw
+      .prepare("SELECT seq FROM events WHERE card_id = 'b1' AND type = 'x'")
+      .get() as { seq: number };
+    raw.prepare("UPDATE events SET payload = '{\"n\":2}' WHERE seq = ?").run(tampered.seq);
+    raw.close();
+    const out = output();
+    await main(["log", "--repo", a]);
+    expect(process.exitCode).toBe(1);
+    expect(out.lines.join("\n")).toContain(`CORRUPTED at seq ${tampered.seq}`);
+  });
+
+  it("K-N12-4: the newest Ledger-Head anchor is read across every project's repository, whichever carried it", async () => {
+    const { a, b } = await twoProjects();
+    // Project Beta's merge carried the newest anchor; Alpha's repository has none.
+    execFileSync(
+      "git",
+      ["commit", "-q", "--allow-empty", "-m", `feat: b\n\nLedger-Head: 999:${"a".repeat(64)}`],
+      { cwd: b },
+    );
+    const { db } = initLocalKernel(a);
+    expect(checkLedgerAnchor(a, db)).toMatchObject({
+      status: "truncated",
+      seq: 999,
+      root: realpathSync(b),
+    });
+    db.close();
+    const out = output();
+    await main(["log", "--repo", a]);
+    expect(process.exitCode).toBe(1);
+    expect(out.lines.join("\n")).toMatch(/truncated/i);
   });
 });

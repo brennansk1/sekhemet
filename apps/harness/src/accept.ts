@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { BoardServiceImpl } from "@sekhemet/board";
 import {
@@ -9,14 +9,16 @@ import {
   type DossierEntry,
   ERASED_MARKER,
   type EventLog,
+  type EventRecord,
 } from "@sekhemet/kernel";
 import { MergeConflictError, NodeGitSyncAdapter, groupByIntent } from "@sekhemet/sync";
 import { boardColumnLabel } from "@sekhemet/ui";
-import { contextForCard } from "./card_root.js";
+import { contextForCard, projectRootOf } from "./card_root.js";
 import { ownersOf } from "./codeowners.js";
 import { effectiveConfig } from "./config_apply.js";
 import { localPersonDetails } from "./ledger_cmds.js";
 import { latestLedgerEvidence } from "./ledger_evidence.js";
+import { reportLostRecord } from "./lost_records.js";
 import {
   openThreadRefusal,
   requiresResolvedThreads,
@@ -34,6 +36,199 @@ import { workspaceFolderOf } from "./workspace_locator.js";
  */
 
 /** What Accept needs of the harness: the repository, its ledger and its board. */
+/** review-git RG-N8-1: what Accept will merge, appended before the merge. */
+export const ACCEPT_STARTED = "card/accept_started";
+/** review-git RG-N8-1, RG-N8-2: an Accept that did not reach its record. */
+export const ACCEPT_FAILED = "card/accept_failed";
+
+interface AcceptStarted {
+  id: string;
+  base: string;
+  branch: string;
+  branchHead: string;
+  squashTree?: string;
+  integration: string;
+  principal: string;
+  independent?: boolean;
+  auto?: true;
+  gateStatus?: "pass" | "fail" | "partial" | "unavailable";
+}
+
+/** Read-only git in the project's repository, hooks off; undefined when git refuses. */
+function gitRead(repoPath: string, args: string[]): string | undefined {
+  try {
+    return execFileSync("git", ["-c", "core.hooksPath=/dev/null", ...args], {
+      cwd: repoPath,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 30_000,
+    }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The tree a squash of `branchHead` onto `base` will have: `git merge-tree
+ * --write-tree`, as the merge computes it (it writes objects only). Undefined
+ * when the two conflict, which the merge then refuses.
+ */
+function squashTreeOf(repoPath: string, base: string, branchHead: string): string | undefined {
+  const out = gitRead(repoPath, ["merge-tree", "--write-tree", base, branchHead]);
+  const tree = out?.split("\n")[0]?.trim();
+  return tree && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(tree) ? tree : undefined;
+}
+
+/**
+ * The squash an `accept_started` describes, on the integration branch: a
+ * first-parent commit whose parent is the recorded head and whose tree is the
+ * recorded tree (or, with no tree recorded, whose message names the card).
+ */
+function findSquash(repoPath: string, started: AcceptStarted): string | undefined {
+  const list = gitRead(repoPath, [
+    "rev-list",
+    "--first-parent",
+    "--parents",
+    `${started.base}..refs/heads/${started.integration}`,
+  ]);
+  for (const line of (list ?? "").split("\n").filter(Boolean)) {
+    const [sha, parent] = line.split(" ");
+    if (!sha || parent !== started.base) continue;
+    if (started.squashTree) {
+      if (gitRead(repoPath, ["rev-parse", `${sha}^{tree}`]) === started.squashTree) return sha;
+    } else if (
+      new RegExp(`^Card: ${started.id}$`, "m").test(
+        gitRead(repoPath, ["log", "-1", "--format=%B", sha]) ?? "",
+      )
+    ) {
+      return sha;
+    }
+  }
+  return undefined;
+}
+
+export type AcceptReconciliation =
+  | { cardId: string; reconciled: string }
+  | { cardId: string; failed: "merge_missing" };
+
+/**
+ * The start-up sweep's Accept reconciliation (review-git RG-N8-2, RG-N8-3;
+ * runtime item 10; FINDINGS REL-02). Every `card/accept_started` with neither
+ * `card/accepted` nor `card/accept_failed` after it is settled from the
+ * repository: the squash found on the integration branch is recorded as the
+ * accept — the move to Done and `card/accepted { reconciled: true }` in one
+ * transaction, by the actor and principal the started record names, whose
+ * decision it was; not found, `card/accept_failed { merge_missing }` and the
+ * card stays in Review. Each card is settled under its project's accept lock
+ * (RG-N8-5), so an Accept in flight in another process — the dashboard's, a
+ * runner's — is left to finish, never judged half-way; a card whose
+ * repository cannot be locked (gone, RUN-88) stays unsettled until it is
+ * back. Run by the runners' start-up pass and by the dashboard server's
+ * start; `cardId` settles one card, and `locked` says the caller holds that
+ * card's accept lock already (`acceptCard`).
+ */
+export async function reconcileAccepts(
+  repoPath: string,
+  cardStore: CardStore,
+  boardService: Pick<BoardServiceImpl, "transitionCard">,
+  options: { cardId?: string; locked?: boolean } = {},
+): Promise<AcceptReconciliation[]> {
+  const out: AcceptReconciliation[] = [];
+  const latest = new Map<string, EventRecord>();
+  for (const e of await cardStore.eventsOfType([ACCEPT_STARTED]))
+    if (e.cardId && (options.cardId === undefined || e.cardId === options.cardId))
+      latest.set(e.cardId, e);
+  for (const [cardId, started] of latest) {
+    const card = await cardStore.getCard(cardId);
+    const root = (card ? projectRootOf(cardStore, card) : undefined) ?? repoPath;
+    const settle = () => settleAccept(root, cardStore, boardService, cardId, started);
+    let settled: AcceptReconciliation | undefined;
+    if (options.locked) settled = await settle();
+    else {
+      // RUN-88: a project whose repository is not there is left unsettled
+      // until it is back; nothing can say whether its squash landed.
+      if (!existsSync(root)) continue;
+      try {
+        settled = await new NodeGitSyncAdapter(root).withAcceptLock(settle);
+      } catch (err) {
+        // Another accept holds the lock: it settles its own record.
+        if (
+          err instanceof Error &&
+          /^Another accept for this project is in progress/.test(err.message)
+        )
+          continue;
+        throw err;
+      }
+    }
+    if (settled) out.push(settled);
+  }
+  return out;
+}
+
+/** Whether `started` has its `card/accepted` or `card/accept_failed` after it. */
+async function settledSince(
+  cardStore: CardStore,
+  cardId: string,
+  started: EventRecord,
+): Promise<boolean> {
+  return (await cardStore.cardEvents(cardId, ["card/accepted", ACCEPT_FAILED])).some(
+    (e) => e.seq > started.seq,
+  );
+}
+
+/** One card's unsettled `card/accept_started`, settled from its repository (RG-N8-2). */
+async function settleAccept(
+  root: string,
+  cardStore: CardStore,
+  boardService: Pick<BoardServiceImpl, "transitionCard">,
+  cardId: string,
+  started: EventRecord,
+): Promise<AcceptReconciliation | undefined> {
+  if (await settledSince(cardStore, cardId, started)) return undefined;
+  const p = started.payload as AcceptStarted;
+  const card = await cardStore.getCard(cardId);
+  const sha = findSquash(root, p);
+  if (!sha) {
+    await cardStore.recordEvent({
+      type: ACCEPT_FAILED,
+      cardId,
+      actor: "harness",
+      payload: { id: cardId, reason: "merge_missing", integration: p.integration },
+    });
+    return { cardId, failed: "merge_missing" };
+  }
+  const accepted = {
+    type: "card/accepted",
+    actor: started.actor,
+    principal: p.principal,
+    payload: {
+      id: cardId,
+      sha,
+      principal: p.principal,
+      ...(p.independent !== undefined ? { independent: p.independent } : {}),
+      ...(p.gateStatus ? { gateStatus: p.gateStatus } : {}),
+      integration: p.integration,
+      ...(p.auto ? { auto: true as const } : {}),
+      reconciled: true as const,
+    },
+  };
+  if (card?.status === "review") {
+    await boardService.transitionCard({
+      cardId,
+      fromStatus: "review",
+      toStatus: "done",
+      actor: started.actor,
+      principal: p.principal,
+      reason: `accepted; its record reconciled at start-up from ${sha.slice(0, 10)} on ${p.integration}`,
+      with: [accepted],
+    });
+  } else {
+    await cardStore.recordEvent({ ...accepted, cardId });
+  }
+  await new NodeGitSyncAdapter(root).removeWorktree(cardId).catch(() => undefined);
+  return { cardId, reconciled: sha };
+}
+
 export interface AcceptContext {
   repoPath: string;
   cardStore: CardStore;
@@ -639,6 +834,61 @@ async function acceptCardIn(
       "Accepted-by": auto ? `sekhemet --auto-accept (for ${person})` : person,
       "Ledger-Head": ctx.cardStore.ledgerHead() ?? "0:genesis",
     };
+    // RG-N8-5: an earlier Accept of this card whose merge was never
+    // recorded is settled first, under this lock. A newer accept_started on
+    // top of it would make it look settled once this one ends, and its
+    // squash would never be recorded; and its squash must not land twice.
+    const earlier = await reconcileAccepts(ctx.repoPath, ctx.cardStore, ctx.boardService, {
+      cardId: stored.id,
+      locked: true,
+    });
+    const landed = earlier.find(
+      (r): r is { cardId: string; reconciled: string } => "reconciled" in r,
+    );
+    if (landed) {
+      throw new AcceptRefusedError(
+        "not_in_review",
+        `${stored.id} was already accepted: its squash ${landed.reconciled.slice(0, 10)} is on ${target}, from an Accept whose record a crash cut short; that record is settled now, and the issue is Done.`,
+      );
+    }
+    // RG-N8-1: what will merge, on the ledger before the merge, so a crash
+    // between the merge and its record is reconciled at the next start.
+    const branch = adapter.cardBranch(stored.id) as string;
+    const branchHead = adapter.revParse(`refs/heads/${branch}^{commit}`);
+    const squashTree = squashTreeOf(ctx.repoPath, old, branchHead);
+    await ctx.cardStore.recordEvent({
+      type: ACCEPT_STARTED,
+      cardId: stored.id,
+      actor,
+      principal,
+      payload: {
+        id: stored.id,
+        base: old,
+        branch,
+        branchHead,
+        ...(squashTree ? { squashTree } : {}),
+        integration: target,
+        principal,
+        independent,
+        gateStatus,
+        ...(auto ? { auto: true } : {}),
+      },
+    });
+    const failed = (reason: "conflict" | "refused" | "error") =>
+      ctx.cardStore
+        .recordEvent({
+          type: ACCEPT_FAILED,
+          cardId: stored.id,
+          actor,
+          principal,
+          payload: { id: stored.id, reason, integration: target },
+        })
+        .catch((err) =>
+          reportLostRecord(ACCEPT_FAILED, err, {
+            workspaceId: ctx.cardStore.workspaceId(),
+            cardId: stored.id,
+          }),
+        );
     let merged: string;
     try {
       merged = await adapter.squashAndMerge(
@@ -650,6 +900,7 @@ async function acceptCardIn(
         { expectedOld: old, body: execute.evidenceSummary(stored, ev, []) },
       );
     } catch (err) {
+      await failed(err instanceof MergeConflictError ? "conflict" : "error");
       if (err instanceof MergeConflictError) {
         throw new AcceptRefusedError("conflict", err.message);
       }
@@ -684,6 +935,7 @@ async function acceptCardIn(
     } catch (err) {
       // RG-S5-3: the board refused after the ref moved — put it back.
       await adapter.restoreRef(target, old, merged);
+      await failed("refused");
       throw err;
     }
     return merged;

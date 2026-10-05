@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { DEFAULT_STEP_BUDGET, type TomlTable, parseToml } from "@sekhemet/kernel";
+import { DEFAULT_STEP_BUDGET, TomlParseError, type TomlTable, parseToml } from "@sekhemet/kernel";
+import { DEFAULT_LOG_LEVEL, type LogLevel, configuredLogLevel } from "./log_levels.js";
 import { parseHours } from "./scheduler.js";
 import type { IdentitySource, Level, OidcSettings } from "./team/settings.js";
 import { userDir } from "./user_dir.js";
@@ -127,6 +128,8 @@ export interface SekhemetConfig {
    * of names by default.
    */
   docs: { product?: string; decisions?: string; noNames: boolean };
+  /** `[log] level` (surface item 21a, SUR-91): the server log's level. */
+  log: { level: LogLevel };
 }
 
 /**
@@ -181,6 +184,7 @@ export const DEFAULT_CONFIG: SekhemetConfig = {
   sync: { github: false, forgejo: "" },
   telemetry: { store: "local" },
   docs: { noNames: false },
+  log: { level: DEFAULT_LOG_LEVEL },
 };
 
 export interface ConfigLayer {
@@ -231,16 +235,73 @@ function mergeTables(base: TomlTable, override: TomlTable): TomlTable {
   return out;
 }
 
-function readLayer(name: string, path: string): ConfigLayer | undefined {
+/**
+ * A `config.toml` that does not parse (surface item 21, SUR-92; FINDINGS_C1
+ * REL-06): its file, line and column, and the one line that names them.
+ */
+export interface ConfigParseError {
+  layer: "user" | "project";
+  path: string;
+  line: number;
+  column: number;
+  message: string;
+  /** `<path>:<line>:<column>: <message>`, the words every refusal uses. */
+  text: string;
+}
+
+function parseErrorOf(
+  layer: ConfigParseError["layer"],
+  path: string,
+  err: unknown,
+): ConfigParseError {
+  const line = err instanceof TomlParseError ? err.line : 1;
+  const column = err instanceof TomlParseError ? err.column : 1;
+  const message =
+    err instanceof TomlParseError ? err.reason : err instanceof Error ? err.message : String(err);
+  return { layer, path, line, column, message, text: `${path}:${line}:${column}: ${message}` };
+}
+
+function readLayer(
+  name: "user" | "project",
+  path: string,
+  errors: ConfigParseError[] = [],
+): ConfigLayer | undefined {
   if (!existsSync(path)) return undefined;
   try {
     return { name, path, values: parseToml(readFileSync(path, "utf8")) };
-  } catch {
-    // A malformed layer is skipped rather than aborting startup; `doctor`
-    // surfaces it. Refusing to boot because of a stray character in an optional
-    // user file is worse than running on defaults.
+  } catch (err) {
+    // A malformed layer is skipped so the dashboard and `doctor` still run on
+    // the other layers, and it is never silent: the error, with its line and
+    // column, is returned for `doctor` to fail on and for `run`, `queue` and
+    // `overnight` to refuse with (SUR-92).
+    errors.push(parseErrorOf(name, path, err));
     return undefined;
   }
+}
+
+/** Each of the person's and the project's `config.toml` that does not parse (SUR-92). */
+export function configParseErrors(
+  repoPath: string,
+  userPath: string = userConfigPath(),
+): ConfigParseError[] {
+  const errors: ConfigParseError[] = [];
+  readLayer("user", userPath, errors);
+  readLayer("project", join(repoPath, ".sekhemet", "config.toml"), errors);
+  return errors;
+}
+
+/**
+ * Why unattended work must not start here (SUR-92): undefined when every
+ * `config.toml` parses, else the refusal `run`, `resume`, `queue` and
+ * `overnight` print before they exit 2.
+ */
+export function configParseRefusal(
+  repoPath: string,
+  userPath: string = userConfigPath(),
+): string | undefined {
+  const errors = configParseErrors(repoPath, userPath);
+  if (errors.length === 0) return undefined;
+  return `${errors.map((e) => e.text).join("; ")} — this configuration does not parse, so nothing was started; fix ${errors.length === 1 ? "it" : "them"} and run again (\`sekhemet doctor\` checks it).`;
 }
 
 /**
@@ -451,6 +512,7 @@ function project(merged: TomlTable, problems: string[] = [], user?: TomlTable): 
     },
     telemetry: { store: str(telemetry.store, d.telemetry.store) },
     docs: docsSettings(table(merged, "docs"), problems),
+    log: { level: configuredLogLevel(table(merged, "log").level, problems) },
   };
 }
 
@@ -550,6 +612,8 @@ export interface ResolvedConfig {
   problems: string[];
   /** The layer each value a file sets came from, by dotted key (DB-N4-1); the rest are defaults. */
   sources: Record<string, string>;
+  /** Each file that does not parse, skipped and named (SUR-92). */
+  parseErrors: ConfigParseError[];
 }
 
 /**
@@ -591,10 +655,15 @@ export function resolveConfig(options: ResolveConfigOptions): ResolvedConfig {
   const layers: ConfigLayer[] = [{ name: "defaults", values: {} }];
 
   const userPath = options.userConfigPath ?? userConfigPath();
-  const user = readLayer("user", userPath);
+  const parseErrors: ConfigParseError[] = [];
+  const user = readLayer("user", userPath, parseErrors);
   if (user) layers.push(user);
 
-  const proj = readLayer("project", join(options.repoPath, ".sekhemet", "config.toml"));
+  const proj = readLayer(
+    "project",
+    join(options.repoPath, ".sekhemet", "config.toml"),
+    parseErrors,
+  );
   if (proj) layers.push(proj);
 
   if (options.cardOverrides) layers.push({ name: "card", values: options.cardOverrides });
@@ -609,6 +678,7 @@ export function resolveConfig(options: ResolveConfigOptions): ResolvedConfig {
     layers: layers.map((l) => l.name),
     problems,
     sources: keySources(layers, problems),
+    parseErrors,
   };
 }
 

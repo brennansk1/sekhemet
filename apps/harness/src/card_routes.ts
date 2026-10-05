@@ -24,6 +24,7 @@ import {
   type EventLog,
   isCardStatus,
 } from "@sekhemet/kernel";
+import { cardVersion } from "@sekhemet/ui";
 import { RevertConflictError, checkoutNotice, integrationBranch } from "./accept.js";
 import { contextForCard } from "./card_root.js";
 import {
@@ -299,6 +300,8 @@ export const CARD_ROUTES: CardRoute[] = [
         json(res, 404, { error: `No issue ${m[1]}` });
         return;
       }
+      // DB-N16-4: the version an edit names in If-Match.
+      res.setHeader("ETag", `"${cardVersion(card as unknown as Record<string, unknown>)}"`);
       json(res, 200, {
         card: presentCard(card, state.cards),
         attempts: attemptsFor(card.id).map((a) => a.summary),

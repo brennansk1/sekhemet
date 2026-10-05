@@ -141,6 +141,9 @@ const NOT_COPY: Record<string, RegExp[]> = {
     // with the dev help in C5 (FINDINGS_C1 R-21, WRD-14).
     /bake-?off|golden set/i,
   ],
+  // The squash commit's `Card:` trailer, matched to reconcile an Accept
+  // (review-git RG-N8-2): git's record, read by a regular expression.
+  "accept.ts": [/^\^Card:\s+\$\{\}\s+\$$/],
   // `config.toml`'s keys (`planner = "…"`) are names the file is read by.
   "init.ts": [/^planner = "/],
   "wave2.ts": [

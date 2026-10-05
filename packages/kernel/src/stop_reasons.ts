@@ -49,6 +49,13 @@ export interface StopReasonRow {
   halts: boolean;
   /** The attempt counts in the competence model. */
   measuresModel: boolean;
+  /**
+   * The queue starts no further card after it: the machine, not the card,
+   * is the problem (runtime item 22, WL-N11-2, WL-N12-2).
+   */
+  haltsQueue: boolean;
+  /** The card returns to Ready, its worktree kept for a resume from its checkpoint. */
+  holdsInReady: boolean;
   /** Where the card goes. */
   goesTo: string;
   /** The next action shown to the person. */
@@ -71,6 +78,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: false,
     halts: false,
     measuresModel: true,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Review",
     nextAction: "Ready for review.",
   },
@@ -83,6 +92,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: false,
     halts: false,
     measuresModel: true,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Parked; Planning with the failures when the gates ran",
     nextAction:
       "By the budget that ran out: steps — raise the step budget for the class or split the issue; context — the prompt reached 95% of its budget, so split the issue or narrow its scope (raising the step budget cannot help).",
@@ -96,6 +107,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: true,
     halts: false,
     measuresModel: true,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Parked; Planning with the failures when the gates ran",
     nextAction: "Tokens used of the budget: raise it for the class or split the issue.",
   },
@@ -108,6 +121,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: true,
     halts: false,
     measuresModel: true,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Parked; Planning with the failures when the gates ran",
     nextAction: "Seconds used of the budget: raise it for the class or split the issue.",
   },
@@ -120,6 +135,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: false,
     halts: false,
     measuresModel: true,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Verify",
     nextAction: "Read what the Agent said on each silent step, and the call it should have made.",
   },
@@ -132,6 +149,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: false,
     halts: false,
     measuresModel: true,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Verify",
     nextAction: "See the repeated call and what to do instead.",
   },
@@ -144,6 +163,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: false,
     halts: false,
     measuresModel: false,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Parked, before any step",
     nextAction: "The tests already pass: rewrite them to fail until the behaviour exists.",
   },
@@ -156,6 +177,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: true,
     halts: false,
     measuresModel: false,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Parked, before any step",
     nextAction:
       "A test fails for the wrong reason (an import, compile, collection or setup error): have the test-author step make it fail at an assertion.",
@@ -170,6 +193,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     halts: false,
     // A precondition that failed before any work: never the Worker's.
     measuresModel: false,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Parked, before any step",
     nextAction:
       "A characterize, refactor or upgrade issue's tests fail on the base: they must pass there before the issue can start. Fix the tests, or plan the issue as a fix.",
@@ -183,6 +208,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: true,
     halts: true,
     measuresModel: false,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Verify",
     nextAction: "Run the checks.",
   },
@@ -195,6 +222,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: false,
     halts: false,
     measuresModel: true,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Verify",
     nextAction: "See the file it tried to change, and widen the scope if it belongs to the issue.",
   },
@@ -207,6 +236,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: true,
     halts: false,
     measuresModel: true,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Parked; the worktree is discarded",
     nextAction:
       "Compare the gitdir the .git pointer names with Sekhemet's record (no git command ran), and inspect before re-queuing the issue from To do.",
@@ -220,6 +251,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: false,
     halts: false,
     measuresModel: true,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Parked",
     nextAction: "See what was tried, what failed each time, and what is suspected.",
   },
@@ -232,6 +265,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: false,
     halts: false,
     measuresModel: true,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Parked",
     nextAction: "See what was tried after the re-plan; split the issue or use a stronger model.",
   },
@@ -244,6 +279,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: false,
     halts: true,
     measuresModel: false,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Planning",
     nextAction: "The planning model re-plans; the plan is recorded in the dossier.",
   },
@@ -256,6 +293,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: true,
     halts: false,
     measuresModel: true,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Parked",
     nextAction:
       "See the check and the Agent's reason, and decide whether the check or the issue is wrong.",
@@ -269,6 +308,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: true,
     halts: true,
     measuresModel: false,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Stays; resumes from its last checkpoint",
     nextAction: "See who stopped it; resume or reject.",
   },
@@ -281,6 +322,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: true,
     halts: true,
     measuresModel: false,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Stays in progress until a person hands it back; resumes from its checkpoint",
     nextAction: "Hand it back with a note, or take it over.",
   },
@@ -293,6 +336,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: true,
     halts: true,
     measuresModel: false,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Parked",
     nextAction: "See the hook and its reason; change the hook or the issue, then take it off hold.",
   },
@@ -305,6 +350,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: true,
     halts: false,
     measuresModel: false, // rule 31: never the Worker's fault (DEC-42)
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Resumes from its last checkpoint",
     nextAction: "See the error; the next run resumes.",
   },
@@ -317,6 +364,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: true,
     halts: true,
     measuresModel: false,
+    haltsQueue: true,
+    holdsInReady: false,
     goesTo: "Held; resumes when the watchdog allows",
     nextAction: "See the watchdog level and what to free.",
   },
@@ -329,6 +378,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: true,
     halts: true,
     measuresModel: false,
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Held; resumes when the quota returns",
     nextAction: "See the quota and when it resets.",
   },
@@ -341,8 +392,42 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: true,
     halts: true,
     measuresModel: false,
+    haltsQueue: false,
+    holdsInReady: true,
     goesTo: "Ready, worktree restored to the last checkpoint",
     nextAction: "Resumes from the last completed step on the next run.",
+  },
+  // Runtime NEW-runtime-13, worker-loop NEW-worker-loop-11: a full disk.
+  disk_low: {
+    class: "environment",
+    parks: "no",
+    resumable: true,
+    mayVerify: false,
+    checkpoints: true,
+    endsSampling: true,
+    halts: true,
+    measuresModel: false, // rule 31: never the Worker's fault (DEC-42)
+    haltsQueue: true,
+    holdsInReady: true,
+    goesTo:
+      "Ready, its worktree at its last checkpoint; a card that had not started stays Ready; no card starts until free space is back above the floor",
+    nextAction:
+      "See the volume, its free space against the floor and the largest consumers under .sekhemet/ (or the path a write failed on); free some space, then resume.",
+  },
+  // Worker-loop NEW-worker-loop-12 (FINDINGS REL-10): the Coding model is down.
+  model_unavailable: {
+    class: "environment",
+    parks: "no",
+    resumable: true,
+    mayVerify: false,
+    checkpoints: true,
+    endsSampling: true,
+    halts: true,
+    measuresModel: false, // rule 31: never the Worker's fault (DEC-42)
+    haltsQueue: true,
+    holdsInReady: true,
+    goesTo: "Ready, its worktree at its last checkpoint; the queue starts no further card",
+    nextAction: "Start the Coding model's engine, then resume.",
   },
   rebase_conflict: {
     class: "environment",
@@ -353,6 +438,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: false,
     halts: false,
     measuresModel: false, // rule 31: never the Worker's fault (DEC-42)
+    haltsQueue: false,
+    holdsInReady: false,
     // RG-N1: the Worker gets the hunks first; the reason is stored only when it parks.
     goesTo:
       "Parked: the conflict lies outside the card's scope, or the Worker's budget ended with it unresolved (one decision request names both cards)",
@@ -367,6 +454,8 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: false,
     halts: false,
     measuresModel: false, // rule 31: never the Worker's fault (DEC-42)
+    haltsQueue: false,
+    holdsInReady: false,
     goesTo: "Planning",
     nextAction: "See the checks that passed on the issue branch and failed after the rebase.",
   },
@@ -394,4 +483,78 @@ export const SECONDS_PER_STEP = 70;
 /** The seconds budget a step budget implies, per sample: steps × 70 s. */
 export function defaultSecondsBudget(stepBudget: number = DEFAULT_STEP_BUDGET): number {
   return stepBudget * SECONDS_PER_STEP;
+}
+
+/** Every error in `err`'s cause chain (an `AggregateError`'s members too), outermost first. */
+function errorChain(err: unknown): unknown[] {
+  const out: unknown[] = [];
+  const queue: unknown[] = [err];
+  while (queue.length > 0 && out.length < 16) {
+    const e = queue.shift();
+    if (e === undefined || e === null || out.includes(e)) continue;
+    out.push(e);
+    if (typeof e === "object") {
+      const o = e as { cause?: unknown; errors?: unknown[] };
+      if (o.cause !== undefined) queue.push(o.cause);
+      if (Array.isArray(o.errors)) queue.push(...o.errors);
+    }
+  }
+  return out;
+}
+
+const fieldOf = (e: unknown, key: string): unknown =>
+  typeof e === "object" && e !== null ? (e as Record<string, unknown>)[key] : undefined;
+
+/**
+ * A write that failed because the volume is full (runtime RUN-70,
+ * worker-loop WL-N11-3): the operating system's ENOSPC (or EDQUOT, a quota),
+ * or SQLite's `SQLITE_FULL` (extended code 13, "database or disk is full").
+ */
+export function isNoSpaceError(err: unknown): boolean {
+  return errorChain(err).some((e) => {
+    const code = fieldOf(e, "code");
+    if (code === "ENOSPC" || code === "EDQUOT") return true;
+    const errcode = fieldOf(e, "errcode");
+    if (typeof errcode === "number" && (errcode & 0xff) === 13) return true;
+    const message = e instanceof Error ? e.message : typeof e === "string" ? e : "";
+    return /\bENOSPC\b|no space left on device|database or disk is full|SQLITE_FULL/i.test(message);
+  });
+}
+
+/** Connection-level failures of a model server that is down or died mid-stream. */
+const MODEL_DOWN_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EPIPE",
+  "ENOTCONN",
+  "EHOSTUNREACH",
+  "UND_ERR_SOCKET",
+  "UND_ERR_CLOSED",
+  // C.6: a managed engine that cannot start — its weights gone mid-load, or
+  // the server exiting during startup (`EngineUnavailableError`, models).
+  "ENGINE_UNAVAILABLE",
+  // MD-N17-2: another project kept the machine's model lease past the wait
+  // (`ModelLeaseHeld`, models): the queue must not start the next card into
+  // another wait.
+  "MODEL_LEASE_HELD",
+]);
+
+/**
+ * The Coding model's engine is down (worker-loop WL-N12-2, FINDINGS REL-10):
+ * the connection was refused or reset, or the response stream ended without
+ * a finish reason (undici's `terminated`, "other side closed"). An HTTP
+ * status from a live server is not: that is a deterministic `error`
+ * (WL-N12-3).
+ */
+export function isModelUnavailableError(err: unknown): boolean {
+  const chain = errorChain(err);
+  if (chain.some((e) => typeof fieldOf(e, "status") === "number")) return false;
+  return chain.some((e) => {
+    const code = fieldOf(e, "code");
+    if (typeof code === "string" && MODEL_DOWN_CODES.has(code)) return true;
+    const message = e instanceof Error ? e.message : "";
+    return /^terminated$|other side closed|socket hang up|ended without a finish reason/i.test(
+      message,
+    );
+  });
 }

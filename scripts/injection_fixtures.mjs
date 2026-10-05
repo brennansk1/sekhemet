@@ -8,15 +8,18 @@
  * Each fixture is a small real task with a RedCode-Exec payload (MIT,
  * fixtures/injection/) in one of four channels — the issue text, a file in the
  * repository, gate output, a fetched page — its targets rewritten to canaries.
- * The page is fetched by the card's visual check, in the verification the
- * Worker must pass to finish (F27), so it reaches the Worker whatever it
- * chooses; a page never served is still "not delivered", never a pass.
+ * The page is read at the card's start and recorded on its dossier as
+ * research, whole (in parts within the dossier's line limit), so it is in the
+ * Worker's first prompt (F28), and fetched again by
+ * the card's visual check, in the verification the Worker must pass to finish
+ * (F27); a page no Worker prompt carried whole — the order and every line of
+ * its script — is "not delivered", never a pass.
  * The Worker runs it through `sekhemet run` with a fake HOME and an offline
  * user config; afterwards every canary must be intact. A full pass is recorded
  * for this Worker's model and quantisation (SEC-37b), which `overnight` needs.
  * Never run `tsc -b` or `pnpm gate` while this runs.
  */
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createSocket } from "node:dgram";
 import {
@@ -50,9 +53,7 @@ const out =
 const CARD_TIMEOUT_MS = 20 * 60 * 1000;
 
 const inj = await import(join(ROOT, "apps/harness/dist/injection.js"));
-const { CardStore, EventLog, initSchema } = await import(
-  join(ROOT, "packages/kernel/dist/index.js")
-);
+const { CardStore, EventLog } = await import(join(ROOT, "packages/kernel/dist/index.js"));
 const { ModelRegistry, defaultRegistryPath, resolveWorkerModelId } = await import(
   join(ROOT, "packages/models/dist/index.js")
 );
@@ -164,23 +165,14 @@ for (const [i, payload] of payloads.entries()) {
     Object.assign(plan, inj.fixturePlan(payload, i, canaries, docs.address().port));
   }
   const repo = join(work, "repo");
-  mkdirSync(join(repo, "src"), { recursive: true });
-  const git = (...a) => execFileSync("git", a, { cwd: repo, stdio: "ignore" });
-  git("init", "-q", "-b", "main");
-  git("config", "user.name", "Fixture");
-  git("config", "user.email", "fixture@example.com");
-  writeFileSync(join(repo, "src", "math.js"), "// math helpers\n");
-  writeFileSync(join(repo, "package.json"), JSON.stringify({ name: "fixture", type: "module" }));
-  for (const [f, body] of Object.entries(plan.files)) writeFileSync(join(repo, f), body);
-  mkdirSync(join(repo, ".sekhemet"));
-  if (plan.gateToml) writeFileSync(join(repo, ".sekhemet", "gates.toml"), plan.gateToml);
-  git("add", "-A");
-  git("commit", "-q", "-m", "fixture");
-  const db = new DatabaseSync(join(repo, ".sekhemet", "events.db"));
-  initSchema(db);
-  const store = new CardStore(db, new EventLog(db));
-  await store.createCard({ ...plan.card, tier: "story", status: "ready" });
-  db.close();
+  // F28: the page is delivered at the card's start, as research on its
+  // dossier, so a Worker stopped before its verification has still seen it.
+  await inj.seedFixtureRepo(repo, plan, {
+    ...(plan.page ? { pageUrl: `http://127.0.0.1:${docs.address().port}/guide` } : {}),
+  });
+  // The runner's own read is not a load by the card's checks: a fixture that
+  // goes undelivered says how often a check loaded the page.
+  const loadsBeforeCard = pageServed;
   const profileBefore = sha(join(home, ".bashrc"));
   const secretBefore = sha(secret);
   const t0 = Date.now();
@@ -284,7 +276,11 @@ for (const [i, payload] of payloads.entries()) {
   // context packs), not that the page was served.
   const delivery =
     plan.channel === "page"
-      ? inj.pageDelivery(pageServed, inj.workerPrompts(db2, repo, plan.card.id))
+      ? inj.pageDelivery(
+          pageServed - loadsBeforeCard,
+          inj.workerPrompts(db2, repo, plan.card.id),
+          plan.page.script,
+        )
       : undefined;
   db2.close();
   const observation = {
@@ -328,7 +324,13 @@ for (const [i, payload] of payloads.entries()) {
     turns,
     stopReason,
     ...(exposure.reason ? { exposure: exposure.reason } : {}),
-    ...(plan.channel === "page" ? { pageServed, delivered: delivery?.delivered === true } : {}),
+    ...(plan.channel === "page"
+      ? {
+          pageServed,
+          checkLoads: pageServed - loadsBeforeCard,
+          delivered: delivery?.delivered === true,
+        }
+      : {}),
     ...verdict,
     observation,
     stderrTail: stderr.slice(-2000),

@@ -1674,3 +1674,56 @@ export function modelUseView(
   const caption = `Every model's tokens in ${period}: ${formatTokens(t.promptTokens)} in, of which ${formatTokens(t.cachedPromptTokens)} were reused from the cache, and ${formatTokens(t.completionTokens)} out, over ${plural(t.requests, "request")}. The Coding model's are its steps on issues; the others' are Seshat's answers and the other models' work.`;
   return { lines, caption };
 }
+
+// ---------------------------------------------------------------------------
+// An issue's version for concurrent edits (dashboard DB-N16-4, FINDINGS REL-08)
+// ---------------------------------------------------------------------------
+
+/** The fields `PATCH /api/cards/:id` edits: the version is theirs alone. */
+export const CARD_VERSION_FIELDS = [
+  "title",
+  "priority",
+  "estimate",
+  "labels",
+  "epicId",
+  "cycleId",
+  "assignee",
+  "dueDate",
+  "gateChecks",
+] as const;
+
+/** A value with its objects' keys in order, and nothing undefined. */
+function canonicalValue(value: unknown): unknown {
+  if (value === undefined || value === null) return null;
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort())
+      out[key] = canonicalValue((value as Record<string, unknown>)[key]);
+    return out;
+  }
+  return value;
+}
+
+/** FNV-1a over a string's UTF-16 code units, from `seed`, as 8 hex digits. */
+function fnv1a(text: string, seed: number): string {
+  let h = seed >>> 0;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+/**
+ * An issue's version (DB-N16-4): a digest of the fields a person edits, the
+ * same on the server (the `ETag` of `GET` and `PATCH /api/cards/:id`) and on
+ * the page (the `If-Match` of an edit), so a stale edit is refused with 409
+ * rather than overwriting another person's. A run's step count or the time of
+ * the last write is no person's edit and leaves it unchanged. A version, not
+ * a secret: two FNV-1a digests, 16 hex digits.
+ */
+export function cardVersion(card: Readonly<Record<string, unknown>>): string {
+  const text = JSON.stringify(CARD_VERSION_FIELDS.map((f) => canonicalValue(card[f])));
+  return `${fnv1a(text, 0x811c9dc5)}${fnv1a(text, 0x01000193 ^ 0x5bd1e995)}`;
+}

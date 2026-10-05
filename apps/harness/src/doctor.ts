@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -31,16 +31,22 @@ import {
   hostFingerprintHash,
   isOllamaCloudTag,
   managedModelWeights,
+  modelLeaseHolderWords,
+  modelLeaseLive,
+  modelLeasePath,
   ollamaCloudRefusal,
   probeModelWeights,
   readKernelPressureLevel,
+  readModelLease,
+  resolveModelsDir,
   sekhemetConfigDir,
   sha256File,
   supportedTierFor,
 } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { plural } from "@sekhemet/ui";
-import { userConfigPath } from "./config.js";
+import { newestVerifiedBackup } from "./backup_sets.js";
+import { resolveConfig, userConfigPath } from "./config.js";
 import {
   defaultWorkerName,
   effectiveConfig,
@@ -48,7 +54,9 @@ import {
   queueDefaults,
 } from "./config_apply.js";
 import { configUpgradeCheck } from "./config_upgrade.js";
+import { checkFreeSpace, formatBytes } from "./disk_space.js";
 import { toolProbeOptions } from "./init.js";
+import { countLostRecords, lostRecordsPath } from "./lost_records.js";
 import { pendingM0InRepo } from "./m0_path.js";
 import { describeModel, roleModelName } from "./model_access.js";
 import { setupFor } from "./planner_live.js";
@@ -58,11 +66,25 @@ import { checkRegisters } from "./registers.js";
 import { researchDoctorLines } from "./research_bakeoff.js";
 import { awaitingResearchHosts } from "./research_consent.js";
 import { secretStoreStatus } from "./secret_store.js";
+import { findOnPath, sleepAssertionCommand, sleepAssertionProbe } from "./sleep_assertion.js";
+import {
+  CREDENTIALS_FILE,
+  type IdentityMove,
+  identityDir,
+  identityRoot,
+  readIdentityMove,
+} from "./team/credential_store.js";
 import { type TeamEnginesReport, checkTeamEngines } from "./team_engines.js";
 import { readMoveRecord, userDir } from "./user_dir.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { playbookDoctorCheck } from "./wave2.js";
-import { holdsLedger, ledgerFacts, rewriteLocators } from "./workspace_locator.js";
+import {
+  holdsLedger,
+  ledgerFacts,
+  ledgerPathOf,
+  rewriteLocators,
+  workspaceFolderOf,
+} from "./workspace_locator.js";
 
 export type CheckStatus = "pass" | "warn" | "fail";
 
@@ -340,7 +362,15 @@ export function weightsCheck(
  * Every check probes something. A diagnostic that cannot fail is worse than no
  * diagnostic, because it is trusted and wrong.
  */
-export async function runDoctor(repoPath: string = process.cwd()): Promise<DoctorReport> {
+export interface DoctorOptions {
+  /** SUR-89: hash every weights file the cache does not hold (`doctor --verify-weights`). */
+  verifyWeights?: boolean;
+}
+
+export async function runDoctor(
+  repoPath: string = process.cwd(),
+  options: DoctorOptions = {},
+): Promise<DoctorReport> {
   const total = totalmem();
   const free = freemem();
   const pressure = classifyMemoryPressure(total - free, total);
@@ -353,8 +383,9 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
     // Rules 6a and 6b: which engine, where it came from, its build against the floor.
     engineDoctorCheck(),
     weightsCheck(),
-    // Rule 5, MD-N7-2: each weights file's hash against the registered one.
-    await weightsHashCheck(),
+    // Rule 5, MD-N7-2: each weights file's hash against the registered one;
+    // a file the cache does not hold is read only on request (SUR-89).
+    await weightsHashCheck({ verify: options.verifyWeights === true }),
     // MD-N8-1: each assigned role verified for its combination on this machine.
     roleQualificationCheck(hostRegistry(), { repoPath }),
     // Rule 6d, MD-N16-4: which roles Ollama serves, in the README's words.
@@ -381,6 +412,8 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
     modelVerificationCheck(),
     ollamaCloudCheck(repoPath),
     userDirCheck(),
+    // Surface item 21, SUR-92: a config.toml that does not parse fails, by file, line and column.
+    configurationCheck(repoPath),
     // SUR-43: each renamed config key an upgrade rewrote, with its backup.
     configUpgradeCheck([join(repoPath, ".sekhemet", "config.toml"), userConfigPath()]),
     hooksCheck(repoPath),
@@ -389,9 +422,66 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
     secretStoreCheck(),
     // SUR-78: every project's locator, rewritten from the ledger.
     projectLocatorsCheck(repoPath),
+    // Surface item 20e (C4): backups, staying awake, power, free space, the
+    // credential store, the model lease and lost records (SUR-83 to SUR-88).
+    ...reliabilityChecks(repoPath),
   ];
 
   return { ok: checks.every((c) => c.status !== "fail"), checks };
+}
+
+/**
+ * Surface item 21, SUR-92 (FINDINGS_C1 REL-06): each `config.toml` that does
+ * not parse fails, named by file, line and column, since `run`, `queue` and
+ * `overnight` refuse to start on it; a value refused (item 23's checks) is a
+ * warning naming its key; otherwise the layers that were read.
+ */
+export function configurationCheck(
+  repoPath: string,
+  userPath: string = userConfigPath(),
+): DiagnosticCheck {
+  const resolved = resolveConfig({ repoPath, userConfigPath: userPath });
+  if (resolved.parseErrors.length > 0)
+    return check(
+      "Configuration",
+      "fail",
+      withDo(
+        `${resolved.parseErrors.map((e) => e.text).join("; ")}; this file is skipped, and run, queue and overnight refuse to start until it parses`,
+        `fix ${resolved.parseErrors.length === 1 ? "that line" : "those lines"}, then run \`sekhemet doctor\` again`,
+      ),
+    );
+  if (resolved.problems.length > 0)
+    return check("Configuration", "warn", resolved.problems.join("; "));
+  const files = resolved.layers.filter((l) => l === "user" || l === "project");
+  return check(
+    "Configuration",
+    "pass",
+    files.length
+      ? `read ${files.map((l) => `the ${l} config.toml`).join(" and ")}`
+      : "built-in defaults; no config.toml",
+  );
+}
+
+/** Surface item 20e's rows for the workspace `repoPath` belongs to (SUR-83 to SUR-88). */
+export function reliabilityChecks(repoPath: string): DiagnosticCheck[] {
+  const workspaceFolder = workspaceFolderOf(repoPath);
+  let workspaceId: string | undefined;
+  try {
+    workspaceId = holdsLedger(workspaceFolder)
+      ? ledgerFacts(workspaceFolder).workspaceId
+      : undefined;
+  } catch {
+    // An unreadable ledger is the Backup row's to report.
+  }
+  return [
+    backupCheck(workspaceFolder),
+    stayAwakeCheck(),
+    powerCheck(repoPath),
+    freeSpaceCheck(repoPath, workspaceFolder, resolveModelsDir()),
+    credentialStoreCheck(workspaceId, workspaceFolder),
+    modelLeaseCheck(),
+    lostRecordsCheck(workspaceId),
+  ];
 }
 
 /**
@@ -862,8 +952,12 @@ export async function weightsHashCheck(
     files?: readonly { modelId: string; path: string }[];
     cachePath?: string;
     hash?: (path: string) => Promise<string>;
+    /** SUR-89: read the files the cache does not hold (`--verify-weights`); otherwise only name them. */
+    verify?: boolean;
+    now?: () => number;
   } = {},
 ): Promise<DiagnosticCheck> {
+  const now = opts.now ?? (() => Date.now());
   const registry = "registry" in opts ? opts.registry : hostRegistry();
   const files =
     opts.files ??
@@ -898,16 +992,50 @@ export async function weightsHashCheck(
   }
   let wrote = false;
   const bad: string[] = [];
+  const unread: { path: string; bytes: number }[] = [];
+  /** Verified here before, at this size, and written since: not read again without the flag. */
+  const changed: string[] = [];
+  let compared = 0;
+  const started = now();
   for (const [path, { modelId, expected }] of todo) {
     let key: string;
+    let bytes: number;
     try {
       const st = statSync(path);
       key = `${path}\0${st.size}\0${Math.round(st.mtimeMs)}`;
+      bytes = st.size;
     } catch {
       continue;
     }
     let sha = cache[key];
     if (!sha || !/^[0-9a-f]{64}$/.test(sha)) {
+      // SUR-89: about 42 GB on the reference machine; read only when asked.
+      if (!opts.verify) {
+        // The cheap signals, read without reading the file (C4 review): a
+        // size other than the registered one, or than the file verified
+        // here before, cannot have the registered hash.
+        const entry = registry?.get(modelId);
+        const registered = entry?.sizeBytes ?? entry?.source?.sizeBytes;
+        const verified = Object.entries(cache)
+          .filter(([k, v]) => k.startsWith(`${path}\0`) && v === expected)
+          .map(([k]) => Number(k.split("\0")[1]));
+        const was =
+          registered !== undefined && registered !== bytes
+            ? `the registered ${formatBytes(registered)}`
+            : verified.length > 0 && !verified.includes(bytes)
+              ? `the ${formatBytes(verified[0] as number)} verified before`
+              : undefined;
+        if (was) {
+          bad.push(
+            withDo(
+              `${modelId}: the file is ${formatBytes(bytes)}, not ${was}, so its hash differs from the registered one (${path})`,
+              `download it again on Configuration › Models, or run \`sekhemet models fetch ${modelId}\``,
+            ),
+          );
+        } else if (verified.length > 0) changed.push(path);
+        else unread.push({ path, bytes });
+        continue;
+      }
       try {
         sha = await hash(path);
       } catch (err) {
@@ -919,6 +1047,7 @@ export async function weightsHashCheck(
       cache[key] = sha;
       wrote = true;
     }
+    compared++;
     if (sha !== expected)
       bad.push(
         withDo(
@@ -934,10 +1063,361 @@ export async function weightsHashCheck(
     } catch {
       // The cache is a convenience; a failed write only means hashing again.
     }
-  if (bad.length) return check("Weights' hashes", "fail", bad.join("; "));
+  const tookMs = now() - started;
+  const unverified = [
+    changed.length
+      ? `${plural(changed.length, "model file")} changed since ${changed.length === 1 ? "it was" : "they were"} verified (${changed.join(", ")}): run \`sekhemet doctor --verify-weights\` to check ${changed.length === 1 ? "it" : "them"}`
+      : "",
+    unreadWords(unread),
+  ].filter(Boolean);
+  if (bad.length) return check("Weights' hashes", "fail", [...bad, ...unverified].join("; "));
+  const matched = compared
+    ? `${plural(compared, "model file")} ${compared === 1 ? "matches its" : "match their"} registered SHA-256${opts.verify ? ` (read in ${durationWords(tookMs)})` : ""}`
+    : "";
+  // SUR-89: a file not read was not checked, so it is never a pass.
   return check(
     "Weights' hashes",
-    "pass",
-    `${plural(todo.size, "model file")} ${todo.size === 1 ? "matches its" : "match their"} registered SHA-256`,
+    unverified.length ? "warn" : "pass",
+    [matched, ...unverified].filter(Boolean).join("; "),
   );
+}
+
+/** The policy rate for the time-to-verify estimate (SUR-89): 1 GB/s. */
+export const HASH_BYTES_PER_SECOND = 1024 ** 3;
+
+function durationWords(ms: number): string {
+  const s = Math.max(1, Math.round(ms / 1000));
+  return s < 90 ? `${s} s` : `${Math.round(s / 60)} min`;
+}
+
+/** The files `doctor` did not read, their size, and how long reading them takes (SUR-89). */
+function unreadWords(unread: readonly { path: string; bytes: number }[]): string {
+  if (unread.length === 0) return "";
+  const bytes = unread.reduce((n, f) => n + f.bytes, 0);
+  return `${plural(unread.length, "model file")} (${formatBytes(bytes)}) not verified yet: reading ${unread.length === 1 ? "it" : "them"} takes about ${durationWords((bytes / HASH_BYTES_PER_SECOND) * 1000)}; run \`sekhemet doctor --verify-weights\` to check ${unread.length === 1 ? "it" : "them"}`;
+}
+
+// ── C4's reliability rows (surface item 20e, NEW-surface-12: SUR-83 to SUR-88) ──
+
+/**
+ * Events recorded after `seq`, read without writing; a backup's own
+ * `ledger/backed_up` record is not counted, since it changes nothing a
+ * backup holds.
+ */
+function eventsAfter(workspaceFolder: string, seq: number): number {
+  const db = new DatabaseSync(ledgerPathOf(workspaceFolder), { readOnly: true });
+  try {
+    return (
+      db
+        .prepare("SELECT COUNT(*) AS n FROM events WHERE seq > ? AND type <> 'ledger/backed_up'")
+        .get(seq) as { n: number }
+    ).n;
+  } finally {
+    db.close();
+  }
+}
+
+const hoursWords = (h: number): string => {
+  const n = Math.floor(h);
+  return n < 1 ? "less than an hour old" : `${n} hour${n === 1 ? "" : "s"} old`;
+};
+
+/**
+ * Backup (SUR-83, runtime RUN-63): the age and path of the workspace's
+ * newest verified set; a warning when it is over 48 hours old while events
+ * were recorded since, or when the ledger has events and there is no set.
+ */
+export function backupCheck(workspaceFolder: string, now: Date = new Date()): DiagnosticCheck {
+  if (!holdsLedger(workspaceFolder)) return check("Backup", "pass", "no Activity log here");
+  let workspaceId: string | undefined;
+  let head: number;
+  try {
+    workspaceId = ledgerFacts(workspaceFolder).workspaceId;
+    head = eventsAfter(workspaceFolder, 0);
+  } catch (err) {
+    return check("Backup", "warn", `the Activity log could not be read: ${String(err)}`);
+  }
+  if (!workspaceId || head === 0) return check("Backup", "pass", "nothing recorded yet to back up");
+  const set = newestVerifiedBackup(workspaceId, now);
+  if (!set)
+    return check(
+      "Backup",
+      "warn",
+      withDo(
+        `no backup of this workspace yet, and ${plural(head, "event")} recorded only in ${ledgerPathOf(workspaceFolder)}`,
+        "run `sekhemet backup`",
+      ),
+    );
+  const since = eventsAfter(workspaceFolder, set.manifest.seq);
+  const age = `the newest backup, ${set.path}, is ${hoursWords(set.ageHours)}`;
+  if (set.ageHours > 48 && since > 0)
+    return check(
+      "Backup",
+      "warn",
+      withDo(`${age} and ${plural(since, "event")} were recorded since`, "run `sekhemet backup`"),
+    );
+  return check(
+    "Backup",
+    "pass",
+    `${age}${since > 0 ? `; ${plural(since, "event")} recorded since` : ""}`,
+  );
+}
+
+/** Staying awake (SUR-84, RUN-66): the tool that keeps the machine awake, or a warning. */
+export function stayAwakeCheck(
+  os: NodeJS.Platform = process.platform,
+  path: string = process.env.PATH ?? "",
+): DiagnosticCheck {
+  const cmd = sleepAssertionCommand(os, process.pid);
+  if (!cmd)
+    return check(
+      "Staying awake",
+      "warn",
+      `no tool keeps the machine awake on ${os}: an unattended run may stop when the machine sleeps`,
+    );
+  const found = findOnPath(cmd.tool, path);
+  if (!found)
+    return check(
+      "Staying awake",
+      "warn",
+      `${cmd.tool} is not on PATH: an unattended run may stop when the machine sleeps`,
+    );
+  // RUN-66 (C4 review, proved in the Lima VM): a tool on PATH can still be
+  // refused — polkit denies `systemd-inhibit` in a headless session — so the
+  // assertion is taken and given back, the way a run takes it.
+  const probe = spawnSync(found, sleepAssertionProbe(cmd.tool), {
+    encoding: "utf8",
+    timeout: 5_000,
+    env: { ...process.env, PATH: path },
+  });
+  if (probe.status !== 0) {
+    const said =
+      `${probe.stderr ?? ""}`.trim().split("\n")[0] ||
+      probe.error?.message ||
+      `exit ${probe.status}`;
+    return check(
+      "Staying awake",
+      "warn",
+      `${found} refused to keep the machine awake (${said}): an unattended run may stop when the machine sleeps`,
+    );
+  }
+  return check("Staying awake", "pass", `${found} keeps the machine awake while a runner works`);
+}
+
+/** Where the machine draws its power from, as far as it says. */
+export type PowerSource = "battery" | "ac" | "none" | "unknown";
+
+/** `pmset -g batt` (macOS): on battery, on mains with a battery, or no battery. */
+export function parsePmsetBatt(out: string): PowerSource {
+  if (/drawing from 'Battery Power'/.test(out)) return "battery";
+  if (/InternalBattery/.test(out)) return "ac";
+  if (/drawing from 'AC Power'/.test(out)) return "none";
+  return "unknown";
+}
+
+/** Linux's `/sys/class/power_supply`: a mains supply online, a battery discharging, or none. */
+export function linuxPowerSource(dir = "/sys/class/power_supply"): PowerSource {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return "unknown";
+  }
+  const read = (n: string, f: string): string => {
+    try {
+      return readFileSync(join(dir, n, f), "utf8").trim();
+    } catch {
+      return "";
+    }
+  };
+  const batteries = names.filter((n) => read(n, "type") === "Battery");
+  if (batteries.length === 0) return "none";
+  if (names.some((n) => read(n, "type") !== "Battery" && read(n, "online") === "1")) return "ac";
+  return batteries.some((n) => read(n, "status") === "Discharging") ? "battery" : "ac";
+}
+
+/** This machine's power source, read from the operating system. */
+export function powerSource(os: NodeJS.Platform = platform()): PowerSource {
+  if (os === "linux") return linuxPowerSource();
+  if (os !== "darwin") return "unknown";
+  try {
+    return parsePmsetBatt(
+      execFileSync("pmset", ["-g", "batt"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 5_000,
+      }),
+    );
+  } catch {
+    return "unknown";
+  }
+}
+
+const WINDOW_KEYS = ["machine.reserved_hours", "machine.hours", "machine.overnight_hours"];
+
+/**
+ * Power (SUR-84, RUN-68): on battery while an overnight window is set in a
+ * `config.toml`, a warning that a closed lid or a battery sleep stops the night.
+ */
+export function powerCheck(
+  repoPath: string,
+  source: PowerSource = powerSource(),
+  userPath: string = userConfigPath(),
+): DiagnosticCheck {
+  if (source === "unknown")
+    return check("Power", "pass", "the power source could not be read on this machine");
+  if (source === "none")
+    return check("Power", "pass", "no battery: the machine runs on mains power");
+  if (source === "ac") return check("Power", "pass", "on mains power");
+  const sources = resolveConfig({ repoPath, userConfigPath: userPath }).sources;
+  const window = WINDOW_KEYS.some((k) => sources[k] === "user" || sources[k] === "project");
+  if (!window) return check("Power", "pass", "on battery power; no overnight window is set");
+  return check(
+    "Power",
+    "warn",
+    withDo(
+      "on battery power with an overnight window set: Sekhemet keeps the machine from idle sleep only, so a closed lid or a sleep the battery forces stops the night",
+      "plug the machine in for the night",
+    ),
+  );
+}
+
+/**
+ * Free space (SUR-85, RUN-71): the repository's volume (and the ledger's,
+ * when another) and the models folder's, against the floor; below it on the
+ * first a failure, since no issue starts, and on the models' a warning.
+ */
+export function freeSpaceCheck(
+  repoPath: string,
+  workspaceFolder: string,
+  modelsDir: string,
+  opts: { floorBytes?: number; modelsFloorBytes?: number } = {},
+): DiagnosticCheck {
+  const work = checkFreeSpace(
+    [repoPath, workspaceFolder],
+    opts.floorBytes !== undefined ? { floorBytes: opts.floorBytes } : {},
+  );
+  const line = (v: { mount: string; freeBytes: number }, floor: number, what: string) =>
+    `${what} (${v.mount}): ${formatBytes(v.freeBytes)} free of a ${formatBytes(floor)} floor`;
+  const lines = work.volumes.map((v, i) =>
+    line(v, work.floorBytes, i === 0 ? "the repository" : "the Activity log"),
+  );
+  let modelsShort = false;
+  if (!existsSync(modelsDir)) lines.push(`the models folder ${modelsDir} does not exist`);
+  else {
+    const models = checkFreeSpace([modelsDir], {
+      floorBytes: opts.modelsFloorBytes ?? work.floorBytes,
+    });
+    const v = models.volumes[0];
+    if (v) lines.push(line(v, models.floorBytes, "the models"));
+    modelsShort = !models.ok;
+  }
+  if (!work.ok) {
+    const consumers = work.consumers.map((c) => `${c.path} (${formatBytes(c.bytes)})`);
+    return check(
+      "Free space",
+      "fail",
+      withDo(
+        `${lines.join("; ")}; below the floor no issue starts${consumers.length ? `; the largest under .sekhemet/: ${consumers.join(", ")}` : ""}`,
+        `free space on ${work.short.mount}`,
+      ),
+    );
+  }
+  if (modelsShort)
+    return check(
+      "Free space",
+      "warn",
+      withDo(`${lines.join("; ")}; the models' volume is below it`, "free space for the models"),
+    );
+  return check("Free space", "pass", lines.join("; "));
+}
+
+/** The store's one-time move as the workspace's ledger records it (SEC-N14-2), read-only. */
+function recordedIdentityMove(workspaceFolder: string): IdentityMove | undefined {
+  const path = join(workspaceFolder, ".sekhemet", "events.db");
+  if (!existsSync(path)) return undefined;
+  try {
+    const db = new DatabaseSync(path, { readOnly: true });
+    try {
+      return readIdentityMove(db);
+    } finally {
+      db.close();
+    }
+  } catch {
+    return undefined; // an unreadable ledger is the Backup row's to report
+  }
+}
+
+/**
+ * Credential store (SUR-86, security SEC-N14-2): this workspace's store, the
+ * one-time move from the old place, and a store still left there.
+ */
+export function credentialStoreCheck(
+  workspaceId: string | undefined,
+  workspaceFolder?: string,
+): DiagnosticCheck {
+  const root = identityRoot();
+  const parts: string[] = [];
+  if (workspaceId) {
+    const dir = identityDir(workspaceId);
+    parts.push(`this workspace's store is ${dir}${existsSync(dir) ? "" : " (nothing kept yet)"}`);
+  }
+  const move = workspaceFolder ? recordedIdentityMove(workspaceFolder) : undefined;
+  if (move)
+    parts.push(
+      `moved ${move.moved.join(" and ")} from ${move.from} to ${move.to} on ${move.at.slice(0, 10)}`,
+    );
+  const left = [CREDENTIALS_FILE, "setup-token"]
+    .map((f) => join(root, f))
+    .filter((f) => existsSync(f));
+  if (left.length)
+    return check(
+      "Credential store",
+      "warn",
+      withDo(
+        `${[...parts, `a store is still at the old place, ${left.join(" and ")}, and no workspace has claimed it`].join("; ")}`,
+        "start the workspace it belongs to (`sekhemet serve` in its folder), which moves it",
+      ),
+    );
+  return check(
+    "Credential store",
+    "pass",
+    parts.length ? parts.join("; ") : "no workspace here, and nothing at the old place",
+  );
+}
+
+/**
+ * Model lease (SUR-87, models MD-N17-1): free, held by a live process (a
+ * warning: a load here waits for it), or left by a process that is gone.
+ */
+export function modelLeaseCheck(path: string = modelLeasePath()): DiagnosticCheck {
+  const lease = readModelLease(path);
+  if (!lease) return check("Model lease", "pass", "free: no process holds this machine's models");
+  if (!modelLeaseLive(lease))
+    return check(
+      "Model lease",
+      "pass",
+      `a stale lease from pid ${lease.pid}, whose process is gone; the next load takes it over`,
+    );
+  return check(
+    "Model lease",
+    "warn",
+    withDo(
+      `another process holds this machine's model lease: ${modelLeaseHolderWords(lease)}; a load here waits for it`,
+      `wait for that run to finish, or stop it (pid ${lease.pid})`,
+    ),
+  );
+}
+
+/** Lost records (SUR-88, runtime RUN-89): the lost-record log's count, and its path. */
+export function lostRecordsCheck(workspaceId: string | undefined): DiagnosticCheck {
+  const n = countLostRecords(workspaceId);
+  const path = lostRecordsPath(workspaceId);
+  return n === 0
+    ? check("Lost records", "pass", "every record was written")
+    : check(
+        "Lost records",
+        "warn",
+        `${plural(n, "record")} could not be written; each is listed in ${path}`,
+      );
 }

@@ -80,9 +80,23 @@ describe("Seshat with no model (PM-01, PM-02)", () => {
       { timeout: 60_000 },
       async () => {
         const page = await open(width);
+        // The widths share one thread: wait until every earlier message has its
+        // failed reply, so the one picked below is this width's, not a late one
+        // from the width before (all replies fail here: no model is configured).
+        await expect
+          .poll(
+            async () =>
+              (await page.locator(".msg.user").count()) ===
+              (await page.locator(".msg.pm.failed").count()),
+            { timeout: 15_000 },
+          )
+          .toBe(true);
+        const failedBefore = await page.locator(".msg.pm.failed").count();
         await send(page, `Why is the CSV export slow (${width})?`);
+        await expect
+          .poll(() => page.locator(".msg.pm.failed").count(), { timeout: 15_000 })
+          .toBe(failedBefore + 1);
         const failed = page.locator(".msg.pm.failed").last();
-        await failed.waitFor({ timeout: 15_000 });
         const words = await failed.innerText();
         expect(words).toContain("Seshat couldn't reply.");
         expect(words).toContain("No model is answering for Seshat on this machine right now.");

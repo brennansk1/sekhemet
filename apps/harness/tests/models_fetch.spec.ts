@@ -229,6 +229,39 @@ describe("sekhemet models fetch --role and --recommended (MD-N18-3, MD-N22-3)", 
     expect(hits).toBe(0);
   });
 
+  // C4 (C3's review minors): the total counts what is still to fetch, so a
+  // kept `.part` (MD-N18-1) is subtracted; and a file of the same name that
+  // no registry entry records is that one model's problem, not the set's.
+  it("subtracts a kept .part from the total still to download", async () => {
+    const reg = registryWithSources();
+    writeFileSync(join(dir, "models", "nail-mtp.gguf.part"), W.subarray(0, 30_000));
+    const lines: string[] = [];
+    expect(await modelsFetchCommand(["--recommended"], opts(reg, lines))).toBe(1);
+    expect(lines.join("\n")).toMatch(/Total to download: 120\.0 kB/);
+    expect(lines.join("\n")).toMatch(/nail-mtp.*30\.0 kB kept/);
+    expect(hits).toBe(0);
+  });
+
+  it("skips a model whose file name is taken by an unregistered file, with the reason, and fetches the rest", async () => {
+    const reg = registryWithSources();
+    writeFileSync(join(dir, "models", "qwen3.8-27b-gsq-rco.gguf"), "someone else's file");
+    const lines: string[] = [];
+    const code = await modelsFetchCommand(["--recommended", "--yes"], opts(reg, lines));
+    const out = lines.join("\n");
+    expect(out).toMatch(
+      /qwen3\.8-27b-gsq-rco is skipped: the folder already has a file named qwen3\.8-27b-gsq-rco\.gguf/,
+    );
+    expect(out).toMatch(/Total to download: 100\.0 kB/);
+    // The set is not whole, so the command says so by its exit code.
+    expect(code).toBe(1);
+    expect(hits).toBe(2);
+    expect(existsSync(join(dir, "models", "nail-mtp.gguf"))).toBe(true);
+    expect(existsSync(join(dir, "models", "apodex-1.1-mini.gguf"))).toBe(true);
+    expect(readFileSync(join(dir, "models", "qwen3.8-27b-gsq-rco.gguf"), "utf8")).toBe(
+      "someone else's file",
+    );
+  });
+
   it("names its usage when given nothing to fetch", async () => {
     const lines: string[] = [];
     expect(await modelsFetchCommand([], opts(registryWithSources(), lines))).toBe(2);

@@ -1128,7 +1128,16 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
         // /tmp is private, so a directory the harness made there is not seen
         // inside unless granted (the C2c Linux run: "Can't chdir"). Writes
         // there are still refused, by Node's permission model.
-        { allowedPaths: [], scratchDir: dir, allowNetwork: false, timeoutMs: 10_000, cwd: dir },
+        // The worktree is a read-only grant: under bubblewrap a worktree made
+        // under the host's /tmp is otherwise hidden (C4, the Linux run).
+        {
+          allowedPaths: [],
+          readOnlyPaths: [realpathSync(this.root)],
+          scratchDir: dir,
+          allowNetwork: false,
+          timeoutMs: 10_000,
+          cwd: dir,
+        },
       );
       if (result.timedOut)
         return fail("run_script", "script timed out", "run_script timed out after 10 s.");

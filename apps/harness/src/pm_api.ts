@@ -13,7 +13,14 @@ import {
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { readKernelPressureLevel } from "@sekhemet/models";
 import { resolvePlannerModel } from "@sekhemet/planner";
-import { type Reproduction, issueSpec, quickCreateRequest, sameProject } from "@sekhemet/ui";
+import {
+  CARD_VERSION_FIELDS,
+  type Reproduction,
+  cardVersion,
+  issueSpec,
+  quickCreateRequest,
+  sameProject,
+} from "@sekhemet/ui";
 import { effectiveConfig } from "./config_apply.js";
 import { recommendRoster } from "./init.js";
 import { handleIntegrationsApi } from "./integrations.js";
@@ -150,6 +157,23 @@ function sameValue(a: unknown, b: unknown): boolean {
         ? [...v].map(String).sort()
         : v;
   return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+}
+
+/**
+ * The versions an `If-Match` header names (RFC 9110 §13.1.1): a list of
+ * quoted entity tags, weak or strong; `*` is any. Undefined when the header
+ * is absent, so a PATCH without one is applied as before (DB-N16-4).
+ */
+function ifMatchVersions(header: string | string[] | undefined): string[] | "*" | undefined {
+  const raw = Array.isArray(header) ? header.join(",") : header;
+  if (raw === undefined || raw.trim() === "") return undefined;
+  if (raw.trim() === "*") return "*";
+  return raw.split(",").map((t) =>
+    t
+      .trim()
+      .replace(/^W\//, "")
+      .replace(/^"(.*)"$/, "$1"),
+  );
 }
 
 /** The principal who last changed `field` on a card (DB-N16-2: Undo names them). */
@@ -1163,6 +1187,30 @@ export function createPmApi(ctx: PmApiContext) {
         ctx.json(res, 400, { error: `Nothing editable in ${rejected.join(", ") || "the body"}` });
         return true;
       }
+      // DB-N16-4 (FINDINGS REL-08): an edit made from a version of the issue
+      // that is no longer current is refused, with the current values and who
+      // changed them, so one person's edit never silently overwrites another's.
+      const wanted = ifMatchVersions(req.headers["if-match"]);
+      if (wanted !== undefined && wanted !== "*") {
+        const current = (await cardStore.getCard(id)) as unknown as Record<string, unknown>;
+        const version = cardVersion(current);
+        if (!wanted.includes(version)) {
+          const fields = Object.keys(patch);
+          const by = await lastChangedBy(ctx.log, id, fields[0] as string);
+          const name = by ? (ctx.nameOf?.(by) ?? undefined) : undefined;
+          res.setHeader("ETag", `"${version}"`);
+          ctx.json(res, 409, {
+            error: `This issue changed since you opened it${name ? ` (last by ${name})` : ""}, so your change was not applied.`,
+            version,
+            current: Object.fromEntries(fields.map((f) => [f, current[f] ?? null])),
+            card: Object.fromEntries(
+              ["id", ...CARD_VERSION_FIELDS].map((f) => [f, current[f] ?? null]),
+            ),
+            ...(name ? { by: name } : {}),
+          });
+          return true;
+        }
+      }
       // NEW-dashboard-16 (DB-N16-2): an Undo restores a field only while it
       // still holds the value the edit set; one another person changed since
       // is left as it is, and the refusal names them.
@@ -1214,7 +1262,9 @@ export function createPmApi(ctx: PmApiContext) {
           text: `Estimate ${b.estimate} is not one of {1,2,3,5,8}; mapped to the nearest allowed value, ${patch.estimate}.`,
         });
       }
-      ctx.json(res, 200, { card, ...(rejected.length ? { ignored: rejected } : {}) });
+      const version = cardVersion(card as unknown as Record<string, unknown>);
+      res.setHeader("ETag", `"${version}"`);
+      ctx.json(res, 200, { card, version, ...(rejected.length ? { ignored: rejected } : {}) });
       return true;
     }
 

@@ -497,6 +497,20 @@ export function stopReasonLabel(
         sentence: "The model provider's limit was reached.",
         tone: "parked",
       };
+    case "disk_low":
+      return {
+        short: "Disk nearly full",
+        sentence:
+          "Stopped safely: the disk is nearly full. Its work is kept; free some space, then resume.",
+        tone: "parked",
+      };
+    case "model_unavailable":
+      return {
+        short: "Coding model not running",
+        sentence:
+          "The Coding model's engine stopped answering. Its work is kept; start the engine, then resume.",
+        tone: "parked",
+      };
     case "error":
       return {
         short: "Sekhemet error",

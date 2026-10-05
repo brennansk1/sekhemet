@@ -5,6 +5,7 @@ import { recordDecision } from "./accept.js";
 import { releaseHeldCards } from "./execute.js";
 import { isPlaybookCandidate, learnFromSendBack } from "./learning/reflect.js";
 import { LearningStore } from "./learning/store.js";
+import { reportLostRecord } from "./lost_records.js";
 import { hookEngineFor } from "./user_hooks.js";
 
 /**
@@ -111,9 +112,15 @@ export async function sendBack(
     actor: "human",
     reason: `returned: ${why}`,
   });
+  // RUN-89: the reason is the next attempt's instruction; a failed write is reported.
   await ctx.cardStore
     .recordDossierEntry({ cardId: card.id, kind: "send_back", text: why, actor: "human" })
-    .catch(() => undefined);
+    .catch((err) =>
+      reportLostRecord("send_back reason", err, {
+        workspaceId: ctx.cardStore.workspaceId(),
+        cardId: card.id,
+      }),
+    );
   // WL-N10-4: each line comment is an instruction to the next attempt, with
   // its file and line.
   for (const c of comments) {

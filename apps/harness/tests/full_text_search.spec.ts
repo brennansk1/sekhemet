@@ -233,6 +233,13 @@ describe("a search on 10,000 issues (DB-N12-3)", () => {
     mkdirSync(join(dir, ".sekhemet"), { recursive: true });
     const db = new DatabaseSync(join(dir, ".sekhemet", "events.db"));
     initSchema(db);
+    // The seed is not what is measured: kernel rule 38's `synchronous = FULL`
+    // (C4, K-N11-1) costs every one of its 10,000 appends a full sync, which
+    // took the seed past the test's time on its own. The search below runs
+    // on the same ledger; the durability mode does not touch a read.
+    db.exec(
+      "PRAGMA synchronous = NORMAL; PRAGMA fullfsync = OFF; PRAGMA checkpoint_fullfsync = OFF",
+    );
     const log = new EventLog(db);
     const store = new CardStore(db, log);
     const words = ["loan", "borrower", "invoice", "overdue", "renewal", "catalog", "fine", "hold"];

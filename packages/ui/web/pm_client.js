@@ -17,10 +17,28 @@ function bySeq(a, b) {
   return (a.seq ?? 0) - (b.seq ?? 0) || String(a.createdAt).localeCompare(String(b.createdAt));
 }
 
+/**
+ * PM-06: what applying a proposal did ("Changed “…”. It is in …") is built
+ * here from the apply's answer; the server's copy of the message does not
+ * carry it. A refresh of the thread keeps it, so it does not vanish when the
+ * stream or a reload brings the applied proposal back.
+ */
+function keepResults(message, previous = store.state.pm.messages) {
+  const before = previous.find((m) => m.id === message?.id);
+  if (!before?.proposals?.some((p) => p.result) || !message.proposals) return message;
+  return {
+    ...message,
+    proposals: message.proposals.map((p) => {
+      const old = before.proposals.find((o) => o.id === p.id);
+      return old?.result && !p.result && p.state === old.state ? { ...p, result: old.result } : p;
+    }),
+  };
+}
+
 function upsert(message) {
   if (!message?.id) return;
   const list = store.state.pm.messages.filter((m) => m.id !== message.id);
-  list.push(message);
+  list.push(keepResults(message));
   list.sort(bySeq);
   setPm({ messages: list });
 }
@@ -60,7 +78,7 @@ export async function loadThread() {
     setPm({
       available: true,
       error: null,
-      messages: [...(r.data?.messages ?? [])].sort(bySeq),
+      messages: [...(r.data?.messages ?? [])].map((m) => keepResults(m)).sort(bySeq),
       model: r.data?.model ?? store.state.pm.model,
     });
     applyStatus(r.data?.status);

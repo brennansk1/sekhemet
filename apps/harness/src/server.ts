@@ -39,6 +39,7 @@ import {
   runningCheckText,
   vocabularyTables,
 } from "@sekhemet/ui";
+import { reconcileAccepts } from "./accept.js";
 import { unenforcedInvariants } from "./architecture_gate.js";
 import { createBenchmarkApi } from "./benchmark_api.js";
 import { type BenchmarkEnv, BenchmarkService, defaultBenchmarkEnv } from "./benchmark_cmd.js";
@@ -47,6 +48,7 @@ import { resolveConfig, userConfigPath } from "./config.js";
 import { type ConfigApiDeps, createConfigApi } from "./config_api.js";
 import { effectiveConfig, queueDefaults } from "./config_apply.js";
 import { dashboardQualify, dashboardResidency, dashboardSpeed } from "./config_model_actions.js";
+import { SERVE_PORT_TRIES } from "./daemon.js";
 import {
   type MemorySample,
   activeHardwareTier,
@@ -110,7 +112,7 @@ import { handleAiTeammateRoute } from "./team/ai_routes.js";
 import type { AiTeammatesDeps } from "./team/ai_teammates.js";
 import { handleAuditRoute } from "./team/audit.js";
 import { recordConfigAtStart, recordConfigWrite } from "./team/config_audit.js";
-import { identityDir } from "./team/credential_store.js";
+import { identityRoot, workspaceIdentityDir } from "./team/credential_store.js";
 import { capNote, personOf, queueStanding, runningAgentIssues } from "./team/fair_queue.js";
 import { type InboxDeps, inboxNotifier } from "./team/inbox.js";
 import { handleInboxRoute } from "./team/inbox_routes.js";
@@ -340,7 +342,7 @@ function json(res: ServerResponse, status: number, body: unknown): void {
  */
 export function startDashboardServer(
   options: DashboardServerOptions,
-): Promise<{ port: number; close: () => Promise<void> }> {
+): Promise<{ port: number; address: string; close: () => Promise<void> }> {
   const { log, boardService, port = DEFAULT_DASHBOARD_PORT } = options;
   const html = generateDashboardHtml();
   const tokenCss = generateTokenCss();
@@ -381,12 +383,13 @@ export function startDashboardServer(
   // M6: a Team install never falls back to Solo, where every request is an Admin.
   const refusal =
     setup === "solo"
-      ? soloStartBlocked(options.db, options.identity?.dir ?? identityDir())
+      ? soloStartBlocked(options.db, options.identity?.dir ?? workspaceIdentityDir(options.db))
       : undefined;
   if (refusal) return Promise.reject(new Error(refusal));
   // TEAM-44: a change to the user config.toml made outside Sekhemet since the
   // last recorded state, recorded now by its keys, never its values.
-  const credentialDir = options.identity?.dir ?? identityDir();
+  // The user config's audit key is the user's, at the identity root (TEAM-44, NEW-security-14).
+  const credentialDir = options.identity?.dir ?? identityRoot();
   const configPath = options.userConfigPath ?? userConfigPath();
   try {
     recordConfigAtStart({ db: options.db, log, path: configPath, identityDir: credentialDir });
@@ -2619,7 +2622,7 @@ export function startDashboardServer(
     // TEAM-2: on a Team start with no Admin, the setup token's path is printed.
     identity.ensureSetupToken();
     const stopIdentity = serverIdentity.startTimers();
-    server.listen(port, host, () => {
+    server.once("listening", () => {
       let ticks = 0;
       timer = setInterval(() => {
         void pump();
@@ -2710,6 +2713,7 @@ export function startDashboardServer(
         : undefined;
       resolve({
         port: boundPort,
+        address: ownAddress ?? `http://127.0.0.1:${boundPort}`,
         close: () =>
           new Promise<void>((done) => {
             void notifier.then((n) => n.stop());
@@ -2760,6 +2764,47 @@ export function startDashboardServer(
         void pump();
       }
     });
-    server.on("error", reject);
+    // MD-N17-3, runtime item 23: a port in use (another workspace's server,
+    // any program) is not fatal: the next free one is taken, up to
+    // SERVE_PORT_TRIES ports from the one asked for, and the bound address
+    // is returned for the caller to print. Port 0 asks the system for one.
+    let trying = port;
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE" && port !== 0 && trying < port + SERVE_PORT_TRIES - 1) {
+        trying += 1;
+        server.listen(trying, host);
+        return;
+      }
+      if (err.code === "EADDRINUSE" && port !== 0) {
+        reject(
+          new Error(
+            `ports ${port} to ${port + SERVE_PORT_TRIES - 1} are all in use on ${host ?? "127.0.0.1"}; stop one of their servers, or name a free port with --port`,
+          ),
+        );
+        return;
+      }
+      reject(err);
+    });
+    // RG-N8-3, RG-N8-5: the dashboard is where most Accepts are made, and a
+    // dashboard-only setup runs no queue, so an Accept a crash (or a cut WAL)
+    // left merged but unrecorded is settled from the repository before the
+    // server serves, each card under its project's accept lock.
+    const sweep = options.cardStore
+      ? reconcileAccepts(repoPath, options.cardStore, boardService).then(
+          (settled) => {
+            for (const r of settled)
+              console.log(
+                "reconciled" in r
+                  ? `${r.cardId}: its Accept's record was settled from ${r.reconciled.slice(0, 10)}; the issue is Done.`
+                  : `${r.cardId}: its Accept never reached the integration branch; the issue stays in Review.`,
+              );
+          },
+          (err: unknown) =>
+            console.warn(
+              `sekhemet: Accepts left unrecorded by a crash were not settled at start (${err instanceof Error ? err.message : String(err)}); the next start tries again.`,
+            ),
+        )
+      : Promise.resolve();
+    void sweep.then(() => server.listen(trying, host));
   });
 }

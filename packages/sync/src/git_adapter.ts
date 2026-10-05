@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { matchesScope } from "@sekhemet/kernel";
+import { processStartTime, sameProcess } from "@sekhemet/sandbox";
 import { hardenGitForProcess } from "./git_hardening.js";
 import {
   GitMetadataError,
@@ -792,9 +793,17 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     );
     const take = (): boolean => {
       try {
-        writeFileSync(lock, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }), {
-          flag: "wx",
-        });
+        // RG-N8-4: pid and process start time, so a recycled pid is not taken for the holder.
+        const processStart = processStartTime(process.pid);
+        writeFileSync(
+          lock,
+          JSON.stringify({
+            pid: process.pid,
+            ...(processStart ? { processStart } : {}),
+            at: new Date().toISOString(),
+          }),
+          { flag: "wx" },
+        );
         return true;
       } catch {
         return false;
@@ -815,7 +824,12 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
         throw busy();
       }
       const holder = lockHolder(stale);
-      if (holder === undefined || holder === process.pid || pidAlive(holder) || tries >= 3) {
+      if (
+        holder === undefined ||
+        holder.pid === process.pid ||
+        sameProcess(holder.pid, holder.processStart) ||
+        tries >= 3
+      ) {
         throw busy();
       }
       const takeover = `${lock}.takeover`;
@@ -1290,21 +1304,13 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
   }
 }
 
-/** The pid recorded in an accept lock, or undefined when it names none. */
-function lockHolder(content: string): number | undefined {
+/** The holder recorded in an accept lock — pid and, when written, start time — or undefined. */
+function lockHolder(content: string): { pid: number; processStart?: string } | undefined {
   try {
-    const pid = (JSON.parse(content) as { pid?: unknown }).pid;
-    return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : undefined;
+    const { pid, processStart } = JSON.parse(content) as { pid?: unknown; processStart?: unknown };
+    if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return undefined;
+    return { pid, ...(typeof processStart === "string" ? { processStart } : {}) };
   } catch {
     return undefined;
-  }
-}
-
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "EPERM";
   }
 }

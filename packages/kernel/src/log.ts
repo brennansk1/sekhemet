@@ -156,8 +156,13 @@ export interface EventLogOptions {
    * Default: the install's one person on a solo setup; no one on a team.
    */
   acceptHolders?: () => readonly string[];
-  /** The erasure register every erasure appends to (rule 35), beside the backups. */
-  erasureRegister?: string;
+  /**
+   * The erasure register every erasure appends to (rule 35), beside the
+   * backups: a path, or a function resolving it when an erasure is made —
+   * the register's place is keyed by the workspace id, which the ledger's
+   * first event gives (runtime item 35a, RUN-78).
+   */
+  erasureRegister?: string | (() => string);
 }
 
 /** Called for every appended event matching the subscription's filter. */
@@ -482,7 +487,10 @@ export class EventLog {
       options.project?.(inserted);
       this.db.exec("COMMIT");
     } catch (err) {
-      this.db.exec("ROLLBACK");
+      // SQLite rolls a transaction back itself on SQLITE_FULL (and I/O
+      // errors): a second ROLLBACK would throw and hide the real error, which
+      // the full-disk stop needs (runtime RUN-70).
+      if (this.db.isTransaction) this.db.exec("ROLLBACK");
       throw err;
     }
     // Notified only after COMMIT, so a subscriber can never observe — or act
@@ -512,7 +520,10 @@ export class EventLog {
       }
       this.db.exec("COMMIT");
     } catch (err) {
-      this.db.exec("ROLLBACK");
+      // SQLite rolls a transaction back itself on SQLITE_FULL (and I/O
+      // errors): a second ROLLBACK would throw and hide the real error, which
+      // the full-disk stop needs (runtime RUN-70).
+      if (this.db.isTransaction) this.db.exec("ROLLBACK");
       throw err;
     }
     for (const record of inserted) this.notify(record);
@@ -854,11 +865,7 @@ export class EventLog {
    * id. Undefined on an empty ledger. A read: it appends nothing.
    */
   public workspaceId(): string | undefined {
-    const row = this.db.prepare("SELECT hash FROM events ORDER BY seq ASC LIMIT 1").get() as
-      | { hash: string }
-      | undefined;
-    const hex = row?.hash.replace(/[^0-9a-f]/g, "").slice(0, 12);
-    return hex && hex.length === 12 ? `ws_${hex}` : undefined;
+    return workspaceIdOf(this.db);
   }
 
   /** The last seq, 0 on an empty ledger. */
@@ -1018,14 +1025,21 @@ export class EventLog {
       });
       this.db.exec("COMMIT");
     } catch (err) {
-      this.db.exec("ROLLBACK");
+      // SQLite rolls a transaction back itself on SQLITE_FULL (and I/O
+      // errors): a second ROLLBACK would throw and hide the real error, which
+      // the full-disk stop needs (runtime RUN-70).
+      if (this.db.isTransaction) this.db.exec("ROLLBACK");
       throw err;
     }
     this.erasures = undefined;
     for (const id of blobIds) input.blobs?.delete(id);
     if (input.fileRoot) for (const f of files) deleteRunFile(input.fileRoot, f);
-    if (input.reapplies === undefined && this.options.erasureRegister) {
-      appendErasureRegister(this.options.erasureRegister, {
+    const register =
+      typeof this.options.erasureRegister === "function"
+        ? this.options.erasureRegister()
+        : this.options.erasureRegister;
+    if (input.reapplies === undefined && register) {
+      appendErasureRegister(register, {
         erasureId: erased.id,
         seq: erased.seq,
         eventIds: erased.payload.eventIds,
@@ -1057,10 +1071,20 @@ export class EventLog {
     path: string,
     options: { principal?: string } = {},
   ): Promise<{ path: string; seq: number }> {
+    const { seq } = await this.copyVerified(path);
+    await this.recordBackup({ path, seq, ...options });
+    return { path, seq };
+  }
+
+  /**
+   * The copy half of `backup`: a consistent copy at `path` whose chain is
+   * verified, recording nothing — a backup set records itself once the set
+   * is whole (runtime item 35a). Returns the last seq the copy holds.
+   */
+  public async copyVerified(path: string): Promise<{ seq: number }> {
     copyDatabase(this.db, path);
     const { DatabaseSync } = await import("node:sqlite");
     const copy = new DatabaseSync(path, { readOnly: true });
-    let seq: number;
     try {
       const check = new EventLog(copy).verifyHashChainSync({ full: true });
       if (!check.valid) {
@@ -1068,19 +1092,47 @@ export class EventLog {
           `The backup at ${path} does not verify: ${check.reason ?? "invalid chain"}`,
         );
       }
-      seq = (copy.prepare("SELECT COALESCE(MAX(seq), 0) AS s FROM events").get() as { s: number })
-        .s;
+      return {
+        seq: (copy.prepare("SELECT COALESCE(MAX(seq), 0) AS s FROM events").get() as { s: number })
+          .s,
+      };
     } finally {
       copy.close();
     }
+  }
+
+  /** `ledger/backed_up {path, seq, schemaVersion?}` (rule 35; runtime item 35a). */
+  public async recordBackup(input: {
+    path: string;
+    seq: number;
+    schemaVersion?: number;
+    principal?: string;
+  }): Promise<void> {
     await this.append({
       actor: "harness",
       type: "ledger/backed_up",
-      payload: { path, seq },
-      ...(options.principal ? { principal: options.principal } : {}),
+      payload: {
+        path: input.path,
+        seq: input.seq,
+        ...(input.schemaVersion !== undefined ? { schemaVersion: input.schemaVersion } : {}),
+      },
+      ...(input.principal ? { principal: input.principal } : {}),
     });
-    return { path, seq };
   }
+}
+
+/**
+ * A ledger's workspace id, `ws_` and the first event's hash's first twelve
+ * hex digits, read from any connection without an `EventLog` (C-18: a ledger
+ * from before numbered migrations has no `hash_version` column for the log's
+ * statements until it is migrated, and its workspace is found before that).
+ */
+export function workspaceIdOf(db: DatabaseSync): string | undefined {
+  const row = db.prepare("SELECT hash FROM events ORDER BY seq ASC LIMIT 1").get() as
+    | { hash: string }
+    | undefined;
+  const hex = row?.hash.replace(/[^0-9a-f]/g, "").slice(0, 12);
+  return hex && hex.length === 12 ? `ws_${hex}` : undefined;
 }
 
 /** Every row of the chain with its private part, in seq order (the export reads these). */

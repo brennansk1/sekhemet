@@ -25,6 +25,8 @@ coverage/
 *.db
 *.db-wal
 *.db-shm
+# The recorded schema of each earlier release (W8 upgrade tests, C-18; scripts/record_schema_fixtures.mjs).
+!packages/kernel/tests/fixtures/schemas/*.db
 
 # OS & Editor
 .DS_Store

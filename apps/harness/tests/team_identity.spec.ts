@@ -187,7 +187,8 @@ describe("TEAM-11: the credential store", () => {
     const copied = backupCredentials(dir, backup);
     expect(copied && mode(copied)).toBe(0o600);
     rmSync(join(dir, "credentials.json"));
-    expect(restoreCredentials(dir, backup)).toBe(true);
+    // No live store to replace, so none is kept (RUN-93).
+    expect(restoreCredentials(dir, backup)).toEqual({});
     expect(mode(join(dir, "credentials.json"))).toBe(0o600);
     const signIn = await newIdentity().signIn("ada@northwind.test", PASSWORD, "10.0.0.1");
     expect(signIn.ok).toBe(true);

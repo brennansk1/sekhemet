@@ -476,8 +476,88 @@ function srtWord(word: string): string {
   return `'${word.replace(/'/g, `'"'"'`)}'`;
 }
 
-/** Where srt's Linux mounts end (SRT_VERSION): it binds a fresh /dev right after them. */
-const SRT_MOUNTS_END = " --dev /dev ";
+/** A word of srt's command: its text once unquoted, where it starts, and whether any of it was quoted. */
+interface SrtToken {
+  text: string;
+  start: number;
+  quoted: boolean;
+}
+
+/**
+ * srt's command split into words by its own quoting rules (SRT_VERSION,
+ * `utils/shell-quote.js`: a word is bare, or single-quoted with each quote
+ * written '"'"'), read as a POSIX shell reads them: single quotes, double
+ * quotes and a backslash outside quotes. A word with any quoted part is marked
+ * quoted, so an owner-controlled path holding " --dev /dev " stays one word.
+ * Refuses an unterminated quote rather than guess.
+ */
+function srtWords(command: string): SrtToken[] {
+  const words: SrtToken[] = [];
+  let i = 0;
+  while (i < command.length) {
+    while (i < command.length && /\s/.test(command.charAt(i))) i += 1;
+    if (i >= command.length) break;
+    const start = i;
+    let text = "";
+    let quoted = false;
+    while (i < command.length && !/\s/.test(command.charAt(i))) {
+      const c = command.charAt(i);
+      if (c === "'") {
+        const close = command.indexOf("'", i + 1);
+        if (close < 0) throw new Error(`srt ${SRT_VERSION}'s command had an unterminated quote`);
+        text += command.slice(i + 1, close);
+        quoted = true;
+        i = close + 1;
+      } else if (c === '"') {
+        let j = i + 1;
+        while (j < command.length && command.charAt(j) !== '"') {
+          if (command.charAt(j) === "\\" && j + 1 < command.length) j += 1;
+          text += command.charAt(j);
+          j += 1;
+        }
+        if (j >= command.length) {
+          throw new Error(`srt ${SRT_VERSION}'s command had an unterminated quote`);
+        }
+        quoted = true;
+        i = j + 1;
+      } else if (c === "\\" && i + 1 < command.length) {
+        text += command.charAt(i + 1);
+        quoted = true;
+        i += 2;
+      } else {
+        text += c;
+        i += 1;
+      }
+    }
+    words.push({ text, start, quoted });
+  }
+  return words;
+}
+
+/**
+ * Where srt's Linux mounts end (SRT_VERSION): it binds a fresh /dev right
+ * after them, as the unquoted words `--dev` `/dev`. The index of `--dev` in
+ * `words`; refused when the pair is missing or appears more than once, since
+ * then the end of the mounts is not known (C4, from C3's review).
+ */
+function srtMountsEnd(words: readonly SrtToken[]): number {
+  const ends: number[] = [];
+  for (let k = 0; k + 1 < words.length; k += 1) {
+    const [a, b] = [words[k], words[k + 1]];
+    if (a && b && !a.quoted && !b.quoted && a.text === "--dev" && b.text === "/dev") ends.push(k);
+  }
+  if (ends.length === 0) {
+    throw new Error(
+      `srt ${SRT_VERSION}'s command had no end of its mounts, so the masked folders could not be made read-only`,
+    );
+  }
+  if (ends.length > 1) {
+    throw new Error(
+      `srt ${SRT_VERSION}'s command had more than one end of its mounts, so the masked folders could not be made read-only`,
+    );
+  }
+  return ends[0] as number;
+}
 
 /**
  * Item 10a under srt on Linux (B1): srt hides a read-denied folder behind a
@@ -489,48 +569,47 @@ const SRT_MOUNTS_END = " --dev /dev ";
  * restores inside it is unaffected. A folder srt mounted nothing for gets
  * nothing only when it does not exist or a remounted masked folder above
  * covers it; any other is refused (B1 review). The command is also refused
- * when srt's mounts cannot be read (passed through a file, or no end found),
- * rather than run with a writable mask.
+ * when srt's mounts cannot be read (passed through a file, or no single end
+ * found), rather than run with a writable mask. srt's command is read word by
+ * word under its own quoting rules (`srtWords`), so a quoted path is never
+ * taken for a mount or for the end of the mounts (C4).
  */
 export function withReadOnlyMasks(wrapped: string, dirs: readonly string[]): string {
   if (dirs.length === 0) return wrapped;
-  const end = wrapped.indexOf(SRT_MOUNTS_END);
-  if (end < 0) {
-    throw new Error(
-      `srt ${SRT_VERSION}'s command had no end of its mounts, so the masked folders could not be made read-only`,
-    );
-  }
-  const mounts = `${wrapped.slice(0, end)} `;
-  if (mounts.includes(" --args ")) {
+  const words = srtWords(wrapped);
+  const end = srtMountsEnd(words);
+  const mounts = words.slice(0, end);
+  if (mounts.some((w) => !w.quoted && w.text === "--args")) {
     throw new Error(
       `srt ${SRT_VERSION} passed its mounts through a file, so the masked folders could not be made read-only`,
     );
   }
+  const tmpfsCount = (dir: string) =>
+    mounts.filter((w, k) => !w.quoted && w.text === "--tmpfs" && mounts[k + 1]?.text === dir)
+      .length;
   const remounts: string[] = [];
-  const mounted = (dir: string) => mounts.includes(` --tmpfs ${srtWord(dir)} `);
   for (const dir of dirs) {
-    const word = srtWord(dir);
-    const tmpfs = ` --tmpfs ${word} `;
-    const at = mounts.indexOf(tmpfs);
-    if (at < 0) {
+    const count = tmpfsCount(dir);
+    if (count === 0) {
       // srt mounts nothing for a folder that does not exist, and --remount-ro
       // on a masked folder above makes everything under it read-only. Any
       // other folder would stay writable: refuse rather than fail open.
-      const covered = dirs.some((up) => up !== dir && isUnder(dir, up) && mounted(up));
+      const covered = dirs.some((up) => up !== dir && isUnder(dir, up) && tmpfsCount(up) > 0);
       if (!existsSync(dir) || covered) continue;
       throw new Error(
         `srt ${SRT_VERSION} mounted no tmpfs for ${dir}, so it could not be made read-only`,
       );
     }
-    if (mounts.indexOf(tmpfs, at + 1) >= 0) {
+    if (count > 1) {
       throw new Error(
         `srt ${SRT_VERSION} mounted ${dir} more than once, so it could not be made read-only`,
       );
     }
-    remounts.push(`--remount-ro ${word}`);
+    remounts.push(`--remount-ro ${srtWord(dir)}`);
   }
   if (remounts.length === 0) return wrapped;
-  return `${wrapped.slice(0, end)} ${remounts.join(" ")}${wrapped.slice(end)}`;
+  const at = (words[end] as SrtToken).start;
+  return `${wrapped.slice(0, at)}${remounts.join(" ")} ${wrapped.slice(at)}`;
 }
 
 /** Whether `dir` is strictly inside `up`. */

@@ -80,6 +80,14 @@ beforeEach(async () => {
       });
       return;
     }
+    // Half the file, then the connection stays open with nothing more: a
+    // person cancels while it waits (rule 4e). Closed after 5 s regardless.
+    if (url.pathname === "/stall/model-Q4_K_M.gguf") {
+      res.writeHead(200, { "content-length": WEIGHTS.length });
+      res.write(WEIGHTS.subarray(0, WEIGHTS.length / 2));
+      setTimeout(() => res.socket?.destroy(), 5000).unref();
+      return;
+    }
     // A source that ignores Range: always 200 and the whole file.
     if (url.pathname === "/norange/model-Q4_K_M.gguf") {
       res.writeHead(200, { "content-length": WEIGHTS.length });
@@ -324,6 +332,49 @@ describe("downloads that resume and fit (NEW-models-18)", () => {
     expect(ranges.at(-1)).toBe("bytes=1000-");
     expect(err).toBeInstanceOf(DownloadHashMismatch);
     expect(readdirSync(dest)).toEqual([]);
+  });
+
+  // C4 (C3's review): MD-N18-4's 416 path. A kept `.part` longer than the
+  // file, when the source names no size, asks for a range past the end; the
+  // source answers 416, and the download asks again without a range and
+  // starts from nothing.
+  it("starts again from nothing after a 416 to its Range request (MD-N18-4)", async () => {
+    const dest = tmp();
+    const stale = Buffer.concat([WEIGHTS, Buffer.alloc(500, 1)]);
+    writeFileSync(join(dest, "model-Q4_K_M.gguf.part"), stale);
+    const { sizeBytes: _unknown, ...noSize } = at("range");
+    const r = await downloadModel({ model: "tiny", source: noSize, destDir: dest, fetch });
+    expect(ranges).toEqual([`bytes=${stale.length}-`, undefined]);
+    expect(r).toMatchObject({ sha256: SHA, bytes: WEIGHTS.length, verified: true });
+    expect(readFileSync(r.path).equals(WEIGHTS)).toBe(true);
+    expect(readdirSync(dest)).toEqual(["model-Q4_K_M.gguf"]);
+  });
+
+  // C4 (C3's review): a person's cancel mid-stream keeps what was received,
+  // and the next run resumes from it.
+  it("keeps the .part when a person cancels mid-stream, and the next run resumes it", async () => {
+    const dest = tmp();
+    const part = join(dest, "model-Q4_K_M.gguf.part");
+    const ac = new AbortController();
+    const err = await downloadModel({
+      model: "tiny",
+      source: at("stall"),
+      destDir: dest,
+      fetch: async (url, init) => {
+        const res = await fetch(url, init);
+        setTimeout(() => ac.abort(), 300);
+        return res;
+      },
+      signal: ac.signal,
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(String(err.message)).toMatch(/cancelled.*kept in model-Q4_K_M\.gguf\.part/);
+    const kept = statSync(part).size;
+    expect(kept).toBe(WEIGHTS.length / 2);
+    expect(readFileSync(part).equals(WEIGHTS.subarray(0, kept))).toBe(true);
+    const r = await downloadModel({ model: "tiny", source: at("range"), destDir: dest, fetch });
+    expect(ranges.at(-1)).toBe(`bytes=${kept}-`);
+    expect(readFileSync(r.path).equals(WEIGHTS)).toBe(true);
   });
 
   it("places a kept file that is already whole after checking its hash, with no request", async () => {

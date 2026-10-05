@@ -66,15 +66,21 @@ describe("doctor checks the weights' hashes (MD-N7-2)", () => {
       reads++;
       return createHash("sha256").update(readFileSync(p)).digest("hex");
     };
-    const c = await weightsHashCheck({ registry: reg, cachePath, hash, files: [] });
+    const c = await weightsHashCheck({ registry: reg, cachePath, hash, files: [], verify: true });
     expect(c).toMatchObject({ name: "Weights' hashes", status: "pass" });
     expect(c.detail).toMatch(/1 model file matches its registered SHA-256/);
-    await weightsHashCheck({ registry: reg, cachePath, hash, files: [] });
+    await weightsHashCheck({ registry: reg, cachePath, hash, files: [], verify: true });
     expect(reads).toBe(1);
     // A changed file (size or time) is read again.
     writeFileSync(file, "weightz");
     utimesSync(file, new Date(), new Date(Date.now() + 5000));
-    const changed = await weightsHashCheck({ registry: reg, cachePath, hash, files: [] });
+    const changed = await weightsHashCheck({
+      registry: reg,
+      cachePath,
+      hash,
+      files: [],
+      verify: true,
+    });
     expect(reads).toBe(2);
     expect(changed.status).toBe("fail");
     expect(changed.detail).toMatch(
@@ -91,8 +97,107 @@ describe("doctor checks the weights' hashes (MD-N7-2)", () => {
       registry: reg,
       cachePath,
       files: [{ modelId: "nail-mtp", path: file }],
+      verify: true,
     });
     expect(c.status).toBe("fail");
     expect(c.detail).toMatch(/nail-mtp: the file's hash differs/);
+  });
+
+  it("SUR-89: without --verify-weights reads no file the cache does not hold, and names how many, how big and how long; with it, says how long it took", async () => {
+    const { reg, file, cachePath } = setup();
+    reg.recordWeights("nail-mtp", { path: file, volume: "internal", sha256: sha("weights") });
+    let reads = 0;
+    const hash = async (p: string) => {
+      reads++;
+      return createHash("sha256").update(readFileSync(p)).digest("hex");
+    };
+    const quiet = await weightsHashCheck({ registry: reg, cachePath, hash, files: [] });
+    expect(reads).toBe(0);
+    // Nothing was checked, so nothing passed (C4 review): a warning.
+    expect(quiet.status).toBe("warn");
+    expect(quiet.detail).toMatch(
+      /^1 model file \(7 bytes\) not verified yet: reading it takes about 1 s; run `sekhemet doctor --verify-weights` to check it$/,
+    );
+    let t = 0;
+    const asked = await weightsHashCheck({
+      registry: reg,
+      cachePath,
+      hash,
+      files: [],
+      verify: true,
+      now: () => {
+        t += 2500;
+        return t;
+      },
+    });
+    expect(reads).toBe(1);
+    expect(asked.detail).toBe("1 model file matches its registered SHA-256 (read in 3 s)");
+    // Now in the cache: compared without being read, and without the flag.
+    const cached = await weightsHashCheck({ registry: reg, cachePath, hash, files: [] });
+    expect(reads).toBe(1);
+    expect(cached.detail).toBe("1 model file matches its registered SHA-256");
+    expect(cached.status).toBe("pass");
+  });
+
+  // C4 review: the cache is keyed by path, size and time, so a file replaced
+  // after its verification missed the cache and was "not verified yet" with
+  // status pass, where before it failed. The cheap signals are read without
+  // reading the file: a size other than the verified file's, or the
+  // registered size, cannot have the registered hash.
+  it("SUR-89: without --verify-weights a file whose size differs from the verified one, or the registered one, fails unread", async () => {
+    const { reg, file, cachePath } = setup();
+    reg.recordWeights("nail-mtp", { path: file, volume: "internal", sha256: sha("weights") });
+    let reads = 0;
+    const hash = async (p: string) => {
+      reads++;
+      return createHash("sha256").update(readFileSync(p)).digest("hex");
+    };
+    expect(
+      (await weightsHashCheck({ registry: reg, cachePath, hash, files: [], verify: true })).status,
+    ).toBe("pass");
+    // Truncated by a failed copy, after its verification.
+    writeFileSync(file, "weig");
+    utimesSync(file, new Date(), new Date(Date.now() + 5000));
+    const truncated = await weightsHashCheck({ registry: reg, cachePath, hash, files: [] });
+    expect(reads).toBe(1);
+    expect(truncated.status).toBe("fail");
+    expect(truncated.detail).toMatch(
+      /nail-mtp: the file is 4 bytes, not the 7 bytes verified before, so its hash differs from the registered one \(.*w\.gguf\)\. Do: download it again/,
+    );
+    // The registered size, with no verification ever made.
+    const other = setup();
+    other.reg.recordWeights("nail-mtp", {
+      path: other.file,
+      volume: "internal",
+      sha256: sha("weights"),
+    });
+    other.reg.upsert("nail-mtp", { sizeBytes: 9 });
+    const sized = await weightsHashCheck({
+      registry: other.reg,
+      cachePath: other.cachePath,
+      hash,
+      files: [],
+    });
+    expect(reads).toBe(1);
+    expect(sized.status).toBe("fail");
+    expect(sized.detail).toMatch(/nail-mtp: the file is 7 bytes, not the registered 9 bytes/);
+  });
+
+  it("SUR-89: a file rewritten at the same size since its verification warns, unread, and names it as changed", async () => {
+    const { reg, file, cachePath } = setup();
+    reg.recordWeights("nail-mtp", { path: file, volume: "internal", sha256: sha("weights") });
+    let reads = 0;
+    const hash = async (p: string) => {
+      reads++;
+      return createHash("sha256").update(readFileSync(p)).digest("hex");
+    };
+    await weightsHashCheck({ registry: reg, cachePath, hash, files: [], verify: true });
+    writeFileSync(file, "weightz");
+    utimesSync(file, new Date(), new Date(Date.now() + 5000));
+    const c = await weightsHashCheck({ registry: reg, cachePath, hash, files: [] });
+    expect(reads).toBe(1);
+    expect(c.status).toBe("warn");
+    expect(c.detail).toMatch(/changed since it was verified/);
+    expect(c.detail).toMatch(/sekhemet doctor --verify-weights/);
   });
 });

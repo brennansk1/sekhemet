@@ -9,6 +9,11 @@
 //   7. the dashboard serves its page and /api/board
 //   8. the MCP server answers tools/list
 //   9. the built context version was measured by a suite A/B (context CX-N6-2)
+//  10. the slow faults of the C.6 suite (a real disk image filled and detached;
+//      FINISH_LINE_PLAN C.6, W8), which `pnpm gate` leaves out
+//  11. the §A performance budgets (W9): the board, the issue page and Review
+//      on a 500-issue board in Chromium, and the CLI's start against its
+//      recorded figure, which `pnpm gate` leaves out (timing is the machine's)
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -142,12 +147,57 @@ function contextVersion() {
   }
 }
 
+function slowFaults() {
+  try {
+    execFileSync("pnpm", ["exec", "vitest", "run", "apps/harness/tests/faults"], {
+      cwd: ROOT,
+      stdio: "ignore",
+      timeout: 15 * 60 * 1000,
+      env: { ...process.env, SEKHEMET_SLOW_FAULTS: "1" },
+    });
+    record(
+      10,
+      "fault injection (C.6, slow)",
+      true,
+      "every fault ends in a recorded stop and resumes",
+    );
+  } catch {
+    record(
+      10,
+      "fault injection (C.6, slow)",
+      false,
+      "run `SEKHEMET_SLOW_FAULTS=1 pnpm exec vitest run apps/harness/tests/faults`",
+    );
+  }
+}
+
+function perfBudgets() {
+  try {
+    execFileSync("pnpm", ["exec", "vitest", "run", "apps/harness/tests/perf"], {
+      cwd: ROOT,
+      stdio: "ignore",
+      timeout: 15 * 60 * 1000,
+      env: { ...process.env, SEKHEMET_PERF: "1" },
+    });
+    record(11, "performance budgets (§A, W9)", true, "LCP, CLS, interactions and CLI start hold");
+  } catch {
+    record(
+      11,
+      "performance budgets (§A, W9)",
+      false,
+      "run `SEKHEMET_PERF=1 pnpm exec vitest run apps/harness/tests/perf`",
+    );
+  }
+}
+
 console.log("Release gate (DEFINITION_OF_DONE.md §4)");
 await gate();
 doctor();
 await dashboard();
 await mcp();
 contextVersion();
+slowFaults();
+perfBudgets();
 const failed = results.filter((r) => !r.ok);
 // A verdict with rungs skipped is not a release verdict: say which ran.
 const skipped = process.argv.includes("--skip-gate");
@@ -155,7 +205,7 @@ console.log(
   failed.length
     ? `\nNOT releasable: ${failed.length} rung(s) failed.`
     : skipped
-      ? "\nRungs 6-9 pass; rungs 1-5 were skipped — not a release verdict."
+      ? "\nRungs 6-11 pass; rungs 1-5 were skipped — not a release verdict."
       : "\nReleasable: every rung passes.",
 );
 process.exitCode = failed.length ? 1 : 0;

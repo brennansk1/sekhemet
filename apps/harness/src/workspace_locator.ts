@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { type CardStore, EventLog, type ProjectRecord } from "@sekhemet/kernel";
+import { type CardStore, type EventLog, type ProjectRecord, workspaceIdOf } from "@sekhemet/kernel";
 
 /**
  * Which workspace a folder belongs to (kernel rule 38a, surface item 8a,
@@ -123,7 +123,8 @@ export function ledgerFacts(workspaceFolder: string): {
         return [];
       }
     })();
-    return { workspaceId: new EventLog(db).workspaceId(), projects };
+    // C-18: read without an EventLog, so a ledger not yet migrated is found too.
+    return { workspaceId: workspaceIdOf(db), projects };
   } finally {
     db.close();
   }

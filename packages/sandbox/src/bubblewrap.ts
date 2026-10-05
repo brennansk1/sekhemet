@@ -107,7 +107,8 @@ function maskOf(path: string): { path: string; argv: string[] } | undefined {
  * 1. the read-only root, the private /tmp, and (denyHomeReads) the empty home
  *    and its toolchains;
  * 2. the writable binds, so a scratch directory under /tmp and a root under
- *    the home are still reachable;
+ *    the home are still reachable, then the read-only grants (L12), bound
+ *    read-only;
  * 3. the secret masks, so a granted root that contains a secret (the home
  *    itself, say) still does not show it;
  * 4. any granted root inside a masked directory, bound again: the harness
@@ -164,8 +165,13 @@ export function bubblewrapArgv(
     });
   const maskedDirs = secretMasks.filter((m) => m.argv[0] === "--tmpfs").map((m) => m.path);
   const rebound = writeRoots.filter((r) => maskedDirs.some((d) => isBelow(r, d)));
+  // L12: read-only grants, bound read-only after the private /tmp (a
+  // worktree under the host's /tmp is otherwise hidden), never writable.
+  const readOnly = [
+    ...new Set((options.readOnlyPaths ?? []).filter((p) => existsSync(p)).map(realPath)),
+  ].filter((p) => !writeRoots.includes(p));
   // Linux lists the ledgers as literal files; the darwin-only glob is Seatbelt's.
-  const ledgerMasks = ledgerReadDenies(roots)
+  const ledgerMasks = ledgerReadDenies([...roots, ...readOnly])
     .filter((p) => !p.includes("*"))
     .map(maskOf)
     .filter((m) => m !== undefined);
@@ -189,6 +195,7 @@ export function bubblewrapArgv(
     "/tmp",
     ...homeMount,
     ...writeRoots.flatMap((p) => ["--bind", p, p]),
+    ...readOnly.flatMap((p) => ["--ro-bind", p, p]),
     ...secretMasks.flatMap((m) => m.argv),
     ...rebound.flatMap((p) => ["--bind", p, p]),
     ...protectedGit.flatMap((p) => ["--ro-bind", p, p]),

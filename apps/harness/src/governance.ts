@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { arch, cpus, platform, totalmem } from "node:os";
 import type { EventLog } from "@sekhemet/kernel";
+import { reportLostRecord } from "./lost_records.js";
 
 /**
  * Compute governance (H23): the machine is the user's, so unattended work is
@@ -54,7 +55,11 @@ export async function energyToday(log: EventLog, now = new Date()): Promise<Ener
   return { kwh: Math.round(kwh * 1000) / 1000, runMs, since: since.toISOString() };
 }
 
-/** Record one stretch of unattended compute on the ledger. */
+/**
+ * Record one stretch of unattended compute on the ledger. `durationMs` is
+ * monotonic time — the time the machine ran — never wall-clock time, so a
+ * machine that slept is not charged for it (runtime item 18, RUN-67).
+ */
 export async function recordUsage(
   log: EventLog,
   durationMs: number,
@@ -154,9 +159,17 @@ export async function mayRun(
     verdict = { ok: false, breaker: "thermal", reason: "the machine is thermally throttled" };
   }
   if (!verdict.ok) {
-    await log
-      .append({ actor: "harness", type: GOVERNANCE_EVENTS.tripped, payload: { ...verdict } })
-      .catch(() => undefined);
+    // Runtime item 29a (RUN-89): a trip that cannot be recorded is reported;
+    // the verdict still stops the night.
+    try {
+      await log.append({
+        actor: "harness",
+        type: GOVERNANCE_EVENTS.tripped,
+        payload: { ...verdict },
+      });
+    } catch (err) {
+      reportLostRecord(GOVERNANCE_EVENTS.tripped, err, { workspaceId: log.workspaceId() });
+    }
   }
   return verdict;
 }

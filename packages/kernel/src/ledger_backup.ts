@@ -6,6 +6,7 @@ import {
   type ErasureRegisterEntry,
   EventLog,
   erasureIndexOf,
+  ledgerErasures,
   readChainRows,
   verifyChainRows,
 } from "./log.js";
@@ -18,6 +19,81 @@ import type { HashChainVerificationResult } from "./types.js";
  * `EventLog.backup`; this module reads the erasure register, re-applies it
  * to a restored ledger, and writes and verifies the NDJSON export.
  */
+
+const BLOB_ID = /\b[0-9a-f]{64}\b/g;
+
+/**
+ * The blobs a ledger names that are not erased (runtime items 35a and 37;
+ * RUN-59, RUN-87, SPEC-02): every blob id in an event's payload or private
+ * part, or a step's context pack, less every blob a `ledger/erased` names.
+ * `held` are those the store holds with bytes that still hash to their id;
+ * `missing` are named, never erased, and absent or damaged. One enumeration
+ * for the backup set and the export. Reads only.
+ */
+export function ledgerBlobIds(
+  db: DatabaseSync,
+  blobs: BlobStore,
+): { held: string[]; missing: string[] } {
+  const named = new Set<string>();
+  const scan = (text: string | null): void => {
+    for (const m of text?.matchAll(BLOB_ID) ?? []) named.add(m[0]);
+  };
+  for (const r of db.prepare("SELECT payload FROM events WHERE type != 'ledger/erased'").all())
+    scan((r as { payload: string }).payload);
+  for (const r of db.prepare("SELECT body FROM event_private").all())
+    scan((r as { body: string }).body);
+  const steps = db
+    .prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'steps'")
+    .get();
+  if (steps) {
+    for (const r of db
+      .prepare("SELECT context_pack_id AS id FROM steps WHERE context_pack_id IS NOT NULL")
+      .all())
+      scan((r as { id: string }).id);
+  }
+  const erased = ledgerErasures(db).byBlob;
+  const held: string[] = [];
+  const missing: string[] = [];
+  for (const id of [...named].sort()) {
+    if (erased.has(id)) continue;
+    if (blobs.get(id) !== undefined) held.push(id);
+    else if (blobs.has(id) || looksLikeBlobRef(db, id)) missing.push(id);
+  }
+  return { held, missing };
+}
+
+/**
+ * Whether a 64-hex value the ledger carries is meant as a blob: a step's
+ * context pack, or a value under a key naming a pack or blob. An event hash
+ * or a commit hash quoted in a payload is not.
+ */
+function looksLikeBlobRef(db: DatabaseSync, id: string): boolean {
+  const steps = db
+    .prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'steps'")
+    .get();
+  if (steps && db.prepare("SELECT 1 AS x FROM steps WHERE context_pack_id = ?").get(id))
+    return true;
+  const keyed = new RegExp(
+    `"[A-Za-z]*(?:[Pp]ack|[Bb]lob)[A-Za-z]*"\\s*:\\s*(?:\\[[^\\]]*)?"${id}"`,
+  );
+  const rows = db
+    .prepare(
+      "SELECT payload AS t FROM events WHERE instr(payload, ?) > 0 UNION ALL SELECT body AS t FROM event_private WHERE instr(body, ?) > 0",
+    )
+    .all(id, id) as { t: string }[];
+  return rows.some((r) => keyed.test(r.t));
+}
+
+/** The evidence bundles a ledger records: id, path (relative to the workspace folder) and hash. */
+export function ledgerEvidence(db: DatabaseSync): { id: string; path: string; sha256: string }[] {
+  const table = db
+    .prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'evidence_bundles'")
+    .get();
+  if (!table) return [];
+  return db
+    .prepare("SELECT id, path, sha256 FROM evidence_bundles ORDER BY created_at, rowid")
+    .all() as unknown as { id: string; path: string; sha256: string }[];
+}
 
 /** The register's entries, oldest first; undefined when the file does not exist. */
 export function readErasureRegister(path: string): ErasureRegisterEntry[] | undefined {
@@ -118,13 +194,37 @@ export interface RestoreReport {
 }
 
 /**
+ * Whether another connection has the ledger at `path` open (RUN-92). In WAL
+ * mode every open connection holds a shared lock on the file for its whole
+ * life, so an exclusive lock taken without waiting fails while any other
+ * process — a server, a runner, an editor's MCP server, a script — has it
+ * open, however idle. False when the file does not exist.
+ */
+export function ledgerInUse(path: string): boolean {
+  if (!existsSync(path)) return false;
+  const probe = new DatabaseSync(path, { timeout: 0 });
+  try {
+    probe.exec("PRAGMA locking_mode=EXCLUSIVE");
+    probe.exec("BEGIN EXCLUSIVE");
+    probe.exec("COMMIT");
+    return false;
+  } catch (err) {
+    if (/locked|busy/i.test((err as Error).message)) return true;
+    throw err;
+  } finally {
+    probe.close();
+  }
+}
+
+/**
  * Restore `backupPath` over `targetPath` (rule 35, K-N7-5): the backup is
  * copied beside the target, migrated if older, and every register erasure
  * newer than its last seq is re-applied there — before the restored ledger is
  * moved into place, so nothing ever reads it unerased. Refused when erasures
  * are known to exist (in the backup or the ledger being replaced) and the
  * register is missing, or when the backup's chain does not verify. The
- * replaced ledger is kept beside it. The ledger must not be open elsewhere.
+ * replaced ledger is kept beside it. Refused while another process has the
+ * ledger open (RUN-92): it would go on writing to the file moved aside.
  */
 export async function restoreBackup(options: {
   backupPath: string;
@@ -177,6 +277,12 @@ export async function restoreBackup(options: {
   db.close();
 
   let previousKeptAt: string | undefined;
+  if (ledgerInUse(targetPath)) {
+    for (const f of [staging, `${staging}-wal`, `${staging}-shm`]) rmSync(f, { force: true });
+    throw new RestoreRefused(
+      `Refusing to restore: another process has the Activity log ${targetPath} open, and would go on writing to the file a restore moves aside. Stop the dashboard server (\`sekhemet daemon stop\`, or the terminal running \`sekhemet serve\`), any runner and any editor connected to it, then restore again.`,
+    );
+  }
   if (existsSync(targetPath)) {
     previousKeptAt = `${targetPath}.before-restore-${new Date().toISOString().replace(/[:.]/g, "-")}`;
     renameSync(targetPath, previousKeptAt);

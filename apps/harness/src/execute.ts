@@ -33,10 +33,12 @@ import {
 import {
   type CardRecord,
   type CardStatus,
+  type CardStopReason,
   type CardStore,
   type DependencyReason,
   type EventLog,
   type RetentionReport,
+  STOP_REASONS,
   cardClassOf,
 } from "@sekhemet/kernel";
 import {
@@ -66,7 +68,12 @@ import { plural } from "@sekhemet/ui";
 import { integrationBranch, ledgerBundle, reviewEntriesSinceEvidence } from "./accept.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { baselineInput, cardGateRunner, gateBaseBranch } from "./card_gates.js";
-import { contextForCard, isolateCard, isolateCheckout } from "./card_root.js";
+import {
+  contextForCard,
+  isolateCard,
+  isolateCheckout,
+  projectRepositoryMissing,
+} from "./card_root.js";
 import { cardOneTests, cardZeroSteps, withoutCardOneStaging } from "./card_zero.js";
 import {
   lastPauseSeq,
@@ -76,6 +83,7 @@ import {
   undeliveredMessages,
 } from "./collaborate.js";
 import { configOverrideLines, networkConfigs } from "./config_apply.js";
+import { DiskLowError, checkFreeSpace, diskLowDetail } from "./disk_space.js";
 import { egressEvent } from "./egress_event.js";
 import type { evidenceSummary } from "./evidence_summary.js";
 import { PR_EVENT, openPullRequestViaApp, prBody } from "./github_sync.js";
@@ -91,6 +99,7 @@ import { playbookRuleOf, standingErrorCode } from "./learning/scoping.js";
 import { type LearningStore, RULES_PER_PROMPT } from "./learning/store.js";
 import { recordLedgerRun } from "./ledger_evidence.js";
 import { withLiveGate } from "./live_gate.js";
+import { lostRecordReporter, reportLostRecord } from "./lost_records.js";
 import { loadBaseline, recordBaselineShrink } from "./onboard.js";
 import { fullContextVersion, rolePromptVersion } from "./prompt_versions.js";
 import { buildReproRecord } from "./repro.js";
@@ -212,6 +221,52 @@ export interface ExecutionContext {
    * Solo, where the one person may always.
    */
   agentRefusal?: (cardId: string) => Promise<string | undefined>;
+  /**
+   * Runtime RUN-69: the free-space floor in bytes; default the policy's (5 GB,
+   * or twice the largest worktree when larger, `disk_space.ts`).
+   */
+  freeSpaceFloorBytes?: number;
+}
+
+/**
+ * Why a stop ends the queue's round, so it starts no further card, or
+ * undefined: memory pressure (runtime item 22), a full disk (WL-N11-2) and a
+ * Coding model that is down (WL-N12-2).
+ */
+export function queueHaltReason(stopReason: CardStopReason): string | undefined {
+  const row = STOP_REASONS[stopReason];
+  return row.haltsQueue ? `${stopReason.replace(/_/g, " ")}: ${row.nextAction}` : undefined;
+}
+
+/** The name of the ledger event a card that did not start for space records (RUN-69). */
+export const DISK_LOW_EVENT = "machine/disk_low";
+
+/**
+ * Runtime RUN-69, RUN-83: before a card starts, the volumes of its project's
+ * root and the workspace folder are read; below the floor the card does not
+ * start — it stays where it is, `machine/disk_low` names the volume, and
+ * `DiskLowError` ends the round.
+ */
+export async function refuseWhenDiskLow(ctx: ExecutionContext, card: CardRecord): Promise<void> {
+  const check = checkFreeSpace(
+    [ctx.repoPath, stateRootOf(ctx)],
+    ctx.freeSpaceFloorBytes !== undefined ? { floorBytes: ctx.freeSpaceFloorBytes } : {},
+  );
+  if (check.ok) return;
+  await ctx.cardStore
+    .recordEvent({
+      type: DISK_LOW_EVENT,
+      cardId: card.id,
+      actor: "harness",
+      payload: { id: card.id, ...diskLowDetail(check) },
+    })
+    .catch((err) =>
+      reportLostRecord(DISK_LOW_EVENT, err, {
+        workspaceId: ctx.cardStore.workspaceId(),
+        cardId: card.id,
+      }),
+    );
+  throw new DiskLowError(check);
 }
 
 /**
@@ -380,6 +435,10 @@ export async function executeCard(
   // root, whatever folder the server or command started in; the workspace's
   // state stays beside its ledger. Security item 10a: its commands see only
   // its own project for the run.
+  // RUN-94: none of a card's project's cards starts while its repository
+  // is missing (a restore found it gone); `sekhemet project move` names it.
+  const missing = projectRepositoryMissing(ctx.cardStore, inputCard);
+  if (missing) throw new Error(`${inputCard.id} not started: ${missing}.`);
   const cardCtx = contextForCard(ctx, inputCard);
   const release = isolateCard(cardCtx, inputCard.id);
   try {
@@ -397,6 +456,8 @@ async function executeCardIn(
   options: ExecuteCardOptions = {},
 ): Promise<CardRunResult> {
   const log = ctx.log ?? ((line: string) => console.log(line));
+  // RUN-69, RUN-83: no card starts on a volume below the free-space floor.
+  await refuseWhenDiskLow(ctx, inputCard);
   // Rule 10: a measured run's fixed sampling seed, on the card's model; set
   // on every card, so a seed never carries over to one that names none, and
   // refused when the model cannot take one (review minor 2).
@@ -558,6 +619,25 @@ async function executeCardIn(
   const nets = networkConfigs(ctx.repoPath);
   const networkPolicy = mergeNetworkConfigs(nets.user, nets.project);
   const runner = new CardRunner({
+    // Runtime item 29a (RUN-89): a record the run could not write is reported.
+    onLostRecord: lostRecordReporter(() => ctx.cardStore.workspaceId(), card.id),
+    // RUN-70, WL-N11-3: after a write's ENOSPC, the volume read against the floor.
+    freeSpace: (path) => {
+      const check = checkFreeSpace(
+        [path, stateRootOf(ctx)],
+        ctx.freeSpaceFloorBytes !== undefined ? { floorBytes: ctx.freeSpaceFloorBytes } : {},
+      );
+      return check.ok
+        ? {
+            belowFloor: false,
+            detail: {
+              volume: check.volumes[0]?.mount,
+              freeBytes: check.volumes[0]?.freeBytes,
+              floorBytes: check.floorBytes,
+            },
+          }
+        : { belowFloor: true, detail: diskLowDetail(check) };
+    },
     onToolCall: (event) => {
       const list = toolCallsByStep.get(event.turnIndex) ?? [];
       list.push(event);
@@ -1308,6 +1388,9 @@ async function stepBudgetDefaulted(
  * used (L21, at most 15% per calibration), or set from the difficulty when
  * the card was created without a step budget and nothing is measured yet.
  */
+/** The reason a run's claim of a Ready issue carries; the start-up sweep reads it (C.6). */
+export const RUN_CLAIM_REASON = "the Planning model claims the issue";
+
 export async function pullThroughPlanning(
   ctx: ExecutionContext,
   card: CardRecord,
@@ -1356,7 +1439,7 @@ export async function pullThroughPlanning(
     fromStatus: "ready",
     toStatus: "planning",
     actor: "planner",
-    reason: "the Planning model claims the issue",
+    reason: RUN_CLAIM_REASON,
   });
   // A cap the caller put on its copy (the queue's --max-turns) still holds
   // for this run; the stored budget is the planner's.
@@ -1876,6 +1959,13 @@ export interface QueueReport {
   retention?: RetentionReport;
   /** Written part-way through the run; the final report has no such mark. */
   partial?: boolean;
+  /**
+   * The machine during the run (runtime items 17b and 34c): what kept it
+   * awake, or that nothing could, said once (RUN-66); "the machine slept N
+   * min" when the wall clock ran over a minute ahead of the monotonic clock
+   * (RUN-67); and why the round ended before a card started for space (RUN-69).
+   */
+  machine?: { awake: string; slept?: string; diskLow?: string };
   /** Condensing's savings over the run, in total and per tool, beside the raw tokens (CX-N5-3). */
   condensing?: CondensingSummary;
   /** Each model's load time, apart from the cards' time (MS-T7-1): `ThroughputMeter.loads()`. */

@@ -51,6 +51,8 @@ import {
   cardClassOf,
   cardKind,
   defaultSecondsBudget,
+  isModelUnavailableError,
+  isNoSpaceError,
   serializeContextPack,
 } from "@sekhemet/kernel";
 import { type ToolCallFormat, candidateSettings, harnessProvenance } from "@sekhemet/models";
@@ -338,7 +340,7 @@ export interface CardRunOptions extends Omit<SessionOptions, "cardId"> {
   checkpointEvery?: number | undefined;
   /** Token budget for this run; defaults to `card.tokenBudget` (L22). */
   tokenBudget?: number | undefined;
-  /** Wall-clock budget in seconds; defaults to `card.secondsBudget` (L22). */
+  /** Seconds budget, on the run's monotonic clock; defaults to `card.secondsBudget` (L22). */
   secondsBudget?: number | undefined;
   /** Clock, injectable for tests. */
   now?: (() => number) | undefined;
@@ -377,7 +379,35 @@ export interface CardRunOptions extends Omit<SessionOptions, "cardId"> {
    * Worker's history.
    */
   startFrom?: { step: number; gitRef: string; attemptId?: string } | undefined;
+  /**
+   * Runtime RUN-70, worker-loop WL-N11-3: the free space of the volume
+   * holding `path` against the floor, as the `disk_low` facts. Read after a
+   * step whose tool reported ENOSPC: a harness write tool's ENOSPC stops the
+   * card; any other mention (a command's output) only when the volume is
+   * below the floor, so a Worker cannot end its card with an environment
+   * stop by printing the word. Absent, ENOSPC stays an observation.
+   */
+  freeSpace?:
+    | ((path: string) => { belowFloor: boolean; detail: Record<string, unknown> })
+    | undefined;
+  /** WL-N12-2: the wait before the one retry of a step whose model went away (default 2 s). */
+  modelRetryBackoffMs?: number | undefined;
 }
+
+/** The stop a failed write of the harness's own forces (WL-N11-3, RUN-90). */
+interface EnvironmentStop {
+  reason: "disk_low" | "error";
+  detail: Record<string, unknown>;
+}
+
+/** Tools whose failure is the harness's own file write in the worktree. */
+const WRITING_TOOLS = new Set([
+  "write_file",
+  "edit",
+  "replace_lines",
+  "replace_symbol_body",
+  "insert_after_symbol",
+]);
 
 export interface CardRunResult {
   cardId: string;
@@ -436,7 +466,8 @@ const TEST_FILE =
  */
 
 /** Longest dossier line shown to the Worker. */
-const DOSSIER_LINE_CHARS = 400;
+/** A dossier entry is clipped to this many characters in a Worker prompt. */
+export const DOSSIER_LINE_CHARS = 400;
 /** Dossier lines shown to the Worker at most (newest kept). */
 const DOSSIER_MAX_LINES = 12;
 
@@ -575,6 +606,63 @@ export class CardRunner {
   private rebaseConflict: { conflict: RebaseConflict; route: "parked" | "unresolved" } | undefined;
   private crossValidation: string | undefined;
   private samplesTried = 1;
+  /** A write of the harness's own that failed and stops the card before its next step. */
+  private environmentStop: EnvironmentStop | undefined;
+
+  /**
+   * Runtime item 29a (RUN-89): a record that could not be written is
+   * reported, never swallowed; one written for space stops the card with
+   * `disk_low` (WL-N11-3), and one that guards the run (`guards`: an egress
+   * record) stops it with `error` (RUN-90).
+   */
+  private lostRecord(kind: string, err: unknown, guards = false): void {
+    if (this.options.onLostRecord) this.options.onLostRecord(kind, err);
+    else console.warn(`sekhemet: ${kind} not recorded: ${refusalReason(err)}`);
+    this.emit({
+      type: "status",
+      cardId: this.options.card.id,
+      message: `${kind} not recorded: ${refusalReason(err)}`,
+    });
+    if (this.environmentStop?.reason === "disk_low") return;
+    if (isNoSpaceError(err)) {
+      this.environmentStop = {
+        reason: "disk_low",
+        detail: { lostRecord: kind, error: refusalReason(err).slice(0, 300) },
+      };
+    } else if (guards && !this.environmentStop) {
+      this.environmentStop = {
+        reason: "error",
+        detail: { lostRecord: kind, error: refusalReason(err).slice(0, 300) },
+      };
+    }
+  }
+
+  /**
+   * WL-N11-3: a writing tool that failed with ENOSPC on a volume now below
+   * the floor stops the card with `disk_low`, naming the path. Any other
+   * observation that mentions ENOSPC (a command's output) stops it only when
+   * the free space read now is below the floor.
+   */
+  private diskLowAfter(turn: TurnResult, worktreePath: string): EnvironmentStop | undefined {
+    const probe = this.options.freeSpace;
+    if (!probe) return undefined;
+    for (const [i, obs] of turn.observations.entries()) {
+      if (obs.ok || !/\bENOSPC\b|no space left on device/i.test(`${obs.summary} ${obs.content}`))
+        continue;
+      const call = turn.toolCalls[i];
+      const target = call?.arguments?.path;
+      // The write tools' own failure reads `error: <the fs error>` (tools.ts).
+      const written =
+        call !== undefined &&
+        WRITING_TOOLS.has(call.name) &&
+        typeof target === "string" &&
+        /^error: (ENOSPC|EDQUOT)\b/.test(obs.summary);
+      const space = probe(written ? join(worktreePath, target) : worktreePath);
+      if (written) return { reason: "disk_low", detail: { ...space.detail, path: target } };
+      if (space.belowFloor) return { reason: "disk_low", detail: space.detail };
+    }
+    return undefined;
+  }
 
   private headOf(worktreePath: string): string | undefined {
     try {
@@ -791,8 +879,13 @@ export class CardRunner {
     await this.session?.abort(this.pendingAbort);
   }
 
+  /**
+   * The run's clock, for durations and the seconds budget only: monotonic
+   * (`performance.now`), so a stepped system clock or a sleep is never
+   * charged to a card (C.6's clock jump; runtime RUN-67).
+   */
   private now(): number {
-    return this.options.now?.() ?? Date.now();
+    return this.options.now?.() ?? performance.now();
   }
 
   /**
@@ -949,11 +1042,7 @@ export class CardRunner {
         });
       }
     } catch (err) {
-      this.emit({
-        type: "status",
-        cardId: this.options.card.id,
-        message: `step ${turn.turnIndex} not recorded: ${refusalReason(err)}`,
-      });
+      this.lostRecord(`step ${turn.turnIndex}`, err);
     }
   }
 
@@ -1000,11 +1089,8 @@ export class CardRunner {
         return undefined;
       }
       if (strict) throw err;
-      this.emit({
-        type: "status",
-        cardId: card.id,
-        message: `checkpoint failed: ${refusalReason(err)}`,
-      });
+      // WL-N11-3: a checkpoint commit that failed for space stops the card.
+      this.lostRecord(`checkpoint at step ${step}`, err);
       return undefined;
     }
     checkpointShas.push(sha);
@@ -1015,7 +1101,9 @@ export class CardRunner {
     });
     const stepId = this.stepIds.get(step);
     if (stepId && store?.runs) {
-      await store.runs.markStepCheckpoint(stepId, sha).catch(() => undefined);
+      await store.runs
+        .markStepCheckpoint(stepId, sha)
+        .catch((err) => this.lostRecord(`step ${step}'s checkpoint mark`, err));
     }
     if (store) {
       const record: CheckpointRecord = {
@@ -1031,11 +1119,7 @@ export class CardRunner {
       try {
         await store.recordCheckpoint(record);
       } catch (err) {
-        this.emit({
-          type: "status",
-          cardId: card.id,
-          message: `checkpoint ${sha.slice(0, 10)} not recorded: ${refusalReason(err)}`,
-        });
+        this.lostRecord(`checkpoint ${sha.slice(0, 10)}`, err);
       }
     }
     return sha;
@@ -1529,9 +1613,10 @@ export class CardRunner {
         cardId: card.id,
         message: `network allowlist warning: ${w.host} — ${w.reason}`,
       });
+      // RUN-90: a security record that cannot be written stops the card.
       void store
         ?.recordEvent({ type: "card/egress_warning", cardId: card.id, actor: "system", payload: w })
-        .catch(() => undefined);
+        .catch((err) => this.lostRecord("card/egress_warning", err, true));
     }
     if (allow.length > 0 && !this.options.allowNetwork && !this.options.restricted) {
       this.egress = new EgressProxy({
@@ -1540,7 +1625,7 @@ export class CardRunner {
         onRequest: (r) => {
           void store
             ?.recordEvent({ type: "card/egress", cardId: card.id, actor: "system", payload: r })
-            .catch(() => undefined);
+            .catch((err) => this.lostRecord("card/egress", err, true));
         },
       });
       this.egressPort = await this.egress.start().catch(() => undefined);
@@ -1563,7 +1648,7 @@ export class CardRunner {
               actor: "system",
               payload: { ...r, via: "generator" },
             })
-            .catch(() => undefined);
+            .catch((err) => this.lostRecord("card/egress", err, true));
         },
       });
       this.generatorPort = await this.generatorEgress.start().catch(() => undefined);
@@ -1789,6 +1874,8 @@ export class CardRunner {
       const every = this.options.checkpointEvery ?? 5;
       let lastCheckpointStep = session.getStepsUsed();
       let lastCheckpointWrites = 0;
+      /** WL-N12-2: the one retry of a step whose model went away. */
+      let modelRetried = false;
 
       const budgetStop = (): ExecutionStopReason | undefined => {
         if (tokenBudget !== undefined && tokenBudget > 0 && tokens >= tokenBudget) {
@@ -1826,11 +1913,24 @@ export class CardRunner {
         const turnStarted = this.now();
         try {
           turn = await session.executeTurn();
+          modelRetried = false;
         } catch (err) {
           // An inference or transport failure ends this card with a recorded
           // reason; it must not take the queue down with it. A single rejected
           // request on a live run previously killed the whole Chronicle gate.
           const message = err instanceof Error ? err.message : String(err);
+          // WL-N12-2: a model that went away gets one retry after a wait;
+          // still away, the card stops with `model_unavailable`.
+          if (isModelUnavailableError(err) && !modelRetried) {
+            modelRetried = true;
+            this.emit({
+              type: "status",
+              cardId: card.id,
+              message: `the Coding model did not answer (${message.slice(0, 160)}); retrying once`,
+            });
+            await new Promise((r) => setTimeout(r, this.options.modelRetryBackoffMs ?? 2000));
+            continue;
+          }
           this.emit({
             type: "status",
             cardId: card.id,
@@ -1840,6 +1940,16 @@ export class CardRunner {
           if (isTampered(err)) {
             this.tampered = message;
             stopReason = "git_metadata_tampered";
+          } else if (isModelUnavailableError(err)) {
+            stopReason = "model_unavailable";
+            stopDetail = {
+              model: this.options.modelAdapter.modelId,
+              error: chainMessage(err).slice(0, 300),
+            };
+          } else if (isNoSpaceError(err)) {
+            // WL-N11-3: a prompt or blob the step could not write for space.
+            stopReason = "disk_low";
+            stopDetail = { error: message.slice(0, 300) };
           } else {
             stopReason = "error";
           }
@@ -1860,8 +1970,10 @@ export class CardRunner {
         tokens += (turn.usage?.promptTokens ?? 0) + (turn.usage?.completionTokens ?? 0);
         try {
           await this.options.onTurn?.(card.id, turn);
-        } catch {
-          // Recording a step must never fail a card.
+        } catch (err) {
+          // Recording a step never fails the card, but it is never silent
+          // either (RUN-89), and one that failed for space stops it.
+          this.lostRecord(`card/step ${turn.turnIndex}`, err);
         }
 
         this.emit({
@@ -1870,6 +1982,15 @@ export class CardRunner {
           turn: turn.turnIndex,
           message: turn.toolCalls.map((c) => c.name).join(", ") || "(no tool calls)",
         });
+
+        // WL-N11-3, RUN-90: a full disk, or a guarding record that was lost.
+        const environment = this.diskLowAfter(turn, worktreePath) ?? this.environmentStop;
+        if (environment) {
+          this.environmentStop = environment;
+          stopReason = environment.reason;
+          stopDetail = environment.detail;
+          break;
+        }
 
         if (turn.gateResult) {
           lastGateResult = turn.gateResult;
@@ -1926,7 +2047,14 @@ export class CardRunner {
 
       // A stop that suspends the card keeps its partial work in a checkpoint:
       // that is what a memory-pressure resume (H17) restarts from.
-      if (STOP_REASONS[stopReason].checkpoints && session.getWriteCount() > lastCheckpointWrites) {
+      // Not after a write failed for space: what it left half-written is not
+      // work, and the resume restores the last good checkpoint (WL-N11-2).
+      const failedWrite = stopReason === "disk_low" && stopDetail?.path !== undefined;
+      if (
+        STOP_REASONS[stopReason].checkpoints &&
+        !failedWrite &&
+        session.getWriteCount() > lastCheckpointWrites
+      ) {
         await this.checkpoint(session.getStepsUsed(), "partial", checkpointShas);
         lastCheckpointWrites = session.getWriteCount();
       }
@@ -1939,7 +2067,14 @@ export class CardRunner {
       // stops are the point.
       // Nor under memory pressure: a typecheck and a test run are exactly the
       // allocations the halt was protecting the host from.
-      if (!lastGateResult && session.isScopeComplete() && STOP_REASONS[stopReason].mayVerify) {
+      // Nor after a guarding record was lost (RUN-90): a card whose egress is
+      // not all on the ledger is not verified into Review.
+      if (
+        !lastGateResult &&
+        session.isScopeComplete() &&
+        STOP_REASONS[stopReason].mayVerify &&
+        this.environmentStop === undefined
+      ) {
         this.emit({
           type: "status",
           cardId: card.id,
@@ -2469,7 +2604,9 @@ export class CardRunner {
       .catch(() => undefined);
     await this.egress?.close().catch(() => undefined);
     await this.generatorEgress?.close().catch(() => undefined);
-    await lifecycle?.recordSteps?.(card.id, params.stepsUsed);
+    await Promise.resolve(lifecycle?.recordSteps?.(card.id, params.stepsUsed)).catch((err) =>
+      this.lostRecord("steps used", err),
+    );
 
     // Bounds are checked against the real diff, which is why the git adapter
     // computes stats: the limit is meaningless without a measured diff.
@@ -2694,6 +2831,15 @@ export class CardRunner {
       } else if (stopReason === "paused") {
         // WL-N10-2: it keeps In Progress, its branch and its checkpoint until
         // a person hands it back or takes it over.
+      } else if (STOP_REASONS[stopReason].holdsInReady) {
+        // WL-N11-2, WL-N12-2: the machine's stops hold the card in Ready with
+        // its worktree; its next run resumes from the last checkpoint.
+        const moved = await this.move(
+          "ready",
+          `held (${stopReason}): ${STOP_REASONS[stopReason].nextAction}`,
+        );
+        if (moved.ok) finalStatus = "ready";
+        else held = { reason: moved.reason, wanted: "ready" };
       } else if (stopReason === "rebase_conflict" && this.rebaseConflict && session) {
         // RG-N1-2 (outside the scope) and RG-N1-3 (unresolved): parked for a person.
         const { conflict, route } = this.rebaseConflict;
@@ -2845,4 +2991,17 @@ export class CardRunner {
       ...(params.resumedFrom ? { resumedFrom: params.resumedFrom } : {}),
     };
   }
+}
+
+/** An error's message with its causes' (a fetch failure's `cause` names the socket error). */
+function chainMessage(err: unknown): string {
+  const parts: string[] = [];
+  let e: unknown = err;
+  for (let i = 0; i < 4 && e; i++) {
+    const m = e instanceof Error ? e.message : String(e);
+    const code = (e as { code?: unknown }).code;
+    parts.push(typeof code === "string" && !m.includes(code) ? `${m} (${code})` : m);
+    e = (e as { cause?: unknown }).cause;
+  }
+  return parts.join(": ");
 }

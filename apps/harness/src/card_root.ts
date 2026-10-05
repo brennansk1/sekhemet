@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { CardStore } from "@sekhemet/kernel";
 import { projectIsolationDenies, registerCardIsolation } from "@sekhemet/sandbox";
@@ -25,6 +26,21 @@ export function projectRootOf(
   card: { projectId?: string | undefined },
 ): string | undefined {
   return card.projectId ? cardStore.getProject(card.projectId)?.rootPath : undefined;
+}
+
+/**
+ * Runtime RUN-88, RUN-94: why none of a card's project's cards may start —
+ * its root no longer holds its repository (a restore found it gone, or it
+ * was moved) — with the command that names the new folder; undefined when
+ * the card has no project the ledger knows, or its repository is there.
+ */
+export function projectRepositoryMissing(
+  cardStore: CardStore,
+  card: { projectId?: string | undefined },
+): string | undefined {
+  const project = card.projectId ? cardStore.getProject(card.projectId) : undefined;
+  if (!project || existsSync(join(project.rootPath, ".git"))) return undefined;
+  return `${project.name}'s repository is missing — expected at ${project.rootPath}; name its folder with \`sekhemet project move ${project.id} <folder>\``;
 }
 
 /** The context a card runs in: its project's root, and the workspace folder for state. */

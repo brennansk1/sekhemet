@@ -23,11 +23,17 @@ export interface TomlTable {
 
 export class TomlParseError extends Error {
   public readonly line: number;
+  /** The 1-based column of the character the parser stopped at (surface item 21, SUR-92). */
+  public readonly column: number;
+  /** What is wrong, without the position. */
+  public readonly reason: string;
 
-  constructor(message: string, line: number) {
-    super(`TOML parse error on line ${line}: ${message}`);
+  constructor(message: string, line: number, column = 1) {
+    super(`TOML parse error on line ${line}, column ${column}: ${message}`);
     this.name = "TomlParseError";
     this.line = line;
+    this.column = column;
+    this.reason = message;
   }
 }
 
@@ -74,8 +80,20 @@ class Scanner {
     this.pos += count;
   }
 
+  /** The 1-based column of the current position on its line. */
+  public get columnNumber(): number {
+    const at = Math.min(this.pos, this.src.length);
+    return at - (this.src.lastIndexOf("\n", at - 1) + 1) + 1;
+  }
+
   public fail(message: string): never {
-    throw new TomlParseError(message, this.lineNumber);
+    throw new TomlParseError(message, this.lineNumber, this.columnNumber);
+  }
+
+  /** Fail at the character just consumed (a newline is reported where it stands). */
+  public failBack(message: string): never {
+    this.pos--;
+    return this.fail(message);
   }
 
   /** Skips spaces and tabs only. */
@@ -199,7 +217,7 @@ function parseBasicString(scanner: Scanner): string {
     if (scanner.eof()) scanner.fail("unterminated basic string");
     const ch = scanner.next();
     if (ch === '"') return out;
-    if (ch === "\n") scanner.fail("newline in basic string");
+    if (ch === "\n") scanner.failBack("newline in basic string");
     if (ch === "\\") {
       out += decodeEscape(scanner);
       continue;
@@ -231,7 +249,7 @@ function parseLiteralString(scanner: Scanner): string {
     if (scanner.eof()) scanner.fail("unterminated literal string");
     const ch = scanner.next();
     if (ch === "'") return out;
-    if (ch === "\n") scanner.fail("newline in literal string");
+    if (ch === "\n") scanner.failBack("newline in literal string");
     out += ch;
   }
 }

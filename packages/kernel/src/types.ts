@@ -85,7 +85,11 @@ export type CardStopReason =
   /** A pre-step project hook vetoed the step (worker-loop rule 32, WL-T3-4). */
   | "hook_veto"
   /** The process died mid-attempt; found on the next start (runtime RUN-9). */
-  | "crashed";
+  | "crashed"
+  /** A volume Sekhemet writes to is below the free-space floor, or a write hit ENOSPC (runtime RUN-69, RUN-70). */
+  | "disk_low"
+  /** The Coding model's engine refused the connection or its stream died (worker-loop WL-N12-2). */
+  | "model_unavailable";
 
 /**
  * Every stop reason, for validation and exhaustive UI tables: the keys of the

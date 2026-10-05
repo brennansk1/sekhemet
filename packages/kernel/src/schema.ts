@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { assigneeTarget } from "./assignee.js";
@@ -18,9 +19,27 @@ export const EVENT_ACTOR_CHECK = `actor IN (${EVENT_ACTORS.map((a) => `'${a}'`).
  * writer that meets a concurrent write fails instantly with SQLITE_BUSY instead
  * of waiting the few milliseconds the other transaction needs.
  */
+/**
+ * The power-loss window, decided by measurement (kernel rule 38, K-N11-1):
+ * `synchronous = FULL` syncs the WAL at every commit; on darwin a plain
+ * fsync leaves the write in the drive's cache, so `fullfsync` (commits) and
+ * `checkpoint_fullfsync` (checkpoints) are on too. Adopted because the p95
+ * single append under it (4.0-5.0 ms on the reference SSD) is within the
+ * 25 ms bound and adds about 0.5 % to a median Worker step (bound: 1 %).
+ */
+export const LEDGER_SYNC_DECISION = {
+  synchronous: "FULL",
+  fullfsync: true,
+  checkpointFullfsync: true,
+  p95BoundMs: 25,
+  evidence: "evidence/append_sync_2026-10-05.json",
+} as const;
+
 export const KERNEL_PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
+PRAGMA synchronous = ${LEDGER_SYNC_DECISION.synchronous};
+PRAGMA fullfsync = ${LEDGER_SYNC_DECISION.fullfsync ? "ON" : "OFF"};
+PRAGMA checkpoint_fullfsync = ${LEDGER_SYNC_DECISION.checkpointFullfsync ? "ON" : "OFF"};
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 `;
@@ -314,7 +333,11 @@ export interface SchemaMigrationReport {
 
 /** A migration refused rather than lose data or open a ledger it cannot serve. */
 export class MigrationRefused extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** Set on the refusal of a database newer than this build (rule 38, REL-18). */
+    public readonly newer?: { stored: number; current: number; preMigrationBackup?: string },
+  ) {
     super(message);
     this.name = "MigrationRefused";
   }
@@ -714,6 +737,46 @@ function backupBeforeMigrating(
 }
 
 /**
+ * The refusal of a database newer than this build (rule 38, K-N4-2), after a
+ * rollback (runtime item 38, FINDINGS_C1 REL-18): it names the backup taken
+ * before the database was migrated past this build — the newest
+ * `pre-migration-v<from>-to-v<to>` whose `from` this build opens — with the
+ * command that restores it, and where the backup sets are listed.
+ */
+function newerDatabaseRefusal(
+  db: DatabaseSync,
+  stored: number,
+  current: number,
+  backupDir: string | undefined,
+): MigrationRefused {
+  const head = `this database is at schema version ${stored}, newer than this build's version ${current}: upgrade Sekhemet to open it`;
+  const location = databaseFile(db);
+  const dir = backupDir ?? (location ? join(dirname(location), "backups") : undefined);
+  let names: string[] = [];
+  try {
+    names = dir ? readdirSync(dir) : [];
+  } catch {
+    names = [];
+  }
+  const newest = names
+    .map((name) => ({ name, m: /^pre-migration-v(\d+)-to-v(\d+)-(.+)\.db$/.exec(name) }))
+    .filter((c) => c.m && Number(c.m[1]) <= current && Number(c.m[2]) > current)
+    .sort((a, b) => (a.m?.[3] ?? "").localeCompare(b.m?.[3] ?? ""))
+    .at(-1);
+  if (!newest || !dir) {
+    return new MigrationRefused(
+      `${head}, or go back to a backup: \`sekhemet backup --list\` lists them by schema version.`,
+      { stored, current },
+    );
+  }
+  const path = join(dir, newest.name);
+  return new MigrationRefused(
+    `${head}, or go back with \`sekhemet restore ${path}\` (taken before the migration; events recorded since then are not in it). \`sekhemet backup --list\` lists the other backups.`,
+    { stored, current, preMigrationBackup: path },
+  );
+}
+
+/**
  * Apply every migration above the database's `user_version`, each in its own
  * transaction (K-N4-1), after writing a backup (K-N4-5). A database newer
  * than these migrations is refused, naming both versions (K-N4-2).
@@ -733,9 +796,7 @@ export function runMigrations(
     applied: [],
   };
   if (stored > current) {
-    throw new MigrationRefused(
-      `this database is at schema version ${stored}, newer than this build's version ${current}: upgrade Sekhemet to open it`,
-    );
+    throw newerDatabaseRefusal(db, stored, current, options.backupDir);
   }
   const pending = [...migrations]
     .filter((m) => m.version > stored)

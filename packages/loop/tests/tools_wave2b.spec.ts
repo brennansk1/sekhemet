@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -50,6 +50,43 @@ describe("loop tools, wave 2b (L12, L18, L19, L20, L23, L24)", () => {
     const spin = await run("run_script", { code: "for (;;) {}" });
     expect(spin.content).toMatch(/timed out/i);
   }, 60_000);
+
+  // C4, routed from C2c: on Linux the default engine is the native one, and
+  // real repositories are made under /tmp (the injection runner's, eval
+  // workspaces, the bakeoff); bubblewrap's private /tmp hid them, so the
+  // test above failed there. The worktree is now bound read-only.
+  it.runIf(process.platform === "linux")(
+    "reads a worktree under the host's /tmp under the native engine, and still cannot write it (L12)",
+    async () => {
+      const native = new ToolExecutor({
+        worktreePath: root,
+        scopeFiles: ["src/**"],
+        sandbox: new ProcessSandbox({ engine: "native" }),
+      });
+      try {
+        expect(root.startsWith("/tmp/") || root.startsWith(`${tmpdir()}/`)).toBe(true);
+        const obs = await native.execute({
+          id: "t",
+          name: "run_script",
+          arguments: { code: 'return grep("TODO").length;' },
+        });
+        expect(obs.ok, obs.content).toBe(true);
+        expect(obs.content).toBe("2");
+        const write = await native.execute({
+          id: "t",
+          name: "run_script",
+          arguments: {
+            code: 'require("node:fs").writeFileSync("src/a.ts", "pwned"); return "wrote";',
+          },
+        });
+        expect(write.ok).toBe(false);
+        expect(readFileSync(join(root, "src", "a.ts"), "utf8")).toMatch(/^export const a = 1;/);
+      } finally {
+        native.dispose();
+      }
+    },
+    60_000,
+  );
 
   it.runIf(process.platform === "linux")(
     "runs a script under bubblewrap's private /tmp, where its own directory is granted (L12, the Linux run)",

@@ -14,6 +14,7 @@ import { REVIEW_DESK_COPY } from "@sekhemet/ui";
 import { ledgerBundle } from "./accept.js";
 import { type ReviewInput, type ReviewResult, findingText, reviewCard } from "./learning/review.js";
 import { reviewCopy } from "./learning/review_copy.js";
+import { reportLostRecord } from "./lost_records.js";
 import type { ModelAccess } from "./model_access.js";
 import { QueuedReviews } from "./queued_reviews.js";
 
@@ -262,6 +263,32 @@ export async function recordNotReviewed(
 }
 
 /**
+ * The not-reviewed reason, recorded; false — reported as a lost record —
+ * when it could not be (runtime RUN-90): the card then stays in Verify, so
+ * it never reaches Review without the reason that nothing reviewed it.
+ */
+export async function notReviewedRecorded(
+  ctx: Pick<ReviewContext, "cardStore">,
+  cardId: string,
+  text: string,
+): Promise<boolean> {
+  try {
+    await recordNotReviewed(ctx, cardId, text);
+    return true;
+  } catch (err) {
+    reportLostRecord("review/not_reviewed", err, {
+      workspaceId: ctx.cardStore.workspaceId(),
+      cardId,
+    });
+    return false;
+  }
+}
+
+/** Why a card waits in Verify when its not-reviewed reason could not be recorded. */
+export const NOT_REVIEWED_UNRECORDED =
+  "held in Verify: the reason no AI review ran could not be recorded; see `sekhemet doctor`";
+
+/**
  * Move a reviewed card from Verify to Review. The board may refuse
  * (back-pressure): the card is then held awaiting Review, which
  * `releaseHeldCards` retries when Review drains.
@@ -299,12 +326,13 @@ export async function releaseUnreviewed(
   cardId: string,
   err: unknown,
 ): Promise<void> {
-  await recordNotReviewed(
+  const recorded = await notReviewedRecorded(
     ctx,
     cardId,
     REVIEW_DESK_COPY.reviewFailed(err instanceof Error ? err.message : String(err)),
-  ).catch(() => undefined);
-  await releaseToReview(ctx, cardId);
+  );
+  // RUN-90: unrecorded, the card stays in Verify rather than reach Review unexplained.
+  if (recorded) await releaseToReview(ctx, cardId);
 }
 
 /**
@@ -384,8 +412,10 @@ export class ReviewFlow {
     // §2.3.2: a change with no diff has nothing to review.
     if (!(await ledgerBundle(this.o.ctx, cardId))?.diff?.trim()) return undefined;
     if (this.o.role.state === "unfilled") {
-      await recordNotReviewed(this.o.ctx, cardId, this.o.role.reason).catch(() => undefined);
-      return undefined;
+      // RUN-90: unrecorded, the card waits in Verify, saying why.
+      return (await notReviewedRecorded(this.o.ctx, cardId, this.o.role.reason))
+        ? undefined
+        : NOT_REVIEWED_UNRECORDED;
     }
     return REVIEW_WAIT;
   }
@@ -423,8 +453,8 @@ export class ReviewFlow {
     );
     for (const c of waiting) {
       if (this.o.role.state === "unfilled") {
-        await recordNotReviewed(this.o.ctx, c.id, this.o.role.reason).catch(() => undefined);
-        await releaseToReview(this.o.ctx, c.id);
+        if (await notReviewedRecorded(this.o.ctx, c.id, this.o.role.reason))
+          await releaseToReview(this.o.ctx, c.id);
       } else this.enqueue(c.id);
     }
     return waiting.map((c) => c.id);

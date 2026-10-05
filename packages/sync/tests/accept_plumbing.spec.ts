@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
+import { processStartTime } from "@sekhemet/sandbox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MergeConflictError, NodeGitSyncAdapter } from "../src/git_adapter.js";
 
@@ -164,6 +165,40 @@ describe("RG-S5-5: two accepts never lose an update", () => {
     writeFileSync(lock, JSON.stringify({ pid: 2 ** 22 + 7, at: new Date().toISOString() }));
     await expect(adapter.withAcceptLock(async () => "ran")).resolves.toBe("ran");
     expect(existsSync(lock)).toBe(false);
+  });
+
+  it("RG-N8-4: judges a lock by pid and process start time: a recycled pid's lock is taken over", async () => {
+    const lock = join(repo, ".git", "sekhemet-accept.lock");
+    // A live process (this one's parent) holding a lock written by another
+    // process that had the same pid: its start time differs.
+    writeFileSync(
+      lock,
+      JSON.stringify({
+        pid: process.ppid,
+        processStart: "Thu Jan 1 00:00:00 1970",
+        at: new Date().toISOString(),
+      }),
+    );
+    await expect(adapter.withAcceptLock(async () => "ran")).resolves.toBe("ran");
+    expect(existsSync(lock)).toBe(false);
+    // The same live process with its own start time holds it: refused.
+    writeFileSync(
+      lock,
+      JSON.stringify({
+        pid: process.ppid,
+        processStart: processStartTime(process.ppid),
+        at: new Date().toISOString(),
+      }),
+    );
+    await expect(adapter.withAcceptLock(async () => "ran")).rejects.toThrow(/another accept/i);
+    // The lock this process writes records its own start time.
+    rmSync(lock);
+    await adapter.withAcceptLock(async () => {
+      expect(JSON.parse(readFileSync(lock, "utf8"))).toMatchObject({
+        pid: process.pid,
+        processStart: processStartTime(process.pid),
+      });
+    });
   });
 
   it("takes a stale lock over only under the takeover lock, so two takers cannot both remove it", async () => {

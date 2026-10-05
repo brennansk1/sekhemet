@@ -667,6 +667,26 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     auto: s(v.literal(true), true),
     gateStatus: s(v.picklist(["pass", "fail", "partial", "unavailable"]), true),
     integration: s(ID, true),
+    // review-git RG-N8-2: recorded by the start-up sweep from the repository.
+    reconciled: s(v.literal(true), true),
+  },
+  // review-git NEW-review-git-8 (RG-N8-1): what Accept will merge, before the merge.
+  "card/accept_started": {
+    id: s(ID),
+    base: s(v.pipe(v.string(), v.regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/))),
+    branch: s(ID),
+    branchHead: s(v.pipe(v.string(), v.regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/))),
+    squashTree: s(v.pipe(v.string(), v.regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/)), true),
+    integration: s(ID),
+    principal: s(PRINCIPAL),
+    independent: s(v.boolean(), true),
+    auto: s(v.literal(true), true),
+    gateStatus: s(v.picklist(["pass", "fail", "partial", "unavailable"]), true),
+  },
+  "card/accept_failed": {
+    id: s(ID),
+    reason: s(v.picklist(["merge_missing", "conflict", "refused", "error"])),
+    integration: s(ID, true),
   },
   // worker-loop NEW-worker-loop-10: collaborating on a running issue (DEC-34).
   "card/message": { id: s(ID), principal: s(PRINCIPAL), message: priv("free_text", TEXT) },

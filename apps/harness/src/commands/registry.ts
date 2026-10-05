@@ -175,10 +175,14 @@ export const COMMAND_REGISTRY: readonly CommandSpec[] = [
     usage: "sekhemet doctor",
     what: "Check the install, including the model weights",
     synopsis:
-      "sekhemet doctor [--json]   |   sekhemet doctor --airgap [--models-dir <dir>] [--query <question>] [--run-gates]",
+      "sekhemet doctor [--json] [--verify-weights] [--report]   |   sekhemet doctor --airgap [--models-dir <dir>] [--query <question>] [--run-gates]",
     example: "sekhemet doctor --json",
     options: {
       airgap: { type: "boolean" },
+      // SUR-89: hash every weights file the cache does not hold.
+      "verify-weights": { type: "boolean" },
+      // SUR-90: write the redacted report folder, and send nothing.
+      report: { type: "boolean" },
       "models-dir": { type: "string" },
       query: { type: "string" },
       "run-gates": { type: "boolean" },
@@ -241,6 +245,37 @@ export const COMMAND_REGISTRY: readonly CommandSpec[] = [
     json: false,
     needsProject: false,
     load: async () => (await import("./editors.js")).editorsCommand,
+  },
+  {
+    // Runtime items 35, 35a (NEW-runtime-11): run as `sekhemet backup`, listed
+    // under `dev --help` (item 35's C4 decision; surface rules 13-14).
+    name: "backup",
+    visibility: "dev",
+    usage: "backup [<path>] [--list]",
+    what: "Back the workspace up outside the repository: the Activity log, its blobs and evidence, each project's configuration; --list shows the sets with their schema",
+    synopsis: "sekhemet backup   |   sekhemet backup <file>   |   sekhemet backup --list",
+    example: "sekhemet backup --list",
+    options: { list: { type: "boolean" } },
+    positionals: { min: 0, max: 1 },
+    positionalWord: "a path",
+    json: false,
+    needsProject: true,
+    load: async () => (await import("../ledger_cmds.js")).backupCommand,
+  },
+  {
+    // Runtime items 35a, 36 (RUN-61, RUN-87, RUN-88): with the server stopped.
+    name: "restore",
+    visibility: "dev",
+    usage: "restore <set or file> | --latest",
+    what: "Restore the workspace from a backup, re-applying erasures; --latest takes the newest set that verifies",
+    synopsis: "sekhemet restore --latest   |   sekhemet restore <set folder or file>",
+    example: "sekhemet restore --latest",
+    options: { latest: { type: "boolean" } },
+    positionals: { min: 0, max: 1 },
+    positionalWord: "a backup",
+    json: false,
+    needsProject: false,
+    load: async () => (await import("../ledger_cmds.js")).restoreCommand,
   },
 ];
 

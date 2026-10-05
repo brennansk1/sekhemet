@@ -14,6 +14,7 @@ import { postConventionDrift } from "./onboard.js";
 import { tickRecurring } from "./recurring.js";
 import { reservationNow } from "./reservation.js";
 import { type Window, mayUseMachine, parseHours } from "./scheduler.js";
+import { type RunClockSource, sleptNote, startRunClock } from "./sleep_assertion.js";
 import { overnightPlanLine } from "./wave2.js";
 
 /**
@@ -45,6 +46,8 @@ export interface OvernightOptions {
   vulnScan?: (repoPath: string) => Promise<VulnScanResult>;
   sleep?: (ms: number) => Promise<void>;
   now?: () => Date;
+  /** Each round's wall and monotonic clocks (RUN-67); injectable for tests. */
+  clock?: RunClockSource;
   maxRounds?: number;
   say?: (line: string) => void;
   /** Skip the end-of-night mutation step (E16) and the deferred mutants (GT-N5-5). */
@@ -342,11 +345,22 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
         );
       }
     }
-    const started = Date.now();
+    const clock = startRunClock(opts.clock);
     const before = readReport(opts.repoPath)?.startedAt;
     const code = await runQueue(opts.queueArgs);
     const report = readReport(opts.repoPath);
-    await recordUsage(opts.log, Date.now() - started, { round: summary.rounds });
+    // RUN-67: only the time the machine ran is charged as energy; a lid
+    // closed for an hour costs nothing, and the night says it slept.
+    const slept = clock.sleptMs();
+    const note = sleptNote(slept);
+    await recordUsage(opts.log, clock.monotonicMs(), {
+      round: summary.rounds,
+      ...(note ? { sleptMs: slept } : {}),
+    });
+    if (note)
+      say(
+        `Round ${summary.rounds}: ${note}; only the ${Math.round(clock.monotonicMs() / 60_000)} min of work counts toward today's energy.`,
+      );
     if (code === ROUND_TIMED_OUT) {
       // RUN-11: killed at its limit — one failure, and the night goes on.
       say(

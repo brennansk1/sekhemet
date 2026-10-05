@@ -1,6 +1,14 @@
 export interface SandboxOptions {
   allowedPaths: string[];
   /**
+   * Paths the command may read and never write (L12's run_script: the card's
+   * worktree). Every engine already reads the filesystem but what it denies,
+   * except under bubblewrap, whose private /tmp hides a worktree made under
+   * the host's /tmp: there each is bound back read-only, with any ledger
+   * inside it still masked. No engine grants a write here.
+   */
+  readOnlyPaths?: string[];
+  /**
    * Private scratch directory granted for temporary files.
    *
    * Supplied per execution so toolchains have a TMPDIR without every sandbox

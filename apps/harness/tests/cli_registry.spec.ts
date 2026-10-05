@@ -15,10 +15,13 @@ describe("SUR-17: every registry entry", () => {
     expect(COMMAND_REGISTRY.map((c) => c.name).sort()).toEqual(
       [
         "accept",
+        // NEW-runtime-11 (C4): backup and restore, run without `dev`.
+        "backup",
         "doctor",
         "editors",
         "egress",
         "engine",
+        "restore",
         "resume",
         "review",
         "run",

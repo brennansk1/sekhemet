@@ -362,6 +362,7 @@ The changes D1 wrote into the specs from [DESIGN_GAPS_C1](DESIGN_GAPS_C1.md) and
 | NEW-planner-pm-13 | The sprint lifecycle (planner side) | [planner-pm](../design/specs/planner-pm.md) | C2b | partial (C2b): PM-N13-1, -2, -3, -5 built; PM-N13-4 (the bet's carry-over basis) and -6 (the tool, PROMPT_STANDARD rule 35) not yet |
 | NEW-review-git-6 | *Request changes*, the industry's word for send back | [review-git](../design/specs/review-git.md) | C2a | not started (D1, DEC-56) |
 | NEW-review-git-7 | Push to remote after Accept and on release | [review-git](../design/specs/review-git.md) | C2b | built (C2b): RG-N7-1..5 |
+| NEW-review-git-8 | Accept survives a crash between its merge and its record | [review-git](../design/specs/review-git.md) | C4 | built (C4); see the spec's State row |
 | NEW-runtime-11 | backups that survive the repository | [runtime](../design/specs/runtime.md) | C4, C5 | not started (D1, DEC-56) |
 | NEW-runtime-12 | the machine stays awake while it works | [runtime](../design/specs/runtime.md) | C4 | not started (D1, DEC-56) |
 | NEW-runtime-13 | a full disk is a named stop | [runtime](../design/specs/runtime.md) | C4 | not started (D1, DEC-56) |
@@ -376,6 +377,7 @@ The changes D1 wrote into the specs from [DESIGN_GAPS_C1](DESIGN_GAPS_C1.md) and
 | NEW-teams-12 | A Team install with no identity provider | [teams](../design/specs/teams.md) | C5 | not started (D1, DEC-56) |
 | NEW-teams-13 | When a member leaves | [teams](../design/specs/teams.md) | C2b | built (C2b): TEAM-49..52 |
 | NEW-worker-loop-11 | `disk_low`, the full-disk stop ([runtime.md](../design/specs/runtime.md) NEW-runtime-13) | [worker-loop](../design/specs/worker-loop.md) | C4 | not started (D1, DEC-56) |
+| NEW-worker-loop-12 | `model_unavailable`, a Worker that is down | [worker-loop](../design/specs/worker-loop.md) | C4 | built (C4); see the spec's State row |
 
 ### Added by the workspace design (D2, 2026-10-01, DEC-57)
 
@@ -391,7 +393,9 @@ A server is a workspace with many projects. Each change is *not started*.
 | NEW-runtime-16 | one server, many project roots | [runtime](../design/specs/runtime.md) | C2b | partial (C2b): RUN-79..82; RUN-83 waits on RUN-69 |
 | NEW-runtime-17 | the machine's list of workspaces | [runtime](../design/specs/runtime.md) | C2a | not started (D2, DEC-57) |
 | NEW-runtime-18 | backups per workspace | [runtime](../design/specs/runtime.md) | C4 | not started (D2, DEC-57) |
+| NEW-runtime-19 | a record that cannot be written is never silent | [runtime](../design/specs/runtime.md) | C4 | built (C4); see the spec's State row |
 | NEW-security-13 | a card sees only its own project (DEC-57) | [security](../design/specs/security.md) | C2b | built (C2b): SEC-N13-1, -2 |
 | NEW-security-14 | the credential store per workspace (DEC-57) | [security](../design/specs/security.md) | C4 | not started (D2, DEC-57) |
 | NEW-surface-11 | the command line in a workspace of many projects | [surface](../design/specs/surface.md) | C2b | partial (C2b): SUR-73, -75..-81; SUR-74 not built |
+| NEW-surface-12 | observability and the reliability rows of `doctor` | [surface](../design/specs/surface.md) | C4 | built (C4 builder D): SUR-83..92 |
 | NEW-teams-14 | A server is one workspace holding any number of projects, and other workspaces one switch away | [teams](../design/specs/teams.md) | C2b (TEAM-59: C2a) | partial (C2b): TEAM-54..58, -60; the acceptance run not yet |

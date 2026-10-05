@@ -1231,6 +1231,11 @@ export class CardStore {
   }
 
   /** The install's own person on a solo setup (rule 19), for a person's decision. */
+  /** The workspace's id, from its ledger (kernel K-N12-1); undefined while the ledger is empty. */
+  public workspaceId(): string | undefined {
+    return this.eventLog.workspaceId();
+  }
+
   public localPrincipal(): string {
     return this.eventLog.localPrincipal();
   }

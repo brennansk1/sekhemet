@@ -30,6 +30,7 @@ import {
   measureUsableMemory,
   pageCacheWarmer,
   resolveWorkerModelId,
+  setModelLeaseOwner,
   tierSettingsOf,
   withMeasurementRun,
 } from "@sekhemet/models";
@@ -271,6 +272,27 @@ function hostMemory(): { usableBytes: number; coResident: boolean } {
   return { usableBytes, coResident };
 }
 
+/**
+ * The machine-wide model lease names this process's workspace by the id of
+ * the ledger it serves (MD-N17-1, kernel rule 38a), so a process waiting for
+ * the lease can say whose it is; the project is the process's folder.
+ */
+function nameLeaseOwner(...ledgers: (SwapLedger | undefined)[]): void {
+  for (const ledger of ledgers) {
+    try {
+      const id = (
+        ledger as { workspaceId?: () => string | undefined } | undefined
+      )?.workspaceId?.();
+      if (id) {
+        setModelLeaseOwner({ workspace: id });
+        return;
+      }
+    } catch {
+      // A ledger closed since (a stopped server's) names nobody; the next does.
+    }
+  }
+}
+
 export class ModelAccess {
   private readonly specs = new Map<string, QueueSpec>();
   private ledger: SwapLedger | undefined;
@@ -349,6 +371,7 @@ export class ModelAccess {
     });
     access = new ModelAccess(scheduler, options);
     access.ledger = options.ledger;
+    nameLeaseOwner(options.ledger);
     if (options.headroom) {
       const self = access;
       self.warmer = pageCacheWarmer({
@@ -368,6 +391,8 @@ export class ModelAccess {
    */
   public recordSwapsOn(ledger: SwapLedger | undefined): void {
     this.ledger ??= ledger;
+    // The ledger this caller serves names the owner first (C4 gate).
+    nameLeaseOwner(ledger, this.ledger);
   }
 
   /** What loading a queue's weights is predicted to cost now (MD-N14-4); loads nothing. */

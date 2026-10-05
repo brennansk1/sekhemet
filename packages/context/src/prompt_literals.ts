@@ -102,6 +102,15 @@ const BUILDER = /(Prompt|PromptFor|Directive|Instructions?)$/;
  */
 const REFUSAL_BUILDER = /Refusal$|^refuse[A-Z]/;
 const PERSON_FACING_REFUSALS: ReadonlySet<string> = new Set([
+  // packages/kernel/src/schema.ts: "this database is at schema version N, newer than this
+  // build's…", thrown when a person opens a ledger a newer Sekhemet wrote (runtime item 38, REL-18).
+  "newerDatabaseRefusal",
+  // apps/harness/src/backup_sets.ts: "the dashboard server (pid …, port …) runs in …", why
+  // `sekhemet restore` will not replace a ledger a server or runner still holds (C4 review).
+  "refuseWhileInUse",
+  // apps/harness/src/config.ts: "… this configuration does not parse, so nothing was started",
+  // printed by run, queue and overnight before they exit 2.
+  "configParseRefusal",
   // packages/eval/src/combination_bench.ts: "<setting> needs the <role> loaded with it, so a
   // benchmark cannot try it run by run…", on the benchmark page and `sekhemet tune` (MS-N7).
   "runSettingsRefusal",

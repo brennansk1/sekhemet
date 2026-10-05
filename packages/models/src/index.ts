@@ -40,6 +40,7 @@ export * from "./gguf_estimate.js";
 export * from "./llama_bench.js";
 export * from "./hf_lookup.js";
 export * from "./model_download.js";
+export * from "./model_lease.js";
 export * from "./placement.js";
 export * from "./recommend.js";
 export * from "./role_weights.js";

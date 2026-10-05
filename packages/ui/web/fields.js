@@ -9,6 +9,7 @@ import {
   PRIORITY_LABELS,
   PRIORITY_ORDER,
   assigneeLabel,
+  cardVersion,
   formatFieldValue,
   formatPoints,
   showsPoints,
@@ -43,8 +44,37 @@ export const EDITABLE = [
   { field: "dueDate", label: "Due date" },
 ];
 
-function patchJSON(path, body) {
-  return sendJSON("PATCH", path, body);
+function patchJSON(path, body, headers) {
+  return sendJSON("PATCH", path, body, headers ? { headers } : {});
+}
+
+/**
+ * DB-N16-4: an edit another person's change overtook. The issue on the page
+ * takes the server's current values, and the sentence names the value now
+ * there: "TS-9's priority changed since you opened it: it is now High (last
+ * changed by Priya). Your change was not applied."
+ */
+function conflictSentence(id, field, label, r) {
+  const now = r.data?.current?.[field];
+  const shown = formatFieldValue(field, now, {
+    cycles: store.state.cycles,
+    epics: store.state.epics,
+    cards: store.state.cards,
+  });
+  const by = r.data?.by;
+  return `${shortName(id)}'s ${label} changed since you opened it: it is now ${shown || "empty"}${by ? ` (last changed by ${by})` : ""}. Your change was not applied.`;
+}
+
+/** The server's current values onto the page's issue, after a refused edit (DB-N16-4). */
+function takeCurrent(id, r) {
+  const c = store.card(id);
+  const current = r.data?.card;
+  if (!c || !current) return;
+  for (const [k, v] of Object.entries(current)) {
+    if (k === "id") continue;
+    if (v === null || v === undefined) delete c[k];
+    else c[k] = v;
+  }
 }
 
 function why(r) {
@@ -130,11 +160,15 @@ export async function setFieldEach(values, field, opts = {}) {
     return;
   }
   const before = new Map();
+  // DB-N16-4: the version of each issue as the page shows it, before the
+  // optimistic change, sent as If-Match so a stale edit is refused.
+  const versions = new Map();
   for (const id of ids) {
     const c = store.card(id);
     if (!c) continue;
     const value = values.get(id);
     before.set(id, c[field]);
+    versions.set(id, cardVersion(c));
     if (value === null || value === undefined) delete c[field];
     else c[field] = value;
   }
@@ -142,13 +176,19 @@ export async function setFieldEach(values, field, opts = {}) {
   const results = await Promise.all(
     [...before.keys()].map(async (id) => [
       id,
-      await patchJSON(`/api/cards/${encodeURIComponent(id)}`, {
-        [field]: values.get(id) ?? null,
-      }),
+      await patchJSON(
+        `/api/cards/${encodeURIComponent(id)}`,
+        { [field]: values.get(id) ?? null },
+        { "If-Match": `"${versions.get(id)}"` },
+      ),
     ]),
   );
   const failed = results.filter(([, r]) => !r.ok);
-  for (const [id] of failed) {
+  for (const [id, r] of failed) {
+    if (r.status === 409 && r.data?.card) {
+      takeCurrent(id, r);
+      continue;
+    }
     const c = store.card(id);
     if (!c) continue;
     const old = before.get(id);
@@ -157,6 +197,8 @@ export async function setFieldEach(values, field, opts = {}) {
   }
   if (failed.length) store.set({ cards: [...store.state.cards] });
   const label = EDITABLE.find((f) => f.field === field)?.label.toLowerCase() ?? field;
+  const reason = (id, r) =>
+    r.status === 409 && r.data?.card ? conflictSentence(id, field, label, r) : why(r);
   const shown =
     "value" in opts
       ? formatFieldValue(field, opts.value, {
@@ -188,13 +230,13 @@ export async function setFieldEach(values, field, opts = {}) {
         n === 1
           ? `Couldn't set ${label} on ${shortName(failed[0][0])}.`
           : `Couldn't set ${label} on ${n} issues.`,
-      detail: why(failed[0][1]),
+      detail: reason(failed[0][0], failed[0][1]),
     });
   } else {
     toastWithUndo(
       {
         tone: "fail",
-        text: `Set on ${n - failed.length} of ${n}. ${shortName(failed[0][0])}: ${why(failed[0][1])}`,
+        text: `Set on ${n - failed.length} of ${n}. ${shortName(failed[0][0])}: ${reason(failed[0][0], failed[0][1])}`,
       },
       undo,
     );

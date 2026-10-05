@@ -37,7 +37,7 @@ import {
   type ThinkingPolicy,
   thinkingPolicyFromEnv,
 } from "./registry.js";
-import { SHIPPED_MODELS, shippedAdapter } from "./shipped_models.js";
+import { SHIPPED_MODELS, shippedAdapter, shippedRoleOf } from "./shipped_models.js";
 import type { ModelRole, UnloadableAdapter } from "./types.js";
 
 /** The inference engine behind an adapter (M24). */
@@ -711,7 +711,10 @@ export class ModelRoster {
     const model = SHIPPED_MODELS.find((m) => m.id === name && m.source);
     if (!model?.source) return undefined;
     const mine = this.roleValues(name, role);
-    const key = `shipped:${name}${mine ? `#${role}#${JSON.stringify(mine)}` : ""}`;
+    // C4: a role other than its shipped one runs at that role's window and port.
+    const serves = shippedRoleOf(role) ?? model.role;
+    const other = serves === model.role ? "" : `@${serves}`;
+    const key = `shipped:${name}${other}${mine ? `#${role}#${JSON.stringify(mine)}` : ""}`;
     const existing = this.shared.get(key);
     if (existing) return existing;
     const registry = this.options.registry;
@@ -720,6 +723,7 @@ export class ModelRoster {
         this.tuned(
           shippedAdapter(model, {
             modelPath: path ?? resolveModelPath(model.source.file),
+            role: serves,
             ...(registry ? { registry } : {}),
             // The caller's window, as `createGenericManaged` honoured it before (B1-C3 review).
             ...(Object.keys(want).length > 0 ? { want } : {}),

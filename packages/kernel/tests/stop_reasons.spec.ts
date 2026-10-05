@@ -31,6 +31,8 @@ describe("the stop-reason table (worker-loop rule 31)", () => {
       "crashed",
       "rebase_conflict",
       "integration_failed",
+      "disk_low",
+      "model_unavailable",
     ] as const) {
       expect(STOP_REASONS[r].class, r).toBe("environment");
     }
@@ -42,7 +44,7 @@ describe("the stop-reason table (worker-loop rule 31)", () => {
 
   it("WL-T3-10: holds the five v1 reasons with rule 31's values; CARD_STOP_REASONS is the table's keys", () => {
     expect([...CARD_STOP_REASONS].sort()).toEqual(Object.keys(STOP_REASONS).sort());
-    expect(CARD_STOP_REASONS).toHaveLength(25);
+    expect(CARD_STOP_REASONS).toHaveLength(27);
     const want = {
       gate_suspected: ["capability_ceiling", "yes", false],
       tests_not_red_for_reason: ["no_progress", "yes", false],
@@ -81,10 +83,13 @@ describe("the stop-reason table (worker-loop rule 31)", () => {
     expect(resumable).toEqual(
       [
         "crashed",
+        // WL-N11-2, WL-N12-1: the machine's stops resume from their checkpoint.
+        "disk_low",
         "error",
         "hook_veto",
         "human_abort",
         "memory_pressure",
+        "model_unavailable",
         // WL-N10-2: a person's pause resumes from its checkpoint when handed back.
         "paused",
         "quota_suspended",
@@ -107,6 +112,56 @@ describe("the stop-reason table (worker-loop rule 31)", () => {
     ]) {
       expect(noVerify, r).toContain(r);
     }
+  });
+});
+
+describe("the machine's stops (WL-N11-1, WL-N12-1)", () => {
+  it("WL-N11-1: disk_low is environment, holds, resumes from its checkpoint, never verifies or measures", () => {
+    const row = STOP_REASONS.disk_low;
+    expect([row.class, row.parks, row.resumable, row.mayVerify]).toEqual([
+      "environment",
+      "no",
+      true,
+      false,
+    ]);
+    expect([row.checkpoints, row.halts, row.endsSampling, row.measuresModel]).toEqual([
+      true,
+      true,
+      true,
+      false,
+    ]);
+    expect(row.goesTo).toMatch(/Ready/);
+    expect(row.nextAction).toMatch(/volume/i);
+    expect(row.nextAction).toMatch(/floor/i);
+    expect(row.nextAction).toMatch(/\.sekhemet/);
+  });
+
+  it("WL-N12-1: model_unavailable is environment, holds, resumes, never verifies or measures", () => {
+    const row = STOP_REASONS.model_unavailable;
+    expect([row.class, row.parks, row.resumable, row.mayVerify]).toEqual([
+      "environment",
+      "no",
+      true,
+      false,
+    ]);
+    expect([row.checkpoints, row.halts, row.endsSampling, row.measuresModel]).toEqual([
+      true,
+      true,
+      true,
+      false,
+    ]);
+    expect(row.nextAction).toMatch(/Start the Coding model's engine, then resume/);
+  });
+});
+
+describe("the queue and the board read the machine's stops from the table", () => {
+  it("only memory pressure, a full disk and a Worker that is down halt the queue; the last two hold the card in Ready", () => {
+    expect(CARD_STOP_REASONS.filter((r) => STOP_REASONS[r].haltsQueue).sort()).toEqual(
+      ["disk_low", "memory_pressure", "model_unavailable"].sort(),
+    );
+    expect(CARD_STOP_REASONS.filter((r) => STOP_REASONS[r].holdsInReady).sort()).toEqual(
+      ["crashed", "disk_low", "model_unavailable"].sort(),
+    );
   });
 });
 

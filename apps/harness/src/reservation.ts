@@ -1,5 +1,6 @@
 import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
 import type { MemoryWatchdog } from "@sekhemet/models";
+import { projectRepositoryMissing } from "./card_root.js";
 
 /**
  * Reserving the machine, and whether a card may start now (runtime.md items
@@ -108,7 +109,8 @@ export async function mayStartCard(
   if (project && project.status === "paused") {
     return `its project ${project.name} is paused; resume it to run its issues`;
   }
-  return undefined;
+  // RUN-94: a project whose repository is gone starts none of its cards.
+  return projectRepositoryMissing(ctx.cardStore, { projectId });
 }
 
 /**

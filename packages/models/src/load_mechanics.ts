@@ -328,6 +328,8 @@ export type DriveState = "ready" | "spun_down" | "disconnected" | "missing";
 
 /** A load refused because its drive is not connected: the work stays queued (MD-N14-35). */
 export class DriveUnavailableError extends Error {
+  /** C.6 (WL-N12-2): the Coding model cannot be reached; the card stops `model_unavailable`. */
+  public readonly code = "ENGINE_UNAVAILABLE";
   constructor(message: string) {
     super(message);
     this.name = "DriveUnavailableError";

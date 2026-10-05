@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { existsSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { EventLog } from "@sekhemet/kernel";
 import {
@@ -11,6 +12,7 @@ import {
   type ModelSource,
   SHIPPED_MODELS,
   type ShippedRole,
+  downloadFileName,
   downloadModel,
   formatBytes,
   lookupPublishedFile,
@@ -208,17 +210,42 @@ export async function modelsFetchRecommended(
       `  ${ROLE_WORD[m.role].padEnd(9)}${m.id}: ${m.file}, ${formatBytes(m.sizeBytes)}, licence ${m.license}${m.present ? " (already here)" : ""}`,
     );
   for (const u of plan.unfilled) print(`  ${ROLE_WORD[u.role].padEnd(9)}unfilled: ${u.reason}`);
-  const missing = plan.models.filter((m) => !m.present);
-  if (missing.length === 0) {
+  const absent = plan.models.filter((m) => !m.present);
+  if (absent.length === 0) {
     print("Every model of the set is already here; nothing to download.");
     return 0;
   }
+  // C4 (C3's review): each download's own file in the folder. A file of that
+  // name no registry entry records is that model's problem, so it is skipped
+  // with the reason and the rest go on; a kept `.part` is resumed (MD-N18-1),
+  // so only the bytes still to fetch count against the volume.
+  const missing: typeof absent = [];
+  let totalBytes = 0;
+  for (const m of absent) {
+    const src = registry.get(m.id)?.source ?? tableSource(m.id, opts.hub);
+    const name = src ? downloadFileName(src.url) : m.file;
+    if (existsSync(join(folder, name))) {
+      print(
+        `  ${m.id} is skipped: the folder already has a file named ${name}, which no model entry records. Register it with sekhemet models add, or move it, then run this again.`,
+      );
+      continue;
+    }
+    const part = join(folder, `${name}.part`);
+    const kept = existsSync(part) ? Math.min(statSync(part).size, m.sizeBytes) : 0;
+    if (kept > 0) print(`  ${m.id}: ${formatBytes(kept)} kept from an earlier download, resumed.`);
+    missing.push(m);
+    totalBytes += m.sizeBytes - kept;
+  }
+  if (missing.length === 0) {
+    print("Nothing was downloaded.");
+    return 1;
+  }
   const free = volumeFreeBytes(folder);
   print(
-    `Total to download: ${formatBytes(plan.totalBytes)} into ${folder}${free !== undefined ? ` (${formatBytes(free)} free)` : ""}.`,
+    `Total to download: ${formatBytes(totalBytes)} into ${folder}${free !== undefined ? ` (${formatBytes(free)} free)` : ""}.`,
   );
   try {
-    refuseWithoutSpace(folder, plan.totalBytes, "The set");
+    refuseWithoutSpace(folder, totalBytes, "The set");
   } catch (err) {
     print(err instanceof DownloadRefused ? err.message : String(err));
     return 1;
@@ -231,7 +258,7 @@ export async function modelsFetchRecommended(
       return 1;
     }
     const yes = await opts.ask(
-      `Download ${missing.length} ${missing.length === 1 ? "file" : "files"} (${formatBytes(plan.totalBytes)})?`,
+      `Download ${missing.length} ${missing.length === 1 ? "file" : "files"} (${formatBytes(totalBytes)})?`,
     );
     if (!yes) {
       print("Nothing was downloaded.");
@@ -242,7 +269,8 @@ export async function modelsFetchRecommended(
     const code = await modelsFetch(m.id, { ...opts, registry, folder });
     if (code !== 0) return code;
   }
-  return 0;
+  // A skipped model leaves the set unfinished, and the exit code says so.
+  return missing.length === absent.length ? 0 : 1;
 }
 
 /** A yes or no from the terminal, when there is one (never in a headless run). */

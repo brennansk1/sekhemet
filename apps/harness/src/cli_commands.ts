@@ -147,6 +147,8 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--adopt-from",
   "--after",
   "--airgap",
+  // `sekhemet daemon status --all` (MD-N17-3).
+  "--all",
   "--answer",
   "--apply",
   "--approve",
@@ -209,8 +211,12 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--json",
   "--key",
   "--kind",
+  // `sekhemet restore --latest` (RUN-61).
+  "--latest",
   "--ledger",
   "--limit",
+  // `sekhemet backup --list` (runtime item 35, REL-18).
+  "--list",
   "--manager",
   "--max-commits",
   "--max-failures",
@@ -262,6 +268,7 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--refused",
   "--release",
   "--repo",
+  "--report",
   "--researcher",
   "--restart",
   "--restricted",
@@ -309,6 +316,7 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--validate-tools",
   "--verbose",
   "--verify",
+  "--verify-weights",
   "--version",
   "--web",
   "--with",

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -70,5 +70,42 @@ describe("@sekhemet/sandbox bubblewrap (Linux)", () => {
       (a, i) => a === "--ro-bind" && argv[i + 1]?.endsWith(".git") && i > lastWritable,
     );
     expect(gitRo).toBeGreaterThan(lastWritable);
+  });
+
+  // L12 under the native engine on Linux (C4): a worktree under the host's
+  // /tmp is hidden by bubblewrap's private /tmp, so run_script could not
+  // read it. A read-only path is bound back read-only — never writable —
+  // after the private /tmp, and a ledger inside it stays masked.
+  it("binds a read-only path back read-only after the private /tmp, never writable, its ledger still masked", () => {
+    const repo = mkdtempSync(join(tmpdir(), "bw-ro-"));
+    dirs.push(repo);
+    mkdirSync(join(repo, ".sekhemet"));
+    writeFileSync(join(repo, ".sekhemet", "events.db"), "");
+    const scratch = join(repo, "scratch");
+    mkdirSync(scratch);
+    const argv = bubblewrapArgv(
+      {
+        allowedPaths: [],
+        readOnlyPaths: [repo],
+        scratchDir: scratch,
+        allowNetwork: false,
+        timeoutMs: 1,
+        cwd: scratch,
+      },
+      "node",
+      [],
+    );
+    const pairs = (flag: string) => argv.flatMap((a, i) => (a === flag ? [argv[i + 1]] : []));
+    const real = pairs("--ro-bind").find((p) => p?.endsWith(repo.split("/").at(-1) as string));
+    expect(real).toBeDefined();
+    expect(pairs("--bind")).not.toContain(real);
+    const tmpAt = argv.indexOf("/tmp") - 1;
+    expect(argv[tmpAt]).toBe("--tmpfs");
+    expect(argv.lastIndexOf(real as string)).toBeGreaterThan(tmpAt);
+    // The ledger inside it is masked after the bind.
+    const ledger = argv.findIndex(
+      (a, i) => a.endsWith(join(".sekhemet", "events.db")) && i > argv.indexOf(real as string),
+    );
+    expect(ledger).toBeGreaterThan(0);
   });
 });

@@ -271,7 +271,8 @@ These are the owner's live-testing ladder, made mandatory. No model loads until 
 - a corrupt configuration file;
 - a clock jump;
 - a network drop during research;
-- two servers on one project.
+- two servers on one project;
+- two projects on one machine ([models](../design/specs/models.md) MD-N17-4).
 
 **Soak:** 8 *policy* hours of `queue` on a fixture, with the dashboard open over SSE. Recorded: RSS, open handles, event-log growth, and SSE reconnects.
 

@@ -12,6 +12,12 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { processStartTime, sameProcess } from "@sekhemet/sandbox";
+import {
+  type SleepAssertion,
+  findOnPath,
+  holdSleepAssertion,
+  sleepAssertionCommand,
+} from "./sleep_assertion.js";
 import { workspaceFolderOf } from "./workspace_locator.js";
 
 /**
@@ -127,7 +133,7 @@ export function leaseRefusal(holder: Lease): string {
 export function acquireRunnerLease(
   repoPath: string,
   options: AcquireOptions = {},
-): { release: () => void; lease: Lease } | { holder: Lease } {
+): { release: () => void; lease: Lease; awake: SleepAssertion } | { holder: Lease } {
   mkdirSync(join(workspaceFolderOf(repoPath), ".sekhemet"), { recursive: true });
   const lease: Lease = {
     ...newLease(),
@@ -157,14 +163,24 @@ export function acquireRunnerLease(
         ".sekhemet",
         "processes",
       );
+      const releaseLease = startLeaseHeartbeat(
+        leasePath(repoPath),
+        lease.token,
+        content,
+        options.heartbeatMs,
+      );
+      // RUN-65: the machine stays awake while the lease is held, and the
+      // assertion goes with the lease (and with this process, if killed).
+      const awake = holdSleepAssertion({
+        why: `Sekhemet ${options.kind ?? "run"}${options.cardId ? ` ${options.cardId}` : ""}`,
+      });
       return {
         lease,
-        release: startLeaseHeartbeat(
-          leasePath(repoPath),
-          lease.token,
-          content,
-          options.heartbeatMs,
-        ),
+        awake,
+        release: () => {
+          awake.release();
+          releaseLease();
+        },
       };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
@@ -202,7 +218,7 @@ function borrow(
   repoPath: string,
   parent: Lease,
   options: AcquireOptions,
-): { release: () => void; lease: Lease } {
+): { release: () => void; lease: Lease; awake: SleepAssertion } {
   const path = leasePath(repoPath);
   const processStart = processStartTime(process.pid);
   const borrower = { pid: process.pid, ...(processStart ? { processStart } : {}) };
@@ -241,7 +257,19 @@ function borrow(
   };
   process.once("exit", release);
   installShutdownSignals();
-  return { lease: parent, release };
+  return { lease: parent, release, awake: parentAwake() };
+}
+
+/**
+ * A borrowed lease's sleep assertion is its holder's (an overnight round runs
+ * under the night's): held when this machine has the tool, which the holder
+ * took it with; otherwise the same note the holder's report gives.
+ */
+function parentAwake(): SleepAssertion {
+  const command = sleepAssertionCommand(process.platform, process.ppid);
+  if (command && findOnPath(command.tool))
+    return { held: true, tool: `${command.tool} (the lease holder's)`, release: () => {} };
+  return { ...holdSleepAssertion({ findTool: () => undefined }), release: () => {} };
 }
 
 /**
