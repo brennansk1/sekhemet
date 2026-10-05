@@ -71,6 +71,8 @@ export interface CommandSpec {
   /** The command's own flags; the global ones are added to every entry. */
   options: Record<string, OptionSpec>;
   positionals: { min: number; max: number };
+  /** What the positional is, for a usage error: "an issue ID" unless said. */
+  positionalWord?: string;
   /** Takes `--json` (surface item 20c). */
   json: boolean;
   /**
@@ -214,6 +216,20 @@ export const COMMAND_REGISTRY: readonly CommandSpec[] = [
     load: async () => (await import("./egress.js")).egressCommand,
   },
   {
+    name: "engine",
+    visibility: "dev",
+    usage: "engine [status | get [--yes]]",
+    what: "The inference engine: which llama-server is used and its build, or get the pinned llama.cpp release",
+    synopsis: "sekhemet engine [status]   |   sekhemet engine get [--yes]",
+    example: "sekhemet engine get --yes",
+    options: { yes: { type: "boolean" } },
+    positionals: { min: 0, max: 1 },
+    positionalWord: "status or get",
+    json: false,
+    needsProject: true,
+    load: async () => (await import("./engine.js")).engineCommand,
+  },
+  {
     name: "editors",
     visibility: "dev",
     usage: "editors [vscode|cursor|zed]",
@@ -287,7 +303,7 @@ export function parseCommandArgs(
     return { error: `sekhemet ${spec.name} needs an issue ID: ${spec.synopsis}` };
   if (positionals.length > spec.positionals.max)
     return {
-      error: `sekhemet ${spec.name} takes ${spec.positionals.max === 0 ? "no issue ID" : "one issue ID"}, not ${positionals.slice(spec.positionals.max).join(" ")}: ${spec.synopsis}`,
+      error: `sekhemet ${spec.name} takes ${spec.positionals.max === 0 ? "no issue ID" : spec.positionalWord ? `only ${spec.positionalWord}` : "one issue ID"}, not ${positionals.slice(spec.positionals.max).join(" ")}: ${spec.synopsis}`,
     };
   return { values: parsed.values, positionals };
 }

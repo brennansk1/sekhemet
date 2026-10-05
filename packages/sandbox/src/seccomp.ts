@@ -7,9 +7,30 @@
  *
  * Landlock is not used: bubblewrap's read-only root with explicit writable
  * binds already gives the same filesystem confinement.
+ *
+ * Item 15 (B1): with the network granted, the command shares the host's
+ * network namespace and with it every abstract Unix socket (X11's, some
+ * session buses'), which no mount can hide. The program for that posture
+ * also refuses creating a Unix socket, `socket(AF_UNIX, …)`, and io_uring,
+ * which can create a socket without that call. A Unix `socketpair` is
+ * allowed only connection-oriented (SOCK_STREAM, SOCK_SEQPACKET): such a
+ * pair is already joined, and a second connect() gives EISCONN. A datagram
+ * pair (SOCK_DGRAM, or SOCK_RAW, which the kernel turns into SOCK_DGRAM) is
+ * refused: its socket can `sendto` any host datagram socket, abstract or by
+ * path (the B1 review proved this in the Linux VM). srt's own apply-seccomp
+ * refuses `socket(AF_UNIX)` but not that socketpair: its residual, named in
+ * security.md item 15. With the network off the namespace is empty, and the
+ * relays inside (DEC-50) need their Unix sockets.
+ *
+ * On x64 an x32-ABI call carries AUDIT_ARCH_X86_64 with
+ * `nr | __X32_SYSCALL_BIT`, so every program refuses nr >= 0x40000000 there,
+ * as libseccomp's and Docker's default profiles do; exact-number checks
+ * would otherwise let `socket` and every denied call through x32.
  */
 const BPF_LD_W_ABS = 0x20;
+const BPF_ALU_AND_K = 0x54;
 const BPF_JMP_JEQ_K = 0x15;
+const BPF_JMP_JGE_K = 0x35;
 const BPF_RET_K = 0x06;
 const SECCOMP_RET_ALLOW = 0x7fff0000;
 const SECCOMP_RET_ERRNO = 0x00050000;
@@ -46,6 +67,20 @@ export const DENIED_SYSCALLS: Record<string, { x64: number; arm64: number }> = {
   acct: { x64: 163, arm64: 89 },
 };
 
+/** `socket`, `socketpair` and `io_uring_setup`, for the Unix-socket refusal (item 15). */
+const SOCKET_NR = { x64: 41, arm64: 198 } as const;
+const SOCKETPAIR_NR = { x64: 53, arm64: 199 } as const;
+const IO_URING_SETUP_NR = { x64: 425, arm64: 425 } as const;
+const AF_UNIX = 1;
+const SOCK_STREAM = 1;
+const SOCK_SEQPACKET = 5;
+/** `type & SOCK_TYPE_MASK` drops SOCK_NONBLOCK and SOCK_CLOEXEC. */
+const SOCK_TYPE_MASK = 0xf;
+const X32_SYSCALL_BIT = 0x40000000;
+/** Where `seccomp_data.args[0]`'s and `args[1]`'s low words are (little-endian). */
+const ARG0_LOW = 16;
+const ARG1_LOW = 24;
+
 function insn(code: number, jt: number, jf: number, k: number): Buffer {
   const b = Buffer.alloc(8);
   b.writeUInt16LE(code, 0);
@@ -55,25 +90,74 @@ function insn(code: number, jt: number, jf: number, k: number): Buffer {
   return b;
 }
 
-/**
- * The filter program (struct sock_filter[], little-endian) for `arch`.
- * A call from another architecture (32-bit compat) is refused outright.
- */
-export function seccompProgram(arch: "x64" | "arm64"): Buffer {
-  const numbers = Object.values(DENIED_SYSCALLS).map((s) => s[arch]);
-  const n = numbers.length;
-  const deny = SECCOMP_RET_ERRNO | EPERM;
-  const program: Buffer[] = [
-    insn(BPF_LD_W_ABS, 0, 0, 4), // A = seccomp_data.arch
-    insn(BPF_JMP_JEQ_K, 1, 0, AUDIT_ARCH[arch]), // native arch: skip the refusal
-    insn(BPF_RET_K, 0, 0, deny),
-    insn(BPF_LD_W_ABS, 0, 0, 0), // A = seccomp_data.nr
-    // Each match jumps over the rest of the list and the ALLOW to the DENY.
-    ...numbers.map((nr, i) => insn(BPF_JMP_JEQ_K, n - i, 0, nr)),
+/** A jump target: the next instruction, a labelled one, or the final ALLOW or DENY. */
+type Target = "next" | "ALLOW" | "DENY" | `@${string}`;
+type Line = { label?: string; code: number; k: number; jt?: Target; jf?: Target };
+
+/** Lays the lines out, then the ALLOW and the DENY, resolving each jump forward. */
+function assemble(lines: Line[], deny: number): Buffer {
+  const at = new Map<string, number>();
+  lines.forEach((l, i) => {
+    if (l.label) at.set(`@${l.label}`, i);
+  });
+  at.set("ALLOW", lines.length);
+  at.set("DENY", lines.length + 1);
+  const offset = (from: number, t: Target = "next") => {
+    if (t === "next") return 0;
+    const to = at.get(t);
+    if (to === undefined || to <= from || to - from - 1 > 255) {
+      throw new Error(`seccomp: bad jump to ${t}`);
+    }
+    return to - from - 1;
+  };
+  return Buffer.concat([
+    ...lines.map((l, i) => insn(l.code, offset(i, l.jt), offset(i, l.jf), l.k)),
     insn(BPF_RET_K, 0, 0, SECCOMP_RET_ALLOW),
     insn(BPF_RET_K, 0, 0, deny),
+  ]);
+}
+
+/**
+ * The filter program (struct sock_filter[], little-endian) for `arch`.
+ * A call from another architecture (32-bit compat, and with it `socketcall`)
+ * is refused outright, and on x64 so is every x32-ABI call.
+ * `refuseUnixSockets`: the network-granted posture's program (item 15).
+ */
+export function seccompProgram(
+  arch: "x64" | "arm64",
+  options: { refuseUnixSockets?: boolean } = {},
+): Buffer {
+  const unix = options.refuseUnixSockets === true;
+  const numbers = [
+    ...Object.values(DENIED_SYSCALLS).map((s) => s[arch]),
+    ...(unix ? [IO_URING_SETUP_NR[arch]] : []),
   ];
-  return Buffer.concat(program);
+  const deny = SECCOMP_RET_ERRNO | EPERM;
+  const lines: Line[] = [
+    { code: BPF_LD_W_ABS, k: 4 }, // A = seccomp_data.arch
+    { code: BPF_JMP_JEQ_K, k: AUDIT_ARCH[arch], jt: "@nr" }, // native arch: skip the refusal
+    { code: BPF_RET_K, k: deny },
+    { label: "nr", code: BPF_LD_W_ABS, k: 0 }, // A = seccomp_data.nr
+    ...(arch === "x64" ? [{ code: BPF_JMP_JGE_K, k: X32_SYSCALL_BIT, jt: "DENY" as const }] : []),
+    ...numbers.map((nr): Line => ({ code: BPF_JMP_JEQ_K, k: nr, jt: "DENY" })),
+  ];
+  if (unix) {
+    lines.push(
+      // socket(AF_UNIX, …): refused.
+      { code: BPF_JMP_JEQ_K, k: SOCKET_NR[arch], jf: "@pair" },
+      { code: BPF_LD_W_ABS, k: ARG0_LOW },
+      { code: BPF_JMP_JEQ_K, k: AF_UNIX, jt: "DENY", jf: "ALLOW" },
+      // socketpair(AF_UNIX, type): only a stream or seqpacket pair.
+      { label: "pair", code: BPF_JMP_JEQ_K, k: SOCKETPAIR_NR[arch], jf: "ALLOW" },
+      { code: BPF_LD_W_ABS, k: ARG0_LOW },
+      { code: BPF_JMP_JEQ_K, k: AF_UNIX, jf: "ALLOW" },
+      { code: BPF_LD_W_ABS, k: ARG1_LOW },
+      { code: BPF_ALU_AND_K, k: SOCK_TYPE_MASK },
+      { code: BPF_JMP_JEQ_K, k: SOCK_STREAM, jt: "ALLOW" },
+      { code: BPF_JMP_JEQ_K, k: SOCK_SEQPACKET, jt: "ALLOW", jf: "DENY" },
+    );
+  }
+  return assemble(lines, deny);
 }
 
 /** The architecture this host's kernel filters for, or undefined when unsupported. */

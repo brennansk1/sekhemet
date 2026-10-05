@@ -1,5 +1,14 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { type Server, createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +16,7 @@ import { DatabaseSync } from "node:sqlite";
 import { EventLog, initSchema } from "@sekhemet/kernel";
 import { ModelRegistry } from "@sekhemet/models";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { modelsFetch } from "../src/models_cmd.js";
+import { modelsFetch, modelsFetchCommand } from "../src/models_cmd.js";
 
 // MD-N12-6, NEW-models-7: `sekhemet models fetch` is the page's Download…
 // in the terminal: one implementation, the same refusals and records.
@@ -114,5 +123,176 @@ describe("sekhemet models fetch (MD-N12-6)", () => {
       await modelsFetch("unknown", opts(new ModelRegistry(join(dir, "models.json")), lines)),
     ).toBe(1);
     expect(lines.join(" ")).toMatch(/no registered source and hash/);
+  });
+});
+
+describe("sekhemet models fetch --role and --recommended (MD-N18-3, MD-N22-3)", () => {
+  // The shipped ids, each with a recorded source on the local server (the
+  // registry's source is the one a download uses, rule 4).
+  const SHIPPED = ["nail-mtp", "qwen3.8-27b-gsq-rco", "apodex-1.1-mini"];
+  const registryWithSources = (sizeOf: (id: string) => number = () => W.length) => {
+    const reg = new ModelRegistry(join(dir, "models.json"));
+    for (const id of SHIPPED)
+      reg.recordSource(id, {
+        url: `${base}/o/${id}/resolve/main/${id}.gguf`,
+        host: "127.0.0.1",
+        sha256: SHA,
+        sizeBytes: sizeOf(id),
+      });
+    mkdirSync(join(dir, "models"), { recursive: true });
+    return reg;
+  };
+
+  it("fetches a role's shipped model (--role planning)", async () => {
+    const reg = registryWithSources();
+    const lines: string[] = [];
+    expect(await modelsFetchCommand(["--role", "planning"], opts(reg, lines))).toBe(0);
+    expect(existsSync(join(dir, "models", "qwen3.8-27b-gsq-rco.gguf"))).toBe(true);
+    expect(hits).toBe(1);
+    expect(reg.get("qwen3.8-27b-gsq-rco")?.family).toBe("qwen");
+  });
+
+  it("names an unfilled role and fetches nothing (--role review)", async () => {
+    const lines: string[] = [];
+    const code = await modelsFetchCommand(["--role", "review"], opts(registryWithSources(), lines));
+    expect(code).toBe(1);
+    expect(lines.join(" ")).toMatch(/Review.*unfilled.*RG-P8-13/);
+    expect(hits).toBe(0);
+  });
+
+  it("shows the set's total size and each licence before asking, and a no downloads nothing", async () => {
+    const lines: string[] = [];
+    const asked: string[] = [];
+    const code = await modelsFetchCommand(["--recommended"], {
+      ...opts(registryWithSources(), lines),
+      ask: async (q: string) => {
+        asked.push(q);
+        // Everything the person agrees to is already on the screen.
+        expect(lines.join("\n")).toMatch(/Total/);
+        return false;
+      },
+    });
+    expect(code).toBe(1);
+    expect(asked).toHaveLength(1);
+    const out = lines.join("\n");
+    expect(out.match(/Apache-2\.0/g)).toHaveLength(3);
+    expect(out).toMatch(/Coding.*nail-mtp/);
+    expect(out).toMatch(/Planning.*qwen3\.8-27b-gsq-rco/);
+    expect(out).toMatch(/Research.*apodex-1\.1-mini/);
+    expect(out).toMatch(/Review.*unfilled/);
+    expect(out).toMatch(/Total.*150\.0 kB/);
+    expect(out).toMatch(/Nothing was downloaded/);
+    expect(hits).toBe(0);
+  });
+
+  it("downloads the set after the yes, --yes giving it in a script, each verified and recorded", async () => {
+    const lines: string[] = [];
+    const code = await modelsFetchCommand(["--recommended", "--yes"], {
+      ...opts(registryWithSources(), lines),
+      ask: async () => {
+        throw new Error("--yes asks nothing");
+      },
+    });
+    expect(code).toBe(0);
+    expect(hits).toBe(3);
+    for (const id of SHIPPED) expect(existsSync(join(dir, "models", `${id}.gguf`))).toBe(true);
+    const events = await log.getEventsByTypes(["model/downloaded"]);
+    expect(events.map((e) => (e.payload as { model: string }).model).sort()).toEqual(
+      [...SHIPPED].sort(),
+    );
+  });
+
+  it("with no one to ask and no --yes, downloads nothing and says how to agree", async () => {
+    const lines: string[] = [];
+    const code = await modelsFetchCommand(["--recommended"], opts(registryWithSources(), lines));
+    expect(code).toBe(1);
+    expect(lines.join(" ")).toMatch(/--yes/);
+    expect(hits).toBe(0);
+  });
+
+  it("refuses the set before asking when the folder's volume cannot hold it, naming both sizes", async () => {
+    const lines: string[] = [];
+    let asked = false;
+    const code = await modelsFetchCommand(["--recommended", "--yes"], {
+      ...opts(
+        registryWithSources(() => 4e15),
+        lines,
+      ),
+      ask: async () => {
+        asked = true;
+        return true;
+      },
+    });
+    expect(code).toBe(1);
+    expect(asked).toBe(false);
+    expect(lines.join(" ")).toMatch(/needs [\d.]+ GB.*has [\d.]+ [GMk]?B free/);
+    expect(hits).toBe(0);
+  });
+
+  it("names its usage when given nothing to fetch", async () => {
+    const lines: string[] = [];
+    expect(await modelsFetchCommand([], opts(registryWithSources(), lines))).toBe(2);
+    expect(lines.join(" ")).toMatch(/--recommended/);
+  });
+});
+
+/**
+ * The entry point (B1-C3 review blocker): the built binary, spawned in an
+ * empty project and an empty home, reaches `--recommended` and `--role`.
+ * The network is offline, so nothing is fetched from anywhere.
+ */
+describe("sekhemet dev models fetch, from the command line (MD-N18-3, MD-N22-2/-3)", () => {
+  const BIN = join(import.meta.dirname, "..", "dist", "index.js");
+  const cli = (args: string[]) => {
+    const cwd = join(dir, "cwd");
+    const home = join(dir, "home");
+    mkdirSync(cwd, { recursive: true });
+    mkdirSync(home, { recursive: true });
+    mkdirSync(join(dir, "models"), { recursive: true });
+    return spawnSync(process.execPath, [BIN, "dev", "models", "fetch", ...args], {
+      cwd,
+      encoding: "utf8",
+      timeout: 30_000,
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: home,
+        SEKHEMET_CONFIG_DIR: join(home, ".sekhemet"),
+        SEKHEMET_USER_CONFIG: join(dir, "user.toml"),
+        SEKHEMET_MODELS_DIR: join(dir, "models"),
+        SEKHEMET_MODEL_LOADS: "off",
+        BROWSER: "false",
+      },
+    });
+  };
+
+  it("--recommended prints each file, size and licence and the total, and with no one to ask downloads nothing", () => {
+    const r = cli(["--recommended"]);
+    expect(r.stderr).not.toMatch(/unknown flag/);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toMatch(
+      /Coding\s+nail-mtp: Nail-Qwen3\.6-35B-A3B-MTP-UD-IQ3_XXS\.gguf, [\d.]+ GB, licence Apache-2\.0/,
+    );
+    expect(r.stdout).toMatch(/Planning\s+qwen3\.8-27b-gsq-rco: .*licence Apache-2\.0/);
+    expect(r.stdout).toMatch(/Research\s+apodex-1\.1-mini: .*licence Apache-2\.0/);
+    expect(r.stdout).toMatch(/Review\s+unfilled/);
+    expect(r.stdout).toMatch(/Total to download: [\d.]+ GB/);
+    // No one is asked, or the volume is refused first when it lacks the room.
+    expect(r.stdout).toMatch(/Nothing was downloaded: no one was asked|nothing was downloaded\./);
+    expect(readdirSync(join(dir, "models"))).toEqual([]);
+  });
+
+  it("--role planning reaches the shipped model's verified source, refused offline with the setting named", () => {
+    const r = cli(["--role", "planning"]);
+    expect(r.stderr).not.toMatch(/unknown flag/);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toMatch(/\[network\] mode/);
+    expect(readdirSync(join(dir, "models"))).toEqual([]);
+  });
+
+  it("--role review names the unfilled role and fetches nothing", () => {
+    const r = cli(["--role", "review"]);
+    expect(r.stderr).not.toMatch(/unknown flag/);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toMatch(/Review role is unfilled/);
   });
 });

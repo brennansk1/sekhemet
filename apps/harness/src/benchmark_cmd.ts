@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   BENCH_EVENTS,
@@ -19,15 +21,19 @@ import {
   type RoleScore,
   type RunFingerprint,
   type RunProfile,
+  type RunSettings,
   type ScreenEstimate,
   type ScreenRunner,
   type ScreeningSets,
+  type SettingsCombination,
   type Throughput,
   type WindowState,
   benchmarkRuns,
   benchmarkedResult,
   cacheKeyString,
+  combinationHistory,
   combinationId,
+  combinationRecord,
   combinationResults,
   defaultOvernightPicks,
   estimateNight,
@@ -40,7 +46,9 @@ import {
   readQuickScores,
   runDefinition,
   runOvernightBench,
+  runSettingsRefusal,
   scheduleOvernight,
+  settingsText,
 } from "@sekhemet/eval";
 import {
   loadFrozenSuite,
@@ -50,7 +58,14 @@ import {
   verifyAsset,
 } from "@sekhemet/eval";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
-import { MODEL_ROLES, type ModelRole, hostFingerprintHash } from "@sekhemet/models";
+import {
+  MODEL_ROLES,
+  type ModelRole,
+  type RoleSettingValues,
+  hostFingerprintHash,
+  readSwapUsedBytes,
+  resolveRoleSettings,
+} from "@sekhemet/models";
 import {
   type SuiteRunnerDeps,
   suiteOvernightRunner,
@@ -58,10 +73,11 @@ import {
 } from "./benchmark_runner.js";
 import { effectiveConfig } from "./config_apply.js";
 import { type BenchmarkLease, type ModelAccess, sharedModelAccess } from "./model_access.js";
-import { fullContextVersion, rolePromptVersions } from "./prompt_versions.js";
+import { fullContextVersion, rolePromptVersion, rolePromptVersions } from "./prompt_versions.js";
 import { reservationNow } from "./reservation.js";
 import { acquireRunnerLease, leaseRefusal } from "./runner_lease.js";
 import { isReserved, parseHours } from "./scheduler.js";
+import { TuneService, dec42HostReading } from "./tune_settings.js";
 import { modelRegistry } from "./wave2.js";
 
 /**
@@ -177,7 +193,8 @@ export interface BenchmarkEnv {
   overnightSets: () => OvernightSets;
   machine: () => { reservedHours: string; overnightHours?: string };
   fit: (role: ModelRole, model: string) => FitCheck;
-  cacheKey: (role: ModelRole, model: string, setHash: string) => CacheKey;
+  /** The key a role's score is cached under, its run-level settings included (rules 33, 39). */
+  cacheKey: (role: ModelRole, model: string, setHash: string, settings?: RunSettings) => CacheKey;
   throughput: () => Promise<Throughput>;
   runProfile: (c: Combination) => RunProfile;
   /** Smart Swap's `withMeasurementRun` (DEC-45): the policy bypassed, models unloaded after. */
@@ -197,6 +214,21 @@ export interface BenchmarkEnv {
   lease?: () => { release: () => void } | { holder: string };
   /** A run changed: streamed as a `config` event `{ kind: "benchmark", run }`. */
   onChange?: (run: BenchRun) => void;
+  /** DEC-42's host reading before Find best settings loads (rule 38): swap and the share free. */
+  hostReading?: () =>
+    | { swapUsedBytes: number; freeRatio: number }
+    | Promise<{ swapUsedBytes: number; freeRatio: number }>;
+  /** The run-level values a role runs at now (rule 38's incumbent). */
+  incumbent?: (role: ModelRole, model: string) => RunSettings;
+  /** Write a person's values for a model in a role (models MD-N21-1); whether it now needs verifying. */
+  applySettings?: (
+    model: string,
+    role: ModelRole,
+    values: RoleSettingValues,
+    principal: string,
+  ) => { needsVerifying: boolean };
+  /** Where the capstone's and Web-Bench's recorded scores are read from (MS-N8-4). */
+  externals?: () => { root: string; runsRoot: string };
 }
 
 export class BenchmarkNotFound extends Error {
@@ -225,15 +257,22 @@ interface Live {
 
 export class BenchmarkService {
   private readonly live = new Map<string, Live>();
+  private tuneService: TuneService | undefined;
 
   constructor(private readonly env: BenchmarkEnv) {}
+
+  /** Find best settings (rule 38), sharing this service's environment and runner. */
+  public get tune(): TuneService {
+    this.tuneService ??= new TuneService(this.env);
+    return this.tuneService;
+  }
 
   private now(): Date {
     return this.env.now?.() ?? new Date();
   }
 
   /** The combination's key roles for the end-to-end cache. */
-  private async cachedKeys(combination: Combination): Promise<Set<string>> {
+  private async cachedKeys(combination: SettingsCombination): Promise<Set<string>> {
     const cached = new Set((await readQuickScores(this.env.log)).map((s) => s.key));
     const sets = this.env.sets();
     const out = new Set<string>();
@@ -241,14 +280,16 @@ export class BenchmarkService {
       const model = modelFor(combination, role);
       const hash = sets.roles[role].hash;
       if (!model || !hash) continue;
-      const key = cacheKeyString(this.env.cacheKey(role, model, hash));
+      const key = cacheKeyString(
+        this.env.cacheKey(role, model, hash, combination.settings?.[role]),
+      );
       if (cached.has(key)) out.add(`${role}\0${model}`);
     }
     return out;
   }
 
   /** MS-N5-1, DB-N6-9: minutes per role for the roles not cached; runs nothing. */
-  public async estimateQuick(combination: Combination): Promise<ScreenEstimate> {
+  public async estimateQuick(combination: SettingsCombination): Promise<ScreenEstimate> {
     const sets = this.env.sets();
     const cached = await this.cachedKeys(combination);
     const measurable = MODEL_ROLES.filter((r) => {
@@ -301,9 +342,12 @@ export class BenchmarkService {
    * screening runner is wired, and while another runner holds the lease.
    */
   public async startQuick(
-    combination: Combination,
+    combination: SettingsCombination,
     principal?: string,
   ): Promise<{ run: BenchRun; estimateSeconds: number; finished: Promise<QuickResult> }> {
+    // MS-N8-1: a value a run cannot apply is refused before anything loads.
+    const refusal = runSettingsRefusal(combination);
+    if (refusal) throw refusal;
     for (const role of MODEL_ROLES) {
       const model = modelFor(combination, role);
       if (!model) continue;
@@ -409,7 +453,7 @@ export class BenchmarkService {
 
   /** Queue an overnight comparison (MS-N5-9): up to 3 combinations, with tonight's fit. */
   public async scheduleOvernight(
-    combinations: Combination[],
+    combinations: SettingsCombination[],
     principal: string | undefined,
     o: { benchmarkFirst?: boolean },
   ): Promise<{ run: BenchRun; estimate: NightEstimate & { window: OvernightWindow } }> {
@@ -511,6 +555,22 @@ export class BenchmarkService {
     return { runs: await this.runs(), results: await combinationResults(this.env.log), roleScores };
   }
 
+  /**
+   * Every combination's runs of both tiers, each against the run before it
+   * (MS-N8-3), and the capstone's and Web-Bench's recorded results with
+   * their protocol (MS-N8-4). Reads only.
+   */
+  public async historyAll(): Promise<{
+    combinations: Awaited<ReturnType<typeof combinationHistory>>;
+    external: ExternalResults;
+  }> {
+    const where = this.env.externals?.();
+    return {
+      combinations: await combinationHistory(this.env.log),
+      external: where ? externalResults(where) : emptyExternal(),
+    };
+  }
+
   /** One combination's results of both tiers over time. */
   public async history(id: string): Promise<CombinationResult[]> {
     return (await this.env.log.getEventsByTypes([MEASURE_BENCHMARKED]))
@@ -593,18 +653,13 @@ export class BenchmarkService {
   }
 }
 
-const modelsOf = (c: Combination): Record<string, string> =>
-  Object.fromEntries(
-    MODEL_ROLES.flatMap((r) => {
-      const m = modelFor(c, r);
-      return m ? [[r, m]] : [];
-    }),
-  );
+/** A combination as the ledger records it: each role's model and its settings (rule 39). */
+const modelsOf = (c: SettingsCombination): Record<string, string> => combinationRecord(c);
 
 /** The interface (c) exports: start a quick screen through a service. */
 export function startQuick(
   service: BenchmarkService,
-  combination: Combination,
+  combination: SettingsCombination,
   principal?: string,
 ): ReturnType<BenchmarkService["startQuick"]> {
   return service.startQuick(combination, principal);
@@ -622,8 +677,9 @@ const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
 /**
  * The benchmark's environment on this machine. `fit` is part (b)'s
- * `fitFor` over the scanned models (MS-N5-5) — without it every model is
- * taken to fit. The runners default to the frozen suite's machinery
+ * `fitFor` over the scanned models (MS-N5-5): the page's, or `scannedFit`'s
+ * in the terminal (FINDINGS CFG-15); without one a model is not judged
+ * here. The runners default to the frozen suite's machinery
  * (`benchmark_runner.ts`) with each role's model resolved as the queue
  * resolves it; tests pass scripted ones.
  */
@@ -711,8 +767,14 @@ export function defaultBenchmarkEnv(o: {
             })),
           },
           planner,
-          reviewer: { state: "not_built", runs: 1, cards: [], reason: "not measured yet" },
-          researcher: { state: "not_built", runs: 1, cards: [], reason: "not measured yet" },
+          reviewer: reviewerOvernightSet(root),
+          researcher: {
+            state: "not_built",
+            runs: 1,
+            cards: [],
+            reason:
+              "the Research model's questions wait on a person's labels and their offline corpus",
+          },
         },
       };
     },
@@ -724,17 +786,21 @@ export function defaultBenchmarkEnv(o: {
       };
     },
     fit: o.fit ?? (() => ({ fits: true })),
-    cacheKey: (_role, model, setHash) => {
+    cacheKey: (role, model, setHash, settings) => {
       const e = entry(model);
       return {
         model,
         quantisation: e?.quant ?? "unknown",
         engine: e?.engine ?? "llama.cpp",
+        // Rule 33 (MS-N8-1, -2): a person's values for the role and the
+        // combination's own settings are part of the key.
         settings: sha(
           JSON.stringify({
             context: e?.contextWindow ?? null,
             sampling: e?.sampling ?? null,
             template: e?.template?.checksum ?? null,
+            role: e?.roleSettings?.[role]?.values ?? null,
+            run: settingsText(settings ?? {}) || null,
           }),
         ).slice(0, 16),
         host,
@@ -788,6 +854,241 @@ export function defaultBenchmarkEnv(o: {
         }
       : {}),
     ...(o.onChange ? { onChange: o.onChange } : {}),
+    hostReading: dec42HostReading,
+    incumbent: (role, model) => {
+      const resolved = resolveRoleSettings(entry(model), role, { env: process.env });
+      const out: Record<string, unknown> = {};
+      for (const r of resolved)
+        if ((RUN_KEYS as readonly string[]).includes(r.key)) out[r.key] = r.value;
+      return out as RunSettings;
+    },
+    applySettings: (model, role, values, principal) => {
+      const reg = registry();
+      reg.setRoleSettings(model, role, values, principal);
+      return {
+        needsVerifying:
+          reg.roleVerification(model, role, rolePromptVersion(role)).state === "needs_verifying",
+      };
+    },
+    externals: () => ({
+      root,
+      runsRoot: resolve(process.env.SEKHEMET_CAPSTONE_RUNS || join(homedir(), "capstone-runs")),
+    }),
+  };
+}
+
+/** The run-level keys (rule 39) an incumbent is read with. */
+const RUN_KEYS = [
+  "temperature",
+  "reasoningLevel",
+  "reasoningCapTokens",
+  "reasoningPolicy",
+  "method",
+  "evidenceGate",
+] as const;
+
+/**
+ * The overnight tier's Reviewer set (MS-N8-5): every defect of the
+ * registered seeded-defect asset, each reviewed once per run; `not_built`
+ * when the asset does not verify.
+ */
+function reviewerOvernightSet(root: string): OvernightSets["roles"]["reviewer"] {
+  try {
+    const asset = verifyAsset(root, "reviewer-seeded-defects");
+    const items = JSON.parse(readFileSync(join(root, asset.path, "items.json"), "utf8")) as {
+      id: string;
+    }[];
+    return {
+      state: "ready",
+      runs: 2,
+      cards: items.map((d) => ({ id: d.id, role: "reviewer" as const })),
+    };
+  } catch (err) {
+    return {
+      state: "not_built",
+      runs: 1,
+      cards: [],
+      reason: `the seeded defects are not registered at their hash: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+// ── the terminal's fit (FINDINGS CFG-15) ────────────────────────────────
+
+/**
+ * The page's fit for the terminal (MS-N5-5, FINDINGS CFG-15): the model
+ * folders scanned and each model judged by `fitFor` against this machine's
+ * usable memory, exactly as Configuration judges it. A model found in no
+ * folder is not judged (it cannot be loaded either). The background
+ * hashing the scan starts is stopped at once: a fit reads headers only, and
+ * hashing a model's file must never compete with the run's own load.
+ */
+export async function scannedFit(o: {
+  repoPath: string;
+  log: EventLog;
+  env?: NodeJS.ProcessEnv;
+  userConfigPath?: string;
+  /** null: no live probe (the estimate from installed memory). */
+  headroomProbe?: null;
+}): Promise<{ fit: BenchmarkEnv["fit"] }> {
+  const { createConfigApi } = await import("./config_api.js");
+  // The Configuration API's model section, used here for its scan and fit
+  // only: no request reaches it, so its HTTP helpers answer nothing.
+  const refuse = () => {
+    throw new Error("the terminal's fit serves no request");
+  };
+  const api = createConfigApi({
+    repoPath: o.repoPath,
+    log: o.log,
+    json: refuse,
+    readJsonBody: refuse,
+    isTrustedMutation: () => false,
+    principalOf: refuse,
+    ...(o.env ? { env: o.env } : {}),
+    ...(o.userConfigPath ? { userConfigPath: o.userConfigPath } : {}),
+    ...(o.headroomProbe === null ? { headroomProbe: null } : {}),
+  });
+  await api.scan();
+  api.close();
+  return { fit: (role, model) => api.fitCheck(role, model) };
+}
+
+// ── the capstone and Web-Bench (MS-N8-4) ────────────────────────────────
+
+/** One recorded run of the capstone or Web-Bench, counts only. */
+export interface ExternalResult {
+  arm: string;
+  run: number;
+  model?: string;
+  valid: boolean;
+  why?: string;
+  scores: Record<string, number | null>;
+  scoredAt?: string;
+  project?: string;
+  commit?: string;
+  source: "showcase" | "runs";
+}
+
+export interface ExternalResults {
+  capstone: ExternalResult[];
+  webbench: ExternalResult[];
+  protocol: { capstone: string; webbench: string };
+}
+
+/** The protocols in words (CAPSTONE_SELECTION "Protocol"; Web-Bench's projects/readme). */
+export const EXTERNAL_PROTOCOL = {
+  capstone:
+    "The capstone: every arm gets byte-identical frozen input (the brief, the stakeholder's answers and the change request, each hash-checked) and an empty seed repository; a hidden acceptance suite, never shown to any arm, scores release 1 and the tree after the change; each harness-and-model pair runs two to three times, and one run at non-zero temperature is not a finding.",
+  webbench:
+    "Web-Bench: one project at a pinned commit, its tasks given in order; a failed task gets one retry with the test output, and the run stops after a task fails both; scored as Web-Bench scores it, pass@1, pass@2 and error@1 over all of the project's tasks.",
+} as const;
+
+export const emptyExternal = (): ExternalResults => ({
+  capstone: [],
+  webbench: [],
+  protocol: { ...EXTERNAL_PROTOCOL },
+});
+
+const rate = (c: unknown): number | null => {
+  const x = c as { passed?: number; total?: number } | undefined;
+  return x && typeof x.passed === "number" && typeof x.total === "number" && x.total > 0
+    ? Math.round((x.passed / x.total) * 1000) / 1000
+    : null;
+};
+
+function readScore(path: string): Record<string, unknown> | undefined {
+  try {
+    const v = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return v && typeof v === "object" ? (v as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Every `<dir>/<arm>/<run>/score.json` under a root. */
+function scoreFiles(dir: string): { arm: string; run: string; path: string }[] {
+  if (!existsSync(dir)) return [];
+  const out: { arm: string; run: string; path: string }[] = [];
+  const list = (d: string) => {
+    try {
+      return readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory());
+    } catch {
+      return [];
+    }
+  };
+  for (const arm of list(dir))
+    for (const run of list(join(dir, arm.name))) {
+      const path = join(dir, arm.name, run.name, "score.json");
+      if (existsSync(path)) out.push({ arm: arm.name, run: run.name, path });
+    }
+  return out;
+}
+
+/**
+ * The capstone's and Web-Bench's recorded results (MS-N8-4): the capstone's
+ * published showcase and every run's `score.json` under the runs root, each
+ * with its validity in words, and Web-Bench's runs (`webbench-<arm>`).
+ * Counts only, as the scorers write them; nothing is run.
+ */
+export function externalResults(o: { root: string; runsRoot: string }): ExternalResults {
+  const capstone: ExternalResult[] = [];
+  const webbench: ExternalResult[] = [];
+  const seen = new Set<string>();
+  const sources: [string, ExternalResult["source"]][] = [
+    [join(o.root, "docs", "showcase", "capstone"), "showcase"],
+    [o.runsRoot, "runs"],
+  ];
+  for (const [dir, source] of sources)
+    for (const f of scoreFiles(dir)) {
+      const v = readScore(f.path);
+      if (!v) continue;
+      const run = Number(v.run ?? f.run);
+      if (v.benchmark === "web-bench" || f.arm.startsWith("webbench-")) {
+        const pass = (v.pass ?? {}) as Record<string, number>;
+        const error = (v.error ?? {}) as Record<string, number>;
+        webbench.push({
+          arm: String(v.arm ?? f.arm.replace(/^webbench-/, "")),
+          run,
+          ...(typeof v.model === "string" ? { model: v.model } : {}),
+          valid: v.valid !== false,
+          scores: { ...pass, ...error },
+          ...(typeof v.scoredAt === "string" ? { scoredAt: v.scoredAt } : {}),
+          ...(typeof v.project === "string" ? { project: v.project } : {}),
+          ...(typeof v.commit === "string" ? { commit: v.commit } : {}),
+          source,
+        });
+        continue;
+      }
+      const arm = String(v.arm ?? f.arm);
+      const key = `${arm}\0${run}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const suite = (v.hiddenSuite ?? {}) as { registered?: boolean; notRegistered?: string };
+      const invalid = Array.isArray(v.invalidBecause) ? (v.invalidBecause as string[]) : [];
+      const why = [
+        ...invalid,
+        ...(suite.registered === false
+          ? [
+              `the hidden suite is not registered${suite.notRegistered ? `: ${suite.notRegistered}` : ""}`,
+            ]
+          : []),
+      ].join("; ");
+      capstone.push({
+        arm,
+        run,
+        valid: v.valid === true && suite.registered !== false,
+        ...(why ? { why } : {}),
+        scores: { "release 1": rate(v.releaseOne), "after the change": rate(v.afterChange) },
+        ...(typeof v.scoredAt === "string" ? { scoredAt: v.scoredAt } : {}),
+        source,
+      });
+    }
+  const order = (a: ExternalResult, b: ExternalResult) =>
+    a.arm < b.arm ? -1 : a.arm > b.arm ? 1 : a.run - b.run;
+  return {
+    capstone: capstone.sort(order),
+    webbench: webbench.sort(order),
+    protocol: { ...EXTERNAL_PROTOCOL },
   };
 }
 

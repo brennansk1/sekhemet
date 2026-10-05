@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { clopperPearson, verifyAsset } from "@sekhemet/eval";
+import { clopperPearson, exactMcNemar, verifyAsset } from "@sekhemet/eval";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
+import { recordedLiteralInventory, rolePromptVersion } from "../prompt_versions.js";
 import { ReviewFailedError, type ReviewInput, type ReviewResult, reviewCard } from "./review.js";
+import { type ReviewMethod, withReviewMethod } from "./review_copy.js";
 
 /**
  * The Reviewer's seeded-defect measure (review-git RG-P8-13; measurement
@@ -316,6 +318,34 @@ export interface SeededDefectRun {
   partial?: boolean;
 }
 
+/**
+ * Review one seeded defect on one Review model as the product builds a
+ * review's input, and score it (RG-P8-13): a cut-off or unreadable reply is
+ * a failed review with its reason (F25). The quick benchmark's Reviewer
+ * screen scores its items this way too (measurement MS-N8-5).
+ */
+export async function reviewSeededItem(
+  root: string,
+  d: Pick<SeededDefect, "id" | "fixture" | "card" | "file" | "edits">,
+  model: LocalInferenceAdapter,
+): Promise<DefectScore> {
+  const reference = readFileSync(
+    join(root, "fixtures", "reference_solutions", d.fixture, d.card, d.file),
+    "utf8",
+  );
+  const seeded = applyEdits(reference, d.edits);
+  const card = fixtureCard(root, d.fixture, d.card);
+  const ranges = changedRanges(reference, seeded);
+  const review = await reviewCard(model, seededReviewInput(card, d.file, seeded)).catch(
+    (err: unknown) => {
+      if (err instanceof ReviewFailedError) return err;
+      throw err;
+    },
+  );
+  if (review instanceof ReviewFailedError) return failedDefectReview(d.id, ranges, review.message);
+  return scoreDefectReview(d.id, d.file, ranges, review);
+}
+
 /** Review every item of the set on one Review model and score it (RG-P8-13). */
 export async function runSeededDefects(
   set: SeededDefectSet,
@@ -325,26 +355,13 @@ export async function runSeededDefects(
   const scores: DefectScore[] = [];
   const items = opts.only?.length ? set.items.filter((d) => opts.only?.includes(d.id)) : set.items;
   for (const d of items) {
-    const reference = readFileSync(
-      join(set.root, "fixtures", "reference_solutions", d.fixture, d.card, d.file),
-      "utf8",
-    );
-    const seeded = applyEdits(reference, d.edits);
-    const card = fixtureCard(set.root, d.fixture, d.card);
-    const ranges = changedRanges(reference, seeded);
     // F25: a cut-off or unreadable reply is a failed review, counted apart.
-    const review = await reviewCard(model, seededReviewInput(card, d.file, seeded)).catch(
-      (err: unknown) => {
-        if (err instanceof ReviewFailedError) return err;
-        throw err;
-      },
-    );
-    if (review instanceof ReviewFailedError) {
-      scores.push(failedDefectReview(d.id, ranges, review.message));
-      opts.say?.(`review failed ${d.id}: ${review.message}`);
+    const score = await reviewSeededItem(set.root, d, model);
+    if (score.failed !== undefined) {
+      scores.push(score);
+      opts.say?.(`review failed ${d.id}: ${score.failed}`);
       continue;
     }
-    const score = scoreDefectReview(d.id, d.file, ranges, review);
     scores.push(score);
     opts.say?.(
       `${score.caught ? "caught" : "missed"} ${d.id}${score.falsePositives ? ` · ${score.falsePositives} false positive${score.falsePositives === 1 ? "" : "s"}` : ""}`,
@@ -367,6 +384,127 @@ export async function runSeededDefects(
           line: `${report.line} Partial run (${items.length} of ${set.items.length} items): not RG-P8-13's verdict.`,
         }
       : report,
+    ...(partial ? { partial: true } : {}),
+  };
+}
+
+// ── the paired A/B of a Review model's method or settings (R3b, R3c) ────
+
+/** One arm of the A/B: the method it reviews with and the adapter (its settings applied). */
+export interface ReviewerArm {
+  method: ReviewMethod;
+  adapter: LocalInferenceAdapter;
+}
+
+/** One item reviewed under both arms. */
+export interface ReviewerPair {
+  id: string;
+  current: boolean;
+  candidate: boolean;
+}
+
+/** The paired seeded-set A/B (review-git RG-P8-17; PROMPT_STANDARD rule 35.4). */
+export interface ReviewerAbRecord {
+  kind: "reviewer-paired-ab";
+  assetHash: string;
+  assetVersion: string;
+  model: string;
+  at: string;
+  arms: {
+    current: {
+      method: ReviewMethod;
+      contextVersion: string;
+      scores: DefectScore[];
+      report: SeededDefectReport;
+    };
+    candidate: {
+      method: ReviewMethod;
+      contextVersion: string;
+      scores: DefectScore[];
+      report: SeededDefectReport;
+    };
+  };
+  pairs: ReviewerPair[];
+  /** Items the candidate caught and the current arm missed, and the reverse. */
+  gained: number;
+  lost: number;
+  /** The exact two-sided sign (McNemar) test on the discordant items. */
+  p: number;
+  /** `best`: the candidate resolves better at 0.05; `worse`: it resolves lower; else no clear difference. */
+  verdict: "best" | "worse" | "no_clear_difference";
+  /** Set when only some items ran (`--only`): never the admission's verdict. */
+  partial?: boolean;
+}
+
+/**
+ * Review the registered set under the current arm and the candidate arm,
+ * item by item and interleaved (measurement rule 10), score each by
+ * RG-P8-13, and compare the pairs by the exact two-sided test. A failed
+ * review in either arm leaves the pair out of the test, and the arm's
+ * report says so. It adopts nothing: admission is rule 35.4's, on each
+ * candidate Review model.
+ */
+export async function reviewerAB(
+  set: SeededDefectSet,
+  o: {
+    current: ReviewerArm;
+    candidate: ReviewerArm;
+    only?: readonly string[];
+    say?: (line: string) => void;
+    now?: () => Date;
+  },
+): Promise<ReviewerAbRecord> {
+  const items = o.only?.length ? set.items.filter((d) => o.only?.includes(d.id)) : set.items;
+  const current: DefectScore[] = [];
+  const candidate: DefectScore[] = [];
+  const pairs: ReviewerPair[] = [];
+  for (const d of items) {
+    const a = await withReviewMethod(o.current.method, () =>
+      reviewSeededItem(set.root, d, o.current.adapter),
+    );
+    const b = await withReviewMethod(o.candidate.method, () =>
+      reviewSeededItem(set.root, d, o.candidate.adapter),
+    );
+    current.push(a);
+    candidate.push(b);
+    if (a.failed === undefined && b.failed === undefined)
+      pairs.push({ id: d.id, current: a.caught, candidate: b.caught });
+    o.say?.(
+      `${d.id}: current ${a.failed !== undefined ? "failed" : a.caught ? "caught" : "missed"}, candidate ${b.failed !== undefined ? "failed" : b.caught ? "caught" : "missed"}`,
+    );
+  }
+  const gained = pairs.filter((x) => x.candidate && !x.current).length;
+  const lost = pairs.filter((x) => x.current && !x.candidate).length;
+  const p = exactMcNemar(gained, lost);
+  const partial = items.length < set.items.length;
+  const inventory = recordedLiteralInventory();
+  const version = (m: ReviewMethod) =>
+    withReviewMethod(m, async () => rolePromptVersion("reviewer", { inventory }));
+  return {
+    kind: "reviewer-paired-ab",
+    assetHash: set.hash,
+    assetVersion: set.version,
+    model: o.candidate.adapter.modelId,
+    at: (o.now?.() ?? new Date()).toISOString(),
+    arms: {
+      current: {
+        method: o.current.method,
+        contextVersion: await version(o.current.method),
+        scores: current,
+        report: seededDefectReport(current),
+      },
+      candidate: {
+        method: o.candidate.method,
+        contextVersion: await version(o.candidate.method),
+        scores: candidate,
+        report: seededDefectReport(candidate),
+      },
+    },
+    pairs,
+    gained,
+    lost,
+    p,
+    verdict: p < 0.05 ? (gained > lost ? "best" : "worse") : "no_clear_difference",
     ...(partial ? { partial: true } : {}),
   };
 }

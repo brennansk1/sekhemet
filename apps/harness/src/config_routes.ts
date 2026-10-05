@@ -28,7 +28,7 @@ export interface ConfigRoute {
   /** The team permission a request needs (teams item 6; `team/access.ts` `ACTIONS`). */
   permission: Permission;
   /** The module that will serve it. */
-  module: "config_api" | "benchmark_api";
+  module: "config_api" | "benchmark_api" | "config_engine";
   /** The spec ids it serves. */
   spec: string;
 }
@@ -147,12 +147,57 @@ export const CONFIG_ROUTES: readonly ConfigRoute[] = [
     module: "config_api",
     spec: "DB-N6-5; models rule 27a",
   },
+  // Keep or Change the setup card's suggestion for a role (DB-N27-1).
+  {
+    method: "POST",
+    path: "/api/config/roles/:role/keep",
+    permission: "config.manage",
+    module: "config_api",
+    spec: "DB-N27-1",
+  },
   {
     method: "POST",
     path: "/api/config/roles/:role/restore",
     permission: "config.manage",
     module: "config_api",
     spec: "DB-N6; MD-N10-2",
+  },
+  // A role's settings per model (NEW-models-21, NEW-dashboard-27; C3-3):
+  // read graded, saved, reset, exported and imported; every change an Admin's.
+  {
+    method: "GET",
+    path: "/api/config/roles/:role/settings",
+    permission: "read",
+    module: "config_api",
+    spec: "MD-N21-1, MD-N21-3; DB-N27-2",
+  },
+  {
+    method: "PUT",
+    path: "/api/config/roles/:role/settings",
+    permission: "config.manage",
+    module: "config_api",
+    spec: "MD-N21-4, MD-N21-5; DB-N27-3, DB-N27-4",
+  },
+  {
+    method: "POST",
+    path: "/api/config/roles/:role/settings/reset",
+    permission: "config.manage",
+    module: "config_api",
+    spec: "MD-N21-1, MD-N21-5",
+  },
+  {
+    method: "GET",
+    path: "/api/config/roles/:role/settings/export",
+    permission: "read",
+    module: "config_api",
+    spec: "MD-N21-6",
+  },
+  {
+    method: "POST",
+    path: "/api/config/roles/:role/settings/import",
+    permission: "config.manage",
+    module: "config_api",
+    spec: "MD-N21-5, MD-N21-6",
   },
   // Downloads (MD-N12-6, MD-N12-7, SEC-53) and the pre-download estimate (DB-NM14-5).
   {
@@ -175,6 +220,22 @@ export const CONFIG_ROUTES: readonly ConfigRoute[] = [
     permission: "config.manage",
     module: "config_api",
     spec: "DB-N6; MD-N12-6",
+  },
+  // Get the inference engine (models rule 6b, NEW-models-19, DEC-53 c7):
+  // the engine's state and the pinned offer; the download on a person's yes.
+  {
+    method: "GET",
+    path: "/api/config/engine",
+    permission: "read",
+    module: "config_engine",
+    spec: "NEW-models-19; MD-N19-1, MD-N19-5",
+  },
+  {
+    method: "POST",
+    path: "/api/config/engine/get",
+    permission: "config.manage",
+    module: "config_engine",
+    spec: "NEW-models-19; MD-N19-1..4; security item 47",
   },
   // Combinations and placement (DB-NM14-6–9, MD-N14-41–42, MS-NM14-4).
   {
@@ -242,6 +303,22 @@ export const CONFIG_ROUTES: readonly ConfigRoute[] = [
     module: "benchmark_api",
     spec: "DB-N6; MS-N5-6",
   },
+  // Find best settings, the history with its charts and the external results
+  // (NEW-measurement-7, -8; DB-N6-19..22; C3-4): literals before :combinationId.
+  {
+    method: "GET",
+    path: "/api/config/benchmark/history",
+    permission: "read",
+    module: "benchmark_api",
+    spec: "MS-N8-3, MS-N8-4; DB-N6-22",
+  },
+  {
+    method: "GET",
+    path: "/api/config/benchmark/tune",
+    permission: "read",
+    module: "benchmark_api",
+    spec: "MS-N7-1, MS-N7-6; DB-N6-21",
+  },
   {
     method: "GET",
     path: "/api/config/benchmark/:combinationId",
@@ -262,5 +339,26 @@ export const CONFIG_ROUTES: readonly ConfigRoute[] = [
     permission: "config.manage",
     module: "benchmark_api",
     spec: "MS-N5-6, MS-N5-12",
+  },
+  {
+    method: "POST",
+    path: "/api/config/benchmark/tune",
+    permission: "config.manage",
+    module: "benchmark_api",
+    spec: "MS-N7-1, MS-N7-2; DB-N6-21",
+  },
+  {
+    method: "POST",
+    path: "/api/config/benchmark/tune/:runId/stop",
+    permission: "config.manage",
+    module: "benchmark_api",
+    spec: "MS-N7-5",
+  },
+  {
+    method: "POST",
+    path: "/api/config/benchmark/tune/:runId/apply",
+    permission: "config.manage",
+    module: "benchmark_api",
+    spec: "MS-N7-7; DB-N6-21",
   },
 ];

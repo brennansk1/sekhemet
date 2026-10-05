@@ -59,6 +59,7 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 |---|---|
 | [PM_RESEARCH_SYNTHESIS.md](research/PM_RESEARCH_SYNTHESIS.md) | Deep Research findings mapped to what is built and what is planned. |
 | [MODEL_CANDIDATES.md](research/MODEL_CANDIDATES.md) | Local model candidates, benchmarks and the worker/manager choice. |
+| [MODEL_SETTINGS_2026-10.md](research/MODEL_SETTINGS_2026-10.md) | Model settings per role (W18 G0): what LM Studio, Ollama, Jan, Msty and Open WebUI expose, which parameters matter per role, and fast tuning on one machine. |
 | [IMPLEMENTATION_AUDIT.md](research/IMPLEMENTATION_AUDIT.md) | Every request, research recommendation and paper finding against its commit and test: the gate before the evaluation. |
 | [RESEARCH_REGISTER.md](research/RESEARCH_REGISTER.md) | Candidate techniques through spotted, triaged, shortlisted, benched and adopted or rejected, with evidence and pre-set thresholds; checked by the build. |
 | [WEB_RESEARCH_2026-09.md](research/WEB_RESEARCH_2026-09.md) | Web research for the Opus 5.5 pass: prompt-cache reuse and MTP on hybrid models, sandbox and git safety, the competitive landscape and professional practice, small-sample statistics and model choice. |

@@ -4,6 +4,15 @@
 // downloads, a model's details with every number graded, combinations,
 // placement with a hash-verified copy, and the residency timeline. Nothing
 // here downloads, loads or copies until a person presses the button.
+// C3-3 (NEW-dashboard-27): the setup card's rows with Keep or Change, the
+// checks in words and Customize per role (config_customize.js); Compare
+// setups runs the quick benchmark from the card; the inference engine is the
+// Model library card's first part (C3-2's routes); and every fit, detail and
+// speed measurement is the chosen role's, never the Coding model's by
+// default (FINDINGS CFG-13).
+import { estimateLabel } from "./config_benchmark.js";
+import { mountCustomize } from "./config_customize.js";
+import { downloadLine } from "./config_engine.js";
 import { $, announce, copyText, esc, getJSON, sendJSON } from "./dom.js";
 
 const ROLE_NAME = {
@@ -11,6 +20,18 @@ const ROLE_NAME = {
   planner: "Planning model",
   reviewer: "Review model",
   researcher: "Research model",
+};
+/** Each role's job in one line (DB-N27-1). */
+const ROLE_JOB = {
+  worker: "Builds each issue: writes the code and the tests.",
+  planner: "Plans the work and answers about the board.",
+  reviewer: "Reads each finished change before you do.",
+  researcher: "Looks things up, with sources.",
+};
+const ENGINE_ORIGIN = {
+  setting: "named by SEKHEMET_LLAMA_SERVER",
+  downloaded: "downloaded by Sekhemet",
+  path: "found on PATH",
 };
 const GRADE_WORD = {
   measured: "Measured",
@@ -74,6 +95,19 @@ const ui = {
   error: "",
   readOnly: "",
   onConfig: null,
+  /** The role whose fit, details and speed the page shows (DB-N27-6, CFG-13). */
+  viewRole: "worker",
+  /** Roles whose picker is open (DB-N27-1); a kept role is the server's (`x.kept`). */
+  change: {},
+  /** The role open in Customize, its panel's host and child (DB-N27-2). */
+  customize: null,
+  custHost: null,
+  custChild: null,
+  /** The inference engine part (models rule 6b): `GET /api/config/engine`. */
+  engine: null,
+  engineTimer: 0,
+  /** Compare setups' quick run from the card (DB-N27-7). */
+  compare: { estimate: null, confirm: false, run: null, note: "" },
 };
 
 function error(text) {
@@ -99,7 +133,7 @@ async function load(part) {
 
 async function loadDetail() {
   if (!ui.open) return;
-  const q = new URLSearchParams({ role: "worker" });
+  const q = new URLSearchParams({ role: ui.viewRole });
   if (ui.whatIf.context) q.set("context", ui.whatIf.context);
   if (ui.whatIf.kvType) q.set("kvType", ui.whatIf.kvType);
   const r = await getJSON(`/api/config/models/${encodeURIComponent(ui.open)}?${q}`);
@@ -158,11 +192,67 @@ function foldersHtml(m, extra = "") {
         `<button class="btn sm" type="button" data-add-folder="${esc(p)}"${disabledAttr()}>Add ${esc(p)}</button>`,
     )
     .join("");
-  return `<section class="cfg-card" aria-labelledby="cfg-h-folders"><h2 id="cfg-h-folders">Model library</h2><p class="sec">Nothing is downloaded, loaded or run until you press the button.</p>${rows}${
+  return `<section class="cfg-card" aria-labelledby="cfg-h-folders"><h2 id="cfg-h-folders">Model library</h2><p class="sec">Nothing is downloaded, loaded or run until you press the button.</p>${engineHtml()}${rows}${
     suggested
       ? `<div class="row"><span class="sec">Found on this machine:</span>${suggested}</div>`
       : ""
   }<form class="row" data-folder-form><label class="sr-only" for="cfg-folder-path">Folder path</label><input id="cfg-folder-path" type="text" name="path" placeholder="/path/to/models" autocomplete="off"${disabledAttr()}><label class="inline"><input type="checkbox" name="sub"${disabledAttr()}>Include subfolders</label><button class="btn" type="submit"${disabledAttr()}>Add folder</button><button class="btn" type="button" data-scan${disabledAttr()}>Scan</button></form><p class="sec">The scan only reads a folder; only a download you confirm writes into one.</p>${extra}</section>`;
+}
+
+/* ---------- The inference engine (models rules 6a, 6b) ---------- */
+
+/**
+ * The engine as the Model library card's first part (DB-N27-1; C3-2's
+ * `GET /api/config/engine`): which llama-server runs the models, its build
+ * against the floor, and — when it is missing or too old and a build is
+ * pinned for this machine — what *Get the inference engine* fetches, shown
+ * before the button (MD-N19-1). A part, not a fifth card (DB-N19-5).
+ */
+function engineHtml() {
+  const v = ui.engine;
+  if (!v) return "";
+  if (v.error)
+    return `<div class="cfg-part" role="group" aria-labelledby="cfg-h-engine"><h3 id="cfg-h-engine">Inference engine</h3><p class="why" role="alert">${esc(v.error)}</p></div>`;
+  const e = v.engine;
+  const status = !e
+    ? "Not found"
+    : v.meetsFloor
+      ? `llama.cpp b${e.build}`
+      : e.build
+        ? `llama.cpp b${e.build}, too old`
+        : "Build unknown";
+  const running =
+    v.download && (v.download.state === "running" || v.download.state === "verifying");
+  const parts = [
+    `<p><b>${esc(status)}</b> · <span class="sec">b${esc(v.floor)} or later needed</span></p>`,
+    e ? `<p class="sec">${esc(e.path)} · ${esc(ENGINE_ORIGIN[e.origin] ?? e.origin)}</p>` : "",
+    v.download ? `<p class="sec" role="status">${esc(downloadLine(v.download))}</p>` : "",
+  ];
+  // The offer only where it is needed: the engine missing or below the floor.
+  // A download the network settings refuse is disabled before the press,
+  // saying why, with the other ways to get it beside it (§2.16, CFG-10).
+  const offered = v.offer && !v.installed && !running && !v.meetsFloor;
+  if (offered) {
+    parts.push(`<p class="sec">${esc(v.offerText ?? "")}</p>`);
+    const why = v.refusal ? `<p class="why" id="cfg-engine-why">${esc(v.refusal)}</p>` : "";
+    const off = v.refusal ? ' disabled aria-describedby="cfg-engine-why"' : disabledAttr();
+    parts.push(
+      `${why}<div class="row"><button class="btn primary" type="button" data-engine-get${off}>Get the inference engine</button></div>`,
+    );
+  } else if (!v.offer && !v.meetsFloor) parts.push(`<p class="sec">${esc(v.noAsset ?? "")}</p>`);
+  if (!v.meetsFloor && (!(v.offer && !v.installed) || v.refusal))
+    for (const f of v.fixes ?? []) parts.push(`<p class="sec">${esc(f)}</p>`);
+  return `<div class="cfg-part cfg-engine" role="group" aria-labelledby="cfg-h-engine"><h3 id="cfg-h-engine">Inference engine</h3>${parts.join("")}</div>`;
+}
+
+async function loadEngine() {
+  const r = await getJSON("/api/config/engine").catch(() => ({ ok: false, data: null }));
+  ui.engine = r.ok ? r.data : { error: r.data?.error ?? "The engine's state could not be read." };
+  render();
+  const d = ui.engine?.download;
+  clearTimeout(ui.engineTimer);
+  if (ui.root && d && (d.state === "running" || d.state === "verifying"))
+    ui.engineTimer = setTimeout(loadEngine, 1000);
 }
 
 /* ---------- Models found ---------- */
@@ -171,10 +261,19 @@ function modelsHtml(m) {
   const list = m.models ?? [];
   const skipped = (m.skipped ?? []).filter((s) => s.reason !== "not_a_model");
   const table = list.length
-    ? `<div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr><th>Name</th><th>Size</th><th>Quantisation</th><th>Context</th><th>Family</th><th>Fits this machine (Coding model)</th><th>Published hash</th></tr></thead><tbody>${list
+    ? `<div class="row"><label for="cfg-view-role">Show the fit and details for</label><select id="cfg-view-role" data-view-role>${Object.entries(
+        ROLE_NAME,
+      )
+        .map(
+          ([r, n]) =>
+            `<option value="${esc(r)}"${r === ui.viewRole ? " selected" : ""}>${esc(`the ${n}`)}</option>`,
+        )
+        .join(
+          "",
+        )}</select></div><div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr><th>Name</th><th>Size</th><th>Quantisation</th><th>Context</th><th>Family</th><th>Fits this machine (${esc(ROLE_NAME[ui.viewRole])})</th><th>Published hash</th></tr></thead><tbody>${list
         .map((x) => {
-          const fit = x.fits?.worker ?? "yes";
-          return `<tr><td><button class="btn ghost sm" type="button" data-open-model="${esc(x.id)}" aria-expanded="${ui.open === x.id}">${esc(x.name)}</button>${x.noEngine ? `<div class="why">${esc(x.noEngine)}</div>` : ""}</td><td>${fromFile(x.sizeBytes, gb)}</td><td class="mono">${esc(x.quantisation)}</td><td>${x.contextLength ? fromFile(x.contextLength, tokens) : '<span class="sec">Not in the header</span>'}</td><td>${esc(x.family ?? "Unknown")}</td><td><span class="fit-${esc(fit)}">${esc(FIT_WORD[fit] ?? fit)}</span><div class="why">${esc(x.fitReason?.worker ?? "")}</div></td><td>${esc(HASH_WORD[x.hash] ?? x.hash)}</td></tr>${
+          const fit = x.fits?.[ui.viewRole] ?? "yes";
+          return `<tr><td><button class="btn ghost sm" type="button" data-open-model="${esc(x.id)}" aria-expanded="${ui.open === x.id}">${esc(x.name)}</button>${x.noEngine ? `<div class="why">${esc(x.noEngine)}</div>` : ""}</td><td>${fromFile(x.sizeBytes, gb)}</td><td class="mono">${esc(x.quantisation)}</td><td>${x.contextLength ? fromFile(x.contextLength, tokens) : '<span class="sec">Not in the header</span>'}</td><td>${esc(x.family ?? "Unknown")}</td><td><span class="fit-${esc(fit)}">${esc(FIT_WORD[fit] ?? fit)}</span><div class="why">${esc(x.fitReason?.[ui.viewRole] ?? "")}</div></td><td>${esc(HASH_WORD[x.hash] ?? x.hash)}</td></tr>${
             ui.open === x.id ? `<tr><td colspan="7">${detailHtml()}</td></tr>` : ""
           }`;
         })
@@ -257,6 +356,8 @@ function rolesHtml(r, models) {
   // DB-N19-5: the recommendation rule's suggestion (models NEW-models-12), so the
   // card is not titled as Seshat's; *Apply suggestion* is *Use the recommended
   // models* with its one confirmation, and *Choose each role* the role pickers.
+  // DB-N27-1: each row has its job, *Keep* or *Change*, the checks in words
+  // and *Customize* (DB-N27-2), whose panel opens under the row.
   return `<section class="cfg-card" aria-labelledby="cfg-h-roles"><h2 id="cfg-h-roles">Suggested setup</h2>${recommendedHtml()}<div class="cfg-roles">${roles
     .map((x) => {
       const name = ROLE_NAME[x.role] ?? x.role;
@@ -268,22 +369,54 @@ function rolesHtml(r, models) {
             : "Not configured";
       const rec = x.recommendation;
       const dl = rec?.download;
+      const differs = rec && rec.model !== x.model;
+      const kept = x.kept && x.model;
+      const picking = ui.change[x.role] || !x.model;
       const options = found
         .filter((m) => m.fits?.[x.role] !== "no")
-        .map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`)
+        .map(
+          (m) =>
+            `<option value="${esc(m.id)}"${rec && (m.registryId === rec.model || m.id === rec.model) ? " selected" : ""}>${esc(m.name)}</option>`,
+        )
         .join("");
       const selectId = `cfg-assign-${x.role}`;
-      return `<div class="cfg-role" data-role="${esc(x.role)}"><div><b>${esc(name)}</b>${x.role === "planner" ? '<div class="why">Seshat, the project manager, runs on this model.</div>' : ""}</div><div><div>${x.model ? `<b>${esc(x.model)}</b>` : "No model"} · ${esc(state)}${x.model && !x.qualified ? " · not verified on this machine" : ""}</div>${
+      const checks = (x.checks ?? []).length
+        ? `<ul class="cfg-checks">${x.checks
+            .map(
+              (c) =>
+                `<li data-check="${esc(c.startsWith("Needs") || c.startsWith("Not") ? "no" : "yes")}">${esc(c)}</li>`,
+            )
+            .join("")}</ul>`
+        : "";
+      const custOpen = ui.customize === x.role;
+      const custModel = x.model ?? found[0]?.registryId ?? found[0]?.id;
+      return `<div class="cfg-role" data-role="${esc(x.role)}"><div><b>${esc(name)}</b><div class="why">${esc(ROLE_JOB[x.role] ?? "")}</div>${x.role === "planner" ? '<div class="why">Seshat, the project manager, runs on this model.</div>' : ""}</div><div><div>${x.model ? `<b>${esc(x.model)}</b>` : "No model"} · ${esc(state)}</div>${
         x.unfilledReason ? `<div class="why">${esc(x.unfilledReason)}</div>` : ""
       }${x.screen === "not_measured" ? '<div class="why">Quick benchmark: Not measured yet.</div>' : ""}${
-        rec ? `<p>Recommended: ${esc(rec.reason)}</p>` : ""
+        rec && !kept ? `<p>Recommended: ${esc(rec.reason)}</p>` : ""
+      }${kept ? `<p class="why">Keeping ${esc(x.model)}.</p>` : ""}${checks}${
+        x.engine
+          ? `<p class="why" data-engine-state="${esc(x.engine.state)}">${esc(x.engine.line)}</p>`
+          : ""
       }</div><div class="actions row">${
-        options
+        x.model && differs && !kept
+          ? `<button class="btn sm" type="button" data-keep="${esc(x.role)}"${disabledAttr()}>Keep</button>`
+          : ""
+      }${
+        x.model && !picking
+          ? `<button class="btn sm" type="button" data-change="${esc(x.role)}" aria-expanded="false"${disabledAttr()}>Change</button>`
+          : ""
+      }${
+        picking && options
           ? `<label class="sr-only" for="${selectId}">Model for the ${esc(name)}</label><select id="${selectId}" data-assign-select="${esc(x.role)}"${disabledAttr()}>${options}</select><button class="btn sm" type="button" data-assign="${esc(x.role)}"${disabledAttr()}>Assign</button>`
           : ""
       }${
-        ui.progress[`qualify-${x.role}`]
-          ? `<button class="btn sm" type="button" data-qualify="${esc(x.role)}"${disabledAttr()}>Verify on this machine to assign</button>`
+        ui.progress[`qualify-${x.role}`] || x.verification?.state === "needs_verifying"
+          ? `<button class="btn sm" type="button" data-qualify="${esc(x.role)}"${disabledAttr()}>${x.verification?.state === "needs_verifying" ? "Verify now" : "Verify on this machine to assign"}</button>`
+          : ""
+      }${
+        custModel
+          ? `<button class="btn sm" type="button" data-customize="${esc(x.role)}" data-model="${esc(custModel)}" aria-expanded="${custOpen}" aria-controls="cfg-cust-${esc(x.role)}">Customize</button>`
           : ""
       }${
         x.model
@@ -295,7 +428,7 @@ function rolesHtml(r, models) {
             ? `<button class="btn sm" type="button" disabled aria-describedby="cfg-dl-why-${esc(x.role)}">Download…</button><span class="why" id="cfg-dl-why-${esc(x.role)}">${esc(dl.blockedBy)}</span>`
             : `<button class="btn sm" type="button" data-download="${esc(rec.model)}" data-size="${esc(dl.sizeBytes)}" data-sha="${esc(dl.sha256)}" data-source="${esc(dl.source)}"${disabledAttr()}>Download…</button>`
           : ""
-      }</div></div>`;
+      }</div>${custOpen ? `<div class="cfg-cust-slot" id="cfg-cust-${esc(x.role)}" data-cust-slot="${esc(x.role)}"></div>` : ""}</div>`;
     })
     .join("")}</div><div class="row">${
     anyRec
@@ -344,20 +477,31 @@ function dialogHtml() {
   const d = ui.dialog;
   if (!d) return "";
   if (d.kind === "recommended") {
+    const keptRoles = new Set((d.kept ?? []).map((k) => k.role));
     const combo = Object.entries(d.combination ?? {})
-      .map(([role, m]) => `<li>${esc(ROLE_NAME[role] ?? role)}: ${esc(m)}</li>`)
+      .map(
+        ([role, m]) =>
+          `<li>${esc(ROLE_NAME[role] ?? role)}: ${esc(m)}${keptRoles.has(role) ? " (kept)" : ""}</li>`,
+      )
       .join("");
     const dls = (d.downloads ?? [])
       .map(
         (x) =>
-          `<li><b>${esc(x.model)}</b><dl><div><dt>Source</dt><dd class="mono">${esc(x.url)}</dd></div><div><dt>Size</dt><dd>${x.sizeBytes ? graded({ value: x.sizeBytes, grade: "published" }, gb) : "Not published"}</dd></div><div><dt>Published SHA-256</dt><dd class="hash">${esc(x.sha256)}</dd></div></dl>${x.blockedBy ? `<p class="why">${esc(x.blockedBy)}</p>` : ""}</li>`,
+          `<li><b>${esc(x.model)}</b><dl><div><dt>Source</dt><dd class="mono">${esc(x.url)}</dd></div><div><dt>Size</dt><dd>${x.sizeBytes ? graded({ value: x.sizeBytes, grade: "published" }, gb) : "Not published"}</dd></div><div><dt>Published SHA-256</dt><dd class="hash">${esc(x.sha256)}</dd></div>${x.license ? `<div><dt>Licence</dt><dd>${esc(x.license)}</dd></div>` : ""}</dl>${x.blockedBy ? `<p class="why">${esc(x.blockedBy)}</p>` : ""}</li>`,
       )
       .join("");
+    // MD-N18-3: the set's total size and each model's licence, before the yes.
+    const licences = (d.licenses ?? []).length
+      ? `<p>Licences: ${esc(d.licenses.join(", "))}. Check they allow your use.</p>`
+      : "";
+    const total = d.totalBytes
+      ? `<p>In all: ${graded({ value: d.totalBytes, grade: "published" }, gb)} to download.</p>`
+      : "";
     return `<div class="cfg-dialog" role="dialog" aria-modal="false" aria-labelledby="cfg-dlg-h"><h4 id="cfg-dlg-h">Use the recommended models</h4><ul>${combo}</ul>${
       dls
-        ? `<p>These downloads are made first, each verified by its hash, into <span class="mono">${esc(d.folder ?? "no folder that can be written now")}</span>:</p><ul>${dls}</ul>`
+        ? `<p>These downloads are made first, each verified by its hash, into <span class="mono">${esc(d.folder ?? "no folder that can be written now")}</span>:</p><ul>${dls}</ul>${total}`
         : "<p>Nothing to download.</p>"
-    }<p>Then the quick benchmark screens this combination, and each role whose model is verified on this machine is assigned.</p><div class="row"><button class="btn primary" type="button" data-confirm-recommended>Use them</button><button class="btn" type="button" data-cancel-dialog>Cancel</button></div></div>`;
+    }${licences}<p>Then the quick benchmark screens this combination, and each role whose model is verified on this machine is assigned.</p><div class="row"><button class="btn primary" type="button" data-confirm-recommended>Use them</button><button class="btn" type="button" data-cancel-dialog>Cancel</button></div></div>`;
   }
   if (d.kind === "speed") {
     return `<div class="cfg-dialog" role="dialog" aria-modal="false" aria-labelledby="cfg-dlg-h"><h4 id="cfg-dlg-h">Measure the speed of ${esc(d.name)}</h4><dl><div><dt>Model</dt><dd>${esc(d.name)}</dd></div><div><dt>Memory it loads</dt><dd>${graded({ value: d.memoryBytes, grade: "estimated" }, gb)}</dd></div></dl><p>${esc(d.error ?? "")}</p><p>llama-bench runs a warm-up and five runs, then the first token is timed with and without the prefix cache. Nothing leaves this machine.</p><div class="row"><button class="btn primary" type="button" data-confirm-speed>Measure</button><button class="btn" type="button" data-cancel-dialog>Cancel</button></div></div>`;
@@ -413,7 +557,7 @@ function combosHtml(c, extra = "") {
       .join("<br>");
     return `<tr><td>${models}</td><td>${x.floorsMet ? "Met" : "Not met"}</td><td>${graded(e.timePerCardMs, mins)}</td><td>${graded(e.expectedSwaps, (v) => v.toFixed(1))}</td><td>${graded(x.peakBytes, gb)}</td><td>${graded(e.acceptedPerNight, (v) => String(v))}</td></tr>`;
   };
-  return `<section class="cfg-card" aria-labelledby="cfg-h-combos"><h2 id="cfg-h-combos">Compare setups</h2><p class="sec">Run the quick benchmark now or schedule it overnight; the scores show under Benchmark.</p><div class="row"><a class="btn" href="#/configuration/benchmark">Run or schedule the benchmark</a></div><h3>Combinations</h3><p class="sec">Ordered by each role's quality floor, then the least time per issue including swaps, then the smaller footprint. No combined score.</p>${
+  return `<section class="cfg-card" aria-labelledby="cfg-h-combos"><h2 id="cfg-h-combos">Compare setups</h2><p class="sec">The quick benchmark shows speed, fit and large differences; the overnight benchmark settles close calls.</p>${compareHtml()}<div class="row"><a class="btn" href="#/configuration/benchmark">Run or schedule the benchmark</a></div><h3>Combinations</h3><p class="sec">Ordered by each role's quality floor, then the least time per issue including swaps, then the smaller footprint. No combined score.</p>${
     kept.length
       ? `<div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr><th>Models</th><th>Quality floors</th><th>Time per issue</th><th>Swaps per issue</th><th>Peak memory</th><th>Issues per night</th></tr></thead><tbody>${kept.map(row).join("")}</tbody></table></div>`
       : '<p class="sec">No combination to compare yet.</p>'
@@ -424,6 +568,46 @@ function combosHtml(c, extra = "") {
           .join("")}</ul></details>`
       : ""
   }${extra}</section>`;
+}
+
+/** The suggested combination: each role's recommendation, else its model (DB-N27-7). */
+function suggested() {
+  const out = {};
+  for (const x of ui.roles?.roles ?? []) {
+    const m = (x.kept ? x.model : x.recommendation?.model) ?? x.model;
+    if (m) out[x.role] = m;
+  }
+  return out;
+}
+
+/**
+ * Compare setups' quick run from the card (DB-N27-7): the estimate first,
+ * then *Start*, the person's yes; the run's state as the benchmark's frames
+ * report it. The scores are under Benchmark.
+ */
+function compareHtml() {
+  const c = suggested();
+  const words = ["worker", "planner", "reviewer", "researcher"]
+    .filter((r) => c[r])
+    .map((r) => `${ROLE_NAME[r]}: ${c[r]}`)
+    .join(" · ");
+  const cmp = ui.compare;
+  if (!c.worker || !c.planner)
+    return '<p class="sec">The quick benchmark needs a Coding model and a Planning model in the suggested setup.</p>';
+  const run = cmp.run;
+  const state = run
+    ? `<p role="status">${esc(
+        run.state === "running"
+          ? `Running the quick benchmark${run.progress ? `: ${run.progress.done ?? 0} of ${run.progress.total ?? "?"} done` : ""}…`
+          : run.state === "done"
+            ? "The quick benchmark is done; its scores are under Benchmark."
+            : `The quick benchmark ${run.state}.`,
+      )}</p>`
+    : "";
+  const button = cmp.confirm
+    ? `<button class="btn primary" type="button" data-compare-start${disabledAttr()}>Start · ${esc(estimateLabel(cmp.estimate).replace(/^Run quick · /, ""))}</button><button class="btn" type="button" data-compare-cancel>Cancel</button>`
+    : `<button class="btn" type="button" data-compare-quick${disabledAttr()}>Run the quick benchmark of this setup</button>`;
+  return `<div class="cfg-part" role="group" aria-labelledby="cfg-h-cmp"><h3 id="cfg-h-cmp">Quick benchmark</h3><p class="sec">${esc(words)}</p>${cmp.confirm ? `<p>${esc(estimateLabel(cmp.estimate))}</p>` : ""}<div class="row">${run && run.state === "running" ? "" : button}</div>${state}${cmp.note ? `<p class="why" role="alert">${esc(cmp.note)}</p>` : ""}</div>`;
 }
 
 function placementHtml(p) {
@@ -489,8 +673,44 @@ function render() {
     const focusKey = document.activeElement?.getAttribute?.("id");
     host.innerHTML = html;
     host.dataset.html = html;
+    // Customize keeps its own state: its panel moves into the new slot, never re-made.
+    const slot = ui.customize ? host.querySelector(`[data-cust-slot="${ui.customize}"]`) : null;
+    if (slot && ui.custHost) slot.append(ui.custHost);
     if (focusKey) document.getElementById(focusKey)?.focus();
   }
+}
+
+/** Open Customize for a role (DB-N27-2), or close it. */
+function openCustomize(role, model) {
+  ui.custChild?.unmount();
+  ui.custChild = null;
+  if (!role || ui.customize === role) {
+    ui.customize = null;
+    render();
+    return;
+  }
+  ui.customize = role;
+  ui.custHost = document.createElement("div");
+  const found = (ui.models?.models ?? [])
+    .filter((m) => !m.noEngine)
+    .map((m) => ({ key: m.registryId ?? m.id, name: m.name, fits: m.fits }));
+  const assigned = (ui.roles?.roles ?? []).find((x) => x.role === role)?.model;
+  ui.custChild = mountCustomize(ui.custHost, {
+    role,
+    model,
+    assigned,
+    models: found,
+    readOnly: ui.readOnly,
+    onChanged: () => load("roles"),
+    onClose: () => {
+      const back = ui.root?.querySelector(`[data-customize="${role}"]`);
+      openCustomize(null);
+      ui.root?.querySelector(`[data-customize="${role}"]`)?.focus();
+      back?.focus();
+    },
+  });
+  render();
+  ui.custHost.querySelector("#cust-h, [data-close]")?.focus?.();
 }
 
 async function onClick(e) {
@@ -504,7 +724,7 @@ async function onClick(e) {
   else if (d.scan !== undefined) await act("POST", "/api/config/models/scan", {}, refreshAll);
   else if (d.measureSpeed) {
     // The server names the model and the memory it loads; the person confirms both.
-    const role = "worker";
+    const role = ui.viewRole;
     const r = await sendJSON(
       "POST",
       `/api/config/models/${encodeURIComponent(d.measureSpeed)}/speed`,
@@ -547,8 +767,57 @@ async function onClick(e) {
       announce(`${ROLE_NAME[role]} assigned.`);
     }
     load("roles");
+  } else if (d.keep) {
+    // DB-N27-1: keep the current model; the suggestion for this role steps
+    // aside, recorded so Apply suggestion and a reload honour it.
+    const role = d.keep;
+    ui.change[role] = false;
+    await act("POST", `/api/config/roles/${role}/keep`, { kept: true }, async () => {
+      announce(`Keeping the ${ROLE_NAME[role]}'s model.`);
+      await load("roles");
+    });
+  } else if (d.change) {
+    const role = d.change;
+    ui.change[role] = true;
+    // Change takes a keep back: the suggestion returns for this role.
+    if ((ui.roles?.roles ?? []).find((x) => x.role === role)?.kept)
+      await act("POST", `/api/config/roles/${role}/keep`, { kept: false }, () => load("roles"));
+    else render();
+    ui.root?.querySelector(`[data-assign-select="${role}"]`)?.focus();
+  } else if (d.customize) {
+    openCustomize(d.customize, d.model);
+  } else if (d.engineGet !== undefined) {
+    // The offer is on the page above the button: the press is the yes (MD-N19-1).
+    const r = await sendJSON("POST", "/api/config/engine/get", { confirm: true });
+    if (!r.ok) error(r.data?.error ?? "The engine could not be fetched.");
+    await loadEngine();
+  } else if (d.compareQuick !== undefined) {
+    const c = suggested();
+    const q = new URLSearchParams({ tier: "quick", ...c });
+    const r = await getJSON(`/api/config/benchmark/estimate?${q}`);
+    ui.compare = { ...ui.compare, note: "" };
+    if (!r.ok) ui.compare.note = r.data?.error ?? "The estimate could not be made.";
+    else ui.compare = { ...ui.compare, estimate: r.data, confirm: true };
+    render();
+  } else if (d.compareCancel !== undefined) {
+    ui.compare = { ...ui.compare, confirm: false };
+    render();
+  } else if (d.compareStart !== undefined) {
+    const r = await sendJSON("POST", "/api/config/benchmark", {
+      tier: "quick",
+      combinations: [suggested()],
+    });
+    ui.compare = {
+      ...ui.compare,
+      confirm: false,
+      ...(r.ok ? { run: r.data.run, note: "" } : { note: r.data?.error ?? "It did not start." }),
+    };
+    render();
+    if (r.ok) announce("The quick benchmark started.");
   } else if (d.chooseRoles !== undefined) {
-    // *Choose each role*: to the first role's picker, where each role is assigned.
+    // *Choose each role*: every role's picker open, focus on the first.
+    for (const x of ui.roles?.roles ?? []) ui.change[x.role] = true;
+    render();
     ui.root?.querySelector("[data-assign-select]")?.focus();
   } else if (d.useRecommended !== undefined) {
     const r = await getJSON("/api/config/recommended");
@@ -672,6 +941,14 @@ async function onSubmit(e) {
 
 function onChange(e) {
   const t = e.target;
+  if (t instanceof HTMLSelectElement && t.hasAttribute("data-view-role")) {
+    // DB-N27-6 (CFG-13): the fit, the details and Measure speed follow the chosen role.
+    ui.viewRole = t.value;
+    ui.whatIf = { context: "", kvType: "" };
+    render();
+    loadDetail();
+    return;
+  }
   if (!(t instanceof HTMLSelectElement) || !t.dataset.whatif) return;
   ui.whatIf[t.dataset.whatif] = t.value;
   loadDetail();
@@ -702,6 +979,9 @@ function onConfig(ev) {
       loadDetail();
     } else if (f.state === "failed") error(`Measuring speed failed: ${f.error ?? ""}`);
     render();
+  } else if (f.kind === "benchmark" && ui.compare.run && f.run?.runId === ui.compare.run.runId) {
+    ui.compare = { ...ui.compare, run: f.run };
+    render();
   } else if (f.kind === "hash" || (f.kind === "scan" && f.done)) {
     load("models");
   }
@@ -721,9 +1001,15 @@ export function mount(container, { readOnly = "" } = {}) {
   window.addEventListener("sekhemet:config", onConfig);
   render();
   refreshAll();
+  void loadEngine();
   return {
     unmount() {
       window.removeEventListener("sekhemet:config", onConfig);
+      clearTimeout(ui.engineTimer);
+      ui.custChild?.unmount();
+      ui.custChild = null;
+      ui.custHost = null;
+      ui.customize = null;
       root.remove();
       ui.root = null;
     },

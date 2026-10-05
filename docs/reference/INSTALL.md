@@ -18,20 +18,41 @@ sekhemet
 
 That is the whole setup: the first run checks the machine, says which models it found, derives the gates from the project, asks once, and opens the board — or the Configuration page while no model is set up. `sekhemet --yes` does the same without a prompt and prints the address instead of opening a browser.
 
+## The inference engine
+
+Sekhemet runs its models on llama.cpp's `llama-server`, build b10809 or later — the build the shipped models were verified on ([models](../design/specs/models.md) rules 6a and 6b). The first run and `sekhemet doctor` say which `llama-server` they found, where it came from and its build. There are three ways to get one:
+
+- **Get the inference engine**, on Configuration › Models, or `sekhemet engine get` in a terminal. It shows the pinned release (llama.cpp b10809, MIT licence), the file and its size, and only after your yes downloads that file from llama.cpp's own release on GitHub, checks it against the SHA-256 recorded in [PROVENANCE](PROVENANCE.md), and unpacks it into `~/.sekhemet/engines/` — nothing outside your Sekhemet folder, and no administrator rights. It is offered for macOS on Apple silicon (Metal) and for Linux on x64 (CPU, or Vulkan where a Vulkan driver is installed).
+- **Homebrew**, on macOS: `brew install llama.cpp`.
+- **Build it yourself**, for any other machine — Linux with an NVIDIA GPU (CUDA) or an AMD GPU (ROCm), for example. Follow llama.cpp's build guide (`docs/build.md` in the llama.cpp repository) for your backend, at release b10809 or later, then put `llama-server` on your `PATH` or name it with `SEKHEMET_LLAMA_SERVER=/path/to/llama-server`.
+
+When several are installed, Sekhemet uses `SEKHEMET_LLAMA_SERVER` when it is set, otherwise the newer of the downloaded engine and the one on your `PATH` that is new enough.
+
 ## For a team: the server image
 
-`packaging/server/Dockerfile` builds one image holding the harness, installed from the same npm tarball; `packaging/server/compose.yaml` runs it with the two containers it needs beside it (SUR-42):
+`packaging/server/Dockerfile` builds one image holding the harness, installed from the same npm tarball; `packaging/server/compose.yaml` runs it with the containers it needs beside it (SUR-42):
 
 | Container | What it is |
 | --- | --- |
 | `identity-proxy` | The **identity-aware proxy** (oauth2-proxy in the example): it terminates TLS with the certificate and key you mount at `/tls` (`tls.crt`, the full chain, and `tls.key`; only its HTTPS listener, on 443, is published), signs people in with your OIDC provider and passes each person's email in `X-Forwarded-Email`. Sekhemet trusts that header only from the addresses listed in `[identity] trusted_proxies` of the server's user configuration ([integrations](../design/specs/integrations.md) item 24, [teams](../design/specs/teams.md) item 13). |
-| `inference` | The **inference engine, in its own container** (llama.cpp's server with the Worker's weights). The harness shares its network namespace and reaches it on loopback, as on a laptop; a server whose model or context differs from the Worker's profile is refused. |
+| `engine-coding`, `engine-planning`, `engine-research` | The **inference engines, one container per filled role** of the shipped set ([models](../design/specs/models.md) rules 3 and 26a): llama.cpp's server with that role's weights, started with exactly its profile's arguments. They join the harness's network namespace and are reached on loopback, as on a laptop; one whose model, context or MTP state differs from its profile is refused. The Review role is unfilled until a model is admitted for it, so it has no engine. |
 | `sekhemet` | The harness: `sekhemet dev serve --host 0.0.0.0` over the repository mounted at `/work`, with its user directory in a volume. |
 
 ```bash
 docker build -f packaging/server/Dockerfile -t sekhemet-server .
 docker compose -f packaging/server/compose.yaml up
 ```
+
+**GPU and memory** (MD-N15-4). The engines use llama.cpp build b10818, pinned by digest: `ghcr.io/ggml-org/llama.cpp:server-cuda-b10818` for NVIDIA GPUs (the compose file's default; it needs the NVIDIA Container Toolkit), `ghcr.io/ggml-org/llama.cpp:server-vulkan-b10818` for AMD or Intel GPUs through Vulkan, and `ghcr.io/ggml-org/llama.cpp:server-b10818` to run on the CPU (slow). To use another variant, replace each engine's `image` with the matching line from [PROVENANCE](PROVENANCE.md) and, for Vulkan, pass `/dev/dri` instead of the NVIDIA reservation. Every engine keeps its role resident, so their memory adds up:
+
+| Engine service | Model | Memory it needs |
+| --- | --- | --- |
+| `engine-coding` | nail-mtp (14.1 GB file, 16k window) | 16.9 GB |
+| `engine-planning` | Qwen3.8-27B GSQ-RCO (12.1 GB file, 8k window) | 14.3 GB |
+| `engine-research` | Apodex-1.1-mini (16.0 GB file, two 32k slots) | 22.1 GB |
+| Together | | 53.2 GB of GPU memory (system memory on the CPU image), plus up to 4 GB of system memory per engine for its prompt cache |
+
+These are the harness's own footprint estimates (weights, KV cache and runtime overhead): keep their sum within the GPU memory free on the host.
 
 In the server's user configuration (`/home/node/.sekhemet/config.toml` in the volume):
 

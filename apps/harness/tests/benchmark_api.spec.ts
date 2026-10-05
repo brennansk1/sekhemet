@@ -53,7 +53,10 @@ function sets(): ScreeningSets {
   };
 }
 
-async function start(fit: BenchmarkEnv["fit"] = () => ({ fits: true })) {
+async function start(
+  fit: BenchmarkEnv["fit"] = () => ({ fits: true }),
+  over: Partial<BenchmarkEnv> = {},
+) {
   const dir = mkdtempSync(join(tmpdir(), "bench-api-"));
   dirs.push(dir);
   mkdirSync(join(dir, ".sekhemet"), { recursive: true });
@@ -94,6 +97,9 @@ async function start(fit: BenchmarkEnv["fit"] = () => ({ fits: true })) {
       endToEnd: async () => ({ passed: true, seconds: 5 }),
     }),
     fingerprint: () => ({ build: "b", contextVersion: "c", qualification: "q" }),
+    hostReading: () => ({ swapUsedBytes: 0, freeRatio: 0.8 }),
+    incumbent: () => ({ temperature: 0.7, reasoningPolicy: "surgical", method: "baseline" }),
+    ...over,
   };
   const service = new BenchmarkService(env);
   const json = (res: ServerResponse, status: number, body: unknown) => {
@@ -251,5 +257,173 @@ describe("the benchmark API (PM_CONTRACT §3 Configuration)", () => {
     expect((await call("GET", "/api/config/benchmark/runs/bench_nope")).status).toBe(404);
     const est = await call("GET", "/api/config/benchmark/estimate?tier=overnight&count=2");
     expect(est.body).toMatchObject({ fitsTonight: expect.any(Number) });
+  });
+});
+
+describe("settings, history and Find best settings over HTTP (NEW-measurement-7, -8; DB-N6-19..22)", () => {
+  /** A screening runner whose temperature 0.2 passes every test and anything else three of four. */
+  const tempRunner = (): BenchmarkEnv["screenRunner"] => () => ({
+    load: async () => ({ seconds: 1 }),
+    runItem: async ({ settings }) => ({
+      outcome: {
+        kind: "tests",
+        passed: (settings as { temperature?: number } | undefined)?.temperature === 0.2 ? 4 : 3,
+        total: 4,
+      },
+      seconds: 5,
+    }),
+    endToEnd: async () => ({ passed: true, seconds: 5 }),
+  });
+
+  const until = async (
+    call: Awaited<ReturnType<typeof start>>["call"],
+    runId: string,
+  ): Promise<Record<string, unknown>> => {
+    for (let i = 0; i < 100; i++) {
+      const r = await call("GET", "/api/config/benchmark/tune?role=worker&model=wa");
+      const run = (r.body.runs as { runId: string; state: string }[]).find(
+        (x) => x.runId === runId,
+      );
+      if (run && run.state !== "running") return run as Record<string, unknown>;
+      await new Promise((res) => setTimeout(res, 10));
+    }
+    throw new Error("the tune run did not finish");
+  };
+
+  it("estimates Find best settings with its candidates in words, runs it only on a confirmation, and applies a best run's values on the person's press", async () => {
+    const applied: unknown[] = [];
+    const { call, log } = await start(undefined, {
+      screenRunner: tempRunner(),
+      applySettings: (model, role, values) => {
+        applied.push({ model, role, values });
+        return { needsVerifying: true };
+      },
+    });
+    const est = await call("GET", "/api/config/benchmark/tune?role=worker&model=wa");
+    expect(est.status).toBe(200);
+    const estimate = est.body.estimate as {
+      candidates: { id: string; words: string }[];
+      minutes: number;
+    };
+    expect(estimate.candidates.map((c) => c.words)).toContain("temperature 0.2");
+    expect(estimate.minutes).toBeGreaterThan(0);
+    expect(est.body.runs).toEqual([]);
+
+    const unconfirmed = await call("POST", "/api/config/benchmark/tune", {
+      role: "worker",
+      model: "wa",
+    });
+    expect(unconfirmed.status).toBe(400);
+    expect(await log.getEventsByTypes(["measure/settings_tuned"])).toEqual([]);
+
+    const started = await call("POST", "/api/config/benchmark/tune", {
+      role: "worker",
+      model: "wa",
+      confirm: true,
+    });
+    expect(started.status).toBe(202);
+    const runId = (started.body.run as { runId: string }).runId;
+    const done = await until(call, runId);
+    expect(done).toMatchObject({
+      state: "done",
+      verdict: "best",
+      survivor: { values: { temperature: 0.2 }, words: "temperature 0.2" },
+      adopted: { temperature: 0.2 },
+    });
+    expect(applied).toEqual([]);
+    const apply = await call("POST", `/api/config/benchmark/tune/${runId}/apply`);
+    expect(apply.status).toBe(200);
+    expect(apply.body).toMatchObject({ applied: { temperature: 0.2 }, needsVerifying: true });
+    expect(applied).toEqual([{ model: "wa", role: "worker", values: { temperature: 0.2 } }]);
+    // A Member cannot start, stop or apply.
+    for (const path of [
+      "/api/config/benchmark/tune",
+      `/api/config/benchmark/tune/${runId}/stop`,
+      `/api/config/benchmark/tune/${runId}/apply`,
+    ])
+      expect(
+        (await call("POST", path, { role: "worker", model: "wa", confirm: true }, true, "member"))
+          .status,
+      ).toBe(403);
+  });
+
+  it("refuses Find best settings for a role whose screen is not built, and over DEC-42's limits, with 409", async () => {
+    const { call } = await start(undefined, { screenRunner: tempRunner() });
+    const planner = await call("POST", "/api/config/benchmark/tune", {
+      role: "planner",
+      model: "p",
+      confirm: true,
+    });
+    expect(planner.status).toBe(409);
+    expect(planner.body.error).toMatch(/not built/);
+    const hot = await start(undefined, {
+      screenRunner: tempRunner(),
+      hostReading: () => ({ swapUsedBytes: 0, freeRatio: 0.3 }),
+    });
+    const r = await hot.call("POST", "/api/config/benchmark/tune", {
+      role: "worker",
+      model: "wa",
+      confirm: true,
+    });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/30% of memory is free/);
+  });
+
+  it("answers 409 to Apply when a run found no clear difference", async () => {
+    const { call } = await start();
+    const started = await call("POST", "/api/config/benchmark/tune", {
+      role: "worker",
+      model: "wa",
+      confirm: true,
+    });
+    const runId = (started.body.run as { runId: string }).runId;
+    expect((await until(call, runId)).verdict).toBe("no_clear_difference");
+    const apply = await call("POST", `/api/config/benchmark/tune/${runId}/apply`);
+    expect(apply.status).toBe(409);
+    expect(apply.body.error).toMatch(/nothing to apply/);
+  });
+
+  it("runs a combination with settings as its own row, refuses a value that needs its own load with 400, and serves the history", async () => {
+    const { call } = await start(undefined, { screenRunner: tempRunner() });
+    const tuned = { ...COMBO, settings: { worker: { temperature: 0.2 } } };
+    const bad = await call("POST", "/api/config/benchmark", {
+      tier: "quick",
+      combinations: [{ ...COMBO, settings: { worker: { kvType: "q4_0" } } }],
+    });
+    expect(bad.status).toBe(400);
+    expect(bad.body).toMatchObject({ key: "kvType" });
+    expect(bad.body.error).toMatch(/Customize/);
+    for (const c of [COMBO, tuned]) {
+      const s = await call("POST", "/api/config/benchmark", { tier: "quick", combinations: [c] });
+      expect(s.status).toBe(200);
+      const runId = (s.body.run as { runId: string }).runId;
+      for (let i = 0; i < 50; i++) {
+        const r = await call("GET", `/api/config/benchmark/runs/${runId}`);
+        if ((r.body.run as { state: string }).state === "done") break;
+        await new Promise((res) => setTimeout(res, 10));
+      }
+    }
+    const est = await call(
+      "GET",
+      `/api/config/benchmark/estimate?tier=quick&worker=wa&planner=p&settings=${encodeURIComponent(JSON.stringify(tuned.settings))}`,
+    );
+    expect(est.body).toMatchObject({ estimateSeconds: 0 });
+    const all = await call("GET", "/api/config/benchmark");
+    const rows = all.body.results as { combination: { settings?: unknown } }[];
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.combination.settings ?? null)).toContainEqual({
+      worker: { temperature: 0.2 },
+    });
+    const history = await call("GET", "/api/config/benchmark/history");
+    expect(history.status).toBe(200);
+    const combos = history.body.combinations as { runs: { settings?: unknown }[] }[];
+    expect(combos).toHaveLength(2);
+    expect(history.body.external).toMatchObject({
+      capstone: expect.any(Array),
+      webbench: expect.any(Array),
+    });
+    expect((history.body.external as { protocol: { capstone: string } }).protocol.capstone).toMatch(
+      /hidden/,
+    );
   });
 });

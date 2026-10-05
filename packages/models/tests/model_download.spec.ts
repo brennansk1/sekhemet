@@ -1,11 +1,25 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  statfsSync,
+  writeFileSync,
+} from "node:fs";
 import { type Server, createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { lookupPublishedFile, matchOnHub } from "../src/hf_lookup.js";
-import { DownloadHashMismatch, DownloadRefused, downloadModel } from "../src/model_download.js";
+import {
+  DownloadHashMismatch,
+  DownloadRefused,
+  downloadModel,
+  downloadVerified,
+} from "../src/model_download.js";
 import { ModelRegistry } from "../src/registry.js";
 
 // MD-N12-6, MD-N12-7, SEC-53, DB-N6-6/7: one explicit download, from the
@@ -18,6 +32,8 @@ const SHA = createHash("sha256").update(WEIGHTS).digest("hex");
 let server: Server;
 let base = "";
 let requests: string[] = [];
+/** The Range header of each request, in order (MD-N18-1). */
+let ranges: (string | undefined)[] = [];
 const dirs: string[] = [];
 const tmp = () => {
   const d = mkdtempSync(join(tmpdir(), "sek-dl-"));
@@ -27,9 +43,58 @@ const tmp = () => {
 
 beforeEach(async () => {
   requests = [];
+  ranges = [];
   server = createServer((req, res) => {
     requests.push(req.url ?? "");
+    ranges.push(req.headers.range);
     const url = new URL(req.url ?? "/", "http://x");
+    const range = /^bytes=(\d+)-$/.exec(req.headers.range ?? "");
+    const from = range ? Number(range[1]) : 0;
+    // A source that honours Range: 206 with the rest of the file.
+    if (
+      url.pathname === "/range/model-Q4_K_M.gguf" ||
+      (url.pathname === "/drop/model-Q4_K_M.gguf" && range)
+    ) {
+      if (!range) {
+        res.writeHead(200, { "content-length": WEIGHTS.length });
+        res.end(WEIGHTS);
+        return;
+      }
+      if (from >= WEIGHTS.length) {
+        res.writeHead(416, { "content-range": `bytes */${WEIGHTS.length}` });
+        res.end();
+        return;
+      }
+      res.writeHead(206, {
+        "content-length": WEIGHTS.length - from,
+        "content-range": `bytes ${from}-${WEIGHTS.length - 1}/${WEIGHTS.length}`,
+      });
+      res.end(WEIGHTS.subarray(from));
+      return;
+    }
+    // The connection drops mid-stream: half the file, then the socket closes.
+    if (url.pathname === "/drop/model-Q4_K_M.gguf") {
+      res.writeHead(200, { "content-length": WEIGHTS.length });
+      res.write(WEIGHTS.subarray(0, WEIGHTS.length / 2), () => {
+        setTimeout(() => res.socket?.destroy(), 50);
+      });
+      return;
+    }
+    // A source that ignores Range: always 200 and the whole file.
+    if (url.pathname === "/norange/model-Q4_K_M.gguf") {
+      res.writeHead(200, { "content-length": WEIGHTS.length });
+      res.end(WEIGHTS);
+      return;
+    }
+    // A 206 that starts somewhere other than the kept length: the whole file from 0.
+    if (url.pathname === "/fromzero/model-Q4_K_M.gguf") {
+      res.writeHead(206, {
+        "content-length": WEIGHTS.length,
+        "content-range": `bytes 0-${WEIGHTS.length - 1}/${WEIGHTS.length}`,
+      });
+      res.end(WEIGHTS);
+      return;
+    }
     if (url.pathname === "/org/model-GGUF/resolve/main/model-Q4_K_M.gguf") {
       res.writeHead(200, { "content-length": WEIGHTS.length });
       res.end(WEIGHTS);
@@ -179,7 +244,7 @@ describe("downloadModel (MD-N12-6, SEC-53)", () => {
     expect(readFileSync(join(dest, "model-Q4_K_M.gguf"), "utf8")).toBe("someone else's file");
   });
 
-  it("cancels, deleting the partial file", async () => {
+  it("cancels before starting: nothing is written (a cancel mid-stream keeps the .part, rule 4e)", async () => {
     const dest = tmp();
     const ac = new AbortController();
     ac.abort();
@@ -187,6 +252,121 @@ describe("downloadModel (MD-N12-6, SEC-53)", () => {
       downloadModel({ model: "tiny", source: source(), destDir: dest, fetch, signal: ac.signal }),
     ).rejects.toThrow(/cancel/i);
     expect(readdirSync(dest)).toEqual([]);
+  });
+});
+
+describe("downloads that resume and fit (NEW-models-18)", () => {
+  const at = (route: string) => ({
+    url: `${base}/${route}/model-Q4_K_M.gguf`,
+    host: "127.0.0.1",
+    sha256: SHA,
+    sizeBytes: WEIGHTS.length,
+  });
+
+  it("keeps the .part file when the connection drops mid-stream, and resumes it with a Range request (MD-N18-1)", async () => {
+    const dest = tmp();
+    const part = join(dest, "model-Q4_K_M.gguf.part");
+    const first = await downloadModel({
+      model: "tiny",
+      source: at("drop"),
+      destDir: dest,
+      fetch,
+    }).catch((e) => e);
+    expect(first).toBeInstanceOf(Error);
+    expect(String(first.message)).toMatch(/kept/);
+    expect(existsSync(part)).toBe(true);
+    const kept = statSync(part).size;
+    expect(kept).toBeGreaterThan(0);
+    expect(kept).toBeLessThan(WEIGHTS.length);
+    expect(readFileSync(part).equals(WEIGHTS.subarray(0, kept))).toBe(true);
+
+    const states: { bytes: number; state: string }[] = [];
+    const r = await downloadModel({
+      model: "tiny",
+      source: at("drop"),
+      destDir: dest,
+      fetch,
+      onProgress: (p) => states.push({ bytes: p.bytes, state: p.state }),
+    });
+    expect(ranges.at(-1)).toBe(`bytes=${kept}-`);
+    expect(r).toMatchObject({ sha256: SHA, bytes: WEIGHTS.length, verified: true });
+    expect(readFileSync(r.path).equals(WEIGHTS)).toBe(true);
+    expect(readdirSync(dest)).toEqual(["model-Q4_K_M.gguf"]);
+    // The progress starts at the kept bytes, not at nothing.
+    expect(states[0]).toEqual({ bytes: kept, state: "running" });
+  });
+
+  it("starts again from nothing when the source answers a Range request with 200", async () => {
+    const dest = tmp();
+    writeFileSync(join(dest, "model-Q4_K_M.gguf.part"), WEIGHTS.subarray(0, 1000));
+    const r = await downloadModel({ model: "tiny", source: at("norange"), destDir: dest, fetch });
+    expect(ranges.at(-1)).toBe("bytes=1000-");
+    expect(r.bytes).toBe(WEIGHTS.length);
+    expect(readFileSync(r.path).equals(WEIGHTS)).toBe(true);
+  });
+
+  it("starts again from a 206 whose range is not the kept length's", async () => {
+    const dest = tmp();
+    writeFileSync(join(dest, "model-Q4_K_M.gguf.part"), WEIGHTS.subarray(0, 1000));
+    const r = await downloadModel({ model: "tiny", source: at("fromzero"), destDir: dest, fetch });
+    expect(readFileSync(r.path).equals(WEIGHTS)).toBe(true);
+  });
+
+  it("hashes the kept bytes too: a kept prefix that is not the file's is caught and deleted", async () => {
+    const dest = tmp();
+    writeFileSync(join(dest, "model-Q4_K_M.gguf.part"), Buffer.alloc(1000, 9));
+    const err = await downloadModel({
+      model: "tiny",
+      source: at("range"),
+      destDir: dest,
+      fetch,
+    }).catch((e) => e);
+    expect(ranges.at(-1)).toBe("bytes=1000-");
+    expect(err).toBeInstanceOf(DownloadHashMismatch);
+    expect(readdirSync(dest)).toEqual([]);
+  });
+
+  it("places a kept file that is already whole after checking its hash, with no request", async () => {
+    const dest = tmp();
+    writeFileSync(join(dest, "model-Q4_K_M.gguf.part"), WEIGHTS);
+    const r = await downloadModel({ model: "tiny", source: at("range"), destDir: dest, fetch });
+    expect(requests).toEqual([]);
+    expect(r).toMatchObject({ sha256: SHA, verified: true });
+    expect(readdirSync(dest)).toEqual(["model-Q4_K_M.gguf"]);
+  });
+
+  it("refuses before starting when the volume has less free space than the download needs, naming both sizes (MD-N18-2)", async () => {
+    const dest = tmp();
+    const s = statfsSync(dest);
+    const free = Number(s.bavail) * Number(s.bsize);
+    const err = await downloadModel({
+      model: "tiny",
+      source: { ...at("range"), sizeBytes: free + 50e9 },
+      destDir: dest,
+      fetch,
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DownloadRefused);
+    expect(String(err.message)).toMatch(/needs [\d.]+ GB.*has [\d.]+ [GMk]?B free/);
+    expect(requests).toEqual([]);
+    expect(readdirSync(dest)).toEqual([]);
+  });
+
+  it("is one function for any verified file: downloadVerified(source, dest), as the engine's download uses it", async () => {
+    const dest = tmp();
+    const r = await downloadVerified(
+      at("range"),
+      { dir: dest, fileName: "llama-b10809-bin-macos-arm64.zip" },
+      { label: "llama.cpp b10809", fetch },
+    );
+    expect(r.path).toBe(join(dest, "llama-b10809-bin-macos-arm64.zip"));
+    expect(readFileSync(r.path).equals(WEIGHTS)).toBe(true);
+    const refused = await downloadVerified(
+      { url: at("range").url, sha256: "" },
+      { dir: dest },
+      { label: "llama.cpp b10809", fetch },
+    ).catch((e) => e);
+    expect(refused).toBeInstanceOf(DownloadRefused);
+    expect(String(refused.message)).toMatch(/llama\.cpp b10809/);
   });
 });
 

@@ -312,6 +312,18 @@ export async function recordM0Pending(
   await log.append({ actor: "harness", type: M0_PENDING, payload: p });
 }
 
+/**
+ * A Coding model adopted by assignment owes the M0 protocol too (CFG-04,
+ * MS-M9-6): the one helper `sekhemet models assign worker` and the
+ * Configuration page's role assignment record it through.
+ */
+export async function recordWorkerAdopted(
+  log: EventLog,
+  p: { worker: string; combination: string },
+): Promise<void> {
+  await recordM0Pending(log, { ...p, reason: "assigned as the Coding model on this machine" });
+}
+
 /** Pending M0 per Worker: the latest pending event not followed by an M0 result for it. */
 export function pendingFromEvents(
   events: readonly { type: string; payload: unknown; createdAt?: string }[],

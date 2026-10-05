@@ -6,7 +6,8 @@ import { MANAGED_MODEL_FILES, createCyberTielWorker } from "../src/llama_server.
 // filled only from what is verifiable on this host — the model card's
 // `hf download` line and the file's SHA-256 computed from the local copy —
 // so a download can be confirmed (source, size, hash) before any request
-// (dashboard DB-N6-16). A default whose source cannot be verified is absent.
+// (dashboard DB-N6-16). A default whose source cannot be verified is absent;
+// since C3 the table is derived from the shipped set (shipped_models.spec.ts).
 
 describe("the model sources table (MD-N12-6)", () => {
   it("names the Worker's official repository, file, size and SHA-256", () => {
@@ -35,9 +36,16 @@ describe("the model sources table (MD-N12-6)", () => {
     expect(tableSource("no-such-model")).toBeUndefined();
   });
 
-  it("leaves out the defaults whose source cannot be verified here (the Planner's and the Researcher's files)", () => {
+  it("lists no file it could not verify: the managed Planner's file name, which its repository now publishes as a different file, is not a source (rule 4)", () => {
     const files = Object.values(MODEL_SOURCES).map((r) => r.file);
     expect(files).not.toContain(MANAGED_MODEL_FILES.planner.split("/").pop());
-    expect(files).not.toContain(MANAGED_MODEL_FILES.researcher.split("/").pop());
+    // The Planning model's source is the file the reference host qualified, under its published name.
+    expect(files).toContain("Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf");
+    // The Researcher's is the exact file the managed profile loads.
+    expect(files).toContain(MANAGED_MODEL_FILES.researcher.split("/").pop());
+    for (const row of Object.values(MODEL_SOURCES)) {
+      expect(row.sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(row.sizeBytes).toBeGreaterThan(1e9);
+    }
   });
 });

@@ -10,6 +10,18 @@ import {
 import { homedir, platform, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 import { gateTemplate } from "@sekhemet/gates";
+import {
+  ENGINE_FLOOR,
+  type EnginePlatform,
+  type EngineStatus,
+  SHIPPED_MODELS,
+  type ShippedRole,
+  detectEnginePlatform,
+  engineFixes,
+  engineStatus,
+  llamaBuildNumber,
+  supportedTierFor,
+} from "@sekhemet/models";
 import { type CiCommand, readCiSteps } from "./ci_files.js";
 
 /**
@@ -98,14 +110,43 @@ export function nodeMeetsFloor(version: string, floor = NODE_FLOOR): boolean {
   return a !== x ? a > x : b !== y ? b > y : c >= z;
 }
 
+/**
+ * The engine's check (models rule 6a, MD-N16-1, MD-N16-2): found by the one
+ * resolution order (rule 6b) and its build read from `--version`, compared
+ * with the shipped set's floor; below it, *llama-server bNNNN found; bMMMM
+ * or later needed*; missing, this platform's fixes. A test's `run` answers
+ * for `llama-server` on PATH instead of the resolution.
+ */
+function engineCheck(run: Run, opts: { platform?: EnginePlatform; engine?: EngineStatus }): Check {
+  const platform = opts.platform ?? opts.engine?.platform ?? detectEnginePlatform();
+  const status = opts.engine ?? (run === defaultRun ? engineStatus({ platform }) : undefined);
+  const out = status ? undefined : run("llama-server", ["--version"]);
+  const found = status ? status.engine !== undefined : Boolean(out);
+  const build = status ? status.engine?.build : llamaBuildNumber(out ?? "");
+  const floor = status?.floor ?? ENGINE_FLOOR;
+  return {
+    name: "llama-server (llama.cpp)",
+    ok: found && build !== undefined && build >= floor,
+    detail: !found
+      ? "not found"
+      : build === undefined
+        ? `found, but it did not report its build; b${floor} or later needed`
+        : build >= floor
+          ? `b${build}`
+          : `llama-server b${build} found; b${floor} or later needed`,
+    fix: (status?.fixes ?? engineFixes(platform)).join("; or "),
+    required: true,
+  };
+}
+
 export function toolchainChecks(
   run: Run = defaultRun,
   nodeVersion = process.versions.node,
+  opts: { platform?: EnginePlatform; engine?: EngineStatus } = {},
 ): Check[] {
   const version = (cmd: string, args = ["--version"]) => run(cmd, args)?.split("\n")[0];
   const git = version("git");
   const pnpm = version("pnpm");
-  const llama = run("llama-server", ["--version"]);
   const docker = version("docker");
   const gh = version("gh");
   const crawl = existsSync(
@@ -134,15 +175,7 @@ export function toolchainChecks(
       fix: "`corepack enable pnpm`",
       required: false,
     },
-    {
-      name: "llama-server (llama.cpp)",
-      ok: Boolean(llama && /version/i.test(llama)),
-      detail: llama ? (/version:\s*(\S+)/.exec(llama)?.[1] ?? "found") : "not found",
-      fix: mac
-        ? "`brew install llama.cpp`"
-        : "build llama.cpp with Vulkan or ROCm (see docs/design/HARNESS_DESIGN.md)",
-      required: true,
-    },
+    engineCheck(run, opts),
     {
       name: "Docker (for private web search)",
       ok: Boolean(docker),
@@ -169,44 +202,45 @@ export function toolchainChecks(
 
 export interface Roster {
   tier: string;
+  /** v1 supports this machine's memory (rule 6c, MD-N16-3; DEC-47 O-5). */
+  supported: boolean;
   worker: string;
   manager: string;
+  /** Empty while the Review role is unfilled (rule 3, RG-P8-13). */
   reviewer: string;
   researcher: string;
   note: string;
 }
 
-/** The model roster that fits this much memory. */
+const shippedId = (role: ShippedRole): string =>
+  SHIPPED_MODELS.find((m) => m.role === role)?.id ?? "";
+
+/**
+ * The shipped set for this much memory (models rules 3 and 8a, MD-N22-2):
+ * read from `SHIPPED_MODELS` and `SUPPORTED_HARDWARE`, never repeated here.
+ * Below 24 GB the note says v1 does not support the machine (MD-N16-3); the
+ * ids stay, for a person who continues at their own risk.
+ */
 export function recommendRoster(totalBytes = totalmem()): Roster {
-  const gb = totalBytes / 1024 ** 3;
-  if (gb >= 96) {
-    return {
-      tier: "XL",
-      worker: "cyber-tiel",
-      manager: "qwen3.8-27b",
-      reviewer: "mistral-small3.2:24b",
-      researcher: "apodex",
-      note: "All four roles stay resident; use the Q8_0 Research model (SEKHEMET_RESEARCHER_GGUF).",
-    };
-  }
-  if (gb >= 48) {
-    return {
-      tier: "L",
-      worker: "cyber-tiel",
-      manager: "qwen3.8-27b",
-      reviewer: "mistral-small3.2:24b",
-      researcher: "apodex",
-      note: "The Coding and Planning models resident together; the Review and Research models swap in.",
-    };
-  }
+  const t = supportedTierFor(totalBytes);
   return {
-    tier: gb >= 24 ? "M" : "S",
-    worker: "cyber-tiel",
-    manager: "qwen3.8-27b",
-    reviewer: "mistral-small3.2:24b",
-    researcher: "apodex",
-    note: "One large model at a time: the Coding model stays resident; the Planning, Review and Research models swap in by role batch.",
+    tier: t.tier,
+    supported: t.supported,
+    worker: shippedId("coding"),
+    manager: shippedId("planning"),
+    reviewer: shippedId("review"),
+    researcher: shippedId("research"),
+    // Rule 6c: the supported tiers' residency is the table's; below them, the floor in words.
+    note: t.supported
+      ? t.residency
+      : "v1 supports 24 GB of memory and above; you may continue at your own risk. The shipped models do not fit in this much memory.",
   };
+}
+
+/** The roster's models in words, or why none is presented as fitting (MD-N16-3). */
+export function rosterLine(roster: Roster): string {
+  if (!roster.supported) return `Models: ${roster.note}`;
+  return `Models: Coding model ${roster.worker}, Planning model (Seshat) ${roster.manager}, Review model ${roster.reviewer || "unfilled until a model is admitted for it"}, Research model ${roster.researcher}.`;
 }
 
 // ---------------------------------------------------------- the one deriver
@@ -925,9 +959,7 @@ export function runInit(
   say(
     `Machine: ${Math.round((opts.totalBytes ?? totalmem()) / 1024 ** 3)} GB, class ${roster.tier}. ${roster.note}`,
   );
-  say(
-    `Models: Coding model ${roster.worker}, Planning model (Seshat) ${roster.manager}, Review model ${roster.reviewer}, Research model ${roster.researcher}.`,
-  );
+  say(rosterLine(roster));
   for (const c of checks)
     say(
       `  ${c.ok ? "✓" : c.required ? "✗" : "·"} ${c.name}: ${c.detail}${c.ok ? "" : ` → ${c.fix}`}`,

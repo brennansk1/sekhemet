@@ -5,13 +5,17 @@ import {
   type ModelRegistry,
   type ModelRole,
   type QualificationCombination,
+  type QualificationLookup,
+  ROLE_WORDS,
   type WorkerOverride,
   hostFingerprintHash,
+  llamaServerBinary,
   samplingSettingsOf,
 } from "@sekhemet/models";
 import { launchVariant } from "./model_access.js";
 import { rolePromptVersion } from "./prompt_versions.js";
 import { llamaRuntime, parseLlamaBuild, sampledDigest } from "./repro.js";
+import type { ReviewerRole } from "./review_flow.js";
 
 /**
  * Qualification per combination on the harness side (models rule 27a,
@@ -94,7 +98,11 @@ export function qualificationCombination(
     const reported = adapter.reportedBuild;
     const build =
       (reported ? parseLlamaBuild(reported) : undefined) ??
-      (deps.engineBuild ?? (() => llamaRuntime(adapter.launchProfile.binary)))();
+      // Rule 6b, MD-N19-5: the engine the launch would start, by the one resolution order.
+      (
+        deps.engineBuild ??
+        (() => llamaRuntime(adapter.launchProfile.binary ?? llamaServerBinary()))
+      )();
     const digest = deps.digest ?? sampledDigest;
     const settings = adapter.launchSettings();
     // A draft model is keyed by its weights' sampled digest, not only its id.
@@ -235,4 +243,159 @@ export function gateWorker(
   const override = workerOverrideFor(registry, adapter, combination);
   if (override) applyWorkerOverride(adapter, override);
   return { combination, ...(override ? { override } : {}) };
+}
+
+/** What `gateRole` decided for one role's adapter. */
+export type RoleGate = WorkerGate;
+
+/** A role's refusal in words that name Verify and its command (MD-N8-1). */
+export function roleRefusalLine(
+  role: ModelRole,
+  modelId: string,
+  look: QualificationLookup,
+  name: string,
+): string {
+  const state = look.status === "missing" ? "missing" : `${look.status}: ${look.reason}`;
+  return `The ${ROLE_WORDS[role]} ${modelId} is not verified on this machine for this combination (${state}). Verify it on Configuration › Models, or run: sekhemet qualify --models ${name}${role === "worker" ? "" : ` --role ${role}`}`;
+}
+
+/**
+ * The one gate for every role (MD-N8-1, W11): the Coding model through
+ * `gateWorker`; any other role refused until its exact combination for that
+ * role has qualified on this host, unless a person recorded an override of
+ * that combination's failure for that role (rule 27, MD-N4-4), which marks
+ * the adapter as the Coding model's does.
+ */
+export function gateRole(
+  registry: ModelRegistry,
+  adapter: LocalInferenceAdapter,
+  role: ModelRole,
+  name: string,
+  deps: CombinationDeps = {},
+): RoleGate {
+  if (role === "worker") return gateWorker(registry, adapter, name, deps);
+  const combination = qualificationCombination(adapter, { ...deps, registry, role });
+  registry.observeContextVersion(combination.settings.contextVersion, role);
+  const look = registry.lookupQualification(adapter.modelId, combination);
+  if (look.status === "qualified") return { combination };
+  if (look.status === "overridden" && look.override) {
+    applyWorkerOverride(adapter, look.override);
+    return { combination, override: look.override };
+  }
+  return { refusal: roleRefusalLine(role, adapter.modelId, look, name), combination };
+}
+
+/** Rule 23: what a role falls back to when its model may not be used. */
+const FALLBACK: Readonly<Record<Exclude<ModelRole, "worker">, string>> = {
+  reviewer: "changes reach Review without an AI review, and each issue says so",
+  researcher: "questions are answered from the repository alone",
+  planner:
+    "the queue runs without it: Seshat does not answer during the run, and issues are not escalated to it",
+};
+
+/**
+ * `run`'s Review role, verified (MD-N8-1, rule 23): a filled role whose model
+ * is not verified for the Review role on this machine becomes unfilled, the
+ * refusal its reason, so the change reaches the person unreviewed and the
+ * card says why.
+ */
+export function verifiedReviewerRole(
+  registry: ModelRegistry,
+  role: ReviewerRole,
+  describe: (name: string, role: ModelRole) => LocalInferenceAdapter,
+  deps: CombinationDeps = {},
+): ReviewerRole {
+  if (role.state !== "filled") return role;
+  const gate = gateRole(
+    registry,
+    describe(role.model, role.queue === "reviewer" ? "reviewer" : "planner"),
+    "reviewer",
+    role.model,
+    deps,
+  );
+  return gate.refusal
+    ? { state: "unfilled", reason: `${gate.refusal}; ${FALLBACK.reviewer}.` }
+    : role;
+}
+
+export interface QueueSpecLike {
+  queue: string;
+  role: ModelRole;
+  name: string;
+}
+
+/**
+ * The queue's roles, verified (MD-N8-1, rule 23): every role but the Coding
+ * model (which `gateWorker` refuses outright) is kept only when its
+ * combination is verified, or a person overrode its failure; each one left
+ * out comes with the line naming why, the command that verifies it and its
+ * fallback. A queue whose weights serve two roles (the Planner's manager and
+ * escalation) is verified as the Planning model once.
+ */
+export function verifiedQueues<S extends QueueSpecLike>(
+  registry: ModelRegistry,
+  specs: readonly S[],
+  describe: (name: string, role: ModelRole) => LocalInferenceAdapter,
+  deps: CombinationDeps = {},
+): { verified: S[]; refused: (S & { line: string; refusal: string })[] } {
+  const seen = new Map<string, string | undefined>();
+  const verified: S[] = [];
+  const refused: (S & { line: string; refusal: string })[] = [];
+  for (const spec of specs) {
+    if (spec.role === "worker") {
+      verified.push(spec);
+      continue;
+    }
+    const key = `${spec.role}|${spec.name}`;
+    if (!seen.has(key))
+      seen.set(
+        key,
+        gateRole(registry, describe(spec.name, spec.role), spec.role, spec.name, deps).refusal,
+      );
+    const refusal = seen.get(key);
+    if (refusal) refused.push({ ...spec, refusal, line: `${refusal}; ${FALLBACK[spec.role]}.` });
+    else verified.push(spec);
+  }
+  return { verified, refused };
+}
+
+/**
+ * The queue's roles, verified, as `queue` runs them (MD-N8-1, rule 23; W11):
+ * the Review role first (`verifiedReviewerRole`), its queue added when it is
+ * filled on its own model; then every queue through `verifiedQueues`. The
+ * Planning model's weights serve the manager, Seshat and escalation queues,
+ * so its refusal takes all three out with one line. A Planning model that
+ * doubles as the Review model (queue "manager") leaves Review unfilled when
+ * the manager queue is refused. `refusals` are the lines `queuePrelude` says
+ * before the pass, one per refused model and role; the Review role's own
+ * reason travels in `reviewer`, which the pass prints with the review desk.
+ */
+export function verifiedQueueRoles<S extends QueueSpecLike>(
+  registry: ModelRegistry,
+  specs: readonly S[],
+  reviewer: ReviewerRole,
+  describe: (name: string, role: ModelRole) => LocalInferenceAdapter,
+  deps: CombinationDeps = {},
+): {
+  verified: S[];
+  refusals: string[];
+  reviewer: ReviewerRole;
+  has: (queue: string) => boolean;
+} {
+  let role = verifiedReviewerRole(registry, reviewer, describe, deps);
+  const all: (S | QueueSpecLike)[] = [...specs];
+  if (role.state === "filled" && role.queue === "reviewer")
+    all.push({ queue: "reviewer", role: "reviewer", name: role.model });
+  const { verified, refused } = verifiedQueues(registry, all, describe, deps);
+  const queues = new Set(verified.map((s) => s.queue));
+  if (role.state === "filled" && role.queue === "manager" && !queues.has("manager")) {
+    const why = refused.find((r) => r.queue === "manager")?.refusal ?? "";
+    role = { state: "unfilled", reason: `${why}; ${FALLBACK.reviewer}.` };
+  }
+  return {
+    verified: verified as S[],
+    refusals: [...new Set(refused.filter((r) => r.role !== "reviewer").map((r) => r.line))],
+    reviewer: role,
+    has: (queue) => queues.has(queue),
+  };
 }

@@ -72,7 +72,11 @@ const tree = (root: string) =>
 
 /** Tools found: git and llama-server, so the toolchain is ready. */
 const run = (cmd: string) =>
-  cmd === "llama-server" ? "version: 6500 (abc)" : cmd === "git" ? "git version 2.50" : undefined;
+  cmd === "llama-server"
+    ? "version: 0.4.0 (build 10809, commit 5266f24da)"
+    : cmd === "git"
+      ? "git version 2.50"
+      : undefined;
 
 const none: RoleWeightsFinder = async () => ({});
 const workerAndPlanner: RoleWeightsFinder = async () => ({
@@ -106,13 +110,48 @@ describe("P10: one first run", () => {
     for (const role of ["Coding model", "Planning model", "Review model", "Research model"])
       expect(text).toContain(role);
     expect(text).toMatch(/Coding model Cyber-Tiel-Coder-35B-A3B — weights present/);
-    expect(text).toMatch(/Review model .* — no weights found/);
+    // DEC-47 O-5: the Review role is unfilled, and says so.
+    expect(text).toMatch(/Review model — unfilled until a model is admitted for it/);
     expect(text).toMatch(/Checks from package\.json: typecheck, unit\./);
     expect(text).not.toMatch(/\b(?:Worker|Planner|Reviewer|Researcher)\b|\bgates?\b/);
     expect(out.code).toBe(2);
     expect(out.wrote).toEqual([]);
     expect(tree(root)).toEqual(before);
     expect(existsSync(join(home, ".sekhemet"))).toBe(false);
+  });
+
+  it("MD-N16-1: names a llama-server below the floor with both builds, and the fix", async () => {
+    const lines: string[] = [];
+    await runFirstRun(npmRepo(), {
+      ...base,
+      run: (cmd) => (cmd === "llama-server" ? "version: 0.3.0 (build 6500, commit abc)" : run(cmd)),
+      findRoleWeights: none,
+      interactive: true,
+      ask: async () => false,
+      say: (l) => lines.push(l),
+    });
+    expect(lines.join("\n")).toMatch(
+      /✗ llama-server \(llama\.cpp\): llama-server b6500 found; b10809 or later needed → /,
+    );
+  });
+
+  it("MD-N16-3: under 24 GB says v1 does not support it, lets the person continue, and presents no set as fitting", async () => {
+    const lines: string[] = [];
+    const out = await runFirstRun(npmRepo(), {
+      ...base,
+      totalBytes: 16 * GB,
+      findRoleWeights: none,
+      yes: true,
+      interactive: false,
+      say: (l) => lines.push(l),
+    });
+    const text = lines.join("\n");
+    expect(text).toMatch(/v1 supports 24 GB of memory and above/);
+    expect(text).toMatch(/at your own risk/);
+    expect(text).not.toMatch(/recommended:/);
+    expect(text).not.toMatch(/nail-mtp|qwen3\.8|apodex/i);
+    expect(text).not.toMatch(/downloads these/);
+    expect(out.code).toBe(0);
   });
 
   it("SUR-3, SUR-34: confirmed, it writes config.toml, gates.toml and one .gitignore block, exactly once", async () => {

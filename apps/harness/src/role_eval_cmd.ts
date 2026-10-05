@@ -2,9 +2,23 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
-import { type LocalInferenceAdapter, type ModelHold, ModelRegistry } from "@sekhemet/models";
+import {
+  type LocalInferenceAdapter,
+  type ModelHold,
+  ModelRegistry,
+  type ReasoningLevel,
+  hostFingerprintHash,
+} from "@sekhemet/models";
 import { plural } from "@sekhemet/ui";
-import { loadSeededDefects, runSeededDefects } from "./learning/review_eval.js";
+import { withRunSettings } from "./benchmark_runner.js";
+import { REVIEW_THINKING_TOKENS } from "./learning/review.js";
+import { REVIEW_METHODS, type ReviewMethod, reviewMethod } from "./learning/review_copy.js";
+import {
+  type ReviewerAbRecord,
+  loadSeededDefects,
+  reviewerAB,
+  runSeededDefects,
+} from "./learning/review_eval.js";
 import { sendBackCatches } from "./learning/send_back_catch.js";
 import { roleModelName, sharedQueue } from "./model_access.js";
 import {
@@ -22,6 +36,7 @@ import { DEFAULT_PM_MODEL } from "./pm/service.js";
  *   sekhemet measure seshat [--model <id>] [--runs 2] [--only a,b] [--out <file>]
  *   sekhemet measure seshat-compare <a.json> <b.json>
  *   sekhemet measure reviewer [--model <id>] [--only a,b] [--out <file>]
+ *   sekhemet measure reviewer --method prove [--reasoning <level>] [--thinking-cap <n>] [--model <id>]
  *   sekhemet measure send-backs
  *
  * Each result is written as JSON (under `.sekhemet/evals/` unless `--out`
@@ -184,6 +199,12 @@ export async function runRoleEvalCommand(
     }
   }
 
+  if (
+    sub === "reviewer" &&
+    ["--method", "--reasoning", "--thinking-cap"].some((f) => args.includes(f))
+  )
+    return reviewerPairedAB(args, deps, print, root, registry());
+
   if (sub === "reviewer") {
     let set: ReturnType<typeof loadSeededDefects>;
     try {
@@ -258,4 +279,143 @@ export async function runRoleEvalCommand(
 
   print(`Unknown role evaluation ${sub}; the evaluations are ${ROLE_EVAL_SUBCOMMANDS.join(", ")}.`);
   return 2;
+}
+
+const LEVELS: readonly ReasoningLevel[] = ["off", "low", "medium", "high"];
+
+/**
+ * `sekhemet measure reviewer --method prove [--reasoning <level>]
+ * [--thinking-cap <n>]` (R3b, R3c; review-git RG-P8-17): the registered
+ * seeded-defect set reviewed twice on one held Review model — once with the
+ * role's current method and settings, once with the candidate's — paired
+ * item by item, written as one result file and one `measure/settings_tuned`
+ * event of kind `paired_ab`. It adopts nothing (PROMPT_STANDARD 35.4: the
+ * admission reads this record on each candidate model).
+ */
+async function reviewerPairedAB(
+  args: readonly string[],
+  deps: RoleEvalDeps,
+  print: (line: string) => void,
+  root: string,
+  registry: ModelRegistry,
+): Promise<number> {
+  const method = flag(args, "--method");
+  const level = flag(args, "--reasoning");
+  const capText = flag(args, "--thinking-cap");
+  if (method !== undefined && !(REVIEW_METHODS as readonly string[]).includes(method)) {
+    print(`--method is ${REVIEW_METHODS.join(" or ")}, not ${method}.`);
+    return 2;
+  }
+  if (level !== undefined && !(LEVELS as readonly string[]).includes(level)) {
+    print(`--reasoning is ${LEVELS.join(", ")}, not ${level}.`);
+    return 2;
+  }
+  const cap = capText === undefined ? undefined : Number(capText);
+  if (cap !== undefined && (!Number.isInteger(cap) || cap < 256)) {
+    print("--thinking-cap takes a whole number of tokens, at least 256.");
+    return 2;
+  }
+  let set: ReturnType<typeof loadSeededDefects>;
+  try {
+    set = loadSeededDefects(root);
+  } catch (err) {
+    print(`Not run: ${err instanceof Error ? err.message : String(err)}.`);
+    return 1;
+  }
+  const model = flag(args, "--model") ?? roleModelName("reviewer", undefined, { registry });
+  if (!model) {
+    print(
+      "No Review model is configured: name one with --model <id>, or assign the Review role on Configuration.",
+    );
+    return 1;
+  }
+  let currentMethod: ReviewMethod;
+  try {
+    currentMethod = reviewMethod();
+  } catch (err) {
+    print(err instanceof Error ? err.message : String(err));
+    return 2;
+  }
+  const set_ = registry.roleSettings(model, "reviewer")?.values ?? {};
+  const current = {
+    reviewMethod: currentMethod,
+    reasoningLevel: set_.reasoningLevel ?? "off",
+    reasoningCapTokens: set_.reasoningCapTokens ?? REVIEW_THINKING_TOKENS,
+  };
+  const candidate = {
+    reviewMethod: (method as ReviewMethod | undefined) ?? currentMethod,
+    reasoningLevel: (level as ReasoningLevel | undefined) ?? current.reasoningLevel,
+    reasoningCapTokens: cap ?? current.reasoningCapTokens,
+  };
+  const only = list(flag(args, "--only"));
+  const words = (a: typeof current) =>
+    `method ${a.reviewMethod}, reasoning ${a.reasoningLevel}, thinking cap ${a.reasoningCapTokens.toLocaleString("en-US")}`;
+  print(
+    `Reviewing ${only?.length ?? set.items.length} seeded defects on ${model} twice, paired: current (${words(current)}) and candidate (${words(candidate)})…`,
+  );
+  const record: ReviewerAbRecord = await withModel(
+    deps,
+    "reviewer",
+    model,
+    (adapter: LocalInferenceAdapter) =>
+      reviewerAB(set, {
+        current: { method: current.reviewMethod, adapter },
+        candidate: {
+          method: candidate.reviewMethod,
+          adapter: withRunSettings(adapter, "reviewer", {
+            reasoningLevel: candidate.reasoningLevel,
+            reasoningCapTokens: candidate.reasoningCapTokens,
+          }),
+        },
+        ...(only ? { only } : {}),
+        say: print,
+        ...(deps.now ? { now: deps.now } : {}),
+      }),
+  );
+  const file = outFile(deps, args, "reviewer-ab");
+  write(file, { ...record, arms: { ...record.arms }, settings: { current, candidate } });
+  const arm = (id: string, values: typeof current, a: ReviewerAbRecord["arms"]["current"]) => ({
+    id,
+    values,
+    items: a.scores.map((x) => ({ id: x.id, score: x.caught ? 1 : 0 })),
+    score: a.report.recall,
+    failed: a.report.failed,
+    passes: a.report.passes && record.partial !== true,
+  });
+  await deps.log.append({
+    actor: "harness",
+    type: "measure/settings_tuned",
+    payload: {
+      runId: `ab_${(deps.now?.() ?? new Date()).getTime().toString(36)}`,
+      kind: "paired_ab",
+      role: "reviewer",
+      model,
+      host: hostFingerprintHash(),
+      setHash: set.hash,
+      candidates: [
+        arm("current", current, record.arms.current),
+        arm("candidate", candidate, record.arms.candidate),
+      ],
+      incumbent: "current",
+      survivor: record.verdict === "best" ? "candidate" : "current",
+      comparison: {
+        better: record.gained,
+        worse: record.lost,
+        ties: record.pairs.length - record.gained - record.lost,
+        p: record.p,
+      },
+      verdict: record.verdict,
+      partial: record.partial === true,
+    },
+  });
+  const r = (a: ReviewerAbRecord["arms"]["current"]) =>
+    `caught ${a.report.caught} of ${a.report.reviewed} seeded defects reviewed${a.report.failed ? ` (${a.report.failed} failed)` : ""}`;
+  print(
+    `Candidate ${r(record.arms.candidate)} (${words(candidate)}); current ${r(record.arms.current)} (${words(current)}).`,
+  );
+  print(
+    `${record.gained} gained, ${record.lost} lost, p = ${record.p.toFixed(3)}: ${record.verdict === "best" ? "the candidate is better" : record.verdict === "worse" ? "the candidate is worse" : "no clear difference"}${record.partial ? "; a partial run (--only), never the admission's verdict" : ""}. Nothing is adopted.`,
+  );
+  print(`Recorded in ${file}.`);
+  return 0;
 }

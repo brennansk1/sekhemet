@@ -177,6 +177,7 @@ import {
 } from "./measure_cmd.js";
 import {
   ModelAccess,
+  type QueueSpec,
   describeModel,
   resolveWorkerName,
   roleModelName,
@@ -197,7 +198,7 @@ import {
   takeDebugFlag,
 } from "./process_errors.js";
 import { runPromptScreen } from "./prompt_screen_cmd.js";
-import { applyWorkerOverride, gateWorker } from "./qualify.js";
+import { applyWorkerOverride, gateWorker, verifiedQueueRoles } from "./qualify.js";
 import { diffTrajectories, formatDiff, formatTrajectory, trajectories } from "./replay.js";
 import { isResearchCard, runResearchCard } from "./research/cards.js";
 import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
@@ -1058,6 +1059,29 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     return;
   }
 
+  if (config.command === "tune" && argv[argv.indexOf("tune") + 1] === "settings") {
+    // `sekhemet tune settings --role <r> [--model <id>] [--yes] | --apply <runId>`
+    // (measurement rule 38, NEW-measurement-7): Find best settings, the page's
+    // service; nothing loads without --yes, and Apply is the person's.
+    const { db, log, cardStore } = initLocalKernel(config.repoPath);
+    const { defaultBenchmarkEnv, scannedFit } = await import("./benchmark_cmd.js");
+    const { tuneSettingsCommand } = await import("./tune_settings.js");
+    const fit = await scannedFit({ repoPath: config.repoPath, log });
+    try {
+      process.exitCode = await tuneSettingsCommand(
+        argv
+          .slice(argv.indexOf("tune") + 1)
+          .filter((a, i, all) => a !== "--repo" && all[i - 1] !== "--repo"),
+        defaultBenchmarkEnv({ repoPath: config.repoPath, log, cardStore, fit: fit.fit }),
+        (l) => console.log(l),
+        cardStore.localPrincipal(),
+      );
+    } finally {
+      db.close();
+    }
+    return;
+  }
+
   if (config.command === "tune") {
     // `sekhemet tune [--from <repo> ...]`: replay recorded runs under candidate
     // stopping policies (Dream-RSI style) and recommend one. Never applies it.
@@ -1138,12 +1162,16 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // `sekhemet dev benchmark estimate|quick|overnight|status|stop|report`
     // (measurement NEW-measurement-5): the Configuration page's two-tier
     // benchmark from the terminal, the same service.
-    const { benchmarkCommand, defaultBenchmarkEnv } = await import("./benchmark_cmd.js");
+    const { benchmarkCommand, defaultBenchmarkEnv, scannedFit } = await import(
+      "./benchmark_cmd.js"
+    );
+    // FINDINGS CFG-15: the page's fit over the scanned models, never "every model fits".
+    const fit = await scannedFit({ repoPath: config.repoPath, log });
     process.exitCode = await benchmarkCommand(
       argv
         .slice(argv.indexOf("benchmark") + 1)
         .filter((a, i, all) => a !== "--repo" && all[i - 1] !== "--repo"),
-      defaultBenchmarkEnv({ repoPath: config.repoPath, log, cardStore }),
+      defaultBenchmarkEnv({ repoPath: config.repoPath, log, cardStore, fit: fit.fit }),
       (l) => console.log(l),
       cardStore.localPrincipal(),
     );
@@ -1176,24 +1204,21 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   }
 
   if (config.command === "models" && argv[argv.indexOf("models") + 1] === "fetch") {
-    // `sekhemet dev models fetch <model> [--folder <path>]` (MD-N12-6): the
-    // page's Download… in the terminal, the same verified implementation.
-    const { modelsFetch } = await import("./models_cmd.js");
-    const model = argv[argv.indexOf("fetch") + 1];
-    if (!model || model.startsWith("-")) {
-      console.log("Usage: sekhemet dev models fetch <model> [--folder <path>]");
-      process.exitCode = 2;
-      return;
-    }
-    const folderAt = argv.indexOf("--folder");
-    const folder = folderAt === -1 ? undefined : argv[folderAt + 1];
-    process.exitCode = await modelsFetch(model, {
-      repoPath: config.repoPath,
-      log,
-      principal: cardStore.localPrincipal(),
-      ...(folder ? { folder } : {}),
-      registry: modelRegistry(),
-    });
+    // `sekhemet dev models fetch <model> | --role <role> | --recommended [--yes]
+    // [--folder <path>]` (MD-N12-6, MD-N18-3, MD-N22-2/-3): the page's
+    // Download… in the terminal, the same verified implementation.
+    const { modelsFetchCommand } = await import("./models_cmd.js");
+    process.exitCode = await modelsFetchCommand(
+      argv
+        .slice(argv.indexOf("fetch") + 1)
+        .filter((a, i, all) => a !== "--repo" && all[i - 1] !== "--repo"),
+      {
+        repoPath: config.repoPath,
+        log,
+        principal: cardStore.localPrincipal(),
+        registry: modelRegistry(),
+      },
+    );
     return;
   }
 
@@ -1255,9 +1280,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // Models rule 20b (MD-N3-4/5): the queued overnight benchmark runs before
     // the queue when a person put it first, after it otherwise, only inside
     // the overnight window; one service for both phases.
-    const { BenchmarkService, defaultBenchmarkEnv } = await import("./benchmark_cmd.js");
+    const { BenchmarkService, defaultBenchmarkEnv, scannedFit } = await import(
+      "./benchmark_cmd.js"
+    );
+    // FINDINGS CFG-15: the night refuses a model that does not fit, as the page does.
+    const nightFit = await scannedFit({ repoPath: config.repoPath, log });
     const nightBench = new BenchmarkService(
-      defaultBenchmarkEnv({ repoPath: config.repoPath, log, cardStore }),
+      defaultBenchmarkEnv({ repoPath: config.repoPath, log, cardStore, fit: nightFit.fit }),
     );
     const summary = await runOvernight({
       repoPath: config.repoPath,
@@ -2281,17 +2310,17 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const configured = queueDefaults(effectiveConfig(config.repoPath, argv).config, argv);
     if (configured.maxTurns) argv.push("--max-turns", String(configured.maxTurns));
     const managerIdx = argv.indexOf("--manager");
-    const managerModel =
+    const managerAsked =
       roleModelName("planner", managerIdx !== -1 ? argv[managerIdx + 1] : undefined, {
         registry: modelRegistry(),
       }) ?? configured.manager;
     const researcherIdx = argv.indexOf("--researcher");
-    const researcherModel =
+    const researcherAsked =
       roleModelName("researcher", researcherIdx !== -1 ? argv[researcherIdx + 1] : undefined, {
         registry: modelRegistry(),
       }) ?? process.env.SEKHEMET_RESEARCHER;
     const reviewerIdx = argv.indexOf("--reviewer");
-    const reviewerModel = roleModelName(
+    const reviewerAsked = roleModelName(
       "reviewer",
       reviewerIdx !== -1 ? argv[reviewerIdx + 1] : undefined,
       { registry: modelRegistry() },
@@ -2303,6 +2332,47 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       roleModelName("worker", workerIdx !== -1 ? argv[workerIdx + 1] : undefined, {
         registry: assignedFrom,
       }) ?? configured.worker;
+    // MD-N8-1, rule 23 (W11): every role's combination is verified before the
+    // pass, as the Coding model's is below; an unverified one is left out and
+    // named with its fallback (`queuePrelude`). The Planning model's weights
+    // serve the manager, Seshat and escalation queues, so they go together.
+    const pmModelName = managerAsked ?? DEFAULT_PM_MODEL;
+    const quickName = effectiveConfig(config.repoPath, argv).config.models.quickAnswerer.trim();
+    const roleRegistry = modelRegistry();
+    const roles = verifiedQueueRoles<QueueSpec>(
+      roleRegistry,
+      [
+        { queue: "worker", role: "worker", name: workerModel ?? defaultWorkerName() },
+        // The Planner doubles as the PM you chat with during the run.
+        { queue: "manager", role: "planner", name: pmModelName },
+        // Seshat answering a person: the same weights, the interactive class
+        // (models rule 20e: a person waiting; its swaps are interactive, C7).
+        { queue: "seshat", role: "planner", name: pmModelName },
+        // The Planner's (stronger, dense) model as a coder, for --escalate-retries.
+        { queue: "escalation", role: "planner", name: pmModelName, window: escalationWindow() },
+        ...(researcherAsked
+          ? [{ queue: "researcher", role: "researcher" as const, name: researcherAsked }]
+          : []),
+        // Rule 20f (b): the Planner role's quick answerer, when a person named one.
+        ...(quickName ? [{ queue: "quick", role: "planner" as const, name: quickName }] : []),
+      ],
+      // review-git §2.3.7, RG-P8-10: the Review model, never of the Coding
+      // model's family; unfilled, each passing issue says why in Review.
+      resolveReviewerRole({
+        reviewer: reviewerAsked,
+        planner: pmModelName,
+        worker: workerModel ?? defaultWorkerName(),
+        familyOf: (m) => familyOf(m, roleRegistry),
+      }),
+      (name, role) => describeModel(name, role, { registry: roleRegistry }),
+    );
+    const managerModel = roles.has("manager") ? managerAsked : undefined;
+    const researcherModel = roles.has("researcher") ? researcherAsked : undefined;
+    const reviewerRole = roles.reviewer;
+    const reviewerModel =
+      reviewerRole.state === "filled" && reviewerRole.queue === "reviewer"
+        ? reviewerRole.model
+        : undefined;
 
     if (project && project.status !== "active") {
       console.log(
@@ -2353,6 +2423,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         {
           autoApply: (project, kind) => team.autoApplier(project, kind),
           workerRefusal: gate.refusal,
+          roleRefusals: roles.refusals,
           workerModelId: workerModel ?? defaultWorkerName(),
           reviewWip: (await boardService.getBoardState()).wipLimits.review,
         },
@@ -2384,38 +2455,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // at the largest window they need; every load is checked against usable
     // memory and every eviction proven. The registry pins chat templates and
     // supplies measured tool arms (M11).
-    const pmModelName = managerModel ?? DEFAULT_PM_MODEL;
-    // review-git §2.3.7, RG-P8-10: the Review model, never of the Coding
-    // model's family; unfilled, each passing issue says why in Review.
-    const reviewerRole = resolveReviewerRole({
-      reviewer: reviewerModel,
-      planner: pmModelName,
-      worker: workerModel ?? defaultWorkerName(),
-      familyOf: (m) => familyOf(m, modelRegistry()),
-    });
     /** Every adapter the scheduler built, for the watchdog's actions. */
     const loaded = new Set<UnloadableAdapter>();
     // Prefill/decode speed per model and the Worker's prefix-cache hit rate (M3, M18).
     const meter = new ThroughputMeter();
     const cache = new PrefixCacheMonitor();
     const router = ModelAccess.forQueues(
-      [
-        { queue: "worker", role: "worker", name: workerModel ?? defaultWorkerName() },
-        // The Planner doubles as the PM you chat with during the run.
-        { queue: "manager", role: "planner", name: pmModelName },
-        // Seshat answering a person: the same weights, the interactive class
-        // (models rule 20e: a person waiting; its swaps are interactive, C7).
-        { queue: "seshat", role: "planner", name: pmModelName },
-        // The Planner's (stronger, dense) model as a coder, for --escalate-retries.
-        { queue: "escalation", role: "planner", name: pmModelName, window: escalationWindow() },
-        ...(researcherModel
-          ? [{ queue: "researcher", role: "researcher" as const, name: researcherModel }]
-          : []),
-        // The Review model, of another family than the Coding model's (--reviewer <model>).
-        ...(reviewerRole.state === "filled" && reviewerRole.queue === "reviewer"
-          ? [{ queue: "reviewer", role: "reviewer" as const, name: reviewerRole.model }]
-          : []),
-      ],
+      // Only the verified roles (MD-N8-1); the quick answerer's queue is added below.
+      roles.verified.filter((q) => q.queue !== "quick"),
       {
         registry: modelRegistry(),
         ledger: log,
@@ -2473,10 +2520,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     });
     await refreshPlan(router, cardStore).catch(() => undefined);
     // Rule 20f (b): the Planner role's quick answerer, when a person named one.
-    const quick = quickAnswererFor(
-      router,
-      effectiveConfig(config.repoPath, argv).config.models.quickAnswerer,
-    );
+    const quick = roles.has("quick") ? quickAnswererFor(router, quickName) : undefined;
     // Residency: every model's footprint against this host's usable memory
     // (MD-N9-3); a model of unknown size is refused when first asked for.
     const plan = await router.measure();
@@ -2647,6 +2691,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       return next;
     };
     const answerPmNow = async (step?: number, batch = false): Promise<void> => {
+      // Rule 23: with the Planning model unverified, Seshat does not answer during the run.
+      if (!router.has("manager")) return;
       const queuedNow = await pmStore.queued();
       if (queuedNow.length === 0) return;
       // Only the human's messages pause the Worker; Worker questions wait for
@@ -2825,6 +2871,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     let workerModelId = workerModel ?? defaultWorkerName();
     // --max-turns caps every card's step budget (the tuner's recommendation).
     const escalateRetries = argv.includes("--escalate-retries");
+    // Rule 23: with the Planning model unverified, nothing is escalated to it.
+    const routeFor = (card: CardRecord, attempt: number): ReturnType<typeof roleForCard> => {
+      const role = roleForCard(card, attempt, escalateRetries);
+      return role === "escalation" && !router.has("escalation") ? "worker" : role;
+    };
     if (argv.includes("--explore")) {
       // Constraints read from the project's own config are facts, so they are
       // activated directly; heuristic rules still wait for a human.
@@ -2872,7 +2923,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       // A retry of a card the worker could not do runs on the stronger model
       // when asked: capability-based routing, not the same model again.
       // The planner's route (P6) sends hard cards to the escalation model up front.
-      const role = roleForCard(rawCard, n, escalateRetries);
+      const role = routeFor(rawCard, n);
       // Models rule 20e: the card's model through `decide()`'s queue, so a
       // tour under way finishes first. An escalated card runs on a visitor's
       // weights (the Planner's): held for the attempt, so the policy (C3, the
@@ -3139,7 +3190,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
           continue;
         }
         // RUN-35: an escalated card runs on another model, so it runs alone.
-        const alone = roleForCard(card, n, escalateRetries) !== "worker";
+        const alone = routeFor(card, n) !== "worker";
         if (alone) await slots.drain();
         // Its own slot lease; a card whose files a running card declared waits.
         const claim = await slots.claim(card);

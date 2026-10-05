@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 73 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 74 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,108 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 74 — 2026-10-04 (C3: models, beside the B1 close-out. The shipped set, resumable downloads, the Team server's engines, *Get the inference engine*, per-role settings and *Find best settings*; B1's four Linux and srt gaps closed in code)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. The owner chose one workflow for both, at under 30% of the 5-hour limit. It ran 13 agents, 3.68M tokens, none failed:
+- the B1 close-out builder (sandbox files) beside the C3 chain: a read-only scoper, then four builders one at a time;
+- three reviews in parallel (security, models backend, models UI), a fixer, a blocker re-check, a sweep and a gate.
+
+The lead then fixed the gate's five failures and the minors below.
+
+- **The B1 close-out** (DEV_LOG Entry 73's four gaps; security items 10a, 11a, 15):
+  1. **The runner:** `PLATFORM_ONLY` (`scripts/milestones/b1.mjs`) names the two `port_relays.spec.ts` cases that are Linux-only by design (`runIf(linux)`: the symlink swap and the missing program). The relays' host-half cases still count on both platforms. A runner test fails without the entry.
+  2. **Item 15 ([DEC-58](docs/design/DECISIONS.md#dec-58--with-the-network-granted-the-native-engine-refuses-unix-sockets-by-seccomp)):** with the network granted, the native engine's seccomp program on Linux refuses:
+     - `socket(AF_UNIX)`;
+     - `io_uring_setup`;
+     - any Unix `socketpair` that is not SOCK_STREAM or SOCK_SEQPACKET (the security review proved in the VM that a datagram pair's end reached a host abstract listener and an unlisted path socket);
+     - on x64, every program refuses x32-ABI calls (`nr >= 0x40000000`).
+
+     An always-empty namespace with relays was considered and not taken: with the network granted no egress proxy runs, so there is nothing to relay to. srt's own filter allows a datagram pair, which is named as srt's residual. `linux_sockets.spec.ts` lost its skip and gained datagram probes.
+  3. **srt on Linux and a masked folder:** srt's tmpfs masks are remounted read-only after all of srt's mounts (`withReadOnlyMasks`). The command is refused when srt's mounts cannot be read and, after the review, when an existing masked folder has neither its own tmpfs nor a remounted masked folder above it, so a later srt fails closed.
+  4. **srt on macOS and a browser:** a browser command gets the native engine's `BROWSER_RULES` plus `mach-lookup` of `org.chromium.*`, no wider than native, added the same way as the TLS rule. The keychain test's Chromium case runs under both engines.
+
+  **Counts:** on the final tree, in the Lima VM (aarch64, Ubuntu 24.04), `packages/sandbox/tests` has 249 passed and 48 skipped (macOS-only) under each engine, native and srt, with no failure. The builder's earlier run: `packages/sandbox/tests` passes on macOS under both engines (275 passed, 15 skipped each). After the fixer's datagram refusal, the Lima VM had 248 passed, 48 skipped (macOS-only). One srt `egress.spec.ts` curl case failed once in the first full VM run, then passed in two more full runs and three runs on its own, so it is flaky. It is named here, not hidden.
+- **C3, models** (FINISH_LINE_PLAN row C3; W11, W18; DESIGN_GAPS b1, b5, b23; DEC-53 c7; the CFG findings):
+  - **The shipped set (DEC-47 O-5, NEW-models-22):** `shipped_models.ts` holds:
+    - Coding: nail-mtp;
+    - Planning: Qwen3.8-27B GSQ-RCO;
+    - Research: Apodex mini;
+    - Review: unfilled, with three candidates.
+
+    Each has its hash, size and licence, from read-only hub lookups cross-checked against this host's registry. With them come the supported-hardware table and `recommendedSetPlan()`. Models rule 2 now records that DEC-47 O-5, the later ruling, makes nail-mtp the shipped Coding model, while Cyber-Tiel stays the baseline profile.
+  - **Downloads (MD-N18):** they resume with a Range request after hashing the kept bytes, and refuse before starting when the volume is short, naming both sizes.
+    - `models fetch --role <r>` and `--recommended [--yes]` print the sizes, licences and total before the yes.
+    - Tests go through the built CLI; the review's blocker was that the CLI never reached them.
+  - **The Team server (b1, MD-N15):** one engine container per filled role, each pinned by digest with its profile's `launchArgs()`. `checkTeamEngines()` checks identity, `/props` and footprint. The image has socat.
+  - ***Get the inference engine* (DEC-53 c7, MD-N19):**
+    - llama.cpp b10809 is pinned for macOS Metal, Linux CPU and Linux Vulkan. Its hashes come from one read-only GitHub release lookup; nothing was downloaded.
+    - Every redirect hop is checked against `[network]`, the hash is checked before unpacking, and the tar reader refuses zip-slip.
+    - It installs under `~/.sekhemet/engines/` on a person's click or `sekhemet engine get`, and the button names why it is off when offline.
+  - **The first hour and doctor (b5, MD-N16):** the engine is found, both floors are stated, and qualification is required for every role.
+    - **W11's review blocker:** `queue` ran unverified Planning, Review and Research models. Now `verifiedQueueRoles` takes an unverified role's queues out, with one line.
+  - **Per-role settings (W18, NEW-models-21):** 22 values per (model, role) in five tabs, each graded (Measured, From its makers, Estimated, Default, Set by a person) and resettable.
+    - A change that needs re-verification marks the role Needs verifying.
+    - There are Keep and Change on the setup card (Keep is a server route and event), Export and Import, and a context slider with live fit.
+    - A research digest is in `docs/research/MODEL_SETTINGS_2026-10.md`.
+  - ***Find best settings* and the benchmark (W18, NEW-measurement-7, -8):** `sekhemet tune settings` uses successive halving on a screening set, then compares the winner on the whole screen by PROMPT_STANDARD 35.4.
+    - It checks DEC-42's limits before any load, and applies only on a person's press.
+    - The Reviewer has a screen of 10 seeded defects (CFG-17), and the terminal benchmark uses the page's real fit (CFG-15).
+    - The Reviewer reads its reasoning level and thinking cap from the Review role's settings (R3c's code).
+  - **CFG findings fixed:** CFG-02, -03, -04, -10, -13, -14, -15, -17, -18.
+- **Review:** 4 blockers and 12 majors, all fixed; the re-check confirmed the blockers.
+  - **Security:** the datagram `socketpair` hole (blocker); x32 ABI, the unrecorded decision and the SEC-18 allowlist (majors).
+  - **Models backend:** `models fetch --role/--recommended` unreachable, and W11's every-role qualification not on `queue` (blockers); the roster dropping the window its caller asks for, a regression (major).
+  - **Models UI:**
+    - the retired word "the agent" (blocker);
+    - the slider re-rendered under a real drag (major);
+    - Keep cosmetic and overridden by Apply suggestion (major);
+    - a Review model of the Coding model's family suggested, the empty clean machine and the offline engine button (majors).
+- **The gate's five failures, fixed by the lead:**
+  - **Five refusals** (`runSettingsRefusal`, `unpackRefusal`, `refuseWithoutSpace`, `engineDownloadRefusal`, `identityRefusal`): each is printed to a person (CLI, page, doctor), never sent to a model, so each joins the scanner's person-facing list with its reason.
+  - **SUR-42's test** asserted the single `inference` container that MD-N15-2 replaced. It now asserts one engine container per filled role, and that no `inference` service remains.
+  - **DS-P7-3's licence scan:** the shipped rows and the engine pin record a download's licence as data, judged only by `classifyLicence`. In those two files a licence literal may now only be the value of a `license:` property; any comparison, table key or pattern still fails.
+  - **`cli_registry.spec.ts`'s two tests** spawn the built CLI once per registry entry, and C3 added commands. They now have a 60 s timeout; the assertions are unchanged.
+- **Minors fixed by the lead:**
+  - srt masks fail closed (test first);
+  - a 24 GB Linux machine reports about 23.4 GiB and is now the M tier (`supportedTierFor`, test first);
+  - the Review note says "issue" (DEC-52);
+  - models rule 2 is amended;
+  - security item 15 names the other-architecture residual.
+- **Minors not fixed, with where they go:**
+  - **Not a defect:** the shipped Coding model on 8098 is the Coding role's port, the same as the baseline Worker's, by design, since only one large Coding model is resident at a time (rule 22).
+  - **C4:**
+    - a shipped id assigned to another role keeps its shipped role's window and port;
+    - `doctor` hashes ~42 GB of weights on its first run without notice;
+    - `--recommended` checks free space without subtracting kept `.part` bytes;
+    - a broken earlier engine install fails late;
+    - MD-N18-4's 416 path and a cancelled download keeping its `.part` have no test;
+    - the ` --dev /dev ` anchor could match inside an owner-controlled path.
+  - **C5 and C6** (the Configuration page's polish):
+    - ✓ and ! chosen by the check's words;
+    - "Set by a teammate" instead of the person and the date;
+    - jargon in the presets and the Harness tab;
+    - registry ids in Compare setups;
+    - the half-width Available models card;
+    - Customize opening on a model that does not fit;
+    - focus not moving into the panel;
+    - Import and Export at 400 px.
+- **Not in this workflow (they need a model load, a person or the network):**
+  - the R3b and R3c admission runs;
+  - re-qualifying every role on this build (R2);
+  - the first real *Find best settings* and Measure speed runs;
+  - the frozen-suite re-run DoD §5.3.4 asks for after model and runner changes;
+  - the owner's 20-minute K-models review of W18's spec and the Customize page;
+  - the first real *Get the inference engine* download (a person's yes);
+  - building and running the Team image in the VM (C5).
+- **Gate:** `pnpm gate` on this exact tree: tsc 0, biome 0, vitest 0: 781 files, 6,239 passed, 63 skipped.
+- **Where the cards stop:**
+  - C3's code is built. Its admission and qualification runs are Stream 1.
+  - B1's four gaps are closed in code, but the sandbox changed, so the injection run is stale again.
+  - **Next:**
+    - re-qualify the Worker and run the 14 injection fixtures on this build;
+    - B1 in the VM;
+    - then R3b and R3c, and the owner's 5-hour figure before C4.
 
 ### Entry 73 — 2026-10-04 (B1 re-run on the F29 build: macOS passes, with the live Worker's injection run at 14/14; Linux leaves four gaps)
 

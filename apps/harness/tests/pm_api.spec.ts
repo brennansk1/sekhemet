@@ -297,13 +297,16 @@ describe("PM and board-practice API", () => {
     // Contract change (H15/H25): idle, the roster is config.toml's, else this
     // machine's recommendation; nothing is loaded, so every role is swapped out.
     expect(body.roles.find((r) => r.role === "worker")).toMatchObject({
-      model: "cyber-tiel",
+      // Models rule 3 (DEC-47 O-5): the shipped Coding model.
+      model: "nail-mtp",
       state: "swapped",
       note: "No run in progress",
     });
     expect(body.roles.find((r) => r.role === "researcher")?.model).toBe(
-      process.env.SEKHEMET_RESEARCHER ?? "apodex",
+      process.env.SEKHEMET_RESEARCHER ?? "apodex-1.1-mini",
     );
+    // The Review role is unfilled until a model is admitted for it.
+    expect(body.roles.find((r) => r.role === "reviewer")).toMatchObject({ state: "unconfigured" });
   });
 
   it("does not load Seshat's model from the dashboard while memory is under pressure", async () => {

@@ -11,21 +11,52 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadGatesConfig } from "@sekhemet/gates";
+import { SHIPPED_ENGINE_FLOOR } from "@sekhemet/models";
 import { describe, expect, it, vi } from "vitest";
+import { findCommand } from "../src/commands/registry.js";
 import { deriveGates, recommendRoster, runInit, toolchainChecks } from "../src/init.js";
 
 const GB = 1024 ** 3;
+/** A machine with git and the reference host's llama-server (build 10809). */
+const fakeRun = (cmd: string) =>
+  cmd === "llama-server"
+    ? "version: 0.4.0 (build 10809, commit 5266f24da)"
+    : cmd === "git"
+      ? "git version 2"
+      : undefined;
 
 describe("sekhemet init (H25)", () => {
-  it("recommends a roster by memory: one at a time on 24 GB, all resident on 128 GB", () => {
+  it("recommends the shipped set by memory: one at a time on 24 GB, all resident on 128 GB", () => {
+    // MD-N22-2: the roster reads SHIPPED_MODELS and SUPPORTED_HARDWARE (DEC-47 O-5).
     expect(recommendRoster(24 * GB)).toMatchObject({
       tier: "M",
-      worker: "cyber-tiel",
-      researcher: "apodex",
+      supported: true,
+      worker: "nail-mtp",
+      manager: "qwen3.8-27b-gsq-rco",
+      researcher: "apodex-1.1-mini",
+      reviewer: "",
     });
     expect(recommendRoster(24 * GB).note).toMatch(/One large model at a time/);
-    expect(recommendRoster(128 * GB)).toMatchObject({ tier: "XL" });
-    expect(recommendRoster(128 * GB).note).toMatch(/All four roles stay resident/);
+    expect(recommendRoster(128 * GB)).toMatchObject({ tier: "XL", supported: true });
+    expect(recommendRoster(128 * GB).note).toMatch(/Every shipped role resident/);
+    // The Review role is unfilled, never mistral (DEC-47 O-5).
+    for (const gb of [16, 24, 64, 128])
+      expect(JSON.stringify(recommendRoster(gb * GB))).not.toMatch(/mistral|cyber-tiel/i);
+  });
+
+  it("MD-N16-3: below 24 GB says v1 does not support it, and never that the set fits", () => {
+    const r = recommendRoster(16 * GB);
+    expect(r).toMatchObject({ tier: "S", supported: false });
+    expect(r.note).toMatch(/v1 supports 24 GB of memory and above/);
+    expect(r.note).toMatch(/your own risk/);
+    const repo = mkdtempSync(join(tmpdir(), "init-16-"));
+    const lines: string[] = [];
+    runInit(repo, { run: fakeRun, totalBytes: 16 * GB, say: (l) => lines.push(l) });
+    const text = lines.join("\n");
+    expect(text).toMatch(/v1 supports 24 GB of memory and above/);
+    expect(text).not.toMatch(/Models: Coding model nail-mtp/);
+    expect(text).toMatch(/do not fit/);
+    rmSync(repo, { recursive: true, force: true });
   });
 
   it("derives gates from the project's own scripts and tooling", () => {
@@ -60,9 +91,53 @@ describe("sekhemet init (H25)", () => {
     const checks = toolchainChecks((cmd) => (cmd === "git" ? "git version 2.50" : undefined));
     const byName = Object.fromEntries(checks.map((c) => [c.name, c]));
     expect(byName.git?.ok).toBe(true);
-    expect(byName["llama-server (llama.cpp)"]).toMatchObject({ ok: false, required: true });
+    expect(byName["llama-server (llama.cpp)"]).toMatchObject({
+      ok: false,
+      required: true,
+      detail: "not found",
+    });
     expect(byName["Docker (for private web search)"]).toMatchObject({ ok: false, required: false });
     expect(checks.every((c) => c.ok || c.fix)).toBe(true);
+  });
+
+  it("MD-N16-1: says which llama-server build was found and which the floor needs", () => {
+    const old = toolchainChecks((cmd) =>
+      cmd === "llama-server" ? "version: 0.3.0 (build 6500, commit abc)" : undefined,
+    ).find((c) => c.name === "llama-server (llama.cpp)");
+    expect(old).toMatchObject({
+      ok: false,
+      detail: `llama-server b6500 found; b${SHIPPED_ENGINE_FLOOR} or later needed`,
+    });
+    const now = toolchainChecks(fakeRun).find((c) => c.name === "llama-server (llama.cpp)");
+    expect(now).toMatchObject({ ok: true, detail: "b10809" });
+  });
+
+  it("MD-N16-2: names this platform's fixes, and every file or page a fix names exists", () => {
+    const root = join(import.meta.dirname, "..", "..", "..");
+    for (const p of [
+      { os: "darwin", arch: "arm64", backend: "metal" },
+      { os: "linux", arch: "x64", backend: "vulkan" },
+      { os: "linux", arch: "x64", backend: "cuda" },
+    ] as const) {
+      const fix = toolchainChecks(() => undefined, undefined, { platform: p }).find(
+        (c) => c.name === "llama-server (llama.cpp)",
+      )?.fix as string;
+      expect(fix).not.toMatch(/HARNESS_DESIGN/);
+      if (p.os === "darwin") expect(fix).toMatch(/brew install llama\.cpp/);
+      if (p.backend === "cuda") expect(fix).not.toMatch(/Get the inference engine/);
+      else expect(fix).toMatch(/Get the inference engine on Configuration › Models/);
+      // Every repository file a fix names exists, with the section it names.
+      for (const m of fix.matchAll(/(docs\/[\w./-]+\.md)(?:, section \*([^*]+)\*)?/g)) {
+        const text = readFileSync(join(root, m[1] as string), "utf8");
+        if (m[2]) expect(text).toMatch(new RegExp(`^## ${m[2]}$`, "m"));
+      }
+      // The page and the command a fix names exist.
+      if (/sekhemet engine get/.test(fix)) expect(findCommand("engine")).toBeDefined();
+      if (/Configuration › Models/.test(fix))
+        expect(
+          readFileSync(join(root, "packages", "ui", "web", "configuration.js"), "utf8"),
+        ).toMatch(/config_models\.js/);
+    }
   });
 
   it("writes config, gates and .gitignore once, keeps them after, and reports readiness", () => {
@@ -70,13 +145,12 @@ describe("sekhemet init (H25)", () => {
     writeFileSync(join(repo, "package.json"), JSON.stringify({ scripts: { test: "vitest run" } }));
     writeFileSync(join(repo, ".gitignore"), "node_modules/");
     const lines: string[] = [];
-    const run = (cmd: string) =>
-      cmd === "llama-server" ? "version: 6500 (abc)" : cmd === "git" ? "git version 2" : undefined;
+    const run = fakeRun;
     const first = runInit(repo, { run, totalBytes: 24 * GB, say: (l) => lines.push(l) });
     expect(first.wrote).toEqual(["gates.toml", "config.toml", ".gitignore"]);
     expect(first.ready).toBe(true);
     expect(readFileSync(join(repo, ".sekhemet", "config.toml"), "utf8")).toMatch(
-      /executor = "cyber-tiel"/,
+      /executor = "nail-mtp"/,
     );
     // SUR-34: one marked block that ignores .sekhemet/ by default.
     expect(readFileSync(join(repo, ".gitignore"), "utf8")).toMatch(
@@ -96,13 +170,7 @@ describe("sekhemet init (H25)", () => {
     const repo = mkdtempSync(join(tmpdir(), "init-leases-"));
     try {
       execFileSync("git", ["init", "-q"], { cwd: repo });
-      const run = (cmd: string) =>
-        cmd === "llama-server"
-          ? "version: 6500 (abc)"
-          : cmd === "git"
-            ? "git version 2"
-            : undefined;
-      runInit(repo, { run, totalBytes: 24 * GB, say: () => {} });
+      runInit(repo, { run: fakeRun, totalBytes: 24 * GB, say: () => {} });
       // The block ignores all of .sekhemet/ but the shared files (SUR-34).
       const ignore = readFileSync(join(repo, ".gitignore"), "utf8").split("\n");
       expect(ignore).toContain(".sekhemet/*");

@@ -14,7 +14,9 @@ import { type AssetLabel, validateAssetLabels, verifyAsset } from "./eval_assets
  * - **Planner:** 3 golden briefs scored by implicit-requirement recall
  *   (`planner.json`); read only from the registered, person-labelled
  *   golden-briefs asset, so until the owner labels them it is `not_built`.
- * - **Reviewer:** not built until B4.8 (rule 30a).
+ * - **Reviewer:** 10 seeded defects drawn from the registered
+ *   `reviewer-seeded-defects` asset (`reviewer.json` names them; C3-4,
+ *   FINDINGS CFG-17), each reviewed as the product builds a review's input.
  * - **Researcher:** the research golden set's first 5 questions, answered
  *   over a cached offline corpus pinned by hash (rules 30a, 31); read only
  *   from the registered, person-labelled research golden set, so until a
@@ -33,10 +35,8 @@ export const SCREENING_SET_SIZE: Readonly<Record<ModelRole, number>> = {
   researcher: 5,
 };
 
-/** The workstream that builds each role's set (rule 30a). */
-const BUILT_IN = {
-  reviewer: "B4.8, with the seeded defects",
-} as const;
+/** The registered asset the Reviewer's screen is drawn from (review-git RG-P8-13). */
+export const REVIEWER_SCREEN_ASSET = "reviewer-seeded-defects";
 
 export interface ScreeningItem {
   id: string;
@@ -60,6 +60,11 @@ export interface ScreeningItem {
   golden?: GoldenQuestion;
   /** Researcher questions: the cached pages it is answered over, relative to the asset. */
   corpus?: string[];
+  /**
+   * Reviewer defects: the one file of the issue's scope and the edits that
+   * seed the defect into its reference solution (never shown to the Reviewer).
+   */
+  seeded?: { file: string; edits: { find: string; replace: string }[] };
 }
 
 export interface ScreeningSet {
@@ -148,6 +153,63 @@ function workerSet(root: string): ScreeningSet {
     expectedSize: want,
     items: file.items,
     hash: built.hash,
+  };
+}
+
+/**
+ * The Reviewer's set (MS-N8-5): its defect ids, read from the registered
+ * seeded-defect asset at its hash; a defect the asset lacks, or a set short
+ * of 10, is `not_built`. The hash covers the set's file and the asset's.
+ */
+function reviewerSet(root: string): ScreeningSet {
+  const loaded = readSet(root, "reviewer");
+  if (!loaded) return notBuilt("reviewer", "fixtures/screening/reviewer.json is missing");
+  const { file } = loaded;
+  let asset: { hash: string; path: string };
+  try {
+    asset = verifyAsset(root, REVIEWER_SCREEN_ASSET);
+  } catch (err) {
+    return notBuilt(
+      "reviewer",
+      `the seeded defects are not registered at their hash: ${err instanceof Error ? err.message : String(err)}`,
+      file,
+    );
+  }
+  const defects = JSON.parse(readFileSync(join(root, asset.path, "items.json"), "utf8")) as {
+    id: string;
+    fixture: string;
+    card: string;
+    file: string;
+    edits: { find: string; replace: string }[];
+  }[];
+  const items: ScreeningItem[] = [];
+  for (const { id } of file.items) {
+    const d = defects.find((x) => x.id === id);
+    if (!d) return notBuilt("reviewer", `the seeded-defect asset has no defect ${id}`, file);
+    items.push({
+      id,
+      fixture: d.fixture,
+      card: d.card,
+      seeded: { file: d.file, edits: d.edits },
+    });
+  }
+  if (items.length !== SCREENING_SET_SIZE.reviewer)
+    return notBuilt(
+      "reviewer",
+      `the Reviewer's set holds ${items.length} of ${SCREENING_SET_SIZE.reviewer} defects`,
+      file,
+    );
+  return {
+    role: "reviewer",
+    version: file.version,
+    state: "ready",
+    capSeconds: file.capSeconds,
+    expectedSize: SCREENING_SET_SIZE.reviewer,
+    items,
+    hash: createHash("sha256")
+      .update(loaded.raw)
+      .update(`\0${REVIEWER_SCREEN_ASSET}\0${asset.hash}`)
+      .digest("hex"),
   };
 }
 
@@ -511,10 +573,7 @@ export function loadScreeningSets(root: string): ScreeningSets {
     roles: {
       worker: workerSet(root),
       planner: plannerSet(root),
-      reviewer: notBuilt(
-        "reviewer",
-        `the Reviewer's screening set is built in ${BUILT_IN.reviewer}`,
-      ),
+      reviewer: reviewerSet(root),
       researcher: researcherSet(root),
     },
     endToEnd: {

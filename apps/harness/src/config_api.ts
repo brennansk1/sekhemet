@@ -22,9 +22,11 @@ import {
   DownloadHashMismatch,
   DownloadRefused,
   type FitHost,
+  type FitLabel,
   type FoundModel,
   GPU_CEILING_SEED,
   type Graded,
+  HEADROOM_DEFAULTS,
   type HeadroomProbe,
   type LlamaBenchResult,
   MANAGED_MODEL_FILES,
@@ -35,12 +37,20 @@ import {
   ModelRegistry,
   type ModelRole,
   type ModelSource,
+  PRESET_KEYS,
   type PairedCompare,
   ROLE_SETTINGS,
+  ROLE_SETTING_FIELDS,
   type RemoteCandidate,
   type RoleAssignment,
   type RoleEvidence,
+  type RoleSettingKey,
+  type RoleSettingValues,
+  SETTINGS_PRESETS,
+  SHIPPED_MODELS,
+  SHIPPED_ROLE_MODEL_ROLE,
   type ScanResult,
+  type SettingsPreset,
   SwapCostBook,
   type SwapEvent,
   type Volume,
@@ -48,27 +58,36 @@ import {
   applyFits,
   assignRole,
   cPair,
+  checkRoleSettings,
   copyToInternal,
   currentAssignment,
+  describeCombination,
   downloadFileName,
   downloadModel,
   estimateRemote,
   fillMetadata,
+  fitCeilingBytes,
+  fitFor,
   freeBytesAt,
+  hardwareFingerprint,
   hashModels,
   hostFingerprintHash,
   isOllamaCloudTag,
+  isReferenceHost,
   lookupPublishedFile,
   matchOnHub,
   measureHeadroom,
   memoryBreakdown,
   ollamaCloudRefusal,
+  parseRoleSettingsFile,
   predictDecode,
   rankCombinations,
   recommendRole,
   registerModelFile,
+  resolveRoleSettings,
   restoreRole,
   roleOf,
+  roleSettingsFile,
   scanModelFolders,
   sekhemetConfigDir,
   sha256File,
@@ -88,14 +107,17 @@ import { type DoneFacts, REVIEW_MINUTES_REFUSED } from "@sekhemet/ui";
 import type { BenchmarkService } from "./benchmark_cmd.js";
 import { type ModelFolderSetting, resolveConfig, userConfigPath } from "./config.js";
 import { networkConfigs } from "./config_apply.js";
+import { createEngineApi } from "./config_engine.js";
 import { CONFIG_ROUTES, type ConfigRoute } from "./config_routes.js";
 import { egressEvent } from "./egress_event.js";
 import { type EgressContext, NOTHING_LEFT, egressRows } from "./egress_view.js";
 import { networkHint } from "./github_transport.js";
+import { recordWorkerAdopted } from "./m0_path.js";
 import { swapHistory } from "./model_access.js";
 import { rolePromptVersion } from "./prompt_versions.js";
 import { headroomProbeFor } from "./smart_swap.js";
 import { REPLAY_EVENT_TYPES, replayDemand } from "./swap_replay.js";
+import type { TeamEnginesReport } from "./team_engines.js";
 
 /**
  * The Configuration page's model section, served (B4.1 part b; routes in
@@ -216,6 +238,21 @@ export interface ConfigApiDeps {
   volume?: (path: string) => Volume;
   freeBytes?: (dir: string) => number;
   now?: () => Date;
+  /**
+   * Whether this is the reference host (MD-N21-9, FINDINGS CFG-14): only
+   * there does the seed GPU ceiling apply. Default: this machine's fingerprint.
+   */
+  referenceHost?: () => boolean;
+  /**
+   * The Team server's engine services checked (`checkTeamEngines`, models
+   * MD-N15-3): each role names its service's state in words. Absent in Solo.
+   */
+  teamEngines?: () => Promise<TeamEnginesReport>;
+  /**
+   * Whether the person behind a request holds `config.manage`: the engine
+   * card's defence in depth behind the access table. Default: yes (Solo).
+   */
+  mayManage?: (req: IncomingMessage) => boolean;
 }
 
 type Json = Record<string, unknown>;
@@ -425,6 +462,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
   const probe =
     deps.headroomProbe === null ? undefined : (deps.headroomProbe ?? headroomProbeFor(true));
   const host = deps.host ?? hostFingerprintHash;
+  const referenceHost = deps.referenceHost ?? (() => isReferenceHost(hardwareFingerprint()));
   const volume = deps.volume ?? ((p: string) => volumeOf(p));
   const freeBytes = deps.freeBytes ?? freeBytesAt;
   const internalDir = deps.internalDir ?? join(homedir(), "AI-Models", "llm");
@@ -572,7 +610,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
   };
 
   const fitHost = async (): Promise<FitHost & { reading?: string }> => {
-    const { book } = await swapBook();
+    const { book, events } = await swapBook();
     const swapSeconds: FitHost["swapSeconds"] = (m) => {
       const p = book.predict({
         model: modelKey(m),
@@ -585,20 +623,35 @@ export function createConfigApi(deps: ConfigApiDeps) {
         grade: p.basis === "measured" ? "measured" : "estimated",
       };
     };
+    // MD-N21-9 (CFG-14): the ceilings this host recorded; the seed only on the reference host.
+    const recorded = events
+      .filter((e) => e.type === "model/gpu_ceiling")
+      .map((e) => e.payload as { basis: string; bytes: number });
+    const ceiling = fitCeilingBytes(recorded, referenceHost(), GPU_CEILING_SEED.bytes);
+    const withCeiling = ceiling !== undefined ? { gpuCeilingBytes: ceiling } : {};
     if (probe) {
       try {
         const r = await probe.read();
         const h = measureHeadroom(r, { computeBufferBytes: 0 });
+        // MD-N21-8 (CFG-02): this machine's usable memory, not the momentary free memory.
+        const theirs = r.processes.filter((p) => !p.ours).reduce((n, p) => n + p.footprintBytes, 0);
+        const usable = Math.max(
+          0,
+          Math.min(
+            r.gpuWiredLimitBytes - HEADROOM_DEFAULTS.gpuMarginBytes,
+            r.totalBytes - HEADROOM_DEFAULTS.macosReserveBytes - HEADROOM_DEFAULTS.harnessPeakBytes,
+          ) - theirs,
+        );
         return {
           headroom: { value: h.bytes, grade: "measured" },
+          usableBytes: { value: usable, grade: "measured" },
           resident: r.processes.map((p) => ({
             name: p.name,
             footprintBytes: p.footprintBytes,
             ours: p.ours,
           })),
           gpuWiredLimitBytes: r.gpuWiredLimitBytes,
-          // The seed is the reference host's (24 GB) until calibration nights record one (MD-N14-33a).
-          ...(r.totalBytes <= 24 * 1024 ** 3 ? { gpuCeilingBytes: GPU_CEILING_SEED.bytes } : {}),
+          ...withCeiling,
           swapSeconds,
           reading: "measured",
         };
@@ -611,6 +664,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
     return {
       headroom: { value: Math.max(0, total * share - 1024 ** 3), grade: "estimated" },
       gpuWiredLimitBytes: total * share,
+      ...withCeiling,
       swapSeconds,
       reading: "estimated",
     };
@@ -759,9 +813,15 @@ export function createConfigApi(deps: ConfigApiDeps) {
     const version = rolePromptVersion(role);
     const mine = all.filter((q) => roleOf(q.combination) === role);
     const newest = mine.filter((q) => q.combination.settings.contextVersion === version).at(-1);
+    // MD-N21-3: a person's values changed an element since it qualified.
+    if (newest?.status === "qualified" && verificationOf(model, role).state === "needs_verifying")
+      return "invalidated";
     if (newest) return newest.status;
     return mine.some((q) => q.status === "qualified") ? "invalidated" : "missing";
   };
+  /** A role's verification as a person's values now make its combination (MD-N21-3). */
+  const verificationOf = (model: string, role: ModelRole) =>
+    registry.roleVerification(model, role, rolePromptVersion(role));
 
   let evalMod: { compareOnItems?: unknown; readQuickScores?: unknown } | undefined;
   const loadEval = async () => {
@@ -801,35 +861,132 @@ export function createConfigApi(deps: ConfigApiDeps) {
     const a = currentAssignment(registry, host(), role);
     return a && a.model !== "(unfilled)" ? a.model : undefined;
   };
-  const workerFamily = () => {
-    const w = assignedModel("worker");
-    return w
-      ? (registry.get(w)?.family ?? state.models.find((m) => modelKey(m) === w)?.family)
-      : undefined;
+  /** A model's family: the registry's, the scan's, else the shipped table's (rule 3). */
+  const familyOfModel = (id: string) =>
+    registry.get(id)?.family ??
+    state.models.find((m) => modelKey(m) === id)?.family ??
+    SHIPPED_MODELS.find((m) => m.id === id)?.family;
+  /**
+   * The Coding model's family: the assigned one's, else — while none is
+   * assigned — the recommended one's, so the Review model is never suggested
+   * of the family the Coding model it is suggested beside has (rule 3; B1-C3
+   * review).
+   */
+  const workerFamily = (recommended?: string) => {
+    const w = assignedModel("worker") ?? recommended;
+    return w ? familyOfModel(w) : undefined;
   };
 
-  /** Registry models with a source that are not in any folder (rule 4c: "up to the strongest"). */
+  /**
+   * Models with a source that are not in any folder (rule 4c: "up to the
+   * strongest"): the registry's, and the shipped set's (rule 3), each shipped
+   * row a default for its own role — so a clean machine, whose registry is
+   * empty, is offered the shipped set (MD-N18-3; B1-C3 review).
+   */
   const remoteCandidates = async (role: ConfigRole): Promise<RemoteCandidate[]> => {
     const present = new Set(state.models.map((m) => registryEntryFor(m)?.id).filter(Boolean));
     const fh = await fitHost();
+    const usable =
+      fh.headroom.value +
+      (fh.resident ?? []).filter((r) => r.ours).reduce((n, r) => n + r.footprintBytes, 0);
+    const need = (sizeBytes: number) =>
+      memoryBreakdown({ sizeBytes, metadata: {} }, ROLE_SETTINGS[role]).totalBytes.value;
     const out: RemoteCandidate[] = [];
     for (const e of registry.list()) {
       if (present.has(e.id) || !e.source || !e.sizeBytes) continue;
-      const settings = ROLE_SETTINGS[role];
-      const need = memoryBreakdown({ sizeBytes: e.sizeBytes, metadata: {} }, settings).totalBytes
-        .value;
-      const usable =
-        fh.headroom.value +
-        (fh.resident ?? []).filter((r) => r.ours).reduce((n, r) => n + r.footprintBytes, 0);
+      const shipped = SHIPPED_MODELS.find((m) => m.id === e.id);
       out.push({
         id: e.id,
         name: e.id,
         ...(e.family ? { family: e.family } : {}),
-        fits: need <= usable ? "yes" : "no",
-        footprintBytes: need,
-        registryDefault: (e.roles ?? []).includes(role as ModelRole),
+        fits: need(e.sizeBytes) <= usable ? "yes" : "no",
+        footprintBytes: need(e.sizeBytes),
+        registryDefault:
+          (e.roles ?? []).includes(role as ModelRole) ||
+          (shipped !== undefined && SHIPPED_ROLE_MODEL_ROLE[shipped.role] === role),
         source: e.source,
       });
+    }
+    for (const m of SHIPPED_MODELS) {
+      if (!m.id || !m.source || present.has(m.id) || out.some((o) => o.id === m.id)) continue;
+      const source = tableSource(m.id, deps.hub);
+      if (!source) continue;
+      out.push({
+        id: m.id,
+        name: m.name ?? m.id,
+        ...(m.family ? { family: m.family } : {}),
+        fits: need(m.source.sizeBytes) <= usable ? "yes" : "no",
+        footprintBytes: need(m.source.sizeBytes),
+        registryDefault: SHIPPED_ROLE_MODEL_ROLE[m.role] === role,
+        source,
+      });
+    }
+    return out;
+  };
+
+  /**
+   * The roles whose suggestion a person kept on this machine (DB-N27-1, *Keep*;
+   * B1-C3 review): the latest `models/suggestion_kept` per role, a keep naming
+   * the model it kept, so it lapses once another model is assigned.
+   */
+  const keptRoles = async (): Promise<Map<ModelRole, string>> => {
+    const out = new Map<ModelRole, string>();
+    for (const e of await deps.log.getEventsByTypes(["models/suggestion_kept"])) {
+      const p = e.payload as { role: ModelRole; model: string; kept: boolean; host: string };
+      if (p.host !== host()) continue;
+      if (p.kept) out.set(p.role, p.model);
+      else out.delete(p.role);
+    }
+    return out;
+  };
+
+  /** The Team server's engine check for one role, in words (MD-N15-3), or undefined. */
+  const engineFor = (report: TeamEnginesReport | undefined, role: ModelRole) => {
+    const e = report?.engines.find((x) => x.roles.some((r) => SHIPPED_ROLE_MODEL_ROLE[r] === role));
+    if (!e) return undefined;
+    return {
+      service: e.service,
+      state: e.state,
+      line:
+        e.state === "ok"
+          ? `${e.service}: answering on port ${e.port}, matches its profile.`
+          : e.state === "no-engine"
+            ? `${e.service}: ${e.reason ?? `no engine answers on port ${e.port}`}.`
+            : `${e.service}: refused — ${e.reason ?? "it does not match its profile"}.`,
+    };
+  };
+
+  /**
+   * A role's checks in words (DB-N27-1): fit, verification, the Review
+   * model's family — for the assigned model, else the recommended one (the
+   * first hour: nothing assigned, every row still states its checks).
+   * `remoteFit` is a model not in any folder: the fit of its download.
+   * A Review model of the Coding model's family is a failing check, never
+   * left out (B1-C3 review).
+   */
+  const checksFor = (
+    role: ModelRole,
+    model: string | undefined,
+    qualified: boolean,
+    opts: { remoteFit?: FitLabel; worker?: string } = {},
+  ): string[] => {
+    if (!model) return [];
+    const out: string[] = [];
+    const found = state.models.find((m) => modelKey(m) === model);
+    const fit = found?.fits[role] ?? opts.remoteFit;
+    if (fit === "yes" || fit === "swaps") out.push("Fits in memory");
+    else if (fit === "no") out.push(found?.fitReason[role] ?? "Does not fit in memory");
+    const v = verificationOf(model, role);
+    if (v.state === "needs_verifying")
+      out.push(`Needs verifying: ${(v.changed ?? []).join(", ") || "its settings"} changed`);
+    else out.push(qualified ? "Verified on this machine" : "Not verified on this machine yet");
+    if (role === "reviewer") {
+      const family = familyOfModel(model);
+      const wf = workerFamily(opts.worker);
+      if (!family) out.push("Not shown to be of another family: its family is unknown");
+      else if (wf && family === wf)
+        out.push(`Not from another family: the Coding model's is ${wf} too`);
+      else if (wf) out.push("Review model from another family");
     }
     return out;
   };
@@ -839,7 +996,11 @@ export function createConfigApi(deps: ConfigApiDeps) {
     const scores = await quick();
     const compare = await compareFn();
     const resident = new Set(deps.residency?.resident() ?? []);
+    const engines = await deps.teamEngines?.().catch(() => undefined);
     const roles: (RoleAssignment & Json)[] = [];
+    const keeps = await keptRoles();
+    /** The recommended Coding model, while none is assigned (MODEL_ROLES lists it first). */
+    let recommendedWorker: string | undefined;
     for (const role of MODEL_ROLES) {
       const model = assignedModel(role);
       const history = registry
@@ -850,7 +1011,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
         role,
         present: state.models.map((m) => ({ ...m, id: modelKey(m) })),
         remote: await remoteCandidates(role),
-        workerFamily: role === "reviewer" ? workerFamily() : undefined,
+        workerFamily: role === "reviewer" ? workerFamily(recommendedWorker) : undefined,
         screenBuilt: SCREEN_BUILT[role],
         ...(compare ? { compare } : {}),
         evidence: (id) => {
@@ -872,13 +1033,30 @@ export function createConfigApi(deps: ConfigApiDeps) {
               : {}),
           }
         : undefined;
+      if (role === "worker" && !model) recommendedWorker = rec?.model;
+      // The row's model: the assigned one, else the recommended one (DB-N27-1).
+      const shown = model ?? rec?.model;
+      const qualified = shown
+        ? ["qualified", "overridden"].includes(qualificationOf(shown, role))
+        : false;
+      const remoteFit =
+        shown && rec && !rec.present && rec.model === shown
+          ? (await remoteCandidates(role)).find((c) => c.id === shown)?.fits
+          : undefined;
+      const kept = model !== undefined && keeps.get(role) === model;
+      const engine = engineFor(engines, role);
       roles.push({
         role,
         ...(model ? { model } : {}),
         state: !model ? "not_configured" : resident.has(model) ? "resident" : "swapped_out",
-        qualified: model
-          ? ["qualified", "overridden"].includes(qualificationOf(model, role))
-          : false,
+        qualified: model ? qualified : false,
+        checks: checksFor(role, shown, qualified, {
+          ...(remoteFit ? { remoteFit } : {}),
+          ...(recommendedWorker ? { worker: recommendedWorker } : {}),
+        }),
+        ...(kept ? { kept: true } : {}),
+        ...(model ? { verification: verificationOf(model, role) } : {}),
+        ...(engine ? { engine } : {}),
         ...(!model && r.unfilledReason ? { unfilledReason: r.unfilledReason } : {}),
         ...(!model && !r.unfilledReason
           ? { unfilledReason: "No model is assigned to this role yet." }
@@ -906,8 +1084,14 @@ export function createConfigApi(deps: ConfigApiDeps) {
   const detailsBody = async (m: FoundModel, query: URLSearchParams) => {
     const role = (query.get("role") as ConfigRole | null) ?? "worker";
     const settings = ROLE_SETTINGS[CONFIG_ROLES.includes(role) ? role : "worker"];
-    const context = Number(query.get("context") ?? "") || settings.contextTokens;
-    const kvType = query.get("kvType") || settings.kvType;
+    // DB-N27-6 (CFG-13): the chosen role's context and KV type as this model runs them there.
+    const runs = MODEL_ROLES.includes(role as ModelRole)
+      ? resolved(modelKey(m), role as ModelRole)
+      : undefined;
+    const ran = (k: RoleSettingKey) => runs?.find((v) => v.key === k)?.value;
+    const context =
+      Number(query.get("context") ?? "") || Number(ran("contextTokens") ?? settings.contextTokens);
+    const kvType = query.get("kvType") || String(ran("kvType") ?? settings.kvType);
     const fh = await fitHost();
     const memory = memoryBreakdown(m, { contextTokens: context, kvType });
     const engines = m.format === "mlx" ? ["mlx"] : ["llama.cpp"];
@@ -1743,6 +1927,25 @@ export function createConfigApi(deps: ConfigApiDeps) {
         ...(r.previous ? { previous: r.previous.model } : {}),
       },
     });
+    // MD-N21-11 (FINDINGS CFG-04, MS-M9-6): a Coding model adopted here owes
+    // its M0, through the helper `sekhemet models assign worker` uses.
+    if (role === "worker") {
+      const version = rolePromptVersion("worker");
+      const verified = (registry.get(id)?.qualifications ?? [])
+        .filter(
+          (q) =>
+            q.status === "qualified" &&
+            roleOf(q.combination) === "worker" &&
+            q.combination.settings.contextVersion === version,
+        )
+        .at(-1);
+      await recordWorkerAdopted(deps.log, {
+        worker: id,
+        combination: verified
+          ? describeCombination(verified.combination)
+          : "not yet verified on this machine",
+      });
+    }
     return r;
   };
 
@@ -1754,6 +1957,8 @@ export function createConfigApi(deps: ConfigApiDeps) {
     host: string;
     sizeBytes: number;
     sha256: string;
+    /** Its SPDX licence where the shipped set records one (MD-N18-3). */
+    license?: string;
     blockedBy?: string;
   };
   type RecommendedRun = {
@@ -1773,15 +1978,25 @@ export function createConfigApi(deps: ConfigApiDeps) {
     const combination: Partial<Record<ModelRole, string>> = {};
     const unfilled: { role: ModelRole; reason: string }[] = [];
     const downloads: RecommendedDownload[] = [];
+    /** Roles a person kept: their own model stays, and the suggestion steps aside (DB-N27-1). */
+    const kept: { role: ModelRole; model: string }[] = [];
     for (const r of roles) {
       const role = r.role as ModelRole;
+      if (r.kept && r.model) {
+        combination[role] = r.model as string;
+        kept.push({ role, model: r.model as string });
+        continue;
+      }
       const rec = r.recommendation;
       if (!rec) {
         unfilled.push({ role, reason: r.unfilledReason ?? "No model is recommended for it." });
         continue;
       }
       combination[role] = rec.model;
-      if (rec.present) continue;
+      // A copy already recorded on this machine (`models fetch`, an earlier
+      // download) is not downloaded again (MD-N18-3: what is still to fetch).
+      const copy = registry.preferredWeights(rec.model);
+      if (rec.present || (copy !== undefined && existsSync(copy))) continue;
       const known = downloads.find((d) => d.model === rec.model);
       if (known) {
         known.roles.push(role);
@@ -1795,6 +2010,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
         continue;
       }
       const blocked = downloadRefusal(source.host);
+      const license = SHIPPED_MODELS.find((m) => m.id === rec.model)?.source?.license;
       downloads.push({
         model: rec.model,
         roles: [role],
@@ -1802,12 +2018,30 @@ export function createConfigApi(deps: ConfigApiDeps) {
         host: source.host,
         sizeBytes: source.sizeBytes ?? rec.download?.sizeBytes ?? 0,
         sha256: source.sha256,
+        ...(license ? { license } : {}),
         ...(blocked ? { blockedBy: blocked } : {}),
       });
     }
     // The folder the confirmation shows; the person's confirmation names it back.
     const folder = downloads.length > 0 ? offeredFolder() : undefined;
-    return { combination, downloads, unfilled, ...(folder ? { folder } : {}) };
+    // MD-N18-3, MD-N22-3: the set's total size and each licence, before the yes.
+    const totalBytes = downloads.reduce((n, d) => n + d.sizeBytes, 0);
+    const licenses = [
+      ...new Set(
+        Object.values(combination)
+          .map((m) => SHIPPED_MODELS.find((x) => x.id === m)?.source?.license)
+          .filter((l): l is string => Boolean(l)),
+      ),
+    ];
+    return {
+      combination,
+      downloads,
+      unfilled,
+      kept,
+      totalBytes,
+      licenses,
+      ...(folder ? { folder } : {}),
+    };
   };
 
   /** Download and verify, screen the combination with the quick benchmark, then assign (DB-N6-16). */
@@ -1892,6 +2126,8 @@ export function createConfigApi(deps: ConfigApiDeps) {
     for (const role of MODEL_ROLES) {
       const model = c[role];
       if (!model) continue;
+      // A kept role is assigned already; the suggestion stepped aside for it.
+      if (plan.kept.some((k) => k.role === role)) continue;
       if (failed.has(model)) {
         run.notAssigned.push({
           role,
@@ -1927,6 +2163,210 @@ export function createConfigApi(deps: ConfigApiDeps) {
     tell();
   };
 
+  // ── a role's settings (NEW-models-21, NEW-dashboard-27) ───────────────
+  const engineApi = createEngineApi({
+    service: { repoPath: deps.repoPath, log: deps.log, userConfigPath: cfgPath, env },
+    json: deps.json,
+    readJsonBody: deps.readJsonBody,
+    isTrustedMutation: deps.isTrustedMutation,
+    principalOf: deps.principalOf,
+    mayManage: deps.mayManage ?? (() => true),
+  });
+
+  /** The model a settings request is about: the one named, else the role's. */
+  const settingsModel = (named: unknown, role: ModelRole): string | undefined => {
+    if (typeof named === "string" && named.trim()) {
+      const m = findModel(named.trim());
+      return m ? modelKey(m) : named.trim();
+    }
+    return assignedModel(role);
+  };
+
+  /** The fit at a context for a found model and role (MD-N21-4, DB-N27-2), or undefined. */
+  const fitAt = async (model: string, role: ModelRole, contextTokens: number, kvType: string) => {
+    const m = findModel(model);
+    if (!m) return undefined;
+    const fh = await fitHost();
+    const v = fitFor(m, role, { ...fh, roleSettings: { [role]: { contextTokens, kvType } } });
+    return {
+      contextTokens,
+      fits: v.fits,
+      reason: v.reason,
+      requiredBytes: v.requiredBytes,
+    };
+  };
+
+  const resolved = (model: string, role: ModelRole) =>
+    resolveRoleSettings(registry.get(model), role, { env });
+
+  const settingsBody = async (role: ModelRole, model: string, context?: number) => {
+    const values = resolved(model, role);
+    const get = (k: RoleSettingKey) => values.find((v) => v.key === k)?.value;
+    const record = registry.roleSettings(model, role);
+    const floor = String(get("reasoningFloor") ?? "none");
+    const fit = await fitAt(
+      model,
+      role,
+      context ?? Number(get("contextTokens")),
+      String(get("kvType") ?? "q8_0"),
+    );
+    return {
+      role,
+      model,
+      values,
+      fields: ROLE_SETTING_FIELDS,
+      verification: verificationOf(model, role),
+      hints: checkRoleSettings(record?.values ?? {}, { role, floor }).hints,
+      ...(fit ? { fit } : {}),
+      ...(record?.preset ? { preset: record.preset } : {}),
+    };
+  };
+
+  /** Check values as a save would (MD-N21-4): the refusal, or the hints. */
+  const checkValues = async (role: ModelRole, model: string, values: RoleSettingValues) => {
+    const current = resolved(model, role);
+    const floor = String(current.find((v) => v.key === "reasoningFloor")?.value ?? "none");
+    const kvType = String(
+      values.kvType ?? current.find((v) => v.key === "kvType")?.value ?? "q8_0",
+    );
+    const fit =
+      values.contextTokens !== undefined
+        ? await fitAt(model, role, values.contextTokens, kvType)
+        : undefined;
+    return checkRoleSettings(values, {
+      role,
+      floor,
+      ...(fit ? { fit: () => (fit.fits === "no" ? fit.reason : undefined) } : {}),
+    });
+  };
+
+  const recordSettings = async (
+    req: IncomingMessage,
+    p: { model: string; role: ModelRole; action: "set" | "reset" | "import"; keys: string[] },
+  ) => {
+    const principal = deps.principalOf(req);
+    await deps.log.append({
+      actor: "human",
+      type: "models/settings_changed",
+      principal,
+      payload: {
+        ...p,
+        needsVerifying: verificationOf(p.model, p.role).state === "needs_verifying",
+        principal,
+      },
+    });
+  };
+
+  const settingsRoute = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    key: string,
+    roleParam: string,
+    body: Json,
+    query: URLSearchParams,
+  ): Promise<void> => {
+    const role = roleParam as ModelRole;
+    if (!MODEL_ROLES.includes(role)) {
+      deps.json(res, 404, { error: "No such role." });
+      return;
+    }
+    if (!state.scan) await scan();
+    const model = settingsModel(key.startsWith("GET") ? query.get("model") : body.model, role);
+    if (!model) {
+      deps.json(res, 400, {
+        error: "Name the model whose settings these are: this role has none yet.",
+      });
+      return;
+    }
+    if (key === "GET /api/config/roles/:role/settings") {
+      const context = Number(query.get("context") ?? "");
+      deps.json(res, 200, await settingsBody(role, model, context > 0 ? context : undefined));
+      return;
+    }
+    if (key === "GET /api/config/roles/:role/settings/export") {
+      deps.json(res, 200, roleSettingsFile(model, role, registry.roleSettings(model, role)));
+      return;
+    }
+    if (key === "POST /api/config/roles/:role/settings/reset") {
+      const known = new Set(ROLE_SETTING_FIELDS.map((f) => f.key as string));
+      const keys = Array.isArray(body.keys) ? body.keys.map(String) : undefined;
+      const unknown = keys?.find((k) => !known.has(k));
+      if (unknown) {
+        deps.json(res, 400, {
+          error: `${unknown} is not a setting Sekhemet knows.`,
+          key: unknown,
+          refused: "unknown",
+        });
+        return;
+      }
+      const had = Object.keys(registry.roleSettings(model, role)?.values ?? {});
+      registry.resetRoleSettings(model, role, keys as RoleSettingKey[] | undefined);
+      await recordSettings(req, { model, role, action: "reset", keys: keys ?? had });
+      deps.json(res, 200, await settingsBody(role, model));
+      return;
+    }
+    // A save or an import: the values checked first, nothing recorded on a refusal.
+    let values: RoleSettingValues;
+    let preset: SettingsPreset | undefined;
+    const extraHints: { key: string; text: string }[] = [];
+    if (key === "POST /api/config/roles/:role/settings/import") {
+      try {
+        const file = parseRoleSettingsFile(body.file);
+        values = file.values;
+        if (file.model && file.model !== model)
+          extraHints.push({
+            key: "import",
+            text: `This file was made for ${file.model}; its values now apply to ${model}.`,
+          });
+        if (file.role && file.role !== role)
+          extraHints.push({
+            key: "import",
+            text: `This file was made for the ${roleWords(file.role)}; its values now apply to the ${roleWords(role)}.`,
+          });
+      } catch (err) {
+        deps.json(res, 400, {
+          error: err instanceof Error ? err.message : String(err),
+          refused: "format",
+        });
+        return;
+      }
+    } else {
+      if (!body.values || typeof body.values !== "object" || Array.isArray(body.values)) {
+        deps.json(res, 400, { error: "Send the values to save as an object.", refused: "unknown" });
+        return;
+      }
+      values = body.values as RoleSettingValues;
+      if (body.preset !== undefined) {
+        if (typeof body.preset !== "string" || !(body.preset in SETTINGS_PRESETS)) {
+          deps.json(res, 400, {
+            error: "The preset is fast, balanced or careful.",
+            key: "preset",
+            refused: "range",
+          });
+          return;
+        }
+        preset = body.preset as SettingsPreset;
+        values = { ...SETTINGS_PRESETS[preset](role), ...values };
+      }
+    }
+    const check = await checkValues(role, model, values);
+    if (check.refusal) {
+      deps.json(res, 400, check.refusal);
+      return;
+    }
+    if (preset === "balanced") registry.resetRoleSettings(model, role, PRESET_KEYS);
+    if (Object.keys(values).length > 0 || preset)
+      registry.setRoleSettings(model, role, values, deps.principalOf(req), preset);
+    await recordSettings(req, {
+      model,
+      role,
+      action: key.endsWith("/import") ? "import" : "set",
+      keys: preset === "balanced" ? [...PRESET_KEYS] : Object.keys(values),
+    });
+    const out = await settingsBody(role, model);
+    deps.json(res, 200, { ...out, hints: [...extraHints, ...out.hints] });
+  };
+
   // ── the handler ───────────────────────────────────────────────────────
   const handle = async (
     req: IncomingMessage,
@@ -1935,6 +2375,8 @@ export function createConfigApi(deps: ConfigApiDeps) {
     query: URLSearchParams,
   ): Promise<boolean> => {
     if (!url.startsWith("/api/config")) return false;
+    // The engine card's routes (C3-2's `config_engine`, mounted here).
+    if (url.startsWith("/api/config/engine")) return engineApi.handle(req, res, url);
     const method = req.method ?? "GET";
     const hit = matchRoute(method, url);
     if (!hit) return false;
@@ -2159,6 +2601,13 @@ export function createConfigApi(deps: ConfigApiDeps) {
         case "GET /api/config/roles":
           deps.json(res, 200, await rolesBody());
           return true;
+        case "GET /api/config/roles/:role/settings":
+        case "PUT /api/config/roles/:role/settings":
+        case "POST /api/config/roles/:role/settings/reset":
+        case "GET /api/config/roles/:role/settings/export":
+        case "POST /api/config/roles/:role/settings/import":
+          await settingsRoute(req, res, key, hit.params.role ?? "", body as Json, query);
+          return true;
         case "PUT /api/config/roles/:role":
         case "POST /api/config/roles/:role/qualify": {
           const role = hit.params.role as ModelRole;
@@ -2302,6 +2751,33 @@ export function createConfigApi(deps: ConfigApiDeps) {
             }
             throw err;
           }
+          deps.json(res, 200, { role: (await rolesBody()).roles.find((r) => r.role === role) });
+          return true;
+        }
+        case "POST /api/config/roles/:role/keep": {
+          // DB-N27-1: *Keep* (kept true) or *Change* (kept false) for the
+          // role's suggestion, recorded so Apply suggestion and a reload read it.
+          const role = hit.params.role as ModelRole;
+          const model = assignedModel(role);
+          if (!MODEL_ROLES.includes(role) || !model) {
+            deps.json(res, 409, {
+              error: "No model is assigned to this role, so there is none to keep.",
+            });
+            return true;
+          }
+          if (typeof body.kept !== "boolean") {
+            deps.json(res, 400, {
+              error: "Say whether the role's model is kept: kept is true or false.",
+            });
+            return true;
+          }
+          const principal = deps.principalOf(req);
+          await deps.log.append({
+            actor: "human",
+            type: "models/suggestion_kept",
+            principal,
+            payload: { role, model, kept: body.kept, host: host(), principal },
+          });
           deps.json(res, 200, { role: (await rolesBody()).roles.find((r) => r.role === role) });
           return true;
         }

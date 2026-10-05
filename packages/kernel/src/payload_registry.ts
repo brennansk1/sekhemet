@@ -123,6 +123,11 @@ const PROBABILITY = v.pipe(v.number(), v.minValue(0), v.maxValue(1));
 /** A research pipeline (harness `ResearchPipeline`, DS-N2-9). */
 const RESEARCH_PIPELINE = v.picklist(["native", "tool-loop"]);
 const BYTES = v.pipe(v.number(), v.integer(), v.minValue(0));
+/** A role's settings as numbers and choices (models NEW-models-21's values; measurement rule 39). */
+const SETTING_VALUES = v.record(
+  v.pipe(v.string(), v.regex(/^[A-Za-z]+$/)),
+  v.union([v.number(), v.boolean(), v.pipe(v.string(), v.regex(/^[A-Za-z0-9_.:-]{1,40}$/))]),
+);
 const QUEUES = v.array(ID);
 /**
  * Whose request a `model/usage` is (measurement rule 4a). The closed list is
@@ -367,6 +372,29 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     model: s(ID),
     scope: s(ASSIGNMENT_SCOPE),
     replaced: s(ID, true),
+  },
+  // dashboard DB-N27-1 (C3-3, B1-C3 review): a person's *Keep* (kept true)
+  // or *Change* (kept false) of the setup card's suggestion for one role on
+  // one host, naming the model kept, so Apply suggestion leaves that role's
+  // model and a reload shows it kept; it lapses once another model is assigned.
+  "models/suggestion_kept": {
+    role: s(ASSIGNED_ROLE),
+    model: s(ID),
+    kept: s(v.boolean()),
+    host: s(ID),
+    principal: s(PRINCIPAL),
+  },
+  // models MD-N21-5 (NEW-models-21, C3-3): a person's change to one role's
+  // settings for one model — set, reset or imported — naming the keys (the
+  // values are numbers and choices, read from the registry), whether the
+  // change made the role need verifying, and who made it.
+  "models/settings_changed": {
+    model: s(ID),
+    role: s(ASSIGNED_ROLE),
+    action: s(v.picklist(["set", "reset", "import"])),
+    keys: s(v.array(v.pipe(v.string(), v.regex(/^[A-Za-z]+$/)))),
+    needsVerifying: s(v.boolean()),
+    principal: s(PRINCIPAL),
   },
   "person/created": {
     principal: s(PRINCIPAL),
@@ -1368,6 +1396,18 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     principal: s(PRINCIPAL),
     verified: s(v.boolean()),
   },
+  // models MD-N19-4 (NEW-models-19, DEC-53 c7): a person's *Get the
+  // inference engine* — the pinned release, its asset's file name, the host
+  // it came from, the verified SHA-256 and size, and who asked. Recorded only
+  // once the engine is installed. Structural only: never where it was put.
+  "engine/downloaded": {
+    release: s(ID),
+    asset: s(ID),
+    source: s(ID),
+    sha256: s(SHA256),
+    bytes: s(BYTES),
+    principal: s(PRINCIPAL),
+  },
   // dashboard DB-NM14-3 (B4.1 half-B): a person's *Measure speed* on this
   // host — llama-bench's median decode and prefill and their spread (accepted
   // only at 3% or less), the first token's time without and with the prefix
@@ -1569,6 +1609,41 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     ),
     passes: s(v.boolean()),
     partial: s(v.boolean()),
+  },
+  // measurement NEW-measurement-7 (C3-4, MS-N7-6) and review-git RG-P8-17:
+  // one Find best settings run (`find_best`) or one paired A/B of a role's
+  // settings or method (`paired_ab`, R3b and R3c) — each candidate's values
+  // (numbers and choices), its item scores, the rungs, the survivor, the
+  // paired comparison, the verdict and the values adopted. Structural only.
+  "measure/settings_tuned": {
+    runId: s(ID),
+    kind: s(v.picklist(["find_best", "paired_ab"])),
+    role: s(ID),
+    model: s(ID),
+    host: s(ID),
+    setHash: s(SHA256, true),
+    candidates: s(
+      v.array(
+        v.strictObject({
+          id: ID,
+          values: SETTING_VALUES,
+          items: v.array(v.strictObject({ id: ID, score: SCORE, seconds: v.optional(MS) })),
+          score: v.optional(SCORE),
+          secondsPerItem: v.optional(MS),
+          failed: v.optional(COUNT),
+          passes: v.optional(v.boolean()),
+        }),
+      ),
+    ),
+    rungs: s(v.array(v.strictObject({ items: COUNT, candidates: v.array(ID) })), true),
+    incumbent: s(ID, true),
+    survivor: s(ID, true),
+    comparison: s(v.strictObject({ better: COUNT, worse: COUNT, ties: COUNT, p: SCORE }), true),
+    wilcoxonP: s(SCORE, true),
+    verdict: s(v.picklist(["best", "cheaper", "no_clear_difference", "worse", "partial"])),
+    adopted: s(SETTING_VALUES, true),
+    partial: s(v.boolean()),
+    principal: s(PRINCIPAL, true),
   },
   // review-git RG-P8-14 (B4.8): the share of send-back reasons the AI review
   // caught before a person opened the issue, against R8's one in five.

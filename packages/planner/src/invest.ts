@@ -95,6 +95,7 @@ export function validateInvest(
   stories: readonly PlannedStory[],
   options: InvestOptions = {},
 ): InvestValidationReport {
+  // MD-N4-10: with no budget given, the window is the resolved Coding model's (read now).
   const budget = options.tierBudget ?? DEFAULT_TIER_BUDGET;
   const checks: InvestCheckResult[] = [];
   const mustResplit = new Set<string>();

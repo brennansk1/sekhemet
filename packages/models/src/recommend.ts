@@ -361,6 +361,8 @@ export interface RankedCombination<E extends CombinationEstimate = CombinationEs
   peakBytes: number;
   excluded?: string;
   estimate?: E;
+  /** Roles with no candidate (MD-N21-10): their floors are not met. */
+  unfilled?: ModelRole[];
 }
 
 const COMBO_ROLES: readonly ModelRole[] = MODEL_ROLES;
@@ -379,6 +381,13 @@ export function rankCombinations<E extends CombinationEstimate>(input: {
   limit?: number;
 }): RankedCombination<E>[] {
   const roles = COMBO_ROLES.filter((r) => (input.roles[r] ?? []).length > 0);
+  // MD-N21-10 (FINDINGS CFG-03): a role given with no candidate is unfilled,
+  // so no combination meets every floor; with no candidate anywhere there is
+  // no combination at all (`[].every()` is true, which promised a phantom).
+  const unfilled = COMBO_ROLES.filter(
+    (r) => input.roles[r] !== undefined && input.roles[r]?.length === 0,
+  );
+  if (roles.length === 0) return [];
   const out: RankedCombination<E>[] = [];
   const limit = input.limit ?? 500;
   const walk = (i: number, acc: RoleCombination, picked: CombinationCandidate[]) => {
@@ -388,7 +397,7 @@ export function rankCombinations<E extends CombinationEstimate>(input: {
       const worker = byRole.get("worker");
       const reviewer = byRole.get("reviewer");
       const peak = Math.max(0, ...picked.map((p) => p.footprintBytes));
-      const floorsMet = picked.every((p) => p.floorOk);
+      const floorsMet = unfilled.length === 0 && picked.every((p) => p.floorOk);
       const noFit = roles.find((r) => byRole.get(r)?.fits === "no");
       let excluded: string | undefined;
       if (noFit) excluded = `${byRole.get(noFit)?.id} does not fit this machine for the ${noFit}`;
@@ -402,6 +411,7 @@ export function rankCombinations<E extends CombinationEstimate>(input: {
         combination,
         floorsMet,
         peakBytes: peak,
+        ...(unfilled.length ? { unfilled: [...unfilled] } : {}),
         ...(excluded ? { excluded } : { estimate: input.estimate(combination) }),
       });
       return;

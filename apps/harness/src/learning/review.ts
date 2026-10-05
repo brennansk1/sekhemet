@@ -8,6 +8,7 @@ import {
   type InferenceRequest,
   type InferenceResponse,
   type LocalInferenceAdapter,
+  type ModelRegistry,
   REASONING_BUDGET_TOKENS,
   extractJsonObject,
 } from "@sekhemet/models";
@@ -233,11 +234,31 @@ export const REVIEW_ANSWER_TOKENS = 1_200;
  */
 export const REVIEW_THINKING_TOKENS = REASONING_BUDGET_TOKENS.high;
 
-/** What every Reviewer request asks of reasoning: none, with its thinking cap stated. */
+/** What a Reviewer request asks of reasoning when the Review role sets nothing: none, its cap stated. */
 const REVIEW_REASONING: Pick<InferenceRequest, "reasoning" | "reasoningBudgetTokens"> = {
   reasoning: "off",
   reasoningBudgetTokens: REVIEW_THINKING_TOKENS,
 };
+
+/**
+ * What this model's review requests ask of reasoning (R3c; models
+ * MD-N21-7): the Review role's level and thinking cap from the registry the
+ * adapter reads (`ModelEntry.roleSettings.reviewer`, NEW-models-21), so
+ * gpt-oss-20b can review at medium with a larger cap; with none set, none,
+ * at the high budget.
+ */
+export function reviewReasoning(
+  model: Pick<LocalInferenceAdapter, "modelId">,
+): Pick<InferenceRequest, "reasoning" | "reasoningBudgetTokens"> {
+  const registry = (model as { registry?: ModelRegistry }).registry;
+  const set = registry?.roleSettings?.(model.modelId, "reviewer")?.values;
+  if (!set || (set.reasoningLevel === undefined && set.reasoningCapTokens === undefined))
+    return REVIEW_REASONING;
+  return {
+    reasoning: set.reasoningLevel ?? "off",
+    reasoningBudgetTokens: set.reasoningCapTokens ?? REVIEW_THINKING_TOKENS,
+  };
+}
 
 /**
  * The thinking room a request reserves in the window: what the adapter
@@ -245,11 +266,17 @@ const REVIEW_REASONING: Pick<InferenceRequest, "reasoning" | "reasoningBudgetTok
  * or the whole stated cap when the adapter does not say.
  */
 export function reviewThinkingReserve(
-  model: Pick<LocalInferenceAdapter, "thinkingAllowance">,
+  model: Pick<LocalInferenceAdapter, "thinkingAllowance"> &
+    Partial<Pick<LocalInferenceAdapter, "modelId">>,
 ): number {
+  // The adapter itself, never a copy: its registry is a getter on the class.
+  const asked =
+    model.modelId !== undefined
+      ? reviewReasoning(model as Pick<LocalInferenceAdapter, "modelId">)
+      : REVIEW_REASONING;
   return model.thinkingAllowance
-    ? Math.max(0, model.thinkingAllowance(REVIEW_REASONING))
-    : REVIEW_THINKING_TOKENS;
+    ? Math.max(0, model.thinkingAllowance(asked))
+    : (asked.reasoningBudgetTokens ?? REVIEW_THINKING_TOKENS);
 }
 
 /**
@@ -536,7 +563,7 @@ export async function reviewCard(
       toolArm: "arm_b_json",
       temperature: 0,
       maxTokens: REVIEW_ANSWER_TOKENS,
-      ...REVIEW_REASONING,
+      ...reviewReasoning(model),
       role: "reviewer",
     });
     requests++;

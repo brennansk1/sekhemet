@@ -92,7 +92,7 @@ import { plural } from "@sekhemet/ui";
 import { airgapSkillApproval, approveVerifiedSkill } from "./airgap.js";
 import { afterDoneCardZero } from "./card_zero.js";
 import { effectiveConfig, queueDefaults } from "./config_apply.js";
-import { pendingM0, recordM0Pending } from "./m0_path.js";
+import { pendingM0, recordM0Pending, recordWorkerAdopted } from "./m0_path.js";
 import { resolvedWorkerWindowTokens } from "./model_access.js";
 import {
   approveCommand,
@@ -545,6 +545,12 @@ export async function queuePrelude(
      * the pass does not start.
      */
     workerRefusal?: string | undefined;
+    /**
+     * The other roles left out of this pass because their combination is not
+     * verified (MD-N8-1, `verifiedQueues`), each a line naming why, its
+     * command and its fallback (rule 23); said before the pass.
+     */
+    roleRefusals?: readonly string[];
     reviewWip?: number;
     print?: (line: string) => void;
     now?: Date;
@@ -564,6 +570,8 @@ export async function queuePrelude(
 
   // MD-N8-1: refuse a Worker whose combination has not qualified on this host.
   if (options.workerRefusal) throw new Error(options.workerRefusal);
+  // MD-N8-1, rule 23: every other unverified role is named with its fallback.
+  for (const line of options.roleRefusals ?? []) say(line);
   // M15: refuse a worker measured below the overnight floor.
   // MD-N2-1: named measured and required rates; read from this host's profile only (MD-N1-3).
   if (options.workerModelId) {
@@ -1217,6 +1225,12 @@ export async function runDevCommand(
             ...(bakeOff ? { bakeOff: bakeOff.id } : {}),
           },
         });
+        // CFG-04, MS-M9-6: a Coding model adopted by assignment owes its M0.
+        if (role === "worker")
+          await recordWorkerAdopted(k.log, {
+            worker: r.assignment.model,
+            combination: describeCombination(combination),
+          });
         return done(
           `${role}: ${r.assignment.model} assigned (${scope})${r.previous ? `, replacing ${r.previous.model}; restore it with: sekhemet models restore ${role}${scope === "personal" ? "" : ` --${scope}`}` : ""}.`,
           0,
@@ -1260,8 +1274,23 @@ export async function runDevCommand(
             `Refusing the override: "${by}" names a model, not a person. A person records an override (models rule 27).`,
             1,
           );
+        // A person's override is the role's (MD-N8-1): the Coding model's by default.
+        const overrideRoleFlag = flag(args, "--role");
+        const overrideRole =
+          overrideRoleFlag === undefined
+            ? "worker"
+            : MODEL_ROLES.find((r) => r === overrideRoleFlag);
+        if (!overrideRole)
+          return done(
+            'Usage: sekhemet qualify --override <model> [--role <worker|planner|reviewer|researcher>] --by "<person>" --reason "<text>"',
+            1,
+          );
         const a = (io.model as (n: string) => LocalInferenceAdapter)(name);
-        const combination = qualificationCombination(a, { ...io.combinationDeps, registry });
+        const combination = qualificationCombination(a, {
+          ...io.combinationDeps,
+          registry,
+          role: overrideRole,
+        });
         let recorded: ReturnType<ModelRegistry["recordQualificationOverride"]>;
         try {
           recorded = registry.recordQualificationOverride(
@@ -1316,11 +1345,11 @@ export async function runDevCommand(
           const combination = qualificationCombination(a, forRole);
           // An override runs, and says so; the failure it overrides is still shown.
           const look = registry.lookupQualification(a.modelId, combination);
-          // An override is the Coding model's only (rule 27, MD-N4-4).
+          // A person's override is honoured per role (rule 27, MD-N4-4, MD-N8-1).
           const why =
             role === "worker"
               ? qualificationRefusal(registry, a, combination, n)
-              : look.status === "qualified"
+              : look.status === "qualified" || look.status === "overridden"
                 ? undefined
                 : `${a.modelId} is not verified on this machine${roleWords} (${look.status}: ${look.reason}). Verify it with: sekhemet qualify --models ${n}${roleFlagText}`;
           refused ||= why !== undefined;

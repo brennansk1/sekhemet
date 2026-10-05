@@ -1,0 +1,19 @@
+{
+  "role": "reviewer",
+  "version": "1",
+  "capSeconds": 30,
+  "source": "reviewer-seeded-defects",
+  "chosenBy": "C3-4, measurement rule 31 (FINDINGS CFG-17): ten defects drawn from the registered seeded-defect asset (review-git RG-P8-13), at most two from one issue, across the three fixtures it covers, each a different kind of miss: a missing audit, an order, a prefix, a zero bound, a digit count, a case, an integer check, a length, a size and a no-op. Each is reviewed as the product builds a review's input; a cited unmet finding within 3 lines of a changed line scores 1, anything else 0, a failed review 0 with its reason.",
+  "items": [
+    { "id": "onyx-vault-get-audit-missing" },
+    { "id": "onyx-scanner-signature-order" },
+    { "id": "onyx-scanner-asia-prefix" },
+    { "id": "onyx-injector-timeout-zero" },
+    { "id": "vanguard-hmac-timestamp-digits" },
+    { "id": "vanguard-replay-hop-case" },
+    { "id": "vanguard-store-limit-integer" },
+    { "id": "vanguard-ingest-source-length" },
+    { "id": "basalt-dag-edge-height" },
+    { "id": "basalt-store-gate-noop" }
+  ]
+}

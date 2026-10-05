@@ -1,6 +1,6 @@
 # Provenance and licence register
 
-Two registers the build maintains. This file is canonical; the design links here rather than keeping a copy. This file is read by code, not only by people:
+Three registers the build maintains. This file is canonical; the design links here rather than keeping a copy. This file is read by code, not only by people:
 
 - `sekhemet register check` and `apps/harness/tests/registers.spec.ts` fail when a table below is malformed, a technique has no public source, or a dependency of this repository has a licence that is neither permissive nor listed under **Licences**.
 - The `licenses` gate (`apps/harness/src/license_gate.ts`) runs beside every card's gates. A card that adds a dependency whose licence is not permissive fails verification unless that component is listed under **Licences** with its licence.
@@ -116,3 +116,29 @@ Components the harness depends on, reimplements, calls as a separate program, or
 | Webhook tunnels (smee-client; cloudflared) | ISC; Apache-2.0 | Not used: proposals for webhook ingress on a laptop (integrations §7). If removed: webhooks only on a reachable server |
 
 Licences were re-checked on 2026-09-22 against each project's licence file, through GitHub's licence API and, where it could not classify the file (Serena, bubblewrap, jq, Gotify, pypdfium2, devpi, the MCP SDK, MADR, Taskmaster), by reading the file itself; rows marked "not re-checked" keep their 2026-09-17 value. The dependencies of this repository are also checked against their installed `package.json` by the test above.
+
+## Model weights and engine
+
+The shipped models' weights and the engine images the Team server runs ([models](../design/specs/models.md) rules 3, 4, 8a and 26a; [DEC-47](../design/DECISIONS.md#dec-47--the-finish-line-decisions) O-5). Each row was verified on 2026-10-04 (C3): a model's SHA-256 and size from the hub's tree API (the file's LFS hash), its licence from the model card (`cardData.license`), and the hash cross-checked against the reference host's registry or its copy; an image's digest from its registry's manifest. The source table in code (`SHIPPED_MODELS`, `packages/models/src/shipped_models.ts`) holds the same values, and `apps/harness/tests/registers.spec.ts` fails when a row is missing or differs. The weights are downloaded only on a person's explicit ask (`sekhemet models fetch`, **Download…**), never bundled.
+
+| Model or engine | Role | Repository or image | File or tag | SHA-256 or digest | Licence |
+| --- | --- | --- | --- | --- | --- |
+| nail-mtp (Nail-Qwen3.6-35B-A3B MTP, UD-IQ3_XXS, 14,069,275,872 bytes) | Coding | `peculiar-ragdoll/Nail-Qwen3.6-35B-A3B-GGUF-MTP` | `Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS.gguf` | `6275d06c6e1b0d0a4e07a69a5fbdc719dbaeaae87bc48e6c8377f4cd58ec369c` | Apache-2.0 |
+| Qwen3.8-27B GSQ-RCO (IQ3_S with MTP head, 12,120,016,960 bytes) | Planning | `ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF` | `Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf` | `58fd826723939933dc86f45b7fe04545cbc2de1c70f6fe2cdd3858c87a98c12f` | Apache-2.0 |
+| Apodex-1.1-mini (IQ3_M, 16,022,990,656 bytes; a quantisation of `apodex/Apodex-1.1-mini`, Apache-2.0) | Research | `abenzerps/Apodex-1.1-mini-GGUF` | `Apodex-1.1-mini-IQ3_M.gguf` | `8620c43276492c59be49269b0cce52ca4f6698c73154751274fa73eb831fb38a` | Apache-2.0 |
+| Cyber-Tiel-Coder-35B-A3B MTP (UD-IQ3_XXS, 13,600,579,904 bytes) | Measurement baseline (DEC-04), not shipped | `peculiar-ragdoll/Cyber-Tiel-Coder-35B-A3B-GGUF-MTP` | `Cyber-Tiel-Coder-35B-A3B-MTP-UD-IQ3_XXS.gguf` | `d60adb32312166b49ceffbd10aed297aee69626b45ec4e720700450ee048bd0e` | MIT |
+| llama.cpp server, CUDA (b10818) | Team server engines (default) | `ghcr.io/ggml-org/llama.cpp` | `server-cuda-b10818` | `sha256:e61f29b37c471f956a772f91f4e9952d29f237e5d1a1a748e14421aae090305f` | MIT |
+| llama.cpp server, Vulkan (b10818) | Team server engines | `ghcr.io/ggml-org/llama.cpp` | `server-vulkan-b10818` | `sha256:d14e49d20a4baf070cedcafbf32388ab1ff809f52fb7ec950371fba01a13c0bd` | MIT |
+| llama.cpp server, CPU (b10818) | Team server engines | `ghcr.io/ggml-org/llama.cpp` | `server-b10818` | `sha256:1394ab6c8e418859b282ff5a38a218ab318b2b4de8848c611b92e92017d6d8e4` | MIT |
+| oauth2-proxy v7.15.5 | Team server identity proxy | `quay.io/oauth2-proxy/oauth2-proxy` | `v7.15.5` | `sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916` | MIT |
+| Node.js base image (`node:24-bookworm-slim`) | Team server image base | `docker.io/library/node` | `24-bookworm-slim` | `sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6` | MIT (Node.js); the Debian packages under their own licences |
+
+The Review role has no row: it is unfilled until a model is admitted for it (RG-P8-13). llama.cpp b10818 is the first container build published at or above the shipped set's engine floor (b10809, the build the Coding and Planning models qualified on; it has no container image). The engine release a person downloads on a laptop (*Get the inference engine*, models rule 6b) is pinned separately, with its assets and hashes, in the table below.
+
+The llama.cpp release *Get the inference engine* and `sekhemet engine get` download (models rule 6b, NEW-models-19): the build the shipped set qualified on (b10809, the floor). Each asset's SHA-256 and size are the digests GitHub's release API publishes for the tag `b10809` of `ggml-org/llama.cpp`, read on 2026-10-04 (C3); the source table in code (`ENGINE_PIN`, `packages/models/src/inference_engine.ts`) holds the same values, and `packages/models/tests/engine.spec.ts` fails when a row is missing or differs. Downloaded only on a person's yes, never bundled.
+
+| Engine asset | Platform (backend) | Release | File | SHA-256 | Size (bytes) | Licence |
+| --- | --- | --- | --- | --- | --- | --- |
+| llama.cpp b10809, macOS | macOS arm64 (Metal) | `ggml-org/llama.cpp` `b10809` | `llama-b10809-bin-macos-arm64.tar.gz` | `7d692df9e1e386e62f1c12b843903218041e6cd74c9415aa39a7ed3176f9eaa2` | 11,123,196 | MIT |
+| llama.cpp b10809, Linux CPU | Linux x64 (CPU) | `ggml-org/llama.cpp` `b10809` | `llama-b10809-bin-ubuntu-x64.tar.gz` | `5e34434ddc6d03cd1584f403201aff0d4bd1a5793a72ff7e286532dfd1e4b941` | 16,734,586 | MIT |
+| llama.cpp b10809, Linux Vulkan | Linux x64 (Vulkan) | `ggml-org/llama.cpp` `b10809` | `llama-b10809-bin-ubuntu-vulkan-x64.tar.gz` | `07f029cef440c82c3cff5310641eb6347e5cbcd865a5d88990215058aa049e93` | 33,799,345 | MIT |

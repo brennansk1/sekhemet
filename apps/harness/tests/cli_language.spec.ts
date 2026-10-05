@@ -248,10 +248,12 @@ describe("DB-N7-4, the CLI and the server: what they say uses DEC-31's words", (
   });
 
   it("names the roles by their DEC-31 names in the machine's roster note", () => {
-    expect([16, 48, 128].map((gb) => recommendRoster(gb * 1024 ** 3).note)).toEqual([
-      "One large model at a time: the Coding model stays resident; the Planning, Review and Research models swap in by role batch.",
-      "The Coding and Planning models resident together; the Review and Research models swap in.",
-      "All four roles stay resident; use the Q8_0 Research model (SEKHEMET_RESEARCHER_GGUF).",
+    // Models rule 8a (MD-N22-2): the notes are SUPPORTED_HARDWARE's; under 24 GB, rule 6c's.
+    expect([16, 24, 48, 128].map((gb) => recommendRoster(gb * 1024 ** 3).note)).toEqual([
+      "v1 supports 24 GB of memory and above; you may continue at your own risk. The shipped models do not fit in this much memory.",
+      "One large model at a time: the roles swap.",
+      "Coding and Planning resident together; Research swaps.",
+      "Every shipped role resident.",
     ]);
   });
 });

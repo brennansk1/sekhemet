@@ -18,8 +18,10 @@ import {
   type ItemRun,
   type OvernightRunner,
   type RunProfile,
+  type RunSettings,
   type ScreenRunner,
   type ScreeningItem,
+  type SettingsCombination,
   loadAssetManifest,
   prepareIndependentCard,
   seededCards,
@@ -36,6 +38,7 @@ import { runConfined } from "@sekhemet/sandbox";
 import { gitEnvFor } from "@sekhemet/sync";
 import { type ExecutionContext, executeCard } from "./execute.js";
 import { reviewCard } from "./learning/review.js";
+import { type SeededDefect, loadSeededDefects, reviewSeededItem } from "./learning/review_eval.js";
 
 /**
  * The runner that drives real work for the combination benchmark
@@ -59,9 +62,91 @@ import { reviewCard } from "./learning/review.js";
  *   card's acceptance criteria; a send-back fails it) (MS-N5-7).
  *
  * The caller wraps every use in `withMeasurementRun` (DEC-45); `release`
- * unloads what this runner loaded. The Planner's, Reviewer's and
- * Researcher's screening items are not built yet (rule 30a) and are refused.
+ * unloads what this runner loaded. The Reviewer's items are seeded defects,
+ * reviewed as the product builds a review's input (MS-N8-5); the Planner's
+ * and Researcher's are not built yet (rule 30a) and are refused.
+ *
+ * A combination's settings (rule 39, MS-N8-1) apply to the run only:
+ * temperature on every request and the reasoning level and cap through the
+ * role's settings as the adapter's registry reads them (`withRunSettings`),
+ * the thinking policy, working method, evidence check and step budget
+ * through the run's `RunProfile` (`profileWithSettings`). Nothing is written
+ * to the registry.
  */
+
+/**
+ * The adapter a run uses with its role's run-level settings (rule 39): the
+ * same adapter — its server, its registry, its health — with temperature set
+ * on every request, the tool arm it offers, and the role's reasoning level
+ * and thinking cap as `roleSettings` reads them (the Reviewer's
+ * `reviewReasoning`). No settings: the adapter itself.
+ */
+export function withRunSettings(
+  adapter: LocalInferenceAdapter,
+  role: ModelRole,
+  values: RunSettings | undefined,
+): LocalInferenceAdapter {
+  if (!values || Object.keys(values).length === 0) return adapter;
+  const reasoning = {
+    ...(values.reasoningLevel !== undefined ? { reasoningLevel: values.reasoningLevel } : {}),
+    ...(values.reasoningCapTokens !== undefined
+      ? { reasoningCapTokens: values.reasoningCapTokens }
+      : {}),
+  };
+  const target = adapter as LocalInferenceAdapter & {
+    registry?: { roleSettings?: (id: string, r: ModelRole) => unknown };
+  };
+  const overlay = (real: typeof target.registry) => ({
+    roleSettings(id: string, r: ModelRole) {
+      const had = real?.roleSettings?.(id, r) as
+        | { values: Record<string, unknown>; by: string; at: string }
+        | undefined;
+      if (r !== role || Object.keys(reasoning).length === 0) return had;
+      return {
+        values: { ...(had?.values ?? {}), ...reasoning },
+        by: had?.by ?? "benchmark",
+        at: had?.at ?? new Date(0).toISOString(),
+      };
+    },
+  });
+  return new Proxy(target, {
+    get(t, prop) {
+      if (prop === "generate")
+        return (req: Parameters<LocalInferenceAdapter["generate"]>[0]) =>
+          t.generate({
+            ...req,
+            ...(values.temperature !== undefined ? { temperature: values.temperature } : {}),
+          });
+      if (prop === "registry") return overlay(t.registry);
+      if (prop === "preferredToolArm" && values.toolArm && values.toolArm !== "auto")
+        return values.toolArm;
+      const v = Reflect.get(t, prop, t);
+      return typeof v === "function" ? v.bind(t) : v;
+    },
+  });
+}
+
+/** A run's `RunProfile` with its role's run-level settings (rule 39) and its seed. */
+export function profileWithSettings(
+  profile: RunProfile,
+  values: (RunSettings & { seed?: number }) | undefined,
+): RunProfile {
+  if (!values) return profile;
+  return {
+    ...profile,
+    policies: {
+      ...profile.policies,
+      ...(values.stepBudget !== undefined ? { stepCap: values.stepBudget } : {}),
+    },
+    switches: {
+      ...profile.switches,
+      ...(values.reasoningPolicy !== undefined ? { thinking: values.reasoningPolicy } : {}),
+      ...(values.method !== undefined ? { workerMethod: values.method } : {}),
+      ...(values.evidenceGate !== undefined ? { evidenceGate: values.evidenceGate } : {}),
+      ...(values.seed !== undefined ? { seed: values.seed } : {}),
+    },
+  };
+}
 
 export interface SuiteRunnerDeps {
   /** The harness checkout: its fixtures, reference solutions, seeders and node_modules. */
@@ -362,18 +447,39 @@ export function suiteScreenRunner(deps: SuiteRunnerDeps): ScreenRunner {
       await a.healthCheck?.();
       return { seconds: (now() - t) / 1000 };
     },
-    async runItem({ role, model, item, capSeconds }): Promise<ItemRun> {
+    async runItem({ role, model, item, capSeconds, settings }): Promise<ItemRun> {
+      if (role === "reviewer") {
+        if (!item.seeded || !item.fixture || !item.card)
+          throw new Error(`${item.id} is not a seeded defect: the Reviewer's items are (MS-N8-5)`);
+        const reviewer = withRunSettings(await loaded.get(role, model), role, settings);
+        const t = now();
+        const score = await reviewSeededItem(
+          deps.harnessRoot,
+          { id: item.id, fixture: item.fixture, card: item.card, ...item.seeded },
+          reviewer,
+        );
+        const seconds = Math.round((now() - t) / 100) / 10;
+        return {
+          outcome: {
+            kind: "detection",
+            detectedAtLocation: score.caught,
+            falseFindings: score.falsePositives,
+          },
+          seconds,
+          ...(score.failed !== undefined ? { stopReason: "review_failed" } : {}),
+        };
+      }
       if (role !== "worker")
         throw new Error(
           `the ${role}'s screening items are not run by this runner until its set is built (rule 30a)`,
         );
-      const worker = await loaded.get(role, model);
+      const worker = withRunSettings(await loaded.get(role, model), role, settings);
       return withCardRepo(deps, item.id, item, async (repo, cardId) => {
         const r = await runSuiteCard(deps, {
           repo,
           cardId,
           worker,
-          runProfile: deps.runProfile(),
+          runProfile: profileWithSettings(deps.runProfile(), settings),
           secondsBudget: capSeconds,
           ...(item.tests !== undefined ? { expectedTests: item.tests } : {}),
         });
@@ -399,14 +505,23 @@ export function suiteScreenRunner(deps: SuiteRunnerDeps): ScreenRunner {
           db.close();
         }
         if (!record) throw new Error(`${cardId} is not on the prepared board`);
-        const planner = await loaded.get("planner", combination.planner, true);
+        const settings = (combination as SettingsCombination).settings ?? {};
+        const planner = withRunSettings(
+          await loaded.get("planner", combination.planner, true),
+          "planner",
+          settings.planner,
+        );
         const guidance = await plannerPlan(planner, record.spec ?? "", record.title);
-        const worker = await loaded.get("worker", combination.worker, true);
+        const worker = withRunSettings(
+          await loaded.get("worker", combination.worker, true),
+          "worker",
+          settings.worker,
+        );
         const r = await runSuiteCard(deps, {
           repo,
           cardId,
           worker,
-          runProfile: deps.runProfile(combination),
+          runProfile: profileWithSettings(deps.runProfile(combination), settings.worker),
           secondsBudget: capSeconds,
           guidance,
           ...(card.tests !== undefined ? { expectedTests: card.tests } : {}),
@@ -414,7 +529,11 @@ export function suiteScreenRunner(deps: SuiteRunnerDeps): ScreenRunner {
         let sentBack = false;
         let reviewFailed: string | undefined;
         if (r.passed && combination.reviewer) {
-          const reviewer = await loaded.get("reviewer", combination.reviewer, true);
+          const reviewer = withRunSettings(
+            await loaded.get("reviewer", combination.reviewer, true),
+            "reviewer",
+            settings.reviewer,
+          );
           let diff = "";
           try {
             // The card's worktree: the guarded git environment, no external diff or textconv (items 19, 20).
@@ -467,18 +586,43 @@ export function suiteScreenRunner(deps: SuiteRunnerDeps): ScreenRunner {
 export function suiteOvernightRunner(deps: SuiteRunnerDeps): OvernightRunner {
   const loaded = new Loaded(deps);
   const now = deps.now ?? (() => Date.now());
+  let defects: SeededDefect[] | undefined;
   return {
     async swapTo(combination) {
       await loaded.get("worker", combination.worker, true);
     },
     async runCard({ combination, card, run, seed, deadline }) {
+      const settings = (combination as SettingsCombination).settings ?? {};
+      if (card.role === "reviewer" && combination.reviewer) {
+        // The Reviewer's full set: every registered seeded defect (MS-N8-5).
+        defects ??= loadSeededDefects(deps.harnessRoot).items;
+        const d = defects.find((x) => x.id === card.id);
+        if (!d) throw new Error(`${card.id} is not in the registered seeded-defect set`);
+        const reviewer = withRunSettings(
+          await loaded.get("reviewer", combination.reviewer, true),
+          "reviewer",
+          settings.reviewer,
+        );
+        const t = now();
+        const score = await reviewSeededItem(deps.harnessRoot, d, reviewer);
+        deps.log?.(
+          `overnight run ${run}: ${card.id} ${score.failed !== undefined ? `review failed (${score.failed})` : score.caught ? "caught" : "missed"}`,
+        );
+        return { passed: score.caught, seconds: Math.round((now() - t) / 100) / 10 };
+      }
       if (card.role !== "worker")
         throw new Error(
           `the ${card.role}'s full evaluation set is not run by this runner yet (rule 30a)`,
         );
-      const worker = await loaded.get("worker", combination.worker);
-      const base = deps.runProfile(combination);
-      const profile: RunProfile = { ...base, switches: { ...base.switches, seed } };
+      const worker = withRunSettings(
+        await loaded.get("worker", combination.worker, true),
+        "worker",
+        settings.worker,
+      );
+      const profile = profileWithSettings(deps.runProfile(combination), {
+        ...settings.worker,
+        seed,
+      });
       const left =
         deadline !== undefined ? Math.max(1, Math.floor((deadline - now()) / 1000)) : undefined;
       return withCardRepo(deps, card.id, undefined, async (repo, cardId) => {

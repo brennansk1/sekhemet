@@ -1,36 +1,64 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { freemem, homedir, platform, tmpdir, totalmem } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { EventLog } from "@sekhemet/kernel";
 import {
+  type EngineStatus,
+  HttpInferenceAdapter,
+  type LocalInferenceAdapter,
+  MEASUREMENT_BASELINE,
   MODEL_ROLES,
+  ManagedLlamaServerAdapter,
   ModelRegistry,
   type ModelRole,
   ROLE_WORDS,
+  SHIPPED_MODELS,
   type WeightsReport,
   classifyMemoryPressure,
   currentAssignment,
+  engineStatus,
   hostFingerprintHash,
   isOllamaCloudTag,
   managedModelWeights,
   ollamaCloudRefusal,
   probeModelWeights,
   readKernelPressureLevel,
+  sekhemetConfigDir,
+  sha256File,
+  supportedTierFor,
 } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { plural } from "@sekhemet/ui";
 import { userConfigPath } from "./config.js";
-import { effectiveConfig, networkConfigs, queueDefaults } from "./config_apply.js";
+import {
+  defaultWorkerName,
+  effectiveConfig,
+  networkConfigs,
+  queueDefaults,
+} from "./config_apply.js";
 import { configUpgradeCheck } from "./config_upgrade.js";
 import { toolProbeOptions } from "./init.js";
 import { pendingM0InRepo } from "./m0_path.js";
+import { describeModel, roleModelName } from "./model_access.js";
+import { setupFor } from "./planner_live.js";
 import { rolePromptVersions } from "./prompt_versions.js";
+import { type CombinationDeps, qualificationCombination } from "./qualify.js";
 import { checkRegisters } from "./registers.js";
 import { researchDoctorLines } from "./research_bakeoff.js";
 import { awaitingResearchHosts } from "./research_consent.js";
 import { secretStoreStatus } from "./secret_store.js";
+import { type TeamEnginesReport, checkTeamEngines } from "./team_engines.js";
 import { readMoveRecord, userDir } from "./user_dir.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { playbookDoctorCheck } from "./wave2.js";
@@ -320,7 +348,19 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
 
   const checks: DiagnosticCheck[] = [
     memoryCheck(pressure, free, total, gb),
+    // Rule 6c, MD-N16-3: the memory floor v1 supports.
+    memoryFloorCheck(total),
+    // Rules 6a and 6b: which engine, where it came from, its build against the floor.
+    engineDoctorCheck(),
     weightsCheck(),
+    // Rule 5, MD-N7-2: each weights file's hash against the registered one.
+    await weightsHashCheck(),
+    // MD-N8-1: each assigned role verified for its combination on this machine.
+    roleQualificationCheck(hostRegistry(), { repoPath }),
+    // Rule 6d, MD-N16-4: which roles Ollama serves, in the README's words.
+    ollamaRolesCheck(roleEngines(repoPath)),
+    // MD-N15-3: on the Team server, each filled role's engine answers and matches.
+    ...(setupFor(repoPath) === "team" ? [teamEnginesCheck(await checkTeamEngines())] : []),
     // Ollama, the managed Worker server (cyber-tiel, 8098) and the legacy 8099.
     await probeInference([
       "http://127.0.0.1:11434",
@@ -597,4 +637,307 @@ function registersCheck(repoPath: string): DiagnosticCheck {
         detail: "the provenance and research records are valid",
       }
     : { name: "Project records", status: "warn", detail: problems.slice(0, 3).join("; ") };
+}
+
+// ── the first hour's rows (models rules 5, 6a–6d; MD-N7-2, MD-N8-1, MD-N15-3) ──
+
+/** A detail that is not a pass, ending with its next step (SUR-62, NEW-surface-8). */
+function withDo(detail: string, step: string): string {
+  const end = (t: string) => (/[.!?]$/.test(t) ? t : `${t}.`);
+  return `${end(detail)} Do: ${end(step)}`;
+}
+
+/**
+ * The inference engine (rules 6a, 6b; MD-N16-1, MD-N16-2, MD-N19-5): which
+ * llama-server is used, where it came from and its build against the floor;
+ * missing or below it, a fail naming this platform's first fix.
+ */
+export function engineDoctorCheck(s: EngineStatus = engineStatus()): DiagnosticCheck {
+  if (s.engine && s.meetsFloor) return check("Inference engine", "pass", s.line);
+  return check(
+    "Inference engine",
+    "fail",
+    withDo(s.line, s.fixes[0] ?? "install llama.cpp's llama-server"),
+  );
+}
+
+/**
+ * The memory floor (rule 6c, MD-N16-3; DEC-47 O-5): v1 supports 24 GB of
+ * memory and above, read from `SUPPORTED_HARDWARE`; below it a warning, since
+ * the person may continue at their own risk.
+ */
+export function memoryFloorCheck(totalBytes: number = totalmem()): DiagnosticCheck {
+  const t = supportedTierFor(totalBytes);
+  const gb = Math.round(totalBytes / 1024 ** 3);
+  if (!t.supported)
+    return check(
+      "Memory floor",
+      "warn",
+      withDo(
+        `${gb} GB installed; v1 supports 24 GB of memory and above, and the shipped models do not fit in this much`,
+        "use a machine with 24 GB or more; you may continue here at your own risk",
+      ),
+    );
+  return check(
+    "Memory floor",
+    "pass",
+    `${gb} GB installed; v1 supports 24 GB and above (tier ${t.tier}: ${t.residency})`,
+  );
+}
+
+/** The README's words for v1's engine (a test holds the two equal). */
+export const README_ENGINE =
+  "Local models only in v1, served by llama.cpp's `llama-server` (README)";
+
+export interface RoleEngine {
+  role: ModelRole;
+  model: string;
+  engine: "ollama" | "llama.cpp" | "other";
+}
+
+const engineOf = (a: LocalInferenceAdapter): RoleEngine["engine"] =>
+  a instanceof ManagedLlamaServerAdapter
+    ? "llama.cpp"
+    : a instanceof HttpInferenceAdapter && a.api === "ollama"
+      ? "ollama"
+      : "other";
+
+/** The model each role resolves to on this machine, and the engine that serves it. */
+export function roleEngines(
+  repoPath: string,
+  registry: ModelRegistry | undefined = hostRegistry(),
+): RoleEngine[] {
+  if (!registry) return [];
+  let configured: ReturnType<typeof queueDefaults> = {};
+  try {
+    configured = queueDefaults(effectiveConfig(repoPath).config, []);
+  } catch {
+    // An unreadable configuration is the configuration check's to report.
+  }
+  const out: RoleEngine[] = [];
+  for (const role of MODEL_ROLES) {
+    const name =
+      roleModelName(role, undefined, { registry }) ??
+      (role === "worker"
+        ? (configured.worker ?? defaultWorkerName())
+        : role === "planner"
+          ? configured.manager
+          : undefined);
+    if (!name) continue;
+    try {
+      out.push({ role, model: name, engine: engineOf(describeModel(name, role, { registry })) });
+    } catch {
+      // A name the roster cannot resolve is the run's to refuse.
+    }
+  }
+  return out;
+}
+
+/**
+ * Ollama's role in v1 (rule 6d, MD-N16-4): the README names llama.cpp's
+ * llama-server as v1's engine, so a role an Ollama model serves is named as
+ * running outside that statement, in the README's words.
+ */
+export function ollamaRolesCheck(roles: readonly RoleEngine[]): DiagnosticCheck {
+  const on = roles.filter((r) => r.engine === "ollama");
+  if (on.length === 0)
+    return check("Ollama's roles", "pass", `${README_ENGINE}; no role runs on Ollama.`);
+  const which = on.map((r) => `the ${ROLE_WORDS[r.role]} (${r.model})`).join(" and ");
+  return check(
+    "Ollama's roles",
+    "warn",
+    withDo(
+      `${README_ENGINE}; Ollama serves ${which}, outside that statement`,
+      "assign a GGUF model to each on Configuration › Models, or run `sekhemet models assign <role> <model>`",
+    ),
+  );
+}
+
+/**
+ * Each role's verification for its combination on this machine (MD-N8-1):
+ * the Coding model as `run` and the queue resolve it, and every other role a
+ * person assigned. Read without writing: no re-verification is scheduled.
+ */
+export function roleQualificationCheck(
+  registry: ModelRegistry | undefined,
+  opts: {
+    repoPath?: string;
+    describe?: (name: string, role: ModelRole) => LocalInferenceAdapter;
+    deps?: CombinationDeps;
+    host?: string;
+    worker?: string;
+  } = {},
+): DiagnosticCheck {
+  if (!registry) return check("Role verification", "warn", "no model list on this host");
+  const host = opts.host ?? hostFingerprintHash();
+  const describe =
+    opts.describe ?? ((n: string, r: ModelRole) => describeModel(n, r, { registry }));
+  let configured: ReturnType<typeof queueDefaults> = {};
+  if (opts.repoPath)
+    try {
+      configured = queueDefaults(effectiveConfig(opts.repoPath).config, []);
+    } catch {
+      // The configuration check reports an unreadable file.
+    }
+  const lines: string[] = [];
+  let status: CheckStatus = "pass";
+  for (const role of MODEL_ROLES) {
+    const name =
+      role === "worker"
+        ? (opts.worker ??
+          roleModelName("worker", undefined, { registry, host }) ??
+          configured.worker ??
+          defaultWorkerName())
+        : roleModelName(role, undefined, { registry, host });
+    if (!name) continue;
+    let look: ReturnType<ModelRegistry["lookupQualification"]>;
+    try {
+      const adapter = describe(name, role);
+      const combination = qualificationCombination(adapter, {
+        ...opts.deps,
+        ...(opts.deps?.host ? {} : { host: () => host }),
+        registry,
+        role,
+      });
+      look = registry.lookupQualification(adapter.modelId, combination);
+    } catch (err) {
+      lines.push(
+        `${ROLE_WORDS[role]} ${name}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      status = role === "worker" ? "fail" : status === "fail" ? "fail" : "warn";
+      continue;
+    }
+    if (look.status === "qualified") lines.push(`${ROLE_WORDS[role]} ${name}: verified`);
+    else if (look.status === "overridden")
+      lines.push(`${ROLE_WORDS[role]} ${name}: runs under an override (${look.reason})`);
+    else {
+      const state = look.status === "missing" ? "missing" : `${look.status}: ${look.reason}`;
+      lines.push(
+        withDo(
+          `${ROLE_WORDS[role]} ${name}: not verified (${state})`,
+          `Verify it on Configuration › Models, or run \`sekhemet qualify --models ${name}${role === "worker" ? "" : ` --role ${role}`}\``,
+        ),
+      );
+      status = role === "worker" ? "fail" : status === "fail" ? "fail" : "warn";
+    }
+  }
+  return check("Role verification", status, lines.join("; "));
+}
+
+/**
+ * The Team server's engines (MD-N15-3): each filled role's engine answers and
+ * matches its profile, the unfilled Review role named, the footprint against
+ * the headroom; any role with no engine or a refused one fails, with its step.
+ */
+export function teamEnginesCheck(report: TeamEnginesReport): DiagnosticCheck {
+  const bad = report.engines.some((e) => e.state !== "ok") || report.footprint.fits === false;
+  const detail = report.lines.join(" ");
+  return bad
+    ? check(
+        "Team engines",
+        "fail",
+        withDo(
+          detail,
+          "start each engine service with its profile's arguments: `docker compose -f packaging/server/compose.yaml up` (docs/reference/INSTALL.md, For a team)",
+        ),
+      )
+    : check("Team engines", "pass", detail);
+}
+
+/** The shipped or baseline source hash of a registry id, for a file the registry has not hashed. */
+const shippedHash = (id: string): string | undefined =>
+  [...SHIPPED_MODELS, ...MEASUREMENT_BASELINE].find((m) => m.id === id)?.source?.sha256;
+
+/**
+ * Rule 5, MD-N7-2 (FINDINGS CFG-05): each weights file the registry records,
+ * and each managed file present, hashed and compared with its registered
+ * SHA-256 (the registry's, else its source's, else the shipped table's).
+ * A file's hash is kept by its path, size and modification time in the
+ * same cache the Configuration page keeps (`model-hashes.json`), so a 13 GB
+ * file is read once.
+ */
+export async function weightsHashCheck(
+  opts: {
+    registry?: ModelRegistry | undefined;
+    files?: readonly { modelId: string; path: string }[];
+    cachePath?: string;
+    hash?: (path: string) => Promise<string>;
+  } = {},
+): Promise<DiagnosticCheck> {
+  const registry = "registry" in opts ? opts.registry : hostRegistry();
+  const files =
+    opts.files ??
+    (() => {
+      try {
+        return managedModelWeights({ registry });
+      } catch {
+        return [];
+      }
+    })();
+  const cachePath = opts.cachePath ?? join(sekhemetConfigDir(), "model-hashes.json");
+  const hash = opts.hash ?? ((p: string) => sha256File(p));
+  const todo = new Map<string, { modelId: string; expected: string }>();
+  for (const e of registry?.list() ?? []) {
+    const path = registry?.preferredWeights(e.id, existsSync);
+    const expected = e.sha256 ?? e.source?.sha256;
+    if (path && expected) todo.set(path, { modelId: e.id, expected });
+  }
+  for (const f of files) {
+    if (todo.has(f.path) || !existsSync(f.path)) continue;
+    const e = registry?.get(f.modelId);
+    const expected = e?.sha256 ?? e?.source?.sha256 ?? shippedHash(f.modelId);
+    if (expected) todo.set(f.path, { modelId: f.modelId, expected });
+  }
+  if (todo.size === 0)
+    return check("Weights' hashes", "pass", "no registered model file on this machine to check");
+  let cache: Record<string, string> = {};
+  try {
+    cache = JSON.parse(readFileSync(cachePath, "utf8")) as Record<string, string>;
+  } catch {
+    // No cache yet.
+  }
+  let wrote = false;
+  const bad: string[] = [];
+  for (const [path, { modelId, expected }] of todo) {
+    let key: string;
+    try {
+      const st = statSync(path);
+      key = `${path}\0${st.size}\0${Math.round(st.mtimeMs)}`;
+    } catch {
+      continue;
+    }
+    let sha = cache[key];
+    if (!sha || !/^[0-9a-f]{64}$/.test(sha)) {
+      try {
+        sha = await hash(path);
+      } catch (err) {
+        bad.push(
+          `${modelId}: could not be read (${err instanceof Error ? err.message : String(err)})`,
+        );
+        continue;
+      }
+      cache[key] = sha;
+      wrote = true;
+    }
+    if (sha !== expected)
+      bad.push(
+        withDo(
+          `${modelId}: the file's hash differs from the registered one (${path})`,
+          `download it again on Configuration › Models, or run \`sekhemet models fetch ${modelId}\``,
+        ),
+      );
+  }
+  if (wrote)
+    try {
+      mkdirSync(dirname(cachePath), { recursive: true });
+      writeFileSync(cachePath, JSON.stringify(cache));
+    } catch {
+      // The cache is a convenience; a failed write only means hashing again.
+    }
+  if (bad.length) return check("Weights' hashes", "fail", bad.join("; "));
+  return check(
+    "Weights' hashes",
+    "pass",
+    `${plural(todo.size, "model file")} ${todo.size === 1 ? "matches its" : "match their"} registered SHA-256`,
+  );
 }

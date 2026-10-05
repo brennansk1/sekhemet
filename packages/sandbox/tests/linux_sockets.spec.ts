@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { type Server, createServer } from "node:net";
 import { platform, tmpdir, userInfo } from "node:os";
@@ -17,14 +18,16 @@ import type { SandboxOptions } from "../src/types.js";
 /**
  * Fix round F3 (W2b finding, security item 15, SEC-15): on Linux a Unix
  * socket is reached by its path, and bubblewrap cannot filter a connect by
- * path, so every socket that is not behind a mask stays reachable, with the
- * network granted or not; with the network granted, an abstract socket (no
- * path at all: X11's, some session buses') is reachable too, since the
- * command shares the host's network namespace. What a mount can deny, it
+ * path, so every socket that is not behind a mask stays reachable with the
+ * network off. With the network granted the command shares the host's
+ * network namespace, and with it the abstract sockets (no path at all: X11's,
+ * some session buses'), so the native engine's seccomp program then refuses
+ * creating any Unix socket, as srt's always does (B1). What a mount can deny, it
  * denies: the system bus, the container and VM daemons that are root on the
  * host, the smart-card daemon, terminal multiplexers' sockets and the key
- * agents in the home. srt's seccomp refuses creating any Unix socket, which
- * closes the rest under that engine. The argv checks run everywhere; the
+ * agents in the home. srt's seccomp refuses `socket(AF_UNIX)`, which closes
+ * the rest of the stream sockets under that engine; it allows a datagram
+ * socketpair, srt's residual (item 15). The argv checks run everywhere; the
  * runtime checks need Linux (R9, the Linux CI runner).
  */
 
@@ -150,13 +153,88 @@ describe("SEC-15: the host sockets a mount can hide", () => {
  * The behaviour, on Linux: a stand-in tmux server at the path `$TMUX` names,
  * outside the granted paths and outside /tmp, never sees a connection from
  * inside the sandbox, under either engine, with the network off or on. Under
- * srt no Unix socket can be made at all, so an unlisted path and an abstract
- * socket are refused too; under the native engine those two remain (item 15).
+ * srt `socket(AF_UNIX)` is refused, so an unlisted path and an abstract
+ * socket are refused a stream connect too. Under the native engine an
+ * abstract socket is refused with the network off by the empty namespace and
+ * with it on by its seccomp program; an unlisted path with the network off
+ * remains (item 15).
  */
 // argv cannot carry a NUL, so an abstract name travels as "@name" (ss's notation).
 const CONNECT = `const p=process.argv[1];const s=require('net').connect(p.startsWith('@')?'\\0'+p.slice(1):p);
 s.on('connect',()=>{console.log('CONNECTED');s.destroy();process.exit(0)});
 s.on('error',e=>{console.log('REFUSED '+e.code);process.exit(7)});`;
+
+/**
+ * The datagram probe (B1 review): Node has no Unix datagram sockets, so
+ * python3 plays both sides. Inside, every way to a Unix datagram socket is
+ * tried — `socket(AF_UNIX, SOCK_DGRAM)`, and `socketpair(AF_UNIX, …)` with
+ * SOCK_DGRAM and SOCK_RAW (which the kernel makes a datagram socket) — each
+ * by `sendto` and by `connect` then `send`. "SENT" is printed for every
+ * datagram the kernel accepted.
+ */
+const PYTHON = "/usr/bin/python3";
+const DGRAM_SEND = `import socket,sys
+def addr(t): return '\\0'+t[1:] if t.startswith('@') else t
+socks=[]
+try: socks.append(('socket',socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM)))
+except OSError as e: print('REFUSED socket',e.errno)
+for kind in (socket.SOCK_DGRAM,3):
+  try: socks.append(('pair%d'%kind,socket.socketpair(socket.AF_UNIX,kind)[0]))
+  except OSError as e: print('REFUSED pair%d'%kind,e.errno)
+for name,s in socks:
+  for t in sys.argv[1:]:
+    try: s.sendto(b'PROBE '+name.encode(),addr(t)); print('SENT sendto',name,t)
+    except OSError as e: print('NOT sendto',name,t,e.errno)
+    try: s.connect(addr(t)); s.send(b'PROBE '+name.encode()); print('SENT connect',name,t)
+    except OSError as e: print('NOT connect',name,t,e.errno)
+`;
+// The host's listener: binds each target, prints READY, then GOT for every datagram.
+const DGRAM_LISTEN = `import socket,sys,select
+socks=[]
+for t in sys.argv[1:]:
+  s=socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM); s.bind('\\0'+t[1:] if t.startswith('@') else t); socks.append(s)
+print('READY',flush=True)
+while True:
+  for s in select.select(socks,[],[])[0]: print('GOT',s.recv(256).decode(),flush=True)
+`;
+
+async function datagramProbe(
+  targets: string[],
+  send: (targets: string[]) => Promise<{ stdout: string; stderr: string }>,
+): Promise<{ sent: string[]; received: string[]; stdout: string }> {
+  expect(existsSync(PYTHON), "the datagram probe needs python3 at /usr/bin/python3").toBe(true);
+  const listener = spawn(PYTHON, ["-u", "-c", DGRAM_LISTEN, ...targets], {
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  let heard = "";
+  listener.stdout.on("data", (b: Buffer) => {
+    heard += b.toString();
+  });
+  try {
+    await new Promise<void>((ok, fail) => {
+      const t = setTimeout(() => fail(new Error("the datagram listener did not start")), 10_000);
+      listener.stdout.on("data", () => {
+        if (heard.includes("READY")) {
+          clearTimeout(t);
+          ok();
+        }
+      });
+      listener.once("exit", (code) => fail(new Error(`the datagram listener exited ${code}`)));
+    });
+    // The probe itself ran: some attempt must be reported, refused or not.
+    const result = await send(targets);
+    expect(result.stdout, result.stderr).toMatch(/REFUSED|SENT|NOT /);
+    // A datagram the kernel accepted arrives at once; give it a moment anyway.
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      sent: result.stdout.split("\n").filter((l) => l.startsWith("SENT")),
+      received: heard.split("\n").filter((l) => l.startsWith("GOT")),
+      stdout: result.stdout,
+    };
+  } finally {
+    listener.kill();
+  }
+}
 
 const ENGINES: { engine: SandboxEngine; runs: boolean }[] = [
   { engine: "native", runs: BWRAP },
@@ -206,18 +284,52 @@ for (const { engine, runs } of ENGINES) {
         expect(seen[sock]).toBe(0);
       });
 
-      // The native engine shares the host's network namespace when the
-      // network is granted, and with it the abstract namespace: item 15's residual.
-      it.skipIf(engine === "native" && allowNetwork)(
-        `cannot reach an abstract socket (network ${allowNetwork ? "on" : "off"})`,
-        async () => {
-          const name = `\0sek-abstract-${process.pid}`;
-          await listen(name);
-          const result = await connect(`@${name.slice(1)}`, allowNetwork);
-          expect(result.stdout).not.toContain("CONNECTED");
-          expect(seen[name]).toBe(0);
-        },
-      );
+      // Network off: the namespace is empty, and the abstract one with it.
+      // Network on: the host's namespace is shared, so the engine's seccomp
+      // program refuses creating a Unix socket at all (item 15, B1).
+      it(`cannot reach an abstract socket (network ${allowNetwork ? "on" : "off"})`, async () => {
+        const name = `\0sek-abstract-${process.pid}`;
+        await listen(name);
+        const result = await connect(`@${name.slice(1)}`, allowNetwork);
+        expect(result.stdout).not.toContain("CONNECTED");
+        expect(seen[name]).toBe(0);
+      });
+    }
+
+    // B1 review blocker: a datagram socket needs no connect, so a Unix
+    // socketpair's datagram end can sendto any host datagram socket. The
+    // native engine's network-granted program refuses that pair (seccomp.ts);
+    // with the network off the empty namespace hides every abstract name.
+    // srt's own filter allows the pair, so under srt only the network-off
+    // abstract case holds: its residual, security.md item 15.
+    const DGRAM_POSTURES = engine === "native" ? [false, true] : [false];
+    for (const allowNetwork of DGRAM_POSTURES) {
+      it(`cannot send a datagram to a host abstract socket (network ${allowNetwork ? "on" : "off"})`, async () => {
+        const probe = await datagramProbe([`@sek-dgram-${process.pid}`], (targets) =>
+          new ProcessSandbox({ engine }).execute(PYTHON, ["-c", DGRAM_SEND, ...targets], {
+            allowedPaths: [work],
+            allowNetwork,
+            timeoutMs: 20_000,
+            cwd: work,
+          }),
+        );
+        expect(probe.sent).toEqual([]);
+        expect(probe.received).toEqual([]);
+      });
+    }
+    if (engine === "native") {
+      it("native: cannot send a datagram to a host path socket no table names, with the network granted", async () => {
+        const probe = await datagramProbe([join(outside, "unlisted-dgram.sock")], (targets) =>
+          new ProcessSandbox({ engine }).execute(PYTHON, ["-c", DGRAM_SEND, ...targets], {
+            allowedPaths: [work],
+            allowNetwork: true,
+            timeoutMs: 20_000,
+            cwd: work,
+          }),
+        );
+        expect(probe.sent).toEqual([]);
+        expect(probe.received).toEqual([]);
+      });
     }
 
     // Generated for srt only, so no engine's block holds a case it never runs (B1, SEC-43).

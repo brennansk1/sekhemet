@@ -512,6 +512,37 @@ describe("B1: the containment suite across macOS and Linux (SEC-43)", () => {
     expect(appliesTo(`containment.spec.ts: ${write}`)).toBe("both");
   });
 
+  it("names the relays' confined tests Linux-only (DEC-50), and the relay's own tests both", () => {
+    const relays = "port_relays.spec.ts: ";
+    for (const engine of ["native", "srt"]) {
+      expect(
+        appliesTo(
+          `${relays}14b: the host half of an outward relay follows no path the command can rewrite a confined command that swaps its relay socket for a symlink reaches no host socket (${engine} engine)`,
+        ),
+      ).toBe("Linux");
+      expect(
+        appliesTo(
+          `${relays}DEC-50: a card's dev server across namespaces (${engine} engine) a missing program is still reported as never started when relays wrap it`,
+        ),
+      ).toBe("Linux");
+      expect(
+        appliesTo(
+          `${relays}DEC-50: a card's dev server across namespaces (${engine} engine) is reached from the host and from another confined command naming its port`,
+        ),
+      ).toBe("both");
+    }
+    expect(
+      appliesTo(
+        `${relays}14b: the host half of an outward relay follows no path the command can rewrite refuses a symlink planted where the relay's socket was, and reaches no host socket`,
+      ),
+    ).toBe("both");
+    expect(
+      appliesTo(
+        `${relays}DEC-50: the host side of the relays inward: a connection on the socket reaches the host port`,
+      ),
+    ).toBe("both");
+  });
+
   it("passes when each test passed on every platform it applies to", () => {
     const check = acrossPlatforms([
       {

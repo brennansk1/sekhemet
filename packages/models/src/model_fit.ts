@@ -153,6 +153,14 @@ export interface ResidentFootprint {
 export interface FitHost {
   /** The live headroom now (rule 20g), measured with no compute buffer taken off. */
   headroom: Graded;
+  /**
+   * This machine's usable memory (MD-N21-8; FINDINGS CFG-02): the GPU wired
+   * limit less its margin, or installed memory less the reserves, whichever
+   * is lower, less a person's own processes — never the momentary free
+   * memory, so reclaimable cache counts as usable. When given, whether a
+   * model fits is judged against it; the headroom decides only swapping.
+   */
+  usableBytes?: Graded;
   resident?: readonly ResidentFootprint[];
   gpuWiredLimitBytes?: number;
   /** The GPU ceiling: the seed until calibrated (MD-N14-33a). */
@@ -187,7 +195,11 @@ export function fitFor(model: FoundModel, role: ConfigRole, host: FitHost): FitV
   const required = b.totalBytes.value;
   const ours = (host.resident ?? []).filter((r) => r.ours);
   // Alone: our own servers would be unloaded; a person's processes stay.
-  const usableAlone = host.headroom.value + ours.reduce((n, r) => n + r.footprintBytes, 0);
+  // Never negative (MD-N21-8): a shortfall is said as the amount needed.
+  const usableAlone = Math.max(
+    0,
+    host.usableBytes?.value ?? host.headroom.value + ours.reduce((n, r) => n + r.footprintBytes, 0),
+  );
   const breakdown = {
     weightsBytes: b.weightsBytes.value,
     kvBytes: b.kvBytes.value,
@@ -252,4 +264,51 @@ export function applyFits(models: readonly FoundModel[], host: FitHost): FoundMo
     }
     return { ...m, fit, fits, fitReason };
   });
+}
+
+/** The reference host (models rule 8a, MD-N14-33a): an Apple M4 with 24 GB of unified memory. */
+export const REFERENCE_HOST = {
+  platform: "darwin",
+  arch: "arm64",
+  cpuModel: "Apple M4",
+  totalBytes: 24 * 1024 ** 3,
+} as const;
+
+/**
+ * Whether this is the reference host (MD-N21-9; FINDINGS CFG-14): its seed
+ * GPU ceiling was measured there, so it applies nowhere else — not to every
+ * machine of 24 GB or less, as Configuration once applied it.
+ */
+export function isReferenceHost(fp: {
+  platform: string;
+  arch: string;
+  cpuModel: string;
+  totalBytes: number;
+}): boolean {
+  return (
+    fp.platform === REFERENCE_HOST.platform &&
+    fp.arch === REFERENCE_HOST.arch &&
+    fp.cpuModel.trim() === REFERENCE_HOST.cpuModel &&
+    fp.totalBytes === REFERENCE_HOST.totalBytes
+  );
+}
+
+/**
+ * The GPU ceiling Configuration's fit applies (MD-N21-9): the lowest of the
+ * ceilings recorded on this host's ledger — every Metal timeout's and the
+ * latest calibrated one — and the seed only on the reference host with no
+ * calibrated ceiling. None: undefined.
+ */
+export function fitCeilingBytes(
+  recorded: readonly { basis: string; bytes: number }[],
+  referenceHost: boolean,
+  seedBytes: number,
+): number | undefined {
+  const timeouts = recorded.filter((c) => c.basis === "metal_timeout").map((c) => c.bytes);
+  const calibrated = recorded.filter((c) => c.basis === "calibrated").at(-1)?.bytes;
+  const all = [
+    ...timeouts,
+    ...(calibrated !== undefined ? [calibrated] : referenceHost ? [seedBytes] : []),
+  ];
+  return all.length ? Math.min(...all) : undefined;
 }

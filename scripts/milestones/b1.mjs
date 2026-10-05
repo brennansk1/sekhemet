@@ -115,6 +115,19 @@ const PLATFORM_ONLY = [
     platform: "Linux",
     test: (file, title) => file === "secret_masks.spec.ts" && title.includes(" bubblewrap: "),
   },
+  // A confined command behind relays: relays exist only across Linux's
+  // network namespaces (DEC-50, item 14b); the relay's host half is tested on both.
+  {
+    platform: "Linux",
+    test: (file, title) =>
+      file === "port_relays.spec.ts" &&
+      (title.includes(
+        " a confined command that swaps its relay socket for a symlink reaches no host socket (",
+      ) ||
+        title.endsWith(
+          " a missing program is still reported as never started when relays wrap it",
+        )),
+  },
   // The keychain, macOS session sockets and Seatbelt's own rules (items 11a, 15, SEC-15a).
   {
     platform: "macOS",

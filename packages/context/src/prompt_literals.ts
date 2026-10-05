@@ -102,6 +102,21 @@ const BUILDER = /(Prompt|PromptFor|Directive|Instructions?)$/;
  */
 const REFUSAL_BUILDER = /Refusal$|^refuse[A-Z]/;
 const PERSON_FACING_REFUSALS: ReadonlySet<string> = new Set([
+  // packages/eval/src/combination_bench.ts: "<setting> needs the <role> loaded with it, so a
+  // benchmark cannot try it run by run…", on the benchmark page and `sekhemet tune` (MS-N7).
+  "runSettingsRefusal",
+  // packages/models/src/inference_engine.ts: "The engine archive was not unpacked: …", on
+  // Configuration › Models and `sekhemet engine get` (models MD-N19).
+  "unpackRefusal",
+  // packages/models/src/model_download.ts: "<file> needs <size> but the volume … has <free>
+  // free; nothing was downloaded.", on `sekhemet models fetch` and the page (models MD-N18-2).
+  "refuseWithoutSpace",
+  // apps/harness/src/config_engine.ts: why Get the inference engine is off, beside the
+  // disabled button on Configuration › Models (DEC-53 c7, models MD-N19).
+  "engineDownloadRefusal",
+  // apps/harness/src/team_engines.ts: "the engine on port <n> … not <model>", the Team
+  // server's engine check in `doctor` for an Admin (models MD-N15-3).
+  "identityRefusal",
   // apps/harness/src/injection.ts: why a run's page fixtures cannot be delivered,
   // printed by scripts/injection_fixtures.mjs to the person before any card runs.
   "pageFixtureRefusal",

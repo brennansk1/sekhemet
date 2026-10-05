@@ -82,12 +82,15 @@ describe("SUR-42: one server image, documented with its identity proxy and infer
     expect(dockerfile).toMatch(/npm install --global --offline .*sekhemet-\*\.tgz/);
     expect(dockerfile).not.toMatch(/llama|ollama|vllm/i);
     const compose = readFileSync(join(ROOT, "packaging", "server", "compose.yaml"), "utf8");
-    expect(compose).toMatch(/^ {2}inference:$/m);
+    // MD-N15-2: one engine container per filled role's weights, not one shared engine.
+    for (const role of ["coding", "planning", "research"])
+      expect(compose).toMatch(new RegExp(`^ {2}engine-${role}:$`, "m"));
+    expect(compose).not.toMatch(/^ {2}inference:$/m);
     expect(compose).toMatch(/^ {2}identity-proxy:$/m);
     expect(compose).toMatch(/^ {2}sekhemet:$/m);
     const doc = readFileSync(join(ROOT, "docs", "reference", "INSTALL.md"), "utf8");
     expect(doc).toMatch(/identity-aware proxy/);
-    expect(doc).toMatch(/inference engine, in its own container/);
+    expect(doc).toMatch(/inference engines, one container per filled role/);
     expect(doc).toMatch(/trusted_proxies/);
   });
 

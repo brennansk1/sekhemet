@@ -126,6 +126,7 @@ Ranked by expected gain per cost on a 24 GB host running a 13 GB Worker:
     - It gets a fresh context holding only the diff, the card's criteria and the gate evidence, never the Worker's reasoning.
     - It reports only gaps that affect correctness or the stated criteria.
     - Its verdict is structured.
+    - One A/B candidate (R3b; [review-git](specs/review-git.md) item 2.3.8): the **prove** method. It starts from "find what is wrong": a criterion is met only when the model quotes the changed line that satisfies it, and is reported unmet when no line does. It sits behind `SEKHEMET_REVIEW_METHOD=baseline|prove`; `baseline` stays the default. It passed steps 1 and 2 of rule 35 (`review_method.spec.ts`: the lint, and a golden render with its token count). In place of step 4's suite A/B it is admitted by the seeded-set A/B on each candidate Review model, by rule 35.4's test.
 33. **Researcher.**
     - Documents come first and the question last. Each fetched document is rendered as `<document><source>…</source><content><untrusted_content source="…">…</untrusted_content></content></document>`: rule 16's wrapper nested inside the document's content, with its `source` attribute the same id as the `<source>` element. The document tags carry the citation id; the inner wrapper marks the text as data.
     - It extracts quotes before answering and cites by source id.

@@ -14,7 +14,7 @@ import { bubblewrapArgv } from "../src/bubblewrap.js";
 import { ProcessSandbox, type SandboxEngine } from "../src/executor.js";
 import { projectIsolationDenies, registerCardIsolation } from "../src/isolation.js";
 import { generateSeatbeltProfile } from "../src/seatbelt.js";
-import { srtFilesystem, srtUnavailableReason } from "../src/srt_engine.js";
+import { srtFilesystem, srtUnavailableReason, withReadOnlyMasks } from "../src/srt_engine.js";
 
 // security item 10a, NEW-security-13 (DEC-57): a card sees only its own
 // project. Under the real sandbox, a card of one project cannot read or write
@@ -149,6 +149,56 @@ describe("item 10a: a card sees only its own project (NEW-security-13)", () => {
     const fs = srtFilesystem(options);
     expect(fs?.denyRead).toEqual(expect.arrayContaining([l.b, l.otherA, l.canaries.ledger]));
     expect(fs?.denyWrite).toEqual(expect.arrayContaining([l.b, l.otherA, l.canaries.ledger]));
+  });
+
+  it("srt on Linux: each masked folder srt mounts as a tmpfs is remounted read-only after its mounts, as bubblewrap's own", () => {
+    // srt's command as SRT_VERSION renders it: its words quoted only when they must be.
+    const cmd = [
+      "/usr/bin/bwrap --new-session --die-with-parent --unshare-net",
+      "--ro-bind / / --bind /w /w --tmpfs /a/b --tmpfs '/x y/c'",
+      "--ro-bind /dev/null /a/f.db --dev /dev --unshare-pid --unshare-user --proc /proc",
+      "-- /bin/bash -c 'exec '\"'\"'/bin/echo'\"'\"' --tmpfs /z'",
+    ].join(" ");
+    const out = withReadOnlyMasks(cmd, ["/a/b", "/x y/c", "/not/mounted"]);
+    expect(out).toBe(
+      cmd.replace(" --dev /dev ", " --remount-ro /a/b --remount-ro '/x y/c' --dev /dev "),
+    );
+    // A folder srt mounted no tmpfs for (absent, or under another one) gets nothing.
+    expect(withReadOnlyMasks(cmd, ["/not/mounted", "/z"])).toBe(cmd);
+    expect(withReadOnlyMasks(cmd, [])).toBe(cmd);
+  });
+
+  // B1 review minor: a masked folder that exists, but that srt mounted no tmpfs
+  // for and that no read-only remounted masked folder above covers, would stay
+  // writable; a later srt spelling its mounts differently must fail closed.
+  it("srt on Linux: refuses a masked folder that exists but is neither mounted nor under a remounted one", () => {
+    const top = mkdtempSync(join(tmpdir(), "sek-mask-"));
+    try {
+      const inner = join(top, "inner");
+      mkdirSync(inner);
+      const cmd = `/usr/bin/bwrap --ro-bind / / --tmpfs ${top} --dev /dev -- x`;
+      expect(withReadOnlyMasks(cmd, [top, inner])).toBe(
+        cmd.replace(" --dev /dev ", ` --remount-ro ${top} --dev /dev `),
+      );
+      expect(() => withReadOnlyMasks(cmd, [inner])).toThrow(/could not be made read-only/);
+      const bare = "/usr/bin/bwrap --ro-bind / / --dev /dev -- x";
+      expect(() => withReadOnlyMasks(bare, [top])).toThrow(/could not be made read-only/);
+    } finally {
+      rmSync(top, { recursive: true, force: true });
+    }
+  });
+
+  it("srt on Linux: refuses rather than leave a masked folder writable when its mounts cannot be read", () => {
+    const viaFile =
+      '/bin/sh -c \'exec 3<"$1" && shift && exec "$@"\' srt-args /proc/self/fd/9 /usr/bin/bwrap --args 3 --dev /dev --unshare-pid -- /bin/bash -c x';
+    expect(() => withReadOnlyMasks(viaFile, ["/a/b"])).toThrow(/file/);
+    expect(withReadOnlyMasks(viaFile, [])).toBe(viaFile);
+    expect(() => withReadOnlyMasks("/usr/bin/bwrap --tmpfs /a/b -- x", ["/a/b"])).toThrow(
+      /end of its mounts/,
+    );
+    expect(() =>
+      withReadOnlyMasks("/usr/bin/bwrap --tmpfs /a/b --tmpfs /a/b --dev /dev -- x", ["/a/b"]),
+    ).toThrow(/more than once/);
   });
 
   it.runIf(confined).each(ENGINES)(

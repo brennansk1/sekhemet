@@ -315,6 +315,16 @@ describe("no other licence table or pattern remains (DS-P7-3)", () => {
    * prose to grade it, and judges nothing about using one.
    */
   const ALLOWED = new Set(["packages/gates/src/licence.ts", "packages/eval/src/screening_sets.ts"]);
+  /**
+   * Provenance records: a pinned download's licence as its source records it
+   * (an SPDX id), shown to a person and judged only by `classifyLicence`
+   * (config_api's `modelLicenceWarning`). Here a licence literal may only be
+   * the value of a `license:` property; a comparison, table key or pattern fails.
+   */
+  const RECORDS = new Set([
+    "packages/models/src/shipped_models.ts",
+    "packages/models/src/inference_engine.ts",
+  ]);
 
   function sources(): string[] {
     const files: string[] = [];
@@ -345,7 +355,13 @@ describe("no other licence table or pattern remains (DS-P7-3)", () => {
           : ts.isRegularExpressionLiteral(n)
             ? n.text
             : undefined;
-      if (text && LICENCE_LITERAL.test(text))
+      const recorded =
+        RECORDS.has(relative(ROOT, file).replaceAll("\\", "/")) &&
+        ts.isStringLiteral(n) &&
+        ts.isPropertyAssignment(n.parent) &&
+        n.parent.initializer === n &&
+        n.parent.name.getText(sf) === "license";
+      if (text && LICENCE_LITERAL.test(text) && !recorded)
         out.push(
           `${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1}: ${text.slice(0, 80)}`,
         );

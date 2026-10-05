@@ -80,6 +80,8 @@ export const COMMANDS = [
   "egress",
   // `sekhemet editors [vscode|cursor|zed]`: the editor snippets (extensibility item 25a).
   "editors",
+  // `sekhemet engine [status | get [--yes]]`: the inference engine (models rule 6b, NEW-models-19).
+  "engine",
   ...DEV_COMMANDS,
 ] as const;
 
@@ -216,6 +218,8 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--max-steps",
   "--max-turns",
   "--memory",
+  // `measure reviewer --method prove [--reasoning <level>] [--thinking-cap <n>]` (RG-P8-17).
+  "--method",
   "--model",
   "--models",
   "--models-dir",
@@ -249,8 +253,11 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--prune",
   "--query",
   "--reason",
+  "--reasoning",
   "--rebuild",
   "--record",
+  // `models fetch --recommended [--yes]` (MD-N18-3, MD-N22-3).
+  "--recommended",
   // `sekhemet egress --refused` (security item 33a, NEW-security-11).
   "--refused",
   "--release",
@@ -291,6 +298,7 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--target",
   "--terminal",
   "--thinking",
+  "--thinking-cap",
   "--threshold",
   "--tool-arm",
   "--trust",

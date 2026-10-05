@@ -12,6 +12,7 @@ import {
   HttpInferenceAdapter,
   type SamplingOptions,
 } from "./http_adapter.js";
+import { llamaServerBinary, resolveLlamaServer } from "./inference_engine.js";
 import { assertKvPolicy } from "./kv_policy.js";
 import { assertModelLoadAllowed, modelLoadRefusal } from "./load_guard.js";
 import {
@@ -799,8 +800,11 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       if (options.loadMode === "preread_mmap")
         await prereadSequential(this.profile.modelPath, signal ? { signal } : {});
       this.metalReported = false;
-      assertModelLoadAllowed({ binary: this.profile.binary });
-      this.child = spawn(this.profile.binary ?? "llama-server", args, {
+      // Rule 6b, MD-N19-5: the profile's binary, else the one resolution order;
+      // the guard judges the program that would start.
+      const binary = this.profile.binary ?? llamaServerBinary();
+      assertModelLoadAllowed({ binary });
+      this.child = spawn(binary, args, {
         stdio: ["ignore", "ignore", "pipe"],
       });
       this.bindToParentLifetime(this.child);
@@ -1522,12 +1526,6 @@ export const RESEARCHER_CANDIDATES: readonly ResearcherCandidate[] = [
   },
 ];
 
-/** llama.cpp's build number from a build_info (`b10828-abc`), an engine string or a version line. */
-export function llamaBuildNumber(text: string): number | undefined {
-  const m = /\bb(\d{3,})\b/.exec(text) ?? /\b(?:version:|build)\s*(\d{3,})\b/i.exec(text);
-  return m ? Number(m[1]) : undefined;
-}
-
 /** CHRONICLE §2 sampling for code and structured output. */
 export const QWEN38_CODE_SAMPLING = {
   temperature: 0.2,
@@ -1649,11 +1647,14 @@ function samePath(a: string, b: string): boolean {
 
 /**
  * llama-bench, the llama.cpp build's own benchmark (dashboard DB-NM14-3,
- * DEC-44): beside `SEKHEMET_LLAMA_SERVER` when that names the build, else on
+ * DEC-44): beside the llama-server the harness resolves (rule 6b:
+ * `SEKHEMET_LLAMA_SERVER`, else the downloaded engine or PATH's), else on
  * the PATH. It loads the model itself, so it runs only inside a benchmark
  * run of the residency scheduler, on a person's confirmed request.
  */
-export function llamaBenchBinary(server = process.env.SEKHEMET_LLAMA_SERVER): string {
+export function llamaBenchBinary(
+  server = process.env.SEKHEMET_LLAMA_SERVER ?? resolveLlamaServer().engine?.path,
+): string {
   return server ? join(dirname(server), "llama-bench") : "llama-bench";
 }
 
@@ -1671,3 +1672,6 @@ export function llamaBenchExec(): (bin: string, args: string[]) => Promise<strin
       );
     });
 }
+
+// Rule 6b: the engine's resolution and download live in inference_engine.ts.
+export * from "./inference_engine.js";

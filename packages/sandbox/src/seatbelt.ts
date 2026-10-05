@@ -94,7 +94,7 @@ export function homeToolchainPaths(home: string = homedir()): string[] {
  * (SandboxOptions.browser): its own Mach services and the power-management
  * IOKit client, nothing wider. Without them it crashes at start.
  */
-const BROWSER_RULES = `
+export const BROWSER_RULES = `
 ;; S3a: a headless browser.
 (allow mach-register (global-name-prefix "org.chromium."))
 (allow iokit-open (iokit-user-client-class "RootDomainUserClient"))`;

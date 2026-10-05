@@ -5,10 +5,13 @@ import { sekhemetConfigDir } from "./models_dir.js";
 import {
   type QualificationCombination,
   type SpeculativeSetting,
+  applyRoleSettings,
   changedCombinationElements,
   combinationKey,
   describeCombination,
   roleOf,
+  withRoleExtras,
+  withoutRoleExtras,
 } from "./qualification_key.js";
 import type { ModelRole, ReasoningLevel, ToolCallFormat } from "./types.js";
 
@@ -205,6 +208,12 @@ export interface ModelEntry {
   overrides?: QualificationOverride[];
   /** The roles it may hold (MD-N4-1: the one role type). */
   roles?: ModelRole[];
+  /**
+   * A person's values per role (NEW-models-21, MD-N21-1): the same weights
+   * may run Coding and Review differently. Only what a person set is kept;
+   * every other value resolves with its grade (`resolveRoleSettings`).
+   */
+  roleSettings?: Partial<Record<ModelRole, RoleSettingsRecord>>;
   /** It reads images (X3): a capability, not a role. */
   vision?: boolean;
   /**
@@ -221,6 +230,372 @@ export interface ModelEntry {
     /** When and by whom it was measured. */
     date?: string;
   };
+}
+
+// ── per-role settings (NEW-models-21) ───────────────────────────────────
+
+/** Where a value a role runs at came from (MD-N21-1): the four grades, or a person. */
+export type SettingGrade = "measured" | "card" | "estimated" | "default" | "set";
+
+/** The KV cache types a person may choose (rule 10: 4-bit is refused, MD-N21-4). */
+export const KV_TYPES = ["f16", "bf16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl"] as const;
+
+/** Every value a person may set for a (model, role), in the page's five groups. */
+export interface RoleSettingValues {
+  contextTokens?: number;
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  minP?: number;
+  repeatPenalty?: number;
+  presencePenalty?: number;
+  /** -1 is random (llama.cpp's own convention). */
+  seed?: number;
+  reasoningPolicy?: ThinkingPolicy;
+  reasoningLevel?: ReasoningLevel;
+  reasoningCapTokens?: number;
+  /** The template's lowest level: shown, never set (MD-N4-2a). */
+  reasoningFloor?: "none" | Exclude<ReasoningLevel, "off">;
+  kvType?: string;
+  flashAttention?: boolean;
+  gpuLayers?: number;
+  slots?: number;
+  /** `auto`: on only when measured faster and qualified (rule 13). */
+  mtp?: "auto" | "off";
+  /** `auto`: the recorded A/B's choice, mmap until one is recorded (rule 20h). */
+  loadMode?: "auto" | "mmap" | "no_mmap";
+  /** `auto`: the measured arm (rule 28). */
+  toolArm?: "auto" | ToolCallFormat;
+  method?: "baseline" | "strict";
+  evidenceGate?: "off" | "on";
+  stepBudget?: number;
+}
+
+export type RoleSettingKey = keyof RoleSettingValues;
+
+/** The page's three presets (D values, tuned by W18 G3). */
+export type SettingsPreset = "fast" | "balanced" | "careful";
+
+/** A person's values for one (model, role), with who set them and when. */
+export interface RoleSettingsRecord {
+  values: RoleSettingValues;
+  by: string;
+  at: string;
+  preset?: SettingsPreset;
+}
+
+/** One value as a role runs at it, graded (MD-N21-1). */
+export interface ResolvedSetting {
+  key: RoleSettingKey;
+  value: number | string | boolean;
+  grade: SettingGrade;
+  /** Where it came from, in words. */
+  source: string;
+  /** For a person's value: who and when. */
+  by?: string;
+  at?: string;
+}
+
+/** One field of the page's Customize tabs (dashboard NEW-dashboard-27). */
+export interface RoleSettingField {
+  key: RoleSettingKey;
+  tab: "basics" | "sampling" | "reasoning" | "engine" | "harness";
+  label: string;
+  kind: "int" | "number" | "choice" | "bool";
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: readonly string[];
+  /** The combination element a change to it alters (MD-N21-3); absent: speed or the loop only. */
+  element?: string;
+  /** Shown, never set. */
+  readOnly?: boolean;
+  /** One line on what it does, for the page. */
+  help: string;
+}
+
+export const ROLE_SETTING_FIELDS: readonly RoleSettingField[] = [
+  {
+    key: "contextTokens",
+    tab: "basics",
+    label: "Context",
+    kind: "int",
+    min: 2048,
+    max: 262144,
+    step: 1024,
+    element: "context size",
+    help: "How much of the issue, the code and the conversation the model reads at once. More context needs more memory.",
+  },
+  {
+    key: "temperature",
+    tab: "sampling",
+    label: "Temperature",
+    kind: "number",
+    min: 0,
+    max: 2,
+    step: 0.05,
+    element: "sampling",
+    help: "How varied the model's choices are. Lower is more predictable.",
+  },
+  {
+    key: "topP",
+    tab: "sampling",
+    label: "Top-p",
+    kind: "number",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    element: "sampling",
+    help: "Keeps the most likely tokens that together reach this probability.",
+  },
+  {
+    key: "topK",
+    tab: "sampling",
+    label: "Top-k",
+    kind: "int",
+    min: 0,
+    max: 200,
+    step: 1,
+    element: "sampling",
+    help: "Keeps only this many most likely tokens; 0 keeps all.",
+  },
+  {
+    key: "minP",
+    tab: "sampling",
+    label: "Min-p",
+    kind: "number",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    element: "sampling",
+    help: "Drops tokens less likely than this share of the most likely one. Sent as 0 when 0: llama-server's own default is 0.05.",
+  },
+  {
+    key: "repeatPenalty",
+    tab: "sampling",
+    label: "Repeat penalty",
+    kind: "number",
+    min: 0.5,
+    max: 2,
+    step: 0.01,
+    element: "repeat and presence penalties",
+    help: "Penalises repeating recent tokens; 1 is off.",
+  },
+  {
+    key: "presencePenalty",
+    tab: "sampling",
+    label: "Presence penalty",
+    kind: "number",
+    min: 0,
+    max: 2,
+    step: 0.05,
+    help: "Penalises any token already used; 0 is off.",
+    element: "repeat and presence penalties",
+  },
+  {
+    key: "seed",
+    tab: "sampling",
+    label: "Seed",
+    kind: "int",
+    min: -1,
+    max: 2147483647,
+    step: 1,
+    help: "Fixes the random draws so a run can be repeated; -1 is random.",
+  },
+  {
+    key: "reasoningPolicy",
+    tab: "reasoning",
+    label: "Thinking policy",
+    kind: "choice",
+    options: ["off", "surgical", "all"],
+    help: "When the model may think: never, on repairs and plans, or on every step.",
+  },
+  {
+    key: "reasoningLevel",
+    tab: "reasoning",
+    label: "Reasoning level",
+    kind: "choice",
+    options: ["off", "low", "medium", "high"],
+    element: "reasoning",
+    help: "How much the model thinks before it answers.",
+  },
+  {
+    key: "reasoningCapTokens",
+    tab: "reasoning",
+    label: "Thinking cap",
+    kind: "int",
+    min: 256,
+    max: 32768,
+    step: 256,
+    element: "reasoning",
+    help: "The most thinking one request may use, in tokens.",
+  },
+  {
+    key: "reasoningFloor",
+    tab: "reasoning",
+    label: "Floor",
+    kind: "choice",
+    options: ["none", "low", "medium", "high"],
+    readOnly: true,
+    help: "The least this model's template lets it think, even when asked for none.",
+  },
+  {
+    key: "kvType",
+    tab: "engine",
+    label: "KV type",
+    kind: "choice",
+    options: KV_TYPES,
+    element: "KV type",
+    help: "The precision of the model's working memory. 8 bits halves it with little loss; 4 bits is refused for tool calls.",
+  },
+  {
+    key: "flashAttention",
+    tab: "engine",
+    label: "Flash attention",
+    kind: "bool",
+    element: "flash attention",
+    help: "A faster, smaller attention. On by default.",
+  },
+  {
+    key: "gpuLayers",
+    tab: "engine",
+    label: "GPU layers",
+    kind: "int",
+    min: 0,
+    max: 999,
+    step: 1,
+    help: "How many layers run on the GPU; 99 is all of them.",
+  },
+  {
+    key: "slots",
+    tab: "engine",
+    label: "Slots",
+    kind: "int",
+    min: 1,
+    max: 8,
+    step: 1,
+    element: "parallel slots",
+    help: "Requests the server serves at once, each with the full context.",
+  },
+  {
+    key: "mtp",
+    tab: "engine",
+    label: "MTP",
+    kind: "choice",
+    options: ["auto", "off"],
+    element: "speculative decoding",
+    help: "Multi-token prediction: on only when measured faster on this machine and verified.",
+  },
+  {
+    key: "loadMode",
+    tab: "engine",
+    label: "Load mode",
+    kind: "choice",
+    options: ["auto", "mmap", "no_mmap"],
+    help: "How the weights are read into memory; auto uses what was measured fastest here.",
+  },
+  {
+    key: "toolArm",
+    tab: "harness",
+    label: "Tool arm",
+    kind: "choice",
+    options: ["auto", "arm_a_flat", "arm_b_json", "arm_c_sketch"],
+    element: "tool arm",
+    help: "How the model writes tool calls; auto uses the arm measured best for it.",
+  },
+  {
+    key: "method",
+    tab: "harness",
+    label: "Working method",
+    kind: "choice",
+    options: ["baseline", "strict"],
+    help: "The Agent's working method for an issue.",
+  },
+  {
+    key: "evidenceGate",
+    tab: "harness",
+    label: "Evidence check",
+    kind: "choice",
+    options: ["off", "on"],
+    help: "Asks the Agent to show evidence before it says an issue is done.",
+  },
+  {
+    key: "stepBudget",
+    tab: "harness",
+    label: "Step budget",
+    kind: "int",
+    min: 5,
+    max: 200,
+    step: 1,
+    help: "The most steps the Agent takes on one issue.",
+  },
+];
+
+/** The presets (MD-N21-1's decisions; D values). Balanced sets nothing: every preset value is Reset. */
+export const SETTINGS_PRESETS: Readonly<
+  Record<SettingsPreset, (role: ModelRole) => RoleSettingValues>
+> = {
+  fast: () => ({ reasoningLevel: "off", reasoningPolicy: "off", mtp: "auto" }),
+  balanced: () => ({}),
+  careful: () => ({
+    reasoningLevel: "medium",
+    reasoningCapTokens: 4096,
+    reasoningPolicy: "surgical",
+    evidenceGate: "on",
+    method: "strict",
+  }),
+};
+
+/** The keys a preset sets, so *Balanced* resets exactly them. */
+export const PRESET_KEYS: readonly RoleSettingKey[] = [
+  ...new Set(
+    (["fast", "careful"] as const).flatMap((p) => Object.keys(SETTINGS_PRESETS[p]("worker"))),
+  ),
+] as RoleSettingKey[];
+
+/** The export format (MD-N21-6). */
+export const ROLE_SETTINGS_FORMAT = "sekhemet-role-settings/1";
+
+export interface RoleSettingsFile {
+  format: typeof ROLE_SETTINGS_FORMAT;
+  model: string;
+  role: ModelRole;
+  values: RoleSettingValues;
+}
+
+/** One role's settings as a file: only a person's values. */
+export function roleSettingsFile(
+  model: string,
+  role: ModelRole,
+  record: RoleSettingsRecord | undefined,
+): RoleSettingsFile {
+  return { format: ROLE_SETTINGS_FORMAT, model, role, values: { ...(record?.values ?? {}) } };
+}
+
+/** Read a settings file (MD-N21-6); throws, naming what is wrong, on any other format. */
+export function parseRoleSettingsFile(raw: unknown): {
+  model?: string;
+  role?: ModelRole;
+  values: RoleSettingValues;
+} {
+  const f = raw as Partial<RoleSettingsFile> | null;
+  if (!f || typeof f !== "object" || f.format !== ROLE_SETTINGS_FORMAT)
+    throw new Error(`Not a settings file: Sekhemet reads only the ${ROLE_SETTINGS_FORMAT} format.`);
+  if (!f.values || typeof f.values !== "object" || Array.isArray(f.values))
+    throw new Error("The settings file has no values object.");
+  return {
+    ...(typeof f.model === "string" ? { model: f.model } : {}),
+    ...(typeof f.role === "string" ? { role: f.role as ModelRole } : {}),
+    values: { ...(f.values as RoleSettingValues) },
+  };
+}
+
+/** A role's verification as the page shows it (MD-N21-3). */
+export interface RoleVerification {
+  state: "verified" | "needs_verifying" | "not_verified";
+  /** The combination elements a person's values changed since it was verified. */
+  changed?: string[];
+  reason: string;
 }
 
 /**
@@ -487,6 +862,95 @@ export class ModelRegistry {
     );
   }
 
+  /** A person's values for this model in this role (MD-N21-1), if any. */
+  public roleSettings(id: string, role: ModelRole): RoleSettingsRecord | undefined {
+    this.refresh();
+    return this.entries.get(id)?.roleSettings?.[role];
+  }
+
+  /**
+   * Merge a person's values into this (model, role) and save (MD-N21-1).
+   * The caller checks them first (`checkRoleSettings`); an undefined value
+   * is not stored.
+   */
+  public setRoleSettings(
+    id: string,
+    role: ModelRole,
+    values: RoleSettingValues,
+    by: string,
+    preset?: SettingsPreset,
+  ): RoleSettingsRecord {
+    this.refresh();
+    const entry = this.entries.get(id) ?? { id };
+    const kept = Object.fromEntries(
+      Object.entries({ ...(entry.roleSettings?.[role]?.values ?? {}), ...values }).filter(
+        ([, v]) => v !== undefined,
+      ),
+    ) as RoleSettingValues;
+    const record: RoleSettingsRecord = {
+      values: kept,
+      by,
+      at: this.now().toISOString(),
+      ...(preset ? { preset } : {}),
+    };
+    entry.roleSettings = { ...(entry.roleSettings ?? {}), [role]: record };
+    this.entries.set(id, entry);
+    this.touch(id);
+    this.save();
+    return record;
+  }
+
+  /** Remove a person's values (the named keys, or all) for this (model, role) and save. */
+  public resetRoleSettings(id: string, role: ModelRole, keys?: readonly RoleSettingKey[]): void {
+    this.refresh();
+    const entry = this.entries.get(id);
+    const current = entry?.roleSettings?.[role];
+    if (!entry || !current) return;
+    const values = { ...current.values };
+    for (const k of keys ?? (Object.keys(values) as RoleSettingKey[]))
+      Reflect.deleteProperty(values, k);
+    const roleSettings = { ...(entry.roleSettings ?? {}) };
+    if (Object.keys(values).length === 0) Reflect.deleteProperty(roleSettings, role);
+    else {
+      const { preset: _p, ...rest } = current;
+      roleSettings[role] = { ...rest, values };
+    }
+    if (Object.keys(roleSettings).length === 0) Reflect.deleteProperty(entry, "roleSettings");
+    else entry.roleSettings = roleSettings;
+    this.entries.set(id, entry);
+    this.touch(id);
+    this.save();
+  }
+
+  /**
+   * Whether a role's model is verified as a person's values now make its
+   * combination (MD-N21-3): its newest qualified combination for the role
+   * under this prompt version, with those values applied, is looked up.
+   * Values that are not elements change nothing here.
+   */
+  public roleVerification(id: string, role: ModelRole, version: string): RoleVerification {
+    this.refresh();
+    const entry = this.entries.get(id);
+    const mine = (entry?.qualifications ?? []).filter(
+      (q) => roleOf(q.combination) === role && q.combination.settings.contextVersion === version,
+    );
+    const base = [...mine].reverse().find((q) => q.status === "qualified");
+    if (!base)
+      return { state: "not_verified", reason: "not verified on this machine for this role yet" };
+    const values = entry?.roleSettings?.[role]?.values;
+    // The base as it ran, without the extras that were folded into it, then as the values make it.
+    const wanted = applyRoleSettings(withoutRoleExtras(base.combination), values);
+    const look = this.lookupQualification(id, wanted);
+    if (look.status === "qualified" || look.status === "overridden")
+      return { state: "verified", reason: look.reason };
+    const changed = changedCombinationElements(base.combination, wanted);
+    return {
+      state: "needs_verifying",
+      ...(changed.length ? { changed } : {}),
+      reason: changed.length ? `${changed.join(", ")} changed since it was verified` : look.reason,
+    };
+  }
+
   /** Every role assignment recorded for a host, oldest first (NEW-models-10). */
   public roleAssignments(host: string): RoleAssignmentRecord[] {
     this.refresh();
@@ -686,11 +1150,13 @@ export class ModelRegistry {
     this.refresh();
     const entry = this.entries.get(id) ?? { id };
     const date = this.now().toISOString();
+    // MD-N21-3: the values a person set that the adapter does not report are part of what ran.
+    const ran = withRoleExtras(combination, entry.roleSettings?.[roleOf(combination)]?.values);
     const full: CombinationQualification = {
       ...record,
       date,
-      key: combinationKey(combination),
-      combination,
+      key: combinationKey(ran),
+      combination: ran,
     };
     entry.qualifications = [...(entry.qualifications ?? []), full];
     if (entry.qualification) {
@@ -778,13 +1244,12 @@ export class ModelRegistry {
    * record for the exact combination decides; with none, the nearest
    * qualified combination names what changed (MD-N8-4).
    */
-  public lookupQualification(
-    id: string,
-    combination: QualificationCombination,
-  ): QualificationLookup {
+  public lookupQualification(id: string, asked: QualificationCombination): QualificationLookup {
     this.refresh();
     const entry = this.entries.get(id);
     const all = entry?.qualifications ?? [];
+    // MD-N21-3: as a person's values make it now, so a change to one is a change of combination.
+    const combination = withRoleExtras(asked, entry?.roleSettings?.[roleOf(asked)]?.values);
     const key = combinationKey(combination);
     const exact = [...all].reverse().find((q) => q.key === key);
     if (exact) {

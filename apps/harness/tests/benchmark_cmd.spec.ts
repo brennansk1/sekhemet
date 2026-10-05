@@ -1,24 +1,37 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 import {
   type Combination,
   type OvernightRunner,
   type OvernightSets,
   type ScreenRunner,
   type ScreeningSets,
+  type SettingsCombination,
+  cacheKeyString,
+  combinationHistory,
+  combinationId,
+  loadScreeningSets,
   resolveRunProfile,
+  settingsText,
 } from "@sekhemet/eval";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
-import { withMeasurementRun } from "@sekhemet/models";
-import { afterEach, describe, expect, it } from "vitest";
+import { type LocalInferenceAdapter, ModelRegistry, withMeasurementRun } from "@sekhemet/models";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { SMALL, writeGguf } from "../../../packages/models/tests/support/gguf_fixture.js";
 import {
   type BenchmarkEnv,
   BenchmarkService,
   benchmarkCommand,
+  defaultBenchmarkEnv,
+  externalResults,
   overnightWindow,
+  scannedFit,
 } from "../src/benchmark_cmd.js";
+import { suiteScreenRunner } from "../src/benchmark_runner.js";
+import { applyEdits, changedRanges, loadSeededDefects } from "../src/learning/review_eval.js";
 import { runOvernight } from "../src/overnight.js";
 import { reserveMachine } from "../src/reservation.js";
 import { acquireRunnerLease } from "../src/runner_lease.js";
@@ -31,6 +44,7 @@ import { acquireRunnerLease } from "../src/runner_lease.js";
 const dirs: string[] = [];
 const dbs: DatabaseSync[] = [];
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const db of dbs.splice(0)) db.close();
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
@@ -376,5 +390,315 @@ describe("the hook in `overnight` before the queue (MD-N3-4, models rule 20b)", 
       },
     });
     expect(calls).toEqual(["first", "after"]);
+  });
+});
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+
+describe("the CLI's fit is the page's (FINDINGS CFG-15, MS-N5-5)", () => {
+  it("judges each scanned model with the page's fit, so the terminal refuses one that does not fit", async () => {
+    const r = repo();
+    const models = join(r.dir, "models");
+    writeGguf(join(models, "huge-Q4_K_M.gguf"), {
+      name: "Huge Llama",
+      blockCount: 400,
+      embeddingLength: 16384,
+      headCount: 128,
+      headCountKv: 128,
+      contextLength: 131072,
+      padBytes: 1024,
+    });
+    writeGguf(join(models, "tiny-Q4_K_M.gguf"), { ...SMALL, name: "Tiny Llama", padBytes: 1024 });
+    const user = join(r.dir, "user.toml");
+    writeFileSync(user, '[network]\nmode = "offline"\n');
+    const fit = await scannedFit({
+      repoPath: r.dir,
+      log: r.log,
+      env: { SEKHEMET_MODELS_DIR: models, SEKHEMET_CONFIG_DIR: join(r.dir, "cfg") },
+      userConfigPath: user,
+      headroomProbe: null,
+    });
+    {
+      expect(fit.fit("worker", "huge-llama")).toMatchObject({ fits: false });
+      expect((fit.fit("worker", "huge-llama").needsGb ?? 0) > 0).toBe(true);
+      expect(fit.fit("worker", "tiny-llama").fits).toBe(true);
+      const out: string[] = [];
+      const code = await benchmarkCommand(
+        ["quick", "--worker", "huge-llama", "--planner", "tiny-llama", "--yes"],
+        env(r, { fit: fit.fit }),
+        (l) => out.push(l),
+      );
+      expect(out.join("\n")).toMatch(/Coding model huge-llama: needs \d+ GB; not loaded/);
+      expect(code).toBe(1);
+      expect(out.join("\n")).toMatch(/does not fit this machine/);
+    }
+  });
+});
+
+describe("settings in the combination (NEW-measurement-8, MS-N8-1, -2)", () => {
+  it("runs a role's settings for that run only, keys its score with them, gives the combination its own id, and refuses a value that needs its own load", async () => {
+    const r = repo();
+    const seen: unknown[] = [];
+    const runner = screenRunner();
+    const inner = runner.runItem;
+    runner.runItem = async (input) => {
+      seen.push(input.settings);
+      return inner(input);
+    };
+    const svc = new BenchmarkService(
+      env(r, {
+        screenRunner: () => runner,
+        cacheKey: (_role, model, setHash, settings) => ({
+          model,
+          quantisation: "Q4",
+          engine: "llama.cpp",
+          settings: settingsText(settings ?? {}) || "s",
+          host: "host-a",
+          contextVersion: "c",
+          setHash,
+        }),
+      }),
+    );
+    await (await svc.startQuick(COMBO, "p_owner")).finished;
+    const tuned: SettingsCombination = { ...COMBO, settings: { worker: { temperature: 0.2 } } };
+    const est = await svc.estimateQuick(tuned);
+    expect(est.roles.find((x) => x.role === "worker")?.state).toBe("to_measure");
+    const result = await (await svc.startQuick(tuned, "p_owner")).finished;
+    expect(seen.at(-1)).toEqual({ temperature: 0.2 });
+    expect(seen[0]).toBeUndefined();
+    // Without settings the id is the one recorded before settings existed.
+    expect(combinationId(COMBO, "host-a")).toBe(
+      `cmb_${(await import("node:crypto"))
+        .createHash("sha256")
+        .update(JSON.stringify(["wa", "p", "", "", "host-a"]))
+        .digest("hex")
+        .slice(0, 16)}`,
+    );
+    expect(result.combinationId).not.toBe(combinationId(COMBO, "host-a"));
+    const last = (await r.log.getEventsByTypes(["measure/benchmarked"])).at(-1);
+    expect((last?.payload as { combination: Record<string, string> }).combination).toEqual({
+      worker: "wa",
+      planner: "p",
+      "worker.settings": "temperature=0.2",
+    });
+    const rows = (await svc.results()).results;
+    expect(rows.map((x) => (x.combination as SettingsCombination).settings ?? null)).toContainEqual(
+      {
+        worker: { temperature: 0.2 },
+      },
+    );
+    await expect(
+      svc.startQuick(
+        { ...COMBO, settings: { worker: { contextTokens: 8192 } } } as never,
+        "p_owner",
+      ),
+    ).rejects.toThrow(/Customize/);
+  });
+
+  it("keys a role's quick score anew when a person's values for that model and role change (MS-N8-2)", () => {
+    const r = repo();
+    const path = join(r.dir, "models.json");
+    vi.stubEnv("SEKHEMET_MODEL_REGISTRY", path);
+    const registry = new ModelRegistry(path);
+    registry.upsert("wa", { quant: "Q4_K_M" });
+    const e = defaultBenchmarkEnv({ repoPath: r.dir, log: r.log, fit: () => ({ fits: true }) });
+    const hash = "a".repeat(64);
+    const worker = () => cacheKeyString(e.cacheKey("worker", "wa", hash));
+    const reviewer = () => cacheKeyString(e.cacheKey("reviewer", "wa", hash));
+    const [w0, r0] = [worker(), reviewer()];
+    registry.setRoleSettings("wa", "worker", { temperature: 0.3 }, "p_owner");
+    expect(worker()).not.toBe(w0);
+    expect(reviewer()).toBe(r0);
+    expect(cacheKeyString(e.cacheKey("worker", "wa", hash, { temperature: 0.2 }))).not.toBe(
+      worker(),
+    );
+  });
+});
+
+describe("the history and the external benchmarks (MS-N8-3, MS-N8-4)", () => {
+  it("lists each combination's runs with their settings, each against the run before on the items both ran", async () => {
+    const r = repo();
+    const run = (scores: number[], extra: Record<string, string> = {}) =>
+      r.log.append({
+        actor: "harness",
+        type: "measure/benchmarked",
+        payload: {
+          tier: "quick",
+          profileHash: "f".repeat(64),
+          host: "host-a",
+          combination: { worker: "wa", planner: "p", ...extra },
+          partial: false,
+          roles: [
+            {
+              role: "worker",
+              model: "wa",
+              state: "measured",
+              cacheKey: `ck_${scores.join("")}`,
+              setHash: "a".repeat(64),
+              score: scores.reduce((a, b) => a + b, 0) / scores.length,
+              low: Math.min(...scores),
+              high: Math.max(...scores),
+              items: scores.map((score, i) => ({ id: `w${i}`, score })),
+            },
+          ],
+          comparisons: [],
+        },
+      });
+    await run([0.5, 0.5, 0.5, 0.5, 0.5, 0.5]);
+    await run([1, 1, 1, 1, 1, 1]);
+    await run([1, 1, 1, 1, 1, 0.5], { "worker.settings": "temperature=0.2" });
+    const history = await combinationHistory(r.log);
+    expect(history).toHaveLength(2);
+    const plain = history.find((h) => !(h.combination as SettingsCombination).settings);
+    expect(plain?.runs.map((x) => x.versusPrevious?.outcome ?? null)).toEqual([null, "better"]);
+    expect(plain?.runs[1]?.versusPrevious).toMatchObject({ better: 6, worse: 0, ties: 0 });
+    const tuned = history.find((h) => (h.combination as SettingsCombination).settings);
+    expect(tuned?.runs[0]?.settings).toEqual({ worker: { temperature: 0.2 } });
+  });
+
+  it("reads the capstone's and Web-Bench's recorded scores with their protocol and validity, and runs nothing", () => {
+    const r = repo();
+    const root = join(r.dir, "harness");
+    const runs = join(r.dir, "runs");
+    const put = (path: string, value: unknown) => {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, JSON.stringify(value));
+    };
+    put(join(root, "docs", "showcase", "capstone", "sekhemet-nail-mtp", "1", "score.json"), {
+      arm: "sekhemet-nail-mtp",
+      run: 1,
+      valid: true,
+      invalidBecause: [],
+      hiddenSuite: { registered: true },
+      releaseOne: { passed: 40, total: 50 },
+      afterChange: { passed: 44, total: 55 },
+      scoredAt: "2026-10-01T10:00:00Z",
+    });
+    put(join(runs, "one-shot-nail-mtp", "2", "score.json"), {
+      arm: "one-shot-nail-mtp",
+      run: 2,
+      valid: false,
+      invalidBecause: ["the run did not finish"],
+      hiddenSuite: { registered: false, notRegistered: "it waits for a person's check (K2)" },
+      afterChange: { passed: 10, total: 55 },
+    });
+    put(join(runs, "webbench-sekhemet-nail-mtp", "1", "score.json"), {
+      benchmark: "web-bench",
+      project: "react",
+      commit: "abc1234",
+      arm: "sekhemet-nail-mtp",
+      model: "nail-mtp",
+      run: 1,
+      tasks: 20,
+      pass: { "pass@1": 0.25, "pass@2": 0.35 },
+      error: { "error@1": 0.1 },
+    });
+    put(join(runs, "README.txt", "x"), "not a run");
+    const x = externalResults({ root, runsRoot: runs });
+    expect(x.capstone).toEqual([
+      expect.objectContaining({ arm: "one-shot-nail-mtp", run: 2, valid: false, source: "runs" }),
+      expect.objectContaining({
+        arm: "sekhemet-nail-mtp",
+        run: 1,
+        valid: true,
+        source: "showcase",
+      }),
+    ]);
+    expect(x.capstone[0]?.why).toMatch(/did not finish.*waits for a person's check/);
+    expect(x.capstone[1]?.scores).toMatchObject({ "release 1": 0.8, "after the change": 0.8 });
+    expect(x.webbench).toEqual([
+      expect.objectContaining({
+        arm: "sekhemet-nail-mtp",
+        model: "nail-mtp",
+        scores: { "pass@1": 0.25, "pass@2": 0.35, "error@1": 0.1 },
+      }),
+    ]);
+    expect(x.protocol.capstone).toMatch(/byte-identical.*hidden/);
+    expect(x.protocol.webbench).toMatch(/pass@1/);
+    expect(
+      externalResults({ root: join(r.dir, "none"), runsRoot: join(r.dir, "none") }),
+    ).toMatchObject({
+      capstone: [],
+      webbench: [],
+    });
+  });
+});
+
+describe("the Reviewer's screen and overnight set (FINDINGS CFG-17, MS-N8-5)", () => {
+  it("is 10 registered seeded defects, at most two per issue, hashed with the asset", () => {
+    const set = loadScreeningSets(ROOT).roles.reviewer;
+    expect(set).toMatchObject({ state: "ready", expectedSize: 10 });
+    expect(set.items).toHaveLength(10);
+    const perCard = new Map<string, number>();
+    for (const i of set.items)
+      perCard.set(`${i.fixture}/${i.card}`, (perCard.get(`${i.fixture}/${i.card}`) ?? 0) + 1);
+    expect(Math.max(...perCard.values())).toBeLessThanOrEqual(2);
+    expect(new Set(set.items.map((i) => i.fixture))).toEqual(
+      new Set(["onyx", "vanguard", "basalt-canvas"]),
+    );
+    expect(set.items.every((i) => i.seeded && i.seeded.edits.length > 0)).toBe(true);
+    expect(set.hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("scores an item 1 on RG-P8-13's catch, and a failed review 0 with its reason", async () => {
+    const set = loadScreeningSets(ROOT).roles.reviewer;
+    const item = set.items[0];
+    if (!item?.seeded || !item.fixture || !item.card) throw new Error("no seeded item");
+    const ref = readFileSync(
+      join(ROOT, "fixtures", "reference_solutions", item.fixture, item.card, item.seeded.file),
+      "utf8",
+    );
+    const [lo] = changedRanges(ref, applyEdits(ref, item.seeded.edits))[0] ?? [1];
+    const reply = (text: string): LocalInferenceAdapter => ({
+      modelId: "scripted-reviewer",
+      supportedArms: ["arm_b_json"],
+      contextWindow: { contextTokens: 32_768, maxTokens: 1200 },
+      generate: async () => ({
+        text,
+        toolCalls: [],
+        usage: { promptTokens: 1, completionTokens: 1, durationMs: 1 },
+      }),
+    });
+    const caught = JSON.stringify({
+      criteria: [
+        { n: 1, verdict: "unmet", at: `${item.seeded.file}:${lo}`, note: "A case is left out." },
+      ],
+    });
+    const runnerFor = (text: string) =>
+      suiteScreenRunner({
+        harnessRoot: ROOT,
+        workDir: join(repo().dir, "work"),
+        adapterFor: () => reply(text),
+        runProfile: () => resolveRunProfile({ env: {}, argv: [] }),
+      });
+    const hit = await runnerFor(caught).runItem({
+      role: "reviewer",
+      model: "rv",
+      item,
+      capSeconds: 30,
+    });
+    expect(hit.outcome).toEqual({ kind: "detection", detectedAtLocation: true, falseFindings: 0 });
+    const failed = await runnerFor("I could not finish").runItem({
+      role: "reviewer",
+      model: "rv",
+      item,
+      capSeconds: 30,
+    });
+    expect(failed.outcome).toMatchObject({ kind: "detection", detectedAtLocation: false });
+    expect(failed.stopReason).toBe("review_failed");
+  });
+
+  it("builds the overnight Reviewer set from every registered defect, reviewed once per run", () => {
+    const r = repo();
+    const e = defaultBenchmarkEnv({
+      repoPath: r.dir,
+      log: r.log,
+      harnessRoot: ROOT,
+      fit: () => ({ fits: true }),
+    });
+    const reviewer = e.overnightSets().roles.reviewer;
+    expect(reviewer.state).toBe("ready");
+    expect(reviewer.cards).toHaveLength(loadSeededDefects(ROOT).items.length);
+    expect(reviewer.cards.every((c) => c.role === "reviewer")).toBe(true);
   });
 });

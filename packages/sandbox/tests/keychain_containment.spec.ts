@@ -16,14 +16,14 @@ import { platform, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ProcessSandbox, type SandboxEngine } from "../src/executor.js";
-import { generateSeatbeltProfile, keychainRules } from "../src/seatbelt.js";
+import { BROWSER_RULES, generateSeatbeltProfile, keychainRules } from "../src/seatbelt.js";
 import {
   KEYCHAIN_FILE_SUFFIXES,
   KEYCHAIN_MACH_SERVICES,
   SYSTEM_KEYCHAIN_PATHS,
   keychainFileDenies,
 } from "../src/secret_paths.js";
-import { srtReset, srtWrap, withKeychainRules } from "../src/srt_engine.js";
+import { SRT_BROWSER_LOOKUP, srtReset, srtWrap, withKeychainRules } from "../src/srt_engine.js";
 import type { SandboxOptions } from "../src/types.js";
 
 /**
@@ -345,10 +345,9 @@ describe.runIf(darwin).each(ENGINES)(
     // Playwright starts Chromium with `--use-mock-keychain`, so the browser
     // never asks the keychain for its storage key: it renders and keeps a
     // cookie in its profile, and in the same command the planted item stays
-    // unreadable. Native engine only: srt's profile has no browser rules
-    // (Chromium cannot register its own Mach services there), so under srt
-    // the visual gates report "not run" and fail closed (item 11a).
-    it.runIf(engine === "native" && playwright !== undefined)(
+    // unreadable. Both engines: srt's profile gets the native engine's
+    // browser rules, and nothing wider (B1).
+    it.runIf(playwright !== undefined)(
       "a Playwright-driven Chromium runs under these rules, and the planted item stays unreadable",
       async () => {
         work = realpathSync(mkdtempSync(join(tmpdir(), "sek-kc-work-")));
@@ -532,6 +531,25 @@ describe("SEC-23b: one keychain table, last in both engines' profiles", () => {
         const cmd = argv[1] as string;
         expect(cmd.includes(trust)).toBe(reachable);
         // The keychain rules still come last, after every allow.
+        expect(cmd.indexOf(keychainRules())).toBeGreaterThan(cmd.lastIndexOf("(allow "));
+        await srtReset();
+      }
+    },
+  );
+
+  it.runIf(darwin)(
+    "srt's real command gets the native engine's browser rules for a browser only, before the keychain's (B1)",
+    async () => {
+      for (const browser of [false, true]) {
+        const { argv } = await srtWrap("/bin/echo", ["hi"], { ...opts, browser });
+        const cmd = argv[1] as string;
+        expect(cmd.includes(BROWSER_RULES.trim())).toBe(browser);
+        expect(cmd.includes(SRT_BROWSER_LOOKUP)).toBe(browser);
+        // Nothing wider than the native profile: its rules, and a lookup it allows for every name.
+        const native = generateSeatbeltProfile({ ...opts, browser });
+        expect(native.includes(BROWSER_RULES)).toBe(browser);
+        expect(native).toContain("\n(allow mach-lookup)\n");
+        expect(SRT_BROWSER_LOOKUP).toBe('(allow mach-lookup (global-name-prefix "org.chromium."))');
         expect(cmd.indexOf(keychainRules())).toBeGreaterThan(cmd.lastIndexOf("(allow "));
         await srtReset();
       }

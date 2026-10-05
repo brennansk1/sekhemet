@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import type { DeterministicGateRunner } from "@sekhemet/gates";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
+import { MEASUREMENT_BASELINE, SHIPPED_MODELS } from "@sekhemet/models";
 import { afterEach, describe, expect, it } from "vitest";
 import { runDoctor } from "../src/doctor.js";
 import { licenseGate, repoLicenseAudit, withLicenseGate } from "../src/license_gate.js";
@@ -17,6 +18,7 @@ import {
   readResearchRegister,
   validateResearchRegister,
 } from "../src/registers.js";
+import { LLAMA_CPP_TEAM_IMAGES } from "../src/team_engines.js";
 import { runDevCommand } from "../src/wave2.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -102,6 +104,59 @@ describe("X17/X18: the registers in this repository are well-formed", () => {
     const audit = repoLicenseAudit(ROOT);
     expect(audit.length).toBeGreaterThan(0);
     expect(audit.filter((a) => !a.ok)).toEqual([]);
+  });
+});
+
+describe("MD-N22-4, DEC-47 O-5: PROVENANCE names every shipped model's source, hash and licence", () => {
+  const table = () =>
+    markdownTable(
+      readFileSync(join(ROOT, "docs/reference/PROVENANCE.md"), "utf8"),
+      "Model weights and engine",
+    );
+  /** The rows a shipped entry with a source has no matching PROVENANCE row for. */
+  const unmatched = (rows: Record<string, string>[]) =>
+    [...SHIPPED_MODELS, ...MEASUREMENT_BASELINE]
+      .filter((m) => m.source)
+      .filter(
+        (m) =>
+          !rows.some(
+            (r) =>
+              r["sha-256 or digest"]?.includes(m.source?.sha256 as string) &&
+              r["repository or image"]?.includes(m.source?.repo as string) &&
+              r["file or tag"]?.includes(m.source?.file as string) &&
+              r.licence === m.source?.license,
+          ),
+      )
+      .map((m) => m.id);
+
+  it("has a row for each shipped model and the baseline, with the same SHA-256, file and licence", () => {
+    expect(table().length).toBeGreaterThan(0);
+    expect(unmatched(table())).toEqual([]);
+  });
+
+  it("has a row for each pinned engine image, with its digest", () => {
+    const rows = table();
+    for (const image of Object.values(LLAMA_CPP_TEAM_IMAGES)) {
+      const digest = image.split("@")[1] as string;
+      expect(
+        rows.some((r) => r["sha-256 or digest"]?.includes(digest) && r.licence === "MIT"),
+      ).toBe(true);
+    }
+  });
+
+  it("fails for a shipped row whose PROVENANCE row is missing or differs", () => {
+    const rows = table();
+    const coding = SHIPPED_MODELS.find((m) => m.role === "coding");
+    const without = rows.filter(
+      (r) => !r["sha-256 or digest"]?.includes(coding?.source?.sha256 as string),
+    );
+    expect(unmatched(without)).toEqual([coding?.id]);
+    const relicensed = rows.map((r) =>
+      r["sha-256 or digest"]?.includes(coding?.source?.sha256 as string)
+        ? { ...r, licence: "MIT" }
+        : r,
+    );
+    expect(unmatched(relicensed)).toEqual([coding?.id]);
   });
 });
 

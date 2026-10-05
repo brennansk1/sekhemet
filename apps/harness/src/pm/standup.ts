@@ -1,4 +1,9 @@
-import { type OvernightVerdict, overnightVerdict } from "@sekhemet/eval";
+import {
+  type OvernightVerdict,
+  overnightVerdict,
+  parseSettingsText,
+  settingsWords,
+} from "@sekhemet/eval";
 import type { CardRecord, CardStore, EventLog, EventRecord } from "@sekhemet/kernel";
 import { MODEL_ROLES } from "@sekhemet/models";
 import { EstimationModel } from "@sekhemet/planner";
@@ -14,7 +19,8 @@ import type { Cycle } from "./types.js";
  * to Slack and push, and the CLI's answer. *Done* holds only the issues done
  * since the person's previous standup; *Next up* the Ready issues in the
  * order the queue will take them, each with its estimate's range and basis;
- * an overnight benchmark finished since then is said in plain words. The
+ * an overnight benchmark finished since then is said in plain words, and so
+ * is a Find best settings run (measurement MS-N7-6). The
  * text is plain (§2.8.9): issues by title, checks and stops in the words a
  * person reads, never a stop code or an id in backticks.
  */
@@ -44,6 +50,8 @@ export interface StandupFacts {
   sprint?: string;
   /** An overnight benchmark finished since the previous standup (PM-P6-14). */
   benchmark?: string;
+  /** Each Find best settings run finished since then, in plain words (MS-N7-6). */
+  settings?: string[];
   /** "Based on: board at 09:02 · ledger #212." */
   basedOn?: string;
 }
@@ -115,6 +123,7 @@ export function standupLines(f: StandupFacts, extra: readonly string[] = []): st
   if (f.sprint) lines.push(f.sprint);
   lines.push(...extra.filter(Boolean));
   if (f.benchmark) lines.push(f.benchmark);
+  if (f.settings) lines.push(...f.settings);
   if (f.basedOn) lines.push(f.basedOn);
   return lines;
 }
@@ -281,7 +290,10 @@ export const CONFIGURATION_MODELS = "#/configuration/models";
 /** A combination as a link to Configuration: its model ids appear only inside it (PM-P6-14). */
 function combinationLink(models: Record<string, string>): string {
   const text = MODEL_ROLES.filter((r) => models[r])
-    .map((r) => `${ROLE_WORDS[r]} ${models[r]}`)
+    .map((r) => {
+      const settings = models[`${r}.settings`];
+      return `${ROLE_WORDS[r]} ${models[r]}${settings ? ` (${settingsWords(parseSettingsText(settings))})` : ""}`;
+    })
     .join(" · ");
   return `[${text}](${CONFIGURATION_MODELS})`;
 }
@@ -306,6 +318,36 @@ export function benchmarkLine(v: OvernightVerdict): string {
         ? `it measured one combination, ${combinationLink(first)}, so there was nothing to compare.`
         : `there is no clear difference between the leading combinations: ${v.leading.map(combinationLink).join(" and ")}.`;
   return `Overnight benchmark (${stopped}): ${result} The benchmark assigned nothing; to use a result, ${APPLY_BENCHMARK_ACTION}.`;
+}
+
+/** Where a person applies a Find best settings result (dashboard §2.16 item 2). */
+export const APPLY_SETTINGS_ACTION = "open Configuration › Benchmark and select Apply";
+
+/**
+ * A Find best settings run in plain words (measurement MS-N7-6): *the best
+ * combination is …*, or *no clear difference*; never a model id, which
+ * appears only on Configuration (PM-P6-14).
+ */
+export function settingsTunedLine(t: {
+  role: string;
+  model: string;
+  verdict: string;
+  adopted?: Readonly<Record<string, unknown>>;
+  comparison?: { better: number; worse: number; ties: number; p: number };
+}): string {
+  const who = `Find best settings for the ${ROLE_WORDS[t.role] ?? t.role}`;
+  const n = t.comparison ? t.comparison.better + t.comparison.worse + t.comparison.ties : 0;
+  const words = settingsWords(t.adopted ?? {});
+  switch (t.verdict) {
+    case "best":
+      return `${who}: the best combination is ${words} (higher on ${t.comparison?.better ?? 0} of ${n} ${t.role === "reviewer" ? "seeded defects" : "issues"}, p = ${(t.comparison?.p ?? 1).toFixed(3)}). Nothing was changed; to use it, ${APPLY_SETTINGS_ACTION}.`;
+    case "cheaper":
+      return `${who}: no clear difference in quality, and ${words} was faster (not established). Nothing was changed; to use it, ${APPLY_SETTINGS_ACTION}.`;
+    case "partial":
+      return `${who}: stopped before a verdict; what it measured is kept.`;
+    default:
+      return `${who}: no clear difference between the settings tried; the current settings stay, and the overnight benchmark can settle it.`;
+  }
 }
 
 /**
@@ -380,6 +422,20 @@ export async function standupFacts(deps: {
   const verdict = await overnightVerdict(deps.log, { since: Date.parse(from) }).catch(
     () => undefined,
   );
+  // MS-N7-6: each Find best settings run finished since the previous standup.
+  const tuned = (await deps.log.getEventsByTypes(["measure/settings_tuned"]).catch(() => []))
+    .filter((e) => after(e) && (e.payload as { kind?: string }).kind === "find_best")
+    .map((e) =>
+      settingsTunedLine(
+        e.payload as {
+          role: string;
+          model: string;
+          verdict: string;
+          adopted?: Record<string, unknown>;
+          comparison?: { better: number; worse: number; ties: number; p: number };
+        },
+      ),
+    );
   const last = await deps.log.getLastEvent();
   const hh = String(now.getHours()).padStart(2, "0");
   const mm = String(now.getMinutes()).padStart(2, "0");
@@ -403,6 +459,7 @@ export async function standupFacts(deps: {
     next: ordered.slice(0, 3).map((c) => ({ ...item(c), estimate: estimateOf(estimator, c) })),
     ...(sprint ? { sprint } : {}),
     ...(verdict ? { benchmark: benchmarkLine(verdict) } : {}),
+    ...(tuned.length ? { settings: tuned } : {}),
     basedOn: `Based on: the board at ${hh}:${mm}${last ? ` and Activity log entry ${last.seq}` : ""}.`,
   };
 }

@@ -13,7 +13,17 @@ import { sandboxDirs, sekhemet } from "./cli_fixture.js";
 describe("SUR-17: every registry entry", () => {
   it("holds the commands this workstream moved", () => {
     expect(COMMAND_REGISTRY.map((c) => c.name).sort()).toEqual(
-      ["accept", "doctor", "editors", "egress", "resume", "review", "run", "status"].sort(),
+      [
+        "accept",
+        "doctor",
+        "editors",
+        "egress",
+        "engine",
+        "resume",
+        "review",
+        "run",
+        "status",
+      ].sort(),
     );
   });
 
@@ -47,37 +57,47 @@ describe("SUR-17: every registry entry", () => {
     }
   });
 
-  it("answers `<command> --help` with its own synopsis and an example, exit 0", () => {
-    const where = sandboxDirs();
-    for (const spec of COMMAND_REGISTRY) {
-      expect(routeFrontDoor([spec.name, "--help"])).toEqual({
-        kind: "command-help",
-        name: spec.name,
-      });
-      const r = sekhemet([spec.name, "--help"], where);
-      expect(r.status, spec.name).toBe(0);
-      expect(r.stdout).toContain(`Usage: ${spec.synopsis}`);
-      expect(r.stdout).toContain(spec.what);
-      expect(r.stdout).toContain(`Example: ${spec.example}`);
-      expect(spec.example.startsWith(`sekhemet ${spec.name}`)).toBe(true);
-    }
-  });
+  // Each of these two spawns the built CLI once per registry entry, so their time
+  // grows with the registry; the assertions are unchanged.
+  it(
+    "answers `<command> --help` with its own synopsis and an example, exit 0",
+    { timeout: 60_000 },
+    () => {
+      const where = sandboxDirs();
+      for (const spec of COMMAND_REGISTRY) {
+        expect(routeFrontDoor([spec.name, "--help"])).toEqual({
+          kind: "command-help",
+          name: spec.name,
+        });
+        const r = sekhemet([spec.name, "--help"], where);
+        expect(r.status, spec.name).toBe(0);
+        expect(r.stdout).toContain(`Usage: ${spec.synopsis}`);
+        expect(r.stdout).toContain(spec.what);
+        expect(r.stdout).toContain(`Example: ${spec.example}`);
+        expect(spec.example.startsWith(`sekhemet ${spec.name}`)).toBe(true);
+      }
+    },
+  );
 
-  it("parses its flags from its own schema: a flag another command takes is a usage error, exit 2", () => {
-    const where = sandboxDirs();
-    for (const spec of COMMAND_REGISTRY) {
-      const foreign = spec.options.ack ? "--worker" : "--ack";
-      const issue = spec.positionals.min > 0 ? ["c1"] : [];
-      expect(parseCommandArgs(spec, [spec.name, ...issue, foreign, "x"])).toMatchObject({
-        error: expect.stringContaining(foreign),
-      });
-      const r = sekhemet([spec.name, ...issue, foreign, "x"], where);
-      expect(r.status, `${spec.name}: ${r.stderr}`).toBe(2);
-      expect(r.stderr).toContain(foreign);
-      expect(r.stderr).toContain(`sekhemet ${spec.name} --help`);
-      expect(r.stdout).toBe("");
-    }
-  });
+  it(
+    "parses its flags from its own schema: a flag another command takes is a usage error, exit 2",
+    { timeout: 60_000 },
+    () => {
+      const where = sandboxDirs();
+      for (const spec of COMMAND_REGISTRY) {
+        const foreign = spec.options.ack ? "--worker" : "--ack";
+        const issue = spec.positionals.min > 0 ? ["c1"] : [];
+        expect(parseCommandArgs(spec, [spec.name, ...issue, foreign, "x"])).toMatchObject({
+          error: expect.stringContaining(foreign),
+        });
+        const r = sekhemet([spec.name, ...issue, foreign, "x"], where);
+        expect(r.status, `${spec.name}: ${r.stderr}`).toBe(2);
+        expect(r.stderr).toContain(foreign);
+        expect(r.stderr).toContain(`sekhemet ${spec.name} --help`);
+        expect(r.stdout).toBe("");
+      }
+    },
+  );
 
   it("keeps the global flags every command takes", () => {
     for (const spec of COMMAND_REGISTRY) {

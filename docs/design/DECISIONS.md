@@ -653,6 +653,11 @@ Not a chat assistant (the conversation plans and reports; code is written on car
 - **Reopen if:** the owner.
 
 
+### DEC-58 — with the network granted, the native engine refuses Unix sockets by seccomp
+**On Linux, when a card's command is granted the network, the native engine's seccomp program refuses `socket(AF_UNIX)`, `io_uring_setup` and any Unix `socketpair` that is not SOCK_STREAM or SOCK_SEQPACKET; on x64 every program also refuses x32-ABI calls.** *Lead, 2026-10-04, under the owner's delegation (DEC-56); the B1 close-out and its review.* With the network granted the command shares the host's network namespace, and with it every abstract socket (X11's, a session bus's): security item 15's residual, which kept B1 from passing on Linux. Giving the native engine an empty namespace always, with DEC-50's relays, was considered first and not taken: with the network granted the card runner starts no egress proxy and setup commands get the network by default, so there is nothing to relay to, and an empty namespace would take an open network away. The review found that a datagram `socketpair` reaches any host datagram socket and that x32 calls pass an exact-number check; both are refused. Cost: with the network granted, a card's command cannot create a Unix socket of its own. srt's filter allows a datagram `socketpair`; that stays srt's named residual (security item 15), and Sekhemet does not replace srt's filter.
+- **Where:** `packages/sandbox/src/seccomp.ts`, `executor.ts`; security.md item 15, SEC-15; tests `seccomp.spec.ts`, `linux_sockets.spec.ts`.
+- **Reopen if:** a Linux tool a card needs breaks on the refusal with the network granted, or the network-granted posture gains an egress proxy (then the empty namespace with relays is the better answer).
+
 ## Founder decisions on record
 
 - **Name:** Sekhemet, a deliberate variant spelling, paired with its descriptor where the product introduces itself.

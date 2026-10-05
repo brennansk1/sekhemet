@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { EventLog, EventRecord } from "@sekhemet/kernel";
-import { MODEL_ROLES, type ModelRole } from "@sekhemet/models";
+import { MODEL_ROLES, type ModelRole, type RoleSettingValues } from "@sekhemet/models";
 import type {
   CacheKey,
   Combination,
@@ -120,6 +120,187 @@ export function compareRoleScores(
   return compareOnItems(a.role as ModelRole, a as Required<RoleScore>, b as Required<RoleScore>);
 }
 
+// ── settings in the combination (NEW-measurement-8, rule 39) ────────────
+
+/**
+ * The values a run applies without its own load (rule 39): per request
+ * (temperature, reasoning level and thinking cap) or through the run's
+ * `RunProfile` (thinking policy, working method, evidence check, step
+ * budget), and the tool arm the run's adapter offers. Everything else —
+ * context, KV type, the engine's values — needs its own load and is a
+ * person's choice on Customize (models MD-N21-1).
+ */
+export const RUN_SETTING_KEYS = [
+  "temperature",
+  "reasoningLevel",
+  "reasoningCapTokens",
+  "reasoningPolicy",
+  "method",
+  "evidenceGate",
+  "toolArm",
+  "stepBudget",
+] as const;
+export type RunSettingKey = (typeof RUN_SETTING_KEYS)[number];
+export type RunSettings = Pick<RoleSettingValues, RunSettingKey>;
+
+/** A combination with, per role, the run-level settings it is measured at (rule 39). */
+export interface SettingsCombination extends Combination {
+  settings?: Partial<Record<ModelRole, RunSettings>>;
+}
+
+/** A combination naming a value a run cannot apply, or a value out of range (MS-N8-1). */
+export class SettingsRefusal extends Error {
+  constructor(
+    message: string,
+    readonly key: string,
+    readonly role: ModelRole,
+  ) {
+    super(message);
+    this.name = "SettingsRefusal";
+  }
+}
+
+const CHOICES: Partial<Record<RunSettingKey, readonly string[]>> = {
+  reasoningLevel: ["off", "low", "medium", "high"],
+  reasoningPolicy: ["off", "surgical", "all"],
+  method: ["baseline", "strict"],
+  evidenceGate: ["off", "on"],
+  toolArm: ["auto", "arm_a_flat", "arm_b_json", "arm_c_sketch"],
+};
+
+const ROLE_WORDS: Record<ModelRole, string> = {
+  worker: "Coding model",
+  planner: "Planning model",
+  reviewer: "Review model",
+  researcher: "Research model",
+};
+
+/** Why a combination's settings cannot run (MS-N8-1), or undefined. Checked before anything loads. */
+export function runSettingsRefusal(c: SettingsCombination): SettingsRefusal | undefined {
+  for (const role of MODEL_ROLES) {
+    const values = (c.settings?.[role] ?? {}) as Record<string, unknown>;
+    for (const [key, value] of Object.entries(values)) {
+      if (value === undefined) continue;
+      if (!(RUN_SETTING_KEYS as readonly string[]).includes(key))
+        return new SettingsRefusal(
+          `${key} needs the ${ROLE_WORDS[role]} loaded with it, so a benchmark cannot try it run by run: set it on Configuration › Models › Customize, where the model is verified with it.`,
+          key,
+          role,
+        );
+      const choices = CHOICES[key as RunSettingKey];
+      const ok = choices
+        ? typeof value === "string" && choices.includes(value)
+        : key === "temperature"
+          ? typeof value === "number" && value >= 0 && value <= 2
+          : typeof value === "number" && Number.isInteger(value) && value >= 1;
+      if (!ok)
+        return new SettingsRefusal(
+          `${String(value)} is not a value for ${key}${choices ? `: it is one of ${choices.join(", ")}` : key === "temperature" ? ": it is 0 to 2" : ": it is a whole number of 1 or more"}.`,
+          key,
+          role,
+        );
+    }
+  }
+  return undefined;
+}
+
+/** One role's settings as one stable string, keys sorted: `reasoningLevel=medium,temperature=0`. */
+export function settingsText(values: Readonly<Record<string, unknown>>): string {
+  return Object.keys(values)
+    .filter((k) => values[k] !== undefined)
+    .sort()
+    .map((k) => `${k}=${String(values[k])}`)
+    .join(",");
+}
+
+/** A role's settings back from `settingsText`. */
+export function parseSettingsText(text: string): RunSettings {
+  const out: Record<string, string | number | boolean> = {};
+  for (const part of text.split(",")) {
+    const at = part.indexOf("=");
+    if (at <= 0) continue;
+    const key = part.slice(0, at);
+    const raw = part.slice(at + 1);
+    out[key] =
+      raw === "true"
+        ? true
+        : raw === "false"
+          ? false
+          : /^-?\d+(\.\d+)?$/.test(raw)
+            ? Number(raw)
+            : raw;
+  }
+  return out as RunSettings;
+}
+
+const WORDS: Record<string, (v: unknown) => string> = {
+  temperature: (v) => `temperature ${v}`,
+  reasoningLevel: (v) => `reasoning ${v}`,
+  reasoningCapTokens: (v) => `thinking cap ${Number(v).toLocaleString("en-US")}`,
+  reasoningPolicy: (v) => `thinking policy ${v}`,
+  method: (v) => `working method ${v}`,
+  evidenceGate: (v) => `evidence check ${v}`,
+  toolArm: (v) => `tool arm ${v}`,
+  stepBudget: (v) => `step budget ${v}`,
+};
+
+/** A role's settings in words, as the page and the standup say them: `temperature 0.2, reasoning medium`. */
+export function settingsWords(values: Readonly<Record<string, unknown>>): string {
+  return Object.keys(values)
+    .filter((k) => values[k] !== undefined)
+    .map((k) =>
+      WORDS[k] ? (WORDS[k] as (v: unknown) => string)(values[k]) : `${k} ${String(values[k])}`,
+    )
+    .join(", ");
+}
+
+/** The suffix a role's settings are recorded under beside its model: `worker.settings`. */
+const SETTINGS_SUFFIX = ".settings";
+
+/**
+ * A combination as the ledger records it (`measure/benchmarked`'s and
+ * `measure/benchmark_started`'s record of strings): each role's model, and
+ * each role's settings as `<role>.settings` (rule 39).
+ */
+export function combinationRecord(c: SettingsCombination): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const role of MODEL_ROLES) {
+    const model = modelFor(c, role);
+    if (model) out[role] = model;
+  }
+  for (const role of MODEL_ROLES) {
+    const text = settingsText(c.settings?.[role] ?? {});
+    if (text && modelFor(c, role)) out[`${role}${SETTINGS_SUFFIX}`] = text;
+  }
+  return out;
+}
+
+/** A combination back from its record, its settings included. */
+export function combinationFromRecord(r: Readonly<Record<string, string>>): SettingsCombination {
+  const settings: Partial<Record<ModelRole, RunSettings>> = {};
+  for (const role of MODEL_ROLES) {
+    const text = r[`${role}${SETTINGS_SUFFIX}`];
+    if (text) settings[role] = parseSettingsText(text);
+  }
+  return {
+    worker: r.worker ?? "",
+    planner: r.planner ?? "",
+    ...(r.reviewer ? { reviewer: r.reviewer } : {}),
+    ...(r.researcher ? { researcher: r.researcher } : {}),
+    ...(Object.keys(settings).length ? { settings } : {}),
+  };
+}
+
+/** The settings part of a combination's identity: empty when it has none. */
+function settingsIdentity(c: SettingsCombination): string {
+  return MODEL_ROLES.map((role) => {
+    const text = settingsText(c.settings?.[role] ?? {});
+    return text ? `${role}:${text}` : "";
+  })
+    .filter(Boolean)
+    .join(";");
+}
+
 // ── keys and ids ────────────────────────────────────────────────────────
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -139,10 +320,22 @@ export function cacheKeyString(key: CacheKey): string {
   ).slice(0, 32)}`;
 }
 
-/** A combination's id, derived from its four model ids and the host (PM_CONTRACT). */
-export function combinationId(c: Combination, host: string): string {
+/**
+ * A combination's id, derived from its four model ids and the host
+ * (PM_CONTRACT), and its settings when it has any (rule 39): a combination
+ * without settings keeps the id it had before settings existed.
+ */
+export function combinationId(c: SettingsCombination, host: string): string {
+  const settings = settingsIdentity(c);
   return `cmb_${sha(
-    JSON.stringify([c.worker, c.planner, c.reviewer ?? "", c.researcher ?? "", host]),
+    JSON.stringify([
+      c.worker,
+      c.planner,
+      c.reviewer ?? "",
+      c.researcher ?? "",
+      host,
+      ...(settings ? [settings] : []),
+    ]),
   ).slice(0, 16)}`;
 }
 
@@ -479,9 +672,11 @@ export interface ScreenRunner {
     model: string;
     item: ScreeningItem;
     capSeconds: number;
+    /** The role's run-level settings for this item (rule 39), and its fixed seed when paired. */
+    settings?: RunSettings & { seed?: number };
   }): Promise<ItemRun>;
   endToEnd(input: {
-    combination: Combination;
+    combination: SettingsCombination;
     card: ScreeningItem;
     capSeconds: number;
   }): Promise<{
@@ -519,8 +714,8 @@ export interface QuickBenchmarkInput {
   log: EventLog;
   sets: ScreeningSets;
   runner: ScreenRunner;
-  /** The key a role's score is cached under (rule 33). */
-  cacheKey: (role: ModelRole, model: string, setHash: string) => CacheKey;
+  /** The key a role's score is cached under (rule 33), its settings included (rule 39). */
+  cacheKey: (role: ModelRole, model: string, setHash: string, settings?: RunSettings) => CacheKey;
   fit: (role: ModelRole, model: string) => FitCheck;
   runProfile: RunProfile;
   /** This host's fingerprint hash. */
@@ -587,15 +782,10 @@ const sameModels = (a: Record<string, string>, b: Record<string, string>) =>
 /** The end-to-end check recorded for exactly this combination and these cached scores. */
 async function cachedEndToEnd(
   log: EventLog,
-  combination: Combination,
+  combination: SettingsCombination,
   keys: Map<ModelRole, string>,
 ): Promise<{ passed: number; total: number } | undefined> {
-  const want: Record<string, string> = Object.fromEntries(
-    MODEL_ROLES.flatMap((r) => {
-      const m = modelFor(combination, r);
-      return m ? [[r, m]] : [];
-    }),
-  );
+  const want = combinationRecord(combination);
   for (const e of (await quickEvents(log)).reverse()) {
     const p = e.payload as BenchmarkedPayload;
     if (!p.endToEnd || p.partial) continue;
@@ -618,11 +808,14 @@ async function cachedEndToEnd(
  * not fit is refused before anything loads (MS-N5-5).
  */
 export async function quickBenchmark(
-  combination: Combination,
+  combination: SettingsCombination,
   input: QuickBenchmarkInput,
 ): Promise<QuickResult> {
   const now = input.now ?? (() => Date.now());
   const started = now();
+  // MS-N8-1: a value a run cannot apply is refused before anything loads.
+  const refusal = runSettingsRefusal(combination);
+  if (refusal) throw refusal;
   // MS-N5-5: a model that does not fit is never loaded.
   for (const role of MODEL_ROLES) {
     const model = modelFor(combination, role);
@@ -659,7 +852,8 @@ export async function quickBenchmark(
         roles.push({ role, model, state: "not_measured" });
         continue;
       }
-      const key = cacheKeyString(input.cacheKey(role, model, set.hash));
+      const settings = combination.settings?.[role];
+      const key = cacheKeyString(input.cacheKey(role, model, set.hash, settings));
       keys.set(role, key);
       setHashes.set(role, set.hash);
       const hit = cached.get(key);
@@ -686,7 +880,13 @@ export async function quickBenchmark(
           stopped = true;
           break;
         }
-        const run = await input.runner.runItem({ role, model, item, capSeconds: set.capSeconds });
+        const run = await input.runner.runItem({
+          role,
+          model,
+          item,
+          capSeconds: set.capSeconds,
+          ...(settings && Object.keys(settings).length ? { settings } : {}),
+        });
         const isCapped = run.capped === true || run.seconds >= set.capSeconds;
         if (isCapped) capped++;
         const score = scoreItem(run.outcome);
@@ -809,9 +1009,7 @@ export async function quickBenchmark(
   }
 
   const partial = stopped || roles.some((r) => r.state === "partial");
-  const models = Object.fromEntries(
-    MODEL_ROLES.flatMap((r) => (modelFor(combination, r) ? [[r, modelFor(combination, r)]] : [])),
-  );
+  const models = combinationRecord(combination);
   const event = await input.log.append({
     actor: "harness",
     type: MEASURE_BENCHMARKED,
@@ -843,14 +1041,8 @@ export async function quickBenchmark(
 
 // ── results keyed by combination (PM_CONTRACT `CombinationResult`) ──────
 
-function combinationOf(models: Record<string, string>): Combination {
-  return {
-    worker: models.worker ?? "",
-    planner: models.planner ?? "",
-    ...(models.reviewer ? { reviewer: models.reviewer } : {}),
-    ...(models.researcher ? { researcher: models.researcher } : {}),
-  };
-}
+const combinationOf = (models: Record<string, string>): SettingsCombination =>
+  combinationFromRecord(models);
 
 /** One recorded `measure/benchmarked` event as a combination's result of its tier. */
 export function benchmarkedResult(e: EventRecord): CombinationResult | undefined {
@@ -905,9 +1097,14 @@ export function orderCombinations(
   y: CombinationResult,
 ): "x" | "y" | "indistinguishable" {
   const resolved: PairedComparison[] = [];
+  const sx = (x.combination as SettingsCombination).settings ?? {};
+  const sy = (y.combination as SettingsCombination).settings ?? {};
   for (const rx of x.roles) {
     const ry = y.roles.find((r) => r.role === rx.role);
-    if (!ry || rx.model === ry.model) continue;
+    const role = rx.role as ModelRole;
+    const sameSettings = settingsText(sx[role] ?? {}) === settingsText(sy[role] ?? {});
+    // Compared only where the role's model or its settings differ (rule 39).
+    if (!ry || (rx.model === ry.model && sameSettings)) continue;
     const c = compareRoleScores(rx, ry);
     if ("excluded" in c || c.indistinguishable) continue;
     resolved.push(c);
@@ -935,4 +1132,90 @@ export async function combinationResults(log: EventLog): Promise<CombinationResu
       .filter((y) => y !== x && orderCombinations(x, y) === "indistinguishable")
       .map((y) => y.combinationId);
   return all.filter((r) => r.tier === "overnight" || latestQuick.get(r.combinationId) === r);
+}
+
+// ── the history (MS-N8-3) ───────────────────────────────────────────────
+
+/** One recorded run of a combination, against the run before it. */
+export interface HistoryRun {
+  seq: number;
+  date: string;
+  tier: "quick" | "overnight";
+  settings?: Partial<Record<ModelRole, RunSettings>>;
+  score?: Score;
+  roles: RoleScore[];
+  partial: boolean;
+  /** Against the combination's run before it, on the items both ran, by the exact sign test. */
+  versusPrevious?: {
+    outcome: "better" | "worse" | "no clear difference";
+    better: number;
+    worse: number;
+    ties: number;
+    p: number;
+  };
+}
+
+export interface CombinationHistory {
+  combinationId: string;
+  combination: SettingsCombination;
+  runs: HistoryRun[];
+}
+
+/** A run's measured items over every role, each id named by its role, for pairing. */
+const pairedItems = (roles: readonly RoleScore[]): ItemScore[] =>
+  roles
+    .filter((r) => r.state === "measured")
+    .flatMap((r) => (r.items ?? []).map((i) => ({ id: `${r.role}/${i.id}`, score: i.score })));
+
+/**
+ * Every recorded run of either tier per combination, oldest first, each
+ * compared with the run before it on the items both ran by the exact sign
+ * test (MS-N8-3): *better*, *worse* or *no clear difference*, never a bare
+ * difference.
+ */
+export async function combinationHistory(log: EventLog): Promise<CombinationHistory[]> {
+  const out = new Map<string, CombinationHistory>();
+  for (const e of await log.getEventsByTypes([MEASURE_BENCHMARKED])) {
+    const r = benchmarkedResult(e);
+    if (!r) continue;
+    const p = e.payload as BenchmarkedPayload;
+    const combination = r.combination as SettingsCombination;
+    let h = out.get(r.combinationId);
+    if (!h) {
+      h = { combinationId: r.combinationId, combination, runs: [] };
+      out.set(r.combinationId, h);
+    }
+    const before = h.runs.at(-1);
+    let versusPrevious: HistoryRun["versusPrevious"];
+    if (before) {
+      const c = compareOnItems(
+        "worker",
+        { model: "this", items: pairedItems(r.roles) },
+        { model: "before", items: pairedItems(before.roles) },
+      );
+      if (c.better + c.worse + c.ties > 0)
+        versusPrevious = {
+          outcome: c.indistinguishable
+            ? "no clear difference"
+            : c.better > c.worse
+              ? "better"
+              : "worse",
+          better: c.better,
+          worse: c.worse,
+          ties: c.ties,
+          p: c.p,
+        };
+    }
+    h.runs.push({
+      seq: e.seq,
+      date: e.createdAt,
+      tier: p.tier,
+      ...(combination.settings ? { settings: combination.settings } : {}),
+      ...(r.score ? { score: r.score } : {}),
+      roles: r.roles,
+      partial: p.partial === true,
+      ...(versusPrevious ? { versusPrevious } : {}),
+    });
+  }
+  return [...out.values()];
 }

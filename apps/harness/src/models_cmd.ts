@@ -1,17 +1,28 @@
 import { resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import type { EventLog } from "@sekhemet/kernel";
 import {
   DownloadHashMismatch,
+  DownloadRefused,
   FAMILY_SAMPLING,
+  MEASUREMENT_BASELINE,
   MODEL_SOURCES,
   ModelRegistry,
   type ModelSource,
+  SHIPPED_MODELS,
+  type ShippedRole,
   downloadModel,
+  formatBytes,
   lookupPublishedFile,
+  recommendedSetPlan,
+  refuseWithoutSpace,
   registerModelFile,
   resolveWorkerModelId,
   samplingSettingsOf,
+  shippedModel,
+  shippedRoleOf,
   tableSource,
+  volumeFreeBytes,
   volumeOf,
 } from "@sekhemet/models";
 import { mergeNetworkConfigs, policyFetch, policyRefusal } from "@sekhemet/sandbox";
@@ -20,6 +31,35 @@ import { networkConfigs } from "./config_apply.js";
 import { egressEvent } from "./egress_event.js";
 import { networkHint } from "./github_transport.js";
 import { describeModel } from "./model_access.js";
+
+/** What `models fetch` takes, besides the model or role. */
+export interface FetchOptions {
+  repoPath: string;
+  log: EventLog;
+  principal: string;
+  folder?: string;
+  registry?: ModelRegistry;
+  userConfigPath?: string;
+  hub?: string;
+  env?: NodeJS.ProcessEnv;
+  print?: (line: string) => void;
+}
+
+const NO_FOLDER =
+  "Name a model folder first: --folder <path>, or add one on the Configuration page.";
+
+/** The folder a download goes to: the one named, else the first configured, else SEKHEMET_MODELS_DIR. */
+function fetchFolder(opts: FetchOptions): string | undefined {
+  const env = opts.env ?? process.env;
+  return (
+    opts.folder ??
+    resolveConfig({
+      repoPath: opts.repoPath,
+      userConfigPath: opts.userConfigPath ?? userConfigPath(),
+    }).config.models.folders[0]?.path ??
+    env.SEKHEMET_MODELS_DIR?.trim()
+  );
+}
 
 /**
  * `sekhemet models fetch <model> [--folder <path>]` (models rule 4, NEW-models-7,
@@ -30,20 +70,7 @@ import { describeModel } from "./model_access.js";
  * SHA-256 before the file is used, and recorded as `model/downloaded` with
  * the person's principal. Running the command is the person's explicit ask.
  */
-export async function modelsFetch(
-  model: string,
-  opts: {
-    repoPath: string;
-    log: EventLog;
-    principal: string;
-    folder?: string;
-    registry?: ModelRegistry;
-    userConfigPath?: string;
-    hub?: string;
-    env?: NodeJS.ProcessEnv;
-    print?: (line: string) => void;
-  },
-): Promise<number> {
+export async function modelsFetch(model: string, opts: FetchOptions): Promise<number> {
   const print = opts.print ?? ((l: string) => console.log(l));
   const registry = opts.registry ?? new ModelRegistry();
   const cfgPath = opts.userConfigPath ?? userConfigPath();
@@ -64,14 +91,9 @@ export async function modelsFetch(
     }).catch(() => undefined);
     if (source) registry.recordSource(model, source);
   }
-  const env = opts.env ?? process.env;
-  const folder =
-    opts.folder ??
-    resolveConfig({ repoPath: opts.repoPath, userConfigPath: cfgPath }).config.models.folders[0]
-      ?.path ??
-    env.SEKHEMET_MODELS_DIR?.trim();
+  const folder = fetchFolder(opts);
   if (!folder) {
-    print("Name a model folder first: --folder <path>, or add one on the Configuration page.");
+    print(NO_FOLDER);
     return 2;
   }
   try {
@@ -106,6 +128,10 @@ export async function modelsFetch(
       volume: volumeOf(done.path),
       sha256: done.sha256,
     });
+    // A shipped model's family, so the Reviewer's family rule can read it (rule 3).
+    const shipped = [...SHIPPED_MODELS, ...MEASUREMENT_BASELINE].find((m) => m.id === id);
+    if (shipped?.family && !registry.get(model)?.family)
+      registry.upsert(model, { family: shipped.family });
     print(`Verified. ${model} is ready to assign: ${done.path}`);
     return 0;
   } catch (err) {
@@ -127,6 +153,142 @@ export async function modelsFetch(
     print(err instanceof Error ? err.message : String(err));
     return 1;
   }
+}
+
+const ROLE_WORD: Readonly<Record<ShippedRole, string>> = {
+  coding: "Coding",
+  planning: "Planning",
+  research: "Research",
+  review: "Review",
+};
+
+/**
+ * `sekhemet models fetch --role <role>` (models rule 4): the role's shipped
+ * model, through `modelsFetch`. An unfilled role (Review, until RG-P8-13
+ * admits a model) is named with its reason and nothing is fetched.
+ */
+export async function modelsFetchRole(roleWord: string, opts: FetchOptions): Promise<number> {
+  const print = opts.print ?? ((l: string) => console.log(l));
+  const role = shippedRoleOf(roleWord);
+  if (!role) {
+    print(`Not a role: ${roleWord} (coding, planning, research or review).`);
+    return 2;
+  }
+  const m = shippedModel(role);
+  if (!m.id) {
+    print(`The ${ROLE_WORD[role]} role is unfilled, so there is nothing to fetch: ${m.note}`);
+    return 1;
+  }
+  return modelsFetch(m.id, opts);
+}
+
+/**
+ * `sekhemet models fetch --recommended [--yes]` (MD-N18-3, MD-N22-3): the
+ * shipped set's files, sizes and licences, the unfilled roles with their
+ * reasons, and the total still to download are printed first; the set is
+ * refused before the question when the folder's volume cannot hold it
+ * (MD-N18-2); then the person's yes — `--yes` in a script — and each model
+ * is fetched in turn through `modelsFetch`. With no one to ask and no
+ * `--yes`, nothing is downloaded: silence is never a yes.
+ */
+export async function modelsFetchRecommended(
+  opts: FetchOptions & { yes?: boolean; ask?: (question: string) => Promise<boolean> },
+): Promise<number> {
+  const print = opts.print ?? ((l: string) => console.log(l));
+  const registry = opts.registry ?? new ModelRegistry();
+  const folder = fetchFolder(opts);
+  if (!folder) {
+    print(NO_FOLDER);
+    return 2;
+  }
+  const plan = recommendedSetPlan({ registry });
+  print("The recommended set for machines with 24 GB of memory and above:");
+  for (const m of plan.models)
+    print(
+      `  ${ROLE_WORD[m.role].padEnd(9)}${m.id}: ${m.file}, ${formatBytes(m.sizeBytes)}, licence ${m.license}${m.present ? " (already here)" : ""}`,
+    );
+  for (const u of plan.unfilled) print(`  ${ROLE_WORD[u.role].padEnd(9)}unfilled: ${u.reason}`);
+  const missing = plan.models.filter((m) => !m.present);
+  if (missing.length === 0) {
+    print("Every model of the set is already here; nothing to download.");
+    return 0;
+  }
+  const free = volumeFreeBytes(folder);
+  print(
+    `Total to download: ${formatBytes(plan.totalBytes)} into ${folder}${free !== undefined ? ` (${formatBytes(free)} free)` : ""}.`,
+  );
+  try {
+    refuseWithoutSpace(folder, plan.totalBytes, "The set");
+  } catch (err) {
+    print(err instanceof DownloadRefused ? err.message : String(err));
+    return 1;
+  }
+  if (!opts.yes) {
+    if (!opts.ask) {
+      print(
+        "Nothing was downloaded: no one was asked. Run it again with --yes to agree to the sizes and licences above.",
+      );
+      return 1;
+    }
+    const yes = await opts.ask(
+      `Download ${missing.length} ${missing.length === 1 ? "file" : "files"} (${formatBytes(plan.totalBytes)})?`,
+    );
+    if (!yes) {
+      print("Nothing was downloaded.");
+      return 1;
+    }
+  }
+  for (const m of missing) {
+    const code = await modelsFetch(m.id, { ...opts, registry, folder });
+    if (code !== 0) return code;
+  }
+  return 0;
+}
+
+/** A yes or no from the terminal, when there is one (never in a headless run). */
+async function terminalAsk(question: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return /^y(es)?$/i.test((await rl.question(`${question} [y/N] `)).trim());
+  } finally {
+    rl.close();
+  }
+}
+
+export const MODELS_FETCH_USAGE =
+  "Usage: sekhemet models fetch <model> | --role <coding|planning|research|review> | --recommended [--yes] [--folder <path>]";
+
+/**
+ * `sekhemet models fetch …`, from the arguments after `fetch`: one model,
+ * a role's shipped model, or the recommended set.
+ */
+export async function modelsFetchCommand(
+  args: readonly string[],
+  opts: FetchOptions & { ask?: (question: string) => Promise<boolean> },
+): Promise<number> {
+  const print = opts.print ?? ((l: string) => console.log(l));
+  const value = (flag: string) => {
+    const at = args.indexOf(flag);
+    return at === -1 ? undefined : args[at + 1];
+  };
+  const folder = value("--folder") ?? opts.folder;
+  const base: FetchOptions = { ...opts, ...(folder ? { folder } : {}) };
+  if (args.includes("--recommended")) {
+    const ask = opts.ask ?? (process.stdin.isTTY ? terminalAsk : undefined);
+    return modelsFetchRecommended({
+      ...base,
+      yes: args.includes("--yes"),
+      ...(ask ? { ask } : {}),
+    });
+  }
+  const role = value("--role");
+  if (role) return modelsFetchRole(role, base);
+  const model = args[0];
+  if (!model || model.startsWith("-")) {
+    print(MODELS_FETCH_USAGE);
+    return 2;
+  }
+  return modelsFetch(model, base);
 }
 
 /** A model card's sampling, as `sekhemet models add --sampling` records it (live-test F16). */

@@ -128,12 +128,16 @@ function proxyEnv(options: SandboxOptions): Record<string, string> {
   return { HTTP_PROXY: url, HTTPS_PROXY: url, http_proxy: url, https_proxy: url };
 }
 
-/** S3: the seccomp program written to the scratch directory and opened, for fd 3. */
-function openSeccompFd(scratchDir: string): number | undefined {
+/**
+ * S3: the seccomp program written to the scratch directory and opened, for
+ * fd 3. With the network granted the command shares the host's network
+ * namespace, so the program also refuses creating a Unix socket (item 15).
+ */
+function openSeccompFd(scratchDir: string, allowNetwork: boolean): number | undefined {
   const arch = hostSeccompArch();
   if (!arch) return undefined;
   const path = join(scratchDir, ".seccomp.bpf");
-  writeFileSync(path, seccompProgram(arch));
+  writeFileSync(path, seccompProgram(arch, { refuseUnixSockets: allowNetwork }));
   return openSync(path, "r");
 }
 
@@ -366,7 +370,8 @@ export class ProcessSandbox implements ExecutionSandbox {
     mode: ConfinementMode,
     relays?: HostRelays,
   ): import("node:child_process").ChildProcessWithoutNullStreams {
-    const seccompFd = mode === "bubblewrap" ? openSeccompFd(scratchDir) : undefined;
+    const seccompFd =
+      mode === "bubblewrap" ? openSeccompFd(scratchDir, options.allowNetwork) : undefined;
     const child = spawn(file, argv, {
       cwd: options.cwd,
       env: buildEnv({ TMPDIR: scratchDir, ...proxyEnv(options), ...options.env }),
@@ -467,7 +472,8 @@ export class ProcessSandbox implements ExecutionSandbox {
       const memoryCap = options.maxMemoryBytes ?? defaultMemoryCap();
 
       // S3: under bubblewrap, the seccomp filter is handed over on fd 3.
-      const seccompFd = this.mode === "bubblewrap" ? openSeccompFd(scratchDir) : undefined;
+      const seccompFd =
+        this.mode === "bubblewrap" ? openSeccompFd(scratchDir, options.allowNetwork) : undefined;
       const child = spawn(file, argv, {
         cwd: options.cwd,
         env: buildEnv({

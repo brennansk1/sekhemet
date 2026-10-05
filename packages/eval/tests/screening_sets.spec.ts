@@ -56,10 +56,10 @@ describe("the screening sets (measurement rule 31)", () => {
     expect(p.hash).toBeUndefined();
   });
 
-  it("reads the Reviewer's set as not_built naming B4.8, and the Researcher's until a person registers the research golden set", () => {
+  it("reads the Reviewer's set from 10 registered seeded defects (C3-4, CFG-17), and the Researcher's as not_built until a person registers the research golden set", () => {
     const sets = loadScreeningSets(ROOT);
-    expect(sets.roles.reviewer).toMatchObject({ state: "not_built" });
-    expect(sets.roles.reviewer.reason).toMatch(/B4\.8/);
+    expect(sets.roles.reviewer).toMatchObject({ state: "ready", expectedSize: 10 });
+    expect(sets.roles.reviewer.items).toHaveLength(10);
     // B4.4 built the set (research_golden.spec.ts); its answers wait on a person's labels.
     expect(sets.roles.researcher).toMatchObject({ state: "not_built" });
     expect(sets.roles.researcher.reason).toMatch(/research golden set is a draft/);

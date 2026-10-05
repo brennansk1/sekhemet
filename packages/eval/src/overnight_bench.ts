@@ -8,9 +8,15 @@ import {
 } from "@sekhemet/models";
 import {
   MEASURE_BENCHMARKED,
+  type SettingsCombination,
+  combinationFromRecord,
   combinationId,
+  combinationRecord,
   compareOnItems,
   modelFor,
+  parseSettingsText,
+  runSettingsRefusal,
+  settingsWords,
 } from "./combination_bench.js";
 import type { BenchRun, Combination, ItemScore, PairedComparison } from "./combination_types.js";
 import { type RunProfile, runProfileHash } from "./run_profile.js";
@@ -176,19 +182,12 @@ interface ItemPayload {
 
 export const newRunId = () => `bench_${randomBytes(6).toString("hex")}`;
 
-const modelsOf = (c: Combination) =>
-  Object.fromEntries(
-    MODEL_ROLES.flatMap((r) => (modelFor(c, r) ? [[r, modelFor(c, r) as string]] : [])),
-  );
+/** A combination as recorded: each role's model, and its settings (rule 39). */
+const modelsOf = (c: SettingsCombination) => combinationRecord(c);
 
-/** A run's combinations back from the ids and models its start recorded. */
-export function combinationFromModels(models: Record<string, string>): Combination {
-  return {
-    worker: models.worker ?? "",
-    planner: models.planner ?? "",
-    ...(models.reviewer ? { reviewer: models.reviewer } : {}),
-    ...(models.researcher ? { researcher: models.researcher } : {}),
-  };
+/** A run's combinations back from the ids and models its start recorded, settings included. */
+export function combinationFromModels(models: Record<string, string>): SettingsCombination {
+  return combinationFromRecord(models);
 }
 
 /**
@@ -199,7 +198,7 @@ export function combinationFromModels(models: Record<string, string>): Combinati
 export async function scheduleOvernight(
   log: EventLog,
   o: {
-    combinations: Combination[];
+    combinations: SettingsCombination[];
     host: string;
     /** The person who queued it; resolved to the install's person on a solo install. */
     principal?: string;
@@ -213,6 +212,11 @@ export async function scheduleOvernight(
     throw new Error(
       `The overnight benchmark compares at most ${MAX_OVERNIGHT_COMBINATIONS} combinations (rule 37); ${o.combinations.length} were picked.`,
     );
+  // MS-N8-1: a value a run cannot apply is refused before anything is queued.
+  for (const c of o.combinations) {
+    const refusal = runSettingsRefusal(c);
+    if (refusal) throw refusal;
+  }
   const runId = o.runId ?? newRunId();
   const combinations = o.combinations.map((c) => ({
     id: combinationId(c, o.host),
@@ -810,7 +814,10 @@ const ROLE_NAMES: Record<string, string> = {
 
 const describeCombination = (models: Record<string, string> = {}) =>
   MODEL_ROLES.filter((r) => models[r])
-    .map((r) => `${ROLE_NAMES[r]} ${models[r]}`)
+    .map((r) => {
+      const settings = models[`${r}.settings`];
+      return `${ROLE_NAMES[r]} ${models[r]}${settings ? ` (${settingsWords(parseSettingsText(settings))})` : ""}`;
+    })
     .join(" · ");
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;

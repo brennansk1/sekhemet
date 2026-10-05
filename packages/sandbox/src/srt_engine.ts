@@ -1,7 +1,7 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, platform } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { BWRAP_CANDIDATES, bubblewrapUnavailableReason } from "./bubblewrap.js";
 import {
@@ -13,6 +13,7 @@ import {
   startHostRelays,
 } from "./relay.js";
 import {
+  BROWSER_RULES,
   homeToolchainPaths,
   isolationRules,
   keychainRules,
@@ -123,6 +124,18 @@ export function srtFilesystem(
     allowWrite,
     denyWrite,
   };
+}
+
+/** Item 10a's masked folders that exist as folders: srt hides each behind a tmpfs on Linux. */
+function maskedFolders(denyPaths: readonly string[] | undefined): string[] {
+  return (denyPaths ?? []).filter((p) => {
+    if (p.includes("*")) return false;
+    try {
+      return statSync(p).isDirectory();
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** The network posture a command needs; each distinct one is a global srt config. */
@@ -358,19 +371,21 @@ export function srtWrap(
     // SEC-23b: srt's allowlist names the keychain's services itself.
     // Item 10a: a card's denies placed last too, where no srt allow reopens them.
     // Item 11a (C2c): certificate trust only with the network open.
+    // Item 11a (B1): a headless browser's rules, the native engine's own.
     const wrapped =
       platform() === "darwin"
         ? withKeychainRules(
             withSockets,
             [
               trustRulesFor(options),
+              browserRulesFor(options),
               localPortRules(options, srtWrapped),
               isolationRules(options.denyPaths),
             ]
               .filter(Boolean)
               .join("\n"),
           )
-        : withSockets;
+        : withReadOnlyMasks(withSockets, maskedFolders(options.denyPaths));
     // `exec` again at the outer level: the spawned pid is the command itself.
     if (plan.length === 0) return { file: shell, argv: [flag, `exec ${wrapped}`] };
     return {
@@ -404,6 +419,27 @@ export function trustRulesFor(options: Pick<SandboxOptions, "allowNetwork">): st
 }
 
 /**
+ * The one lookup srt's macOS profile lacks for a headless browser: Chromium's
+ * child processes look up the services its browser process registered
+ * (`org.chromium.…MachPortRendezvousServer.<pid>`). The native profile
+ * allows every `mach-lookup`, so this is narrower than it.
+ */
+export const SRT_BROWSER_LOOKUP = '(allow mach-lookup (global-name-prefix "org.chromium."))';
+
+/**
+ * Security item 11a (B1): srt's macOS profile has nothing for a headless
+ * browser: Chromium could not register its own Mach services and died at
+ * start, and its renderer could not reach them. A command that runs one
+ * (`SandboxOptions.browser`) gets the native profile's rules
+ * (`seatbelt.ts` BROWSER_RULES) and the lookup of the same names, placed
+ * with the other additions, before the keychain's. Nothing is wider than the
+ * native profile, whose `mach-lookup` is unrestricted.
+ */
+export function browserRulesFor(options: Pick<SandboxOptions, "browser">): string {
+  return options.browser ? `${BROWSER_RULES.trim()}\n${SRT_BROWSER_LOOKUP}` : "";
+}
+
+/**
  * F29: srt maps a card's `localPorts` to `allowLocalBinding`, and its macOS
  * profile (SRT_VERSION) then allows outbound to `localhost:*` — every
  * loopback listener on the host (the model server, the dashboard, another
@@ -429,6 +465,78 @@ export function localPortRules(
     '(deny network-outbound (remote ip "localhost:*"))',
     ...ports.map((p) => `(allow network-outbound (remote ip "localhost:${p}"))`),
   ].join("\n");
+}
+
+/**
+ * A word as srt's `quote` renders it (SRT_VERSION, `utils/shell-quote.js`):
+ * bare when nothing in it is special to a shell, else single-quoted.
+ */
+function srtWord(word: string): string {
+  if (/^[A-Za-z0-9_./:@+,-][A-Za-z0-9_./:=@+,-]*$/.test(word)) return word;
+  return `'${word.replace(/'/g, `'"'"'`)}'`;
+}
+
+/** Where srt's Linux mounts end (SRT_VERSION): it binds a fresh /dev right after them. */
+const SRT_MOUNTS_END = " --dev /dev ";
+
+/**
+ * Item 10a under srt on Linux (B1): srt hides a read-denied folder behind a
+ * tmpfs it leaves writable, by design, and applies `denyWrite` only within
+ * the writable roots; a write at the top of a masked folder then exited 0
+ * into a private copy nobody sees. The native engine mounts the same folders
+ * read-only (`bubblewrap.ts`). Each masked folder srt mounted a tmpfs for is
+ * remounted read-only the same way, after all of srt's mounts, so a mount srt
+ * restores inside it is unaffected. A folder srt mounted nothing for gets
+ * nothing only when it does not exist or a remounted masked folder above
+ * covers it; any other is refused (B1 review). The command is also refused
+ * when srt's mounts cannot be read (passed through a file, or no end found),
+ * rather than run with a writable mask.
+ */
+export function withReadOnlyMasks(wrapped: string, dirs: readonly string[]): string {
+  if (dirs.length === 0) return wrapped;
+  const end = wrapped.indexOf(SRT_MOUNTS_END);
+  if (end < 0) {
+    throw new Error(
+      `srt ${SRT_VERSION}'s command had no end of its mounts, so the masked folders could not be made read-only`,
+    );
+  }
+  const mounts = `${wrapped.slice(0, end)} `;
+  if (mounts.includes(" --args ")) {
+    throw new Error(
+      `srt ${SRT_VERSION} passed its mounts through a file, so the masked folders could not be made read-only`,
+    );
+  }
+  const remounts: string[] = [];
+  const mounted = (dir: string) => mounts.includes(` --tmpfs ${srtWord(dir)} `);
+  for (const dir of dirs) {
+    const word = srtWord(dir);
+    const tmpfs = ` --tmpfs ${word} `;
+    const at = mounts.indexOf(tmpfs);
+    if (at < 0) {
+      // srt mounts nothing for a folder that does not exist, and --remount-ro
+      // on a masked folder above makes everything under it read-only. Any
+      // other folder would stay writable: refuse rather than fail open.
+      const covered = dirs.some((up) => up !== dir && isUnder(dir, up) && mounted(up));
+      if (!existsSync(dir) || covered) continue;
+      throw new Error(
+        `srt ${SRT_VERSION} mounted no tmpfs for ${dir}, so it could not be made read-only`,
+      );
+    }
+    if (mounts.indexOf(tmpfs, at + 1) >= 0) {
+      throw new Error(
+        `srt ${SRT_VERSION} mounted ${dir} more than once, so it could not be made read-only`,
+      );
+    }
+    remounts.push(`--remount-ro ${word}`);
+  }
+  if (remounts.length === 0) return wrapped;
+  return `${wrapped.slice(0, end)} ${remounts.join(" ")}${wrapped.slice(end)}`;
+}
+
+/** Whether `dir` is strictly inside `up`. */
+function isUnder(dir: string, up: string): boolean {
+  const rel = relative(up, dir);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
 /** srt's open-network line in its macOS profile (SRT_VERSION), where the socket rules go. */

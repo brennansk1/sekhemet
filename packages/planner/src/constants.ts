@@ -1,4 +1,5 @@
 import { DEFAULT_STEP_BUDGET } from "@sekhemet/kernel";
+import { codingModelWindowTokens } from "@sekhemet/models";
 import type { TierBudget } from "./types.js";
 
 /**
@@ -51,17 +52,26 @@ export const ASSUMED_TEST_TOKENS = 400;
 /** How long a decision may sit before its default (or Parked) applies. */
 export const DEFAULT_DECISION_DEADLINE_MS = 12 * 60 * 60 * 1_000;
 
-/** The reference Worker's window (16,384): W = 9,984, Zone 3's cap 3,792 (DEC-27). */
+/**
+ * The reference Worker's window (16,384): W = 9,984, Zone 3's cap 3,792
+ * (DEC-27). A worked example for the docs and tests, never a default: no
+ * planner constant sets the window (MD-N4-10).
+ */
 export const REFERENCE_WORKER_WINDOW = 16_384;
 
 /**
- * Default budget for a story-tier card: the reference Worker's window
- * (16,384) until the caller passes the resolved Worker's from the registry
- * (models rule 11). INVEST's *Small* is Zone 3's cap at that Worker's prompt
- * budget (`small.ts`, DEC-27); there is no pack fraction.
+ * Default budget for a story-tier card. Its window is the resolved Coding
+ * model's, read from the registry each time it is read — this host's
+ * assignment, else the shipped Coding model's (models MD-N4-10, rule 3) —
+ * so a caller that passes no tier budget sizes INVEST's *Small* at the
+ * model that will run the card. The harness passes its own resolution
+ * (`resolvedWorkerWindowTokens`). INVEST's *Small* is Zone 3's cap at that
+ * Worker's prompt budget (`small.ts`, DEC-27); there is no pack fraction.
  */
 export const DEFAULT_TIER_BUDGET: TierBudget = {
-  workerWindowTokens: REFERENCE_WORKER_WINDOW,
+  get workerWindowTokens(): number {
+    return codingModelWindowTokens();
+  },
   maxSteps: INVEST_MAX_STEPS,
   maxFiles: MAX_SCOPE_FILES,
 };

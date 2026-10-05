@@ -1,5 +1,9 @@
 import type { MetadataSource, ModelMetadata } from "./library_types.js";
 import type { ModelSource } from "./registry.js";
+import { MEASUREMENT_BASELINE, SHIPPED_MODELS } from "./shipped_models.js";
+
+// The shipped set (rule 8a) is exported from here, so the package index is unchanged.
+export * from "./shipped_models.js";
 
 /**
  * The model sources table and the Hugging Face lookups (models rule 4,
@@ -30,21 +34,27 @@ export interface ModelSourceRow {
  * here, with no source recorded in the registry either, offers no download
  * (MD-N12-6).
  *
- * Filled only from what is verifiable on this host (B4.1): the Worker's
- * repository from its model card's `hf download` line, its size and SHA-256
- * from the local copy the harness runs. The managed Planner's file
- * (`Dirk-Qwen3.8-27B-GSQ-RCO-IQ3_S.gguf`) is not in the published file
- * list of the repository its folder names, and the Researcher's (Apodex)
- * has no model card or download record here, so neither is listed.
+ * Derived from the shipped set and the measurement baseline
+ * (`shipped_models.ts`, rule 8a), whose rows are filled only from a verified
+ * lookup; a role with no verified source (Review, while unfilled) has none.
  */
-export const MODEL_SOURCES: Readonly<Record<string, ModelSourceRow>> = {
-  "cyber-tiel-coder-35b-a3b-mtp-iq3xxs": {
-    repo: "peculiar-ragdoll/Cyber-Tiel-Coder-35B-A3B-GGUF-MTP",
-    file: "Cyber-Tiel-Coder-35B-A3B-MTP-UD-IQ3_XXS.gguf",
-    sha256: "d60adb32312166b49ceffbd10aed297aee69626b45ec4e720700450ee048bd0e",
-    sizeBytes: 13_600_579_904,
-  },
-};
+export const MODEL_SOURCES: Readonly<Record<string, ModelSourceRow>> = Object.fromEntries(
+  [...SHIPPED_MODELS, ...MEASUREMENT_BASELINE].flatMap((m) =>
+    m.id && m.source
+      ? [
+          [
+            m.id,
+            {
+              repo: m.source.repo,
+              file: m.source.file,
+              sha256: m.source.sha256,
+              sizeBytes: m.source.sizeBytes,
+            },
+          ],
+        ]
+      : [],
+  ),
+);
 
 /** A file's download URL on the hub. */
 export function hubFileUrl(repo: string, file: string, hub: string = HF_HUB): string {

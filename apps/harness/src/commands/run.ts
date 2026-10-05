@@ -7,9 +7,9 @@ import { cardStepCap, configOverrideLines, defaultWorkerName } from "../config_a
 import { executeCard, runLspPool } from "../execute.js";
 import { LearningStore } from "../learning/store.js";
 import { applyProfileSwitches, profileForRun } from "../measure_cmd.js";
-import { ModelAccess, roleModelName } from "../model_access.js";
+import { ModelAccess, describeModel, roleModelName } from "../model_access.js";
 import { setupFor } from "../planner_live.js";
-import { gateWorker } from "../qualify.js";
+import { gateWorker, verifiedReviewerRole } from "../qualify.js";
 import {
   REVIEW_WAIT,
   familyOf,
@@ -140,12 +140,20 @@ export const runCommand: CommandHandler = async (args, env) => {
   console.log(`Coding model: ${model.modelId}`);
   // review-git RG-P8-1, -10: the AI review reads the change before Review,
   // on a Review model outside the Coding model's family, or says why not.
-  const runReviewer = resolveReviewerRole({
-    reviewer: roleModelName("reviewer", undefined, { registry }),
-    planner: roleModelName("planner", undefined, { registry }),
-    worker: model.modelId,
-    familyOf: (m) => familyOf(m, registry),
-  });
+  // MD-N8-1, rule 23: a Review model not verified for the Review role on this
+  // machine is not used; the change reaches Review unreviewed, saying why.
+  const runReviewer = verifiedReviewerRole(
+    registry,
+    resolveReviewerRole({
+      reviewer: roleModelName("reviewer", undefined, { registry }),
+      planner: roleModelName("planner", undefined, { registry }),
+      worker: model.modelId,
+      familyOf: (m) => familyOf(m, registry),
+    }),
+    (name, role) => describeModel(name, role, { registry }),
+  );
+  if (runReviewer.state === "unfilled" && /not verified/.test(runReviewer.reason))
+    console.log(runReviewer.reason);
   // MD-N8-1: the Worker runs cards only once its exact combination (engine,
   // model build, host, settings) has qualified on this host. Nothing loads.
   // Rule 27, MD-N4-4: a person's override runs the failed combination, and

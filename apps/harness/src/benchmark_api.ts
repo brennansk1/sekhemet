@@ -1,7 +1,15 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { BenchmarkRefusal, type Combination, MAX_OVERNIGHT_COMBINATIONS } from "@sekhemet/eval";
+import {
+  BenchmarkRefusal,
+  MAX_OVERNIGHT_COMBINATIONS,
+  type RunSettings,
+  type SettingsCombination,
+  SettingsRefusal,
+} from "@sekhemet/eval";
+import { MODEL_ROLES, type ModelRole } from "@sekhemet/models";
 import { BenchmarkNotFound, type BenchmarkService, QUICK_TIER_COPY } from "./benchmark_cmd.js";
 import { CONFIG_ROUTES, type ConfigRoute } from "./config_routes.js";
+import { TuneRefusal } from "./tune_settings.js";
 
 /**
  * The two-tier benchmark's REST routes (PM_CONTRACT §3 *Configuration*;
@@ -63,7 +71,27 @@ function match(
   return undefined;
 }
 
-function combinationOf(v: unknown): Combination | undefined {
+/** A combination's per-role settings from a body or a query (rule 39); checked by the service. */
+function settingsOf(v: unknown): SettingsCombination["settings"] | undefined {
+  let raw = v;
+  if (typeof raw === "string") {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Partial<Record<ModelRole, RunSettings>> = {};
+  for (const role of MODEL_ROLES) {
+    const r = (raw as Record<string, unknown>)[role];
+    if (r && typeof r === "object" && !Array.isArray(r) && Object.keys(r).length)
+      out[role] = r as RunSettings;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function combinationOf(v: unknown): SettingsCombination | undefined {
   if (!v || typeof v !== "object") return undefined;
   const c = v as Record<string, unknown>;
   const s = (x: unknown) => (typeof x === "string" && x.trim() ? x.trim() : undefined);
@@ -72,11 +100,13 @@ function combinationOf(v: unknown): Combination | undefined {
   if (!worker || !planner) return undefined;
   const reviewer = s(c.reviewer);
   const researcher = s(c.researcher);
+  const settings = settingsOf(c.settings);
   return {
     worker,
     planner,
     ...(reviewer ? { reviewer } : {}),
     ...(researcher ? { researcher } : {}),
+    ...(settings ? { settings } : {}),
   };
 }
 
@@ -85,6 +115,9 @@ export function createBenchmarkApi(ctx: BenchmarkApiContext) {
 
   const refused = (res: ServerResponse, err: unknown): void => {
     if (err instanceof BenchmarkNotFound) ctx.json(res, 404, { error: err.message });
+    else if (err instanceof SettingsRefusal)
+      ctx.json(res, 400, { error: err.message, key: err.key, role: err.role });
+    else if (err instanceof TuneRefusal) ctx.json(res, 409, { error: err.message });
     else if (err instanceof BenchmarkRefusal)
       ctx.json(res, 409, {
         error: err.message,
@@ -94,7 +127,7 @@ export function createBenchmarkApi(ctx: BenchmarkApiContext) {
   };
 
   /** A combination named by id (one already benchmarked) or by its models in the query. */
-  const queryCombination = async (q: URLSearchParams): Promise<Combination | undefined> => {
+  const queryCombination = async (q: URLSearchParams): Promise<SettingsCombination | undefined> => {
     const id = q.get("combination");
     if (id) {
       const known = (await svc.results()).results.find((r) => r.combinationId === id);
@@ -142,6 +175,21 @@ export function createBenchmarkApi(ctx: BenchmarkApiContext) {
       const e = await svc.estimateQuick(c);
       ctx.json(res, 200, { ...e, copy: QUICK_TIER_COPY });
     },
+    // MS-N8-3, -4: every combination's runs against the one before, and the external results.
+    "GET /api/config/benchmark/history": async (_req, res) => {
+      ctx.json(res, 200, await svc.historyAll());
+    },
+    // MS-N7-1, -6: the Find best settings runs, and a role's candidates and estimate.
+    "GET /api/config/benchmark/tune": async (_req, res, _p, q) => {
+      const role = q.get("role") as ModelRole | null;
+      const model = q.get("model");
+      const known = role && MODEL_ROLES.includes(role) ? role : undefined;
+      ctx.json(res, 200, {
+        roles: svc.tune.roleStates(),
+        runs: await svc.tune.runs(known ? { role: known } : {}),
+        ...(known && model ? { estimate: await svc.tune.estimate(known, model) } : {}),
+      });
+    },
     "GET /api/config/benchmark/runs/:runId": async (_req, res, p) => {
       const run = await svc.run(p.runId ?? "");
       if (!run) return ctx.json(res, 404, { error: `No benchmark run ${p.runId}.` });
@@ -157,14 +205,14 @@ export function createBenchmarkApi(ctx: BenchmarkApiContext) {
         return ctx.json(res, 400, {
           error: "Each combination names at least a Coding model and a Planning model.",
         });
-      const combinations = list as Combination[];
+      const combinations = list as SettingsCombination[];
       const principal = ctx.principalOf?.(req);
       if (body.tier === "quick") {
         if (combinations.length !== 1)
           return ctx.json(res, 400, {
             error: "A quick benchmark screens exactly one combination.",
           });
-        const s = await svc.startQuick(combinations[0] as Combination, principal);
+        const s = await svc.startQuick(combinations[0] as SettingsCombination, principal);
         return ctx.json(res, 200, { run: s.run, estimateSeconds: s.estimateSeconds });
       }
       if (body.tier === "overnight") {
@@ -186,6 +234,31 @@ export function createBenchmarkApi(ctx: BenchmarkApiContext) {
     },
     "POST /api/config/benchmark/runs/:runId/stop": async (req, res, p) => {
       ctx.json(res, 200, await svc.stop(p.runId ?? "", ctx.principalOf?.(req)));
+    },
+    // MS-N7-1, -2: started only on the person's confirmation; refused before any load.
+    "POST /api/config/benchmark/tune": async (req, res) => {
+      const body = await ctx.readJsonBody(req);
+      const role = body.role as ModelRole;
+      const model = typeof body.model === "string" ? body.model.trim() : "";
+      if (!MODEL_ROLES.includes(role) || !model)
+        return ctx.json(res, 400, { error: "Name the role and its model." });
+      if (body.confirm !== true)
+        return ctx.json(res, 400, {
+          error: "Find best settings runs only after its confirmation.",
+          needs: "confirmation",
+        });
+      const principal = ctx.principalOf?.(req);
+      const started = await svc.tune.start(role, model, principal);
+      ctx.json(res, 202, { run: started.run });
+    },
+    "POST /api/config/benchmark/tune/:runId/stop": async (_req, res, p) => {
+      ctx.json(res, 200, await svc.tune.stop(p.runId ?? ""));
+    },
+    // MS-N7-7: Apply is the person's press.
+    "POST /api/config/benchmark/tune/:runId/apply": async (req, res, p) => {
+      const principal = ctx.principalOf?.(req);
+      if (!principal) return ctx.json(res, 403, { error: "Apply needs a person." });
+      ctx.json(res, 200, await svc.tune.apply(p.runId ?? "", principal));
     },
   };
 

@@ -232,7 +232,12 @@ export async function planFirstRun(repo: string, options: FirstRunOptions): Prom
 function paragraph(plan: FirstRunPlan): string[] {
   const lines: string[] = [];
   const present = plan.weights.filter((w) => w.present);
-  if (present.length === 0) {
+  // Rule 6c, MD-N16-3: below 24 GB the shipped set is never presented as
+  // fitting; the person may continue at their own risk.
+  const supported = plan.roster.supported;
+  if (!supported) {
+    lines.push(`${plan.chip}, ${plan.memoryGb} GB. ${plan.roster.note}`);
+  } else if (present.length === 0) {
     const worker = plan.weights[0];
     const planner = plan.weights[1];
     lines.push(
@@ -242,11 +247,21 @@ function paragraph(plan: FirstRunPlan): string[] {
     lines.push(`${plan.chip}, ${plan.memoryGb} GB, class ${plan.roster.tier}.`);
   }
   for (const w of plan.weights) {
-    lines.push(
-      `  ${w.label} ${w.model} — ${w.present ? `weights present${w.sizeBytes ? ` (${gb(w.sizeBytes)})` : ""}` : "no weights found"}`,
-    );
+    if (w.present)
+      lines.push(
+        `  ${w.label} ${w.model} — weights present${w.sizeBytes ? ` (${gb(w.sizeBytes)})` : ""}`,
+      );
+    else if (!w.model)
+      // Rule 3: a role the shipped set leaves unfilled says so (the Review role).
+      lines.push(`  ${w.label} — unfilled until a model is admitted for it`);
+    else
+      lines.push(
+        supported
+          ? `  ${w.label} ${w.model} — no weights found`
+          : `  ${w.label} — no weights found`,
+      );
   }
-  if (present.length === 0) {
+  if (present.length === 0 && supported) {
     lines.push(
       "  The Configuration page finds the models you already have, or downloads these when you choose.",
     );

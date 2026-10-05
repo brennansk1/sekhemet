@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ModelRole } from "./types.js";
+import type { ModelRole, ReasoningLevel, ToolCallFormat } from "./types.js";
 
 /**
  * What a qualification qualifies (models rule 27a, MD-N8-1): the tuple
@@ -53,6 +53,41 @@ export interface QualificationSettings {
    * sampled combination by "sampling".
    */
   sampling?: SamplingSettings;
+  /**
+   * The repeat and presence penalties a person set for the role
+   * (NEW-models-21, MD-N21-3). Absent until set, so every earlier record
+   * keeps its key.
+   */
+  penalties?: { repeat?: number; presence?: number };
+  /** The reasoning level and thinking cap a person set for the role (R3c, MD-N21-3). */
+  reasoning?: { level?: ReasoningLevel; capTokens?: number };
+  /** Flash attention, when a person set it (on is the launch's default). */
+  flashAttention?: boolean;
+  /** The tool arm a person chose for the role over the measured one. */
+  toolArm?: ToolCallFormat;
+}
+
+/**
+ * The values a person may set for a role that the combination keys
+ * (NEW-models-21): the subset of `RoleSettingValues` (registry.ts) that can
+ * change what the model emits. Speed-only and harness values (seed, GPU
+ * layers, load mode, method, evidence gate, step budget) are not here.
+ */
+export interface CombinationSettingValues {
+  contextTokens?: number;
+  kvType?: string;
+  slots?: number;
+  mtp?: "auto" | "off";
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  minP?: number;
+  repeatPenalty?: number;
+  presencePenalty?: number;
+  reasoningLevel?: ReasoningLevel;
+  reasoningCapTokens?: number;
+  flashAttention?: boolean;
+  toolArm?: "auto" | ToolCallFormat;
 }
 
 export interface QualificationCombination {
@@ -79,7 +114,30 @@ const ELEMENTS: [name: string, read: (c: QualificationCombination) => unknown][]
   ["context version", (c) => c.settings.contextVersion],
   ["sampling", (c) => canonicalSampling(c.settings.sampling)],
   ["role", (c) => roleOf(c)],
+  ["repeat and presence penalties", (c) => canonicalPenalties(c.settings.penalties)],
+  ["reasoning", (c) => canonicalReasoning(c.settings.reasoning)],
+  ["flash attention", (c) => c.settings.flashAttention],
+  ["tool arm", (c) => c.settings.toolArm],
 ];
+
+/** Elements absent from a combination until a person sets them (NEW-models-21): an absent one keys as before. */
+const OPTIONAL = new Set([
+  "sampling",
+  "repeat and presence penalties",
+  "reasoning",
+  "flash attention",
+  "tool arm",
+]);
+
+function canonicalPenalties(p: QualificationSettings["penalties"]): unknown {
+  if (!p || (p.repeat === undefined && p.presence === undefined)) return undefined;
+  return [p.repeat ?? null, p.presence ?? null];
+}
+
+function canonicalReasoning(r: QualificationSettings["reasoning"]): unknown {
+  if (!r || (r.level === undefined && r.capTokens === undefined)) return undefined;
+  return [r.level ?? null, r.capTokens ?? null];
+}
 
 /** The role a combination is qualified for: absent is the Coding model's (the Worker's). */
 export function roleOf(c: Pick<QualificationCombination, "settings">): ModelRole {
@@ -102,7 +160,7 @@ function canonical(c: QualificationCombination): string {
   return JSON.stringify(
     ELEMENTS.filter(
       ([name, read]) =>
-        (name !== "sampling" || read(c) !== undefined) && (name !== "role" || read(c) !== "worker"),
+        (!OPTIONAL.has(name) || read(c) !== undefined) && (name !== "role" || read(c) !== "worker"),
     ).map(([name, read]) => [name, read(c)]),
   );
 }
@@ -134,4 +192,73 @@ export function describeCombination(c: QualificationCombination): string {
     ? `, temperature ${s.sampling.temperature ?? "default"}, top_p ${s.sampling.topP ?? "default"}, top_k ${s.sampling.topK ?? "default"}, min_p ${s.sampling.minP ?? "default"}`
     : "";
   return `${c.engine}, ${s.contextTokens} tokens, KV ${s.kvType}, speculative ${describeSpeculative(s.speculative)}, prefix caching ${s.prefixCaching ? "on" : "off"}, ${s.parallelSlots} slot${s.parallelSlots === 1 ? "" : "s"}${sampling}`;
+}
+
+/**
+ * The values a person set that the running adapter does not report itself
+ * (NEW-models-21, MD-N21-3): the penalties, the reasoning level and cap,
+ * flash attention and the tool arm. The registry folds these into a
+ * combination when it records or looks one up, so a change to any of them
+ * is a change of combination, while the context, KV type, slots, MTP and
+ * sampling reach the combination through the launch the roster applied
+ * them to. Nothing set adds nothing.
+ */
+export function withRoleExtras(
+  c: QualificationCombination,
+  v: CombinationSettingValues | undefined,
+): QualificationCombination {
+  if (!v) return c;
+  const settings: QualificationSettings = { ...c.settings };
+  if (v.repeatPenalty !== undefined || v.presencePenalty !== undefined)
+    settings.penalties = {
+      ...(v.repeatPenalty !== undefined ? { repeat: v.repeatPenalty } : {}),
+      ...(v.presencePenalty !== undefined ? { presence: v.presencePenalty } : {}),
+    };
+  if (v.reasoningLevel !== undefined || v.reasoningCapTokens !== undefined)
+    settings.reasoning = {
+      ...(v.reasoningLevel !== undefined ? { level: v.reasoningLevel } : {}),
+      ...(v.reasoningCapTokens !== undefined ? { capTokens: v.reasoningCapTokens } : {}),
+    };
+  // On is the launch's own default: only off changes what runs.
+  if (v.flashAttention === false) settings.flashAttention = false;
+  if (v.toolArm !== undefined && v.toolArm !== "auto") settings.toolArm = v.toolArm;
+  return { ...c, settings };
+}
+
+/**
+ * A qualified combination as a person's values would make it (MD-N21-3):
+ * every element they set, the launch's ones included, so the page can say
+ * *Needs verifying* and name what changed before anything runs.
+ */
+export function applyRoleSettings(
+  c: QualificationCombination,
+  v: CombinationSettingValues | undefined,
+): QualificationCombination {
+  if (!v) return c;
+  const out = withRoleExtras(c, v);
+  const settings: QualificationSettings = { ...out.settings };
+  if (v.contextTokens !== undefined) settings.contextTokens = v.contextTokens;
+  if (v.kvType !== undefined) settings.kvType = v.kvType;
+  if (v.slots !== undefined) settings.parallelSlots = v.slots;
+  if (v.mtp === "off") settings.speculative = "off";
+  const sampled =
+    v.temperature !== undefined ||
+    v.topP !== undefined ||
+    v.topK !== undefined ||
+    v.minP !== undefined;
+  if (sampled)
+    settings.sampling = {
+      ...(settings.sampling ?? {}),
+      ...(v.temperature !== undefined ? { temperature: v.temperature } : {}),
+      ...(v.topP !== undefined ? { topP: v.topP } : {}),
+      ...(v.topK !== undefined ? { topK: v.topK } : {}),
+      ...(v.minP !== undefined ? { minP: v.minP } : {}),
+    };
+  return { ...out, settings };
+}
+
+/** A combination without the values a person set that the registry folds in (`withRoleExtras`). */
+export function withoutRoleExtras(c: QualificationCombination): QualificationCombination {
+  const { penalties: _p, reasoning: _r, flashAttention: _f, toolArm: _t, ...settings } = c.settings;
+  return { ...c, settings };
 }

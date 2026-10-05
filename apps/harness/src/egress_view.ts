@@ -5,11 +5,17 @@ import type { EventLog, EventRecord } from "@sekhemet/kernel";
  * dashboard §2.16 item 5, NEW-dashboard-24; FINDINGS INS-08). The rows of
  * Configuration › Project › *Network activity* and of `sekhemet egress`, one
  * reader for both, so the two show the same rows for the same ledger
- * (DB-N24-1). It reads the recorded `harness/egress`, `card/egress` and
- * `model/downloaded` events and records nothing (SEC-N11-2, DB-N24-3).
+ * (DB-N24-1). It reads the recorded `harness/egress`, `card/egress`,
+ * `model/downloaded` and `engine/downloaded` (models MD-N19-4) events and
+ * records nothing (SEC-N11-2, DB-N24-3).
  */
 
-export const EGRESS_EVENT_TYPES = ["harness/egress", "card/egress", "model/downloaded"] as const;
+export const EGRESS_EVENT_TYPES = [
+  "harness/egress",
+  "card/egress",
+  "model/downloaded",
+  "engine/downloaded",
+] as const;
 
 /** SEC-N11-3, DB-N24-2: the words when no row is recorded (or none matches the filters). */
 export const NOTHING_LEFT = "Nothing has left this machine.";
@@ -69,6 +75,8 @@ const PURPOSES: Record<string, string> = {
   "supply-chain": "Package registry check",
   "model lookup": "Model lookup",
   "model download": "Model download",
+  // Models rule 6b: *Get the inference engine*, each redirect hop its own row.
+  "engine download": "Engine download",
 };
 
 /** A recorded purpose id in plain words. */
@@ -115,6 +123,11 @@ function rowOf(e: EventRecord, ctx: EgressContext): EgressRow | undefined {
   if (e.type === "model/downloaded") {
     host = str(p.source) ?? "unknown host";
     purpose = purposeWords("model download");
+    allowed = true;
+    bytes = num(p.bytes);
+  } else if (e.type === "engine/downloaded") {
+    host = str(p.source) ?? "unknown host";
+    purpose = `${purposeWords("engine download")}, llama.cpp ${str(p.release) ?? ""}`.trim();
     allowed = true;
     bytes = num(p.bytes);
   } else if (e.type === "card/egress") {

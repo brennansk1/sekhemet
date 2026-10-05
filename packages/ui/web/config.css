@@ -303,3 +303,143 @@
     white-space: normal;
   }
 }
+/* Configuration › Models in three layers (NEW-dashboard-27; C3-3): the setup
+   card's checks in words, the inference engine as the Model library's first
+   part, and Customize per role with its five tabs. */
+.cfg-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.cfg-checks li::before {
+  content: "✓ ";
+  color: var(--state-pass);
+}
+.cfg-checks li[data-check="no"]::before {
+  content: "! ";
+  color: var(--state-parked);
+}
+.cfg-engine {
+  border-top: 0;
+  padding-top: 0;
+}
+.cfg-cust-slot {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.cfg-cust {
+  min-width: 0;
+}
+.cfg-cust .cust-head {
+  justify-content: space-between;
+}
+.cfg-cust .cust-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.cfg-cust .cust-tabs .tab {
+  position: relative;
+  flex: 0 0 auto;
+  padding: 8px 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.cust-panel {
+  display: grid;
+  gap: 12px;
+  padding-top: 8px;
+  min-width: 0;
+}
+.cust-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.cust-field > label {
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+.cust-ctl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.cfg-cust input[type="number"] {
+  width: 140px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+.cfg-cust input[type="range"] {
+  width: 100%;
+  max-width: 480px;
+}
+.cust-grade {
+  font-size: var(--text-sm);
+}
+.cust-grade .grade {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.cust-grade .grade[data-grade="measured"] {
+  color: var(--state-pass);
+}
+.cust-fit {
+  font-size: var(--text-sm);
+}
+.cust-ver[data-state="needs_verifying"] {
+  color: var(--state-parked);
+}
+.cust-presets {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  gap: 4px;
+}
+.cust-presets legend {
+  padding: 0;
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+.cust-presets .btn[aria-pressed="true"] {
+  border-color: var(--text-primary);
+}
+.cust-foot {
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+.cust-import {
+  position: relative;
+  cursor: pointer;
+}
+.cust-import.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@media (max-width: 767px) {
+  .cfg-cust .cust-tabs .tab {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .cfg-cust input[type="number"] {
+    height: 44px;
+  }
+  .cfg-cust input[type="range"] {
+    height: 44px;
+  }
+}

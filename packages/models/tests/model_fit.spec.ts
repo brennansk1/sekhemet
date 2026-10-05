@@ -3,7 +3,9 @@ import type { FoundModel } from "../src/library_types.js";
 import {
   ROLE_SETTINGS,
   applyFits,
+  fitCeilingBytes,
   fitFor,
+  isReferenceHost,
   kvBytes,
   kvBytesPerElement,
   memoryBreakdown,
@@ -144,5 +146,68 @@ describe("applyFits", () => {
     expect(b?.fits.worker).toBe("no");
     expect(b?.fitReason.worker).toMatch(/Needs/);
     expect(b?.fit?.worker?.fits).toBe("no");
+  });
+});
+
+describe("MD-N21-8 (FINDINGS CFG-02): fit against this machine's usable memory, never negative", () => {
+  it("a model that fits the machine fits even while reclaimable cache holds the momentary memory", () => {
+    const v = fitFor(
+      model("small", 4 * GB),
+      "worker",
+      host(-0.3 * GB, { usableBytes: { value: 16 * GB, grade: "measured" as const } }),
+    );
+    expect(v.fits).toBe("yes");
+    expect(v.reason).toMatch(/of 16\.0 GB usable$/);
+    expect(v.reason).not.toMatch(/-/);
+  });
+
+  it("a shortfall names usable memory of zero or more, never a negative amount", () => {
+    const v = fitFor(model("big", 4 * GB), "worker", host(-0.3 * GB));
+    expect(v.fits).toBe("no");
+    expect(v.reason).toMatch(/of 0\.0 GB usable/);
+    expect(v.reason).not.toMatch(/of -/);
+  });
+
+  it("the momentary headroom still decides swapping beside our own resident model", () => {
+    const v = fitFor(
+      model("mid", 6 * GB),
+      "reviewer",
+      host(1 * GB, {
+        usableBytes: { value: 16 * GB, grade: "measured" as const },
+        resident: [{ name: "the Worker", footprintBytes: 9 * GB, ours: true }],
+      }),
+    );
+    expect(v.fits).toBe("swaps");
+    expect(v.reason).toMatch(/of 16\.0 GB usable; swaps with the Worker/);
+  });
+});
+
+describe("MD-N21-9 (FINDINGS CFG-14): the seed ceiling is the reference host's alone", () => {
+  const m4 = {
+    platform: "darwin",
+    arch: "arm64",
+    cpuModel: "Apple M4",
+    totalBytes: 24 * 1024 ** 3,
+  };
+  it("knows the reference host by platform, chip and memory", () => {
+    expect(isReferenceHost(m4)).toBe(true);
+    expect(isReferenceHost({ ...m4, cpuModel: "Apple M4 Pro" })).toBe(false);
+    expect(isReferenceHost({ ...m4, totalBytes: 16 * 1024 ** 3 })).toBe(false);
+    expect(isReferenceHost({ ...m4, platform: "linux", arch: "x64" })).toBe(false);
+  });
+  it("applies recorded ceilings anywhere, and the seed only on the reference host with none calibrated", () => {
+    expect(fitCeilingBytes([], false, 15e9)).toBeUndefined();
+    expect(fitCeilingBytes([], true, 15e9)).toBe(15e9);
+    expect(fitCeilingBytes([{ basis: "calibrated", bytes: 18e9 }], true, 15e9)).toBe(18e9);
+    expect(
+      fitCeilingBytes(
+        [
+          { basis: "metal_timeout", bytes: 12e9 },
+          { basis: "calibrated", bytes: 18e9 },
+        ],
+        false,
+        15e9,
+      ),
+    ).toBe(12e9);
   });
 });

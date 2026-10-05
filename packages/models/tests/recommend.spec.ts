@@ -241,3 +241,41 @@ describe("combinations (MD-N14-42, DB-NM14-6)", () => {
     for (const r of ranked) expect(Object.keys(r)).not.toContain("score");
   });
 });
+
+describe("MD-N21-10 (FINDINGS CFG-03): a role with no candidate is never a met floor", () => {
+  const c = (id: string, family: string) => ({
+    id,
+    family,
+    footprintBytes: 10e9,
+    fits: "yes" as const,
+    floorOk: true,
+  });
+  const estimate = () => ({ timePerCardMs: { value: 600_000, grade: "estimated" as const } });
+
+  it("returns no combination when no role has a candidate", () => {
+    expect(
+      rankCombinations({
+        roles: { worker: [], planner: [], reviewer: [], researcher: [] },
+        estimate,
+      }),
+    ).toEqual([]);
+  });
+
+  it("names an empty role as unfilled on every combination and marks its floors not met", () => {
+    const ranked = rankCombinations({
+      roles: {
+        worker: [c("w", "qwen")],
+        planner: [c("p", "qwen")],
+        reviewer: [],
+        researcher: [c("r", "qwen")],
+      },
+      estimate,
+    });
+    expect(ranked).toHaveLength(1);
+    expect(ranked[0]).toMatchObject({
+      combination: { worker: "w", planner: "p", researcher: "r" },
+      floorsMet: false,
+      unfilled: ["reviewer"],
+    });
+  });
+});

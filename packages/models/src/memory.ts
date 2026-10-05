@@ -110,6 +110,30 @@ export function readSwapUsedBytes(): number | undefined {
 }
 
 /**
+ * The share of memory free as the host reports it (DEC-42's reading before a
+ * load): `memory_pressure -Q`'s free percentage on macOS, MemAvailable over
+ * MemTotal on Linux, else `os.freemem()` over `os.totalmem()`.
+ */
+export function readHostFreeRatio(): number {
+  try {
+    if (platform() === "darwin") {
+      const out = execFileSync("memory_pressure", ["-Q"], { encoding: "utf8", timeout: 10_000 });
+      const m = /free percentage:\s*(\d+(?:\.\d+)?)%/i.exec(out);
+      if (m) return Number(m[1]) / 100;
+    }
+    if (platform() === "linux") {
+      const info = readFileSync("/proc/meminfo", "utf8");
+      const total = Number(/MemTotal:\s+(\d+)/.exec(info)?.[1]);
+      const avail = Number(/MemAvailable:\s+(\d+)/.exec(info)?.[1]);
+      if (total > 0 && avail >= 0) return avail / total;
+    }
+  } catch {
+    // Unreadable: the free share below.
+  }
+  return totalmem() > 0 ? freemem() / totalmem() : 0;
+}
+
+/**
  * Linux Pressure Stall Information mapped onto the macOS scale.
  *
  * `some avg10` is the share of the last 10 s in which at least one task
