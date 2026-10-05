@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 76 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 77 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,43 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 77 — 2026-10-05 (R3b and R3c, the Reviewer's admission runs: no method or setting is adopted, no candidate reaches the recall bar, and the Review role ships unfilled)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. No helpers. Every run was from a frozen snapshot of 92b2348 (after F30, Entry 76), one model at a time, with DEC-42 checks before each load and the model unloaded after each. The 22 seeded defects come from the registered set, with the same asset hash `649f03dda459` in every run. The two arms were reviewed interleaved and paired by the exact two-sided test (PROMPT_STANDARD 35.4).
+
+- **A 2-defect smoke first**, on gpt-oss-20b with prove: both reviews answered, where before F30 every reply was empty.
+- **R3b, the prove method:**
+
+  | Model | Baseline | Prove | Paired |
+  | --- | --- | --- | --- |
+  | gpt-oss-20b | 4/22 caught, 1 false positive | 4/21 caught, 1 failed, 3 false positives | 3 gained, 3 lost, p = 1.0 |
+  | GLM-4.7-Flash | 0/22 caught | 1/19 caught, 3 failed | 1 gained, 0 lost, p = 1.0 |
+
+- **R3c, gpt-oss-20b's reasoning** (baseline method):
+
+  | Setting | Caught | False positives |
+  | --- | --- | --- |
+  | Low, 2,048-token cap | 4/22 | 3 |
+  | Medium, 8,192-token cap | 2/22 | 8 |
+
+  Paired: 0 gained, 2 lost, p = 0.5. More thinking did not help; it raised the false positives.
+- **The four failed replies** were all prove's, and each held no readable JSON. Prove asks for quoted lines, so its replies run longer.
+- **The verdict:**
+  - No difference is clear, so neither `prove` nor the larger thinking cap is adopted. `SEKHEMET_REVIEW_METHOD` stays `baseline`.
+  - No candidate reaches RG-P8-13's 0.3 recall: gpt-oss-20b is at 0.18 and GLM at 0.0, which is GLM's rubber-stamping again (Entry 60).
+  - So the **Review role ships unfilled and says so**, as the shipped set already says (FINISH_LINE_PLAN §G 4; models rule 3; DEC-47 O-5): a change reaches the person without an AI review, and its issue says so.
+  - Gemma-4-26B-A4B, the third candidate, is not on this host. Downloading it is the owner's yes.
+- **Evidence:** `evidence/reviewer_ab_2026-10-05/` (the three paired records). review-git's RG-P8-17 row now reads "built; measured, not adopted".
+- **Gate:** `pnpm gate` on this exact tree: tsc 0, biome 0, vitest 0: 781 files, 6,241 passed, 63 skipped.
+- **Where the cards stop:**
+  - **Milestones:** B1, B3 and B4.10 PASS; B2.5, B4.4 and B4.11 NOT RUN.
+  - C3's admission runs are done: Coding (nail-mtp) and Planning qualified, Review unfilled by measurement.
+  - **Next:**
+    - C4 (reliability), after the owner's 5-hour figure;
+    - R2, re-qualifying every role on the C3 build;
+    - the planning measure for B2.5 once the owner labels the golden briefs;
+    - optionally, a fourth Reviewer candidate if the owner approves a download.
 
 ### Entry 76 — 2026-10-04 (F30: a model registered before F25 never got its reasoning floor, so gpt-oss Reviewer runs thought until their answer allowance ran out)
 

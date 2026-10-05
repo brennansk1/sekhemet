@@ -1,0 +1,481 @@
+{
+  "kind": "reviewer-paired-ab",
+  "assetHash": "649f03dda459ffc2c9bb2afea51d019b48d9ba547ed47ff8c806b50474846dce",
+  "assetVersion": "1",
+  "model": "glm-4.7-flash",
+  "at": "2026-10-05T06:40:19.594Z",
+  "arms": {
+    "current": {
+      "method": "baseline",
+      "contextVersion": "359959dba21c34af",
+      "scores": [
+        {
+          "id": "onyx-vault-project-case",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[6, 6]]
+        },
+        {
+          "id": "onyx-vault-key-lower-tail",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[7, 7]]
+        },
+        {
+          "id": "onyx-vault-get-audit-missing",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[82, 83], [89, 89]]
+        },
+        {
+          "id": "onyx-vault-delete-audit-missing",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[104, 105], [110, 112]]
+        },
+        {
+          "id": "onyx-scanner-first-token-only",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[30, 32]]
+        },
+        {
+          "id": "onyx-scanner-signature-order",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[20, 20], [21, 22]]
+        },
+        {
+          "id": "onyx-scanner-private-key-kinds",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[19, 19]]
+        },
+        {
+          "id": "onyx-scanner-asia-prefix",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[20, 20]]
+        },
+        {
+          "id": "onyx-injector-timeout-zero",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[52, 54]]
+        },
+        {
+          "id": "onyx-injector-empty-value",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[23, 23]]
+        },
+        {
+          "id": "vanguard-hmac-last-v1",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[42, 42], [49, 49], [51, 51], [59, 59]]
+        },
+        {
+          "id": "vanguard-hmac-timestamp-digits",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[51, 51]]
+        },
+        {
+          "id": "vanguard-hmac-github-prefix-case",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[71, 72]]
+        },
+        {
+          "id": "vanguard-replay-hop-case",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[22, 22]]
+        },
+        {
+          "id": "vanguard-store-limit-integer",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[79, 79]]
+        },
+        {
+          "id": "vanguard-ingest-source-length",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[53, 53]]
+        },
+        {
+          "id": "vanguard-ingest-round-seconds",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[91, 91]]
+        },
+        {
+          "id": "basalt-dag-unknown-order",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[28, 28], [29, 30]]
+        },
+        {
+          "id": "basalt-dag-edge-height",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[88, 88]]
+        },
+        {
+          "id": "basalt-store-initial-copy",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[27, 27]]
+        },
+        {
+          "id": "basalt-store-gate-noop",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[62, 63]]
+        },
+        {
+          "id": "basalt-store-gate-mutates",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[64, 66]]
+        }
+      ],
+      "report": {
+        "items": 22,
+        "reviewed": 22,
+        "failed": 0,
+        "caught": 0,
+        "recall": 0,
+        "interval": {
+          "low": 0,
+          "high": 0.15437251281557457
+        },
+        "overFalsePositiveBound": [],
+        "maxFalsePositives": 0,
+        "passes": false,
+        "line": "AI review caught 0 of 22 seeded defects reviewed (recall 0%, 95% interval 0%–15%); no reviewed change had more than 1 false positive. Does not meet RG-P8-13 (recall at least 0.3, at most 1 false positive per reviewed change, every review completed)."
+      }
+    },
+    "candidate": {
+      "method": "prove",
+      "contextVersion": "22adf82a1ff905b7",
+      "scores": [
+        {
+          "id": "onyx-vault-project-case",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[6, 6]]
+        },
+        {
+          "id": "onyx-vault-key-lower-tail",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[7, 7]]
+        },
+        {
+          "id": "onyx-vault-get-audit-missing",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[82, 83], [89, 89]]
+        },
+        {
+          "id": "onyx-vault-delete-audit-missing",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[104, 105], [110, 112]]
+        },
+        {
+          "id": "onyx-scanner-first-token-only",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[30, 32]]
+        },
+        {
+          "id": "onyx-scanner-signature-order",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[20, 20], [21, 22]]
+        },
+        {
+          "id": "onyx-scanner-private-key-kinds",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[19, 19]]
+        },
+        {
+          "id": "onyx-scanner-asia-prefix",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[20, 20]]
+        },
+        {
+          "id": "onyx-injector-timeout-zero",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[52, 54]],
+          "failed": "the Review model's reply held no readable JSON"
+        },
+        {
+          "id": "onyx-injector-empty-value",
+          "caught": true,
+          "falsePositives": 0,
+          "unmet": [
+            {
+              "criterion": "1. buildChildEnv({ PATH: \"/bin\", TOKEN: \"old\" }, { TOKEN: \"new\", EXTRA: \"1\" }) equals { PATH: \"/bin\", TOKEN: \"new\", EXTRA: \"1\" }; undefined base values are dropped; neither input is mutated.",
+              "at": "src/injector.ts:23",
+              "catches": true
+            }
+          ],
+          "ranges": [[23, 23]]
+        },
+        {
+          "id": "vanguard-hmac-last-v1",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[42, 42], [49, 49], [51, 51], [59, 59]]
+        },
+        {
+          "id": "vanguard-hmac-timestamp-digits",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[51, 51]]
+        },
+        {
+          "id": "vanguard-hmac-github-prefix-case",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[71, 72]]
+        },
+        {
+          "id": "vanguard-replay-hop-case",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[22, 22]]
+        },
+        {
+          "id": "vanguard-store-limit-integer",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[79, 79]]
+        },
+        {
+          "id": "vanguard-ingest-source-length",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[53, 53]]
+        },
+        {
+          "id": "vanguard-ingest-round-seconds",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[91, 91]]
+        },
+        {
+          "id": "basalt-dag-unknown-order",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[28, 28], [29, 30]],
+          "failed": "the Review model's reply held no readable JSON"
+        },
+        {
+          "id": "basalt-dag-edge-height",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[88, 88]],
+          "failed": "the Review model's reply held no readable JSON"
+        },
+        {
+          "id": "basalt-store-initial-copy",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[27, 27]]
+        },
+        {
+          "id": "basalt-store-gate-noop",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[62, 63]]
+        },
+        {
+          "id": "basalt-store-gate-mutates",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[64, 66]]
+        }
+      ],
+      "report": {
+        "items": 22,
+        "reviewed": 19,
+        "failed": 3,
+        "caught": 1,
+        "recall": 0.05263157894736842,
+        "interval": {
+          "low": 0.0013316288041794245,
+          "high": 0.2602806541952142
+        },
+        "overFalsePositiveBound": [],
+        "maxFalsePositives": 0,
+        "passes": false,
+        "line": "AI review caught 1 of 19 seeded defects reviewed (recall 5%, 95% interval 0%–26%); no reviewed change had more than 1 false positive. 3 of 22 reviews failed (the reply was cut off or unreadable) and are not counted. Does not meet RG-P8-13 (recall at least 0.3, at most 1 false positive per reviewed change, every review completed)."
+      }
+    }
+  },
+  "pairs": [
+    {
+      "id": "onyx-vault-project-case",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-vault-key-lower-tail",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-vault-get-audit-missing",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-vault-delete-audit-missing",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-scanner-first-token-only",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-scanner-signature-order",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-scanner-private-key-kinds",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-scanner-asia-prefix",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-injector-empty-value",
+      "current": false,
+      "candidate": true
+    },
+    {
+      "id": "vanguard-hmac-last-v1",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "vanguard-hmac-timestamp-digits",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "vanguard-hmac-github-prefix-case",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "vanguard-replay-hop-case",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "vanguard-store-limit-integer",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "vanguard-ingest-source-length",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "vanguard-ingest-round-seconds",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "basalt-store-initial-copy",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "basalt-store-gate-noop",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "basalt-store-gate-mutates",
+      "current": false,
+      "candidate": false
+    }
+  ],
+  "gained": 1,
+  "lost": 0,
+  "p": 1,
+  "verdict": "no_clear_difference",
+  "settings": {
+    "current": {
+      "reviewMethod": "baseline",
+      "reasoningLevel": "off",
+      "reasoningCapTokens": 2048
+    },
+    "candidate": {
+      "reviewMethod": "prove",
+      "reasoningLevel": "off",
+      "reasoningCapTokens": 2048
+    }
+  }
+}

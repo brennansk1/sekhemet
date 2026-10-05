@@ -1,0 +1,582 @@
+{
+  "kind": "reviewer-paired-ab",
+  "assetHash": "649f03dda459ffc2c9bb2afea51d019b48d9ba547ed47ff8c806b50474846dce",
+  "assetVersion": "1",
+  "model": "gpt-oss-20b",
+  "at": "2026-10-05T07:31:42.487Z",
+  "arms": {
+    "current": {
+      "method": "baseline",
+      "contextVersion": "359959dba21c34af",
+      "scores": [
+        {
+          "id": "onyx-vault-project-case",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[6, 6]]
+        },
+        {
+          "id": "onyx-vault-key-lower-tail",
+          "caught": false,
+          "falsePositives": 1,
+          "unmet": [
+            {
+              "criterion": "6. set(\"api\", \"lower_case\", ...) throws \"invalid key: lower_case\"; set(\"Bad Project\", \"OK\", ...) throws \"invalid project: Bad Project\"; after these no secrets rows and no audit rows exist.",
+              "at": "src/vault.ts:13",
+              "catches": false
+            }
+          ],
+          "ranges": [[7, 7]]
+        },
+        {
+          "id": "onyx-vault-get-audit-missing",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[82, 83], [89, 89]]
+        },
+        {
+          "id": "onyx-vault-delete-audit-missing",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[104, 105], [110, 112]]
+        },
+        {
+          "id": "onyx-scanner-first-token-only",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[30, 32]]
+        },
+        {
+          "id": "onyx-scanner-signature-order",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[20, 20], [21, 22]]
+        },
+        {
+          "id": "onyx-scanner-private-key-kinds",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[19, 19]]
+        },
+        {
+          "id": "onyx-scanner-asia-prefix",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[20, 20]]
+        },
+        {
+          "id": "onyx-injector-timeout-zero",
+          "caught": false,
+          "falsePositives": 1,
+          "unmet": [
+            {
+              "criterion": "3. After a run, process.env of the parent does not contain the injected key and the child's working directory is still empty.",
+              "at": "src/injector.ts:37",
+              "catches": false
+            }
+          ],
+          "ranges": [[52, 54]]
+        },
+        {
+          "id": "onyx-injector-empty-value",
+          "caught": true,
+          "falsePositives": 1,
+          "unmet": [
+            {
+              "criterion": "1. buildChildEnv({ PATH: \"/bin\", TOKEN: \"old\" }, { TOKEN: \"new\", EXTRA: \"1\" }) equals { PATH: \"/bin\", TOKEN: \"new\", EXTRA: \"1\" }; undefined base values are dropped; neither input is mutated.",
+              "at": "src/injector.ts:23",
+              "catches": true
+            },
+            {
+              "criterion": "3. After a run, process.env of the parent does not contain the injected key and the child's working directory is still empty.",
+              "at": "src/injector.ts:37",
+              "catches": false
+            }
+          ],
+          "ranges": [[23, 23]]
+        },
+        {
+          "id": "vanguard-hmac-last-v1",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[42, 42], [49, 49], [51, 51], [59, 59]]
+        },
+        {
+          "id": "vanguard-hmac-timestamp-digits",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[51, 51]]
+        },
+        {
+          "id": "vanguard-hmac-github-prefix-case",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[71, 72]]
+        },
+        {
+          "id": "vanguard-replay-hop-case",
+          "caught": true,
+          "falsePositives": 0,
+          "unmet": [
+            {
+              "criterion": "2. buildReplayHeaders drops host, content-length and connection, keeps content-type and stripe-signature, and adds x-vanguard-replay equal to the event id.",
+              "at": "src/replay.ts:22",
+              "catches": true
+            }
+          ],
+          "ranges": [[22, 22]]
+        },
+        {
+          "id": "vanguard-store-limit-integer",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[79, 79]]
+        },
+        {
+          "id": "vanguard-ingest-source-length",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[53, 53]]
+        },
+        {
+          "id": "vanguard-ingest-round-seconds",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[91, 91]]
+        },
+        {
+          "id": "basalt-dag-unknown-order",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[28, 28], [29, 30]]
+        },
+        {
+          "id": "basalt-dag-edge-height",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[88, 88]]
+        },
+        {
+          "id": "basalt-store-initial-copy",
+          "caught": true,
+          "falsePositives": 0,
+          "unmet": [
+            {
+              "criterion": "1. createInitialState() equals { cards: [], filter: { text: \"\", cardClass: null }, selectedId: null, history: [] }.",
+              "at": "src/store.ts:25",
+              "catches": true
+            }
+          ],
+          "ranges": [[27, 27]]
+        },
+        {
+          "id": "basalt-store-gate-noop",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[62, 63]]
+        },
+        {
+          "id": "basalt-store-gate-mutates",
+          "caught": true,
+          "falsePositives": 0,
+          "unmet": [
+            {
+              "criterion": "3. reduce never mutates its input (a structuredClone snapshot still equals the old state) and returns the identical object for a no-op move or a back with empty history.",
+              "at": "src/store.ts:64",
+              "catches": true
+            }
+          ],
+          "ranges": [[64, 66]]
+        }
+      ],
+      "report": {
+        "items": 22,
+        "reviewed": 22,
+        "failed": 0,
+        "caught": 4,
+        "recall": 0.18181818181818182,
+        "interval": {
+          "low": 0.0518672993124369,
+          "high": 0.40284578307787144
+        },
+        "overFalsePositiveBound": [],
+        "maxFalsePositives": 1,
+        "passes": false,
+        "line": "AI review caught 4 of 22 seeded defects reviewed (recall 18%, 95% interval 5%–40%); no reviewed change had more than 1 false positive. Does not meet RG-P8-13 (recall at least 0.3, at most 1 false positive per reviewed change, every review completed)."
+      }
+    },
+    "candidate": {
+      "method": "baseline",
+      "contextVersion": "359959dba21c34af",
+      "scores": [
+        {
+          "id": "onyx-vault-project-case",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[6, 6]]
+        },
+        {
+          "id": "onyx-vault-key-lower-tail",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[7, 7]]
+        },
+        {
+          "id": "onyx-vault-get-audit-missing",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[82, 83], [89, 89]]
+        },
+        {
+          "id": "onyx-vault-delete-audit-missing",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[104, 105], [110, 112]]
+        },
+        {
+          "id": "onyx-scanner-first-token-only",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[30, 32]]
+        },
+        {
+          "id": "onyx-scanner-signature-order",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[20, 20], [21, 22]]
+        },
+        {
+          "id": "onyx-scanner-private-key-kinds",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[19, 19]]
+        },
+        {
+          "id": "onyx-scanner-asia-prefix",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[20, 20]]
+        },
+        {
+          "id": "onyx-injector-timeout-zero",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[52, 54]]
+        },
+        {
+          "id": "onyx-injector-empty-value",
+          "caught": true,
+          "falsePositives": 0,
+          "unmet": [
+            {
+              "criterion": "1. buildChildEnv({ PATH: \"/bin\", TOKEN: \"old\" }, { TOKEN: \"new\", EXTRA: \"1\" }) equals { PATH: \"/bin\", TOKEN: \"new\", EXTRA: \"1\" }; undefined base values are dropped; neither input is mutated.",
+              "at": "src/injector.ts:23",
+              "catches": true
+            }
+          ],
+          "ranges": [[23, 23]]
+        },
+        {
+          "id": "vanguard-hmac-last-v1",
+          "caught": false,
+          "falsePositives": 1,
+          "unmet": [
+            {
+              "criterion": "5. One flipped payload bit, a wrong secret, a truncated signature, a non-hex signature, a flipped hex digit and a signature reused with a forged timestamp all give reason \"signature mismatch\".",
+              "at": "src/hmac.ts:55",
+              "catches": false
+            }
+          ],
+          "ranges": [[42, 42], [49, 49], [51, 51], [59, 59]]
+        },
+        {
+          "id": "vanguard-hmac-timestamp-digits",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[51, 51]]
+        },
+        {
+          "id": "vanguard-hmac-github-prefix-case",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[71, 72]]
+        },
+        {
+          "id": "vanguard-replay-hop-case",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[22, 22]]
+        },
+        {
+          "id": "vanguard-store-limit-integer",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[79, 79]]
+        },
+        {
+          "id": "vanguard-ingest-source-length",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[53, 53]]
+        },
+        {
+          "id": "vanguard-ingest-round-seconds",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[91, 91]]
+        },
+        {
+          "id": "basalt-dag-unknown-order",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[28, 28], [29, 30]]
+        },
+        {
+          "id": "basalt-dag-edge-height",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[88, 88]]
+        },
+        {
+          "id": "basalt-store-initial-copy",
+          "caught": false,
+          "falsePositives": 7,
+          "unmet": [
+            {
+              "criterion": "2. addCard with an existing id throws \"duplicate card: x\"; moveCard, updateGate and select with an unknown id throw \"unknown card: zz\".",
+              "at": "src/store.ts:49",
+              "catches": false
+            },
+            {
+              "criterion": "3. reduce never mutates its input (a structuredClone snapshot still equals the old state) and returns the identical object for a no-op move or a back with empty history.",
+              "at": "src/store.ts:57",
+              "catches": false
+            },
+            {
+              "criterion": "4. updateGate changes one gate of one card only.",
+              "at": "src/store.ts:61",
+              "catches": false
+            },
+            {
+              "criterion": "5. Selecting a, b, c gives selectedId c and history [a, b]; back gives b and [a]; null and repeated selections are not recorded; history keeps only the last 10 ids.",
+              "at": "src/store.ts:47",
+              "catches": false
+            },
+            {
+              "criterion": "6. Filter text \"  PARSE \" matches titles containing parse case-insensitively; text and cardClass filters combine.",
+              "at": "src/store.ts:47",
+              "catches": false
+            },
+            {
+              "criterion": "7. Subscribers receive the new state, are not called for no-op actions, and stop receiving after unsubscribe; a throwing dispatch leaves getState() unchanged.",
+              "at": "src/store.ts:47",
+              "catches": false
+            },
+            {
+              "criterion": "8. tests/store.spec.ts passes without modification.",
+              "at": "src/store.ts:47",
+              "catches": false
+            }
+          ],
+          "ranges": [[27, 27]]
+        },
+        {
+          "id": "basalt-store-gate-noop",
+          "caught": false,
+          "falsePositives": 0,
+          "unmet": [],
+          "ranges": [[62, 63]]
+        },
+        {
+          "id": "basalt-store-gate-mutates",
+          "caught": true,
+          "falsePositives": 0,
+          "unmet": [
+            {
+              "criterion": "3. reduce never mutates its input (a structuredClone snapshot still equals the old state) and returns the identical object for a no-op move or a back with empty history.",
+              "at": "src/store.ts:64",
+              "catches": true
+            }
+          ],
+          "ranges": [[64, 66]]
+        }
+      ],
+      "report": {
+        "items": 22,
+        "reviewed": 22,
+        "failed": 0,
+        "caught": 2,
+        "recall": 0.09090909090909091,
+        "interval": {
+          "low": 0.011205586024150997,
+          "high": 0.29161274155393346
+        },
+        "overFalsePositiveBound": ["basalt-store-initial-copy"],
+        "maxFalsePositives": 7,
+        "passes": false,
+        "line": "AI review caught 2 of 22 seeded defects reviewed (recall 9%, 95% interval 1%–29%); 1 reviewed change had more than 1 false positive. Does not meet RG-P8-13 (recall at least 0.3, at most 1 false positive per reviewed change, every review completed)."
+      }
+    }
+  },
+  "pairs": [
+    {
+      "id": "onyx-vault-project-case",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-vault-key-lower-tail",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-vault-get-audit-missing",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-vault-delete-audit-missing",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-scanner-first-token-only",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-scanner-signature-order",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-scanner-private-key-kinds",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-scanner-asia-prefix",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-injector-timeout-zero",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "onyx-injector-empty-value",
+      "current": true,
+      "candidate": true
+    },
+    {
+      "id": "vanguard-hmac-last-v1",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "vanguard-hmac-timestamp-digits",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "vanguard-hmac-github-prefix-case",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "vanguard-replay-hop-case",
+      "current": true,
+      "candidate": false
+    },
+    {
+      "id": "vanguard-store-limit-integer",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "vanguard-ingest-source-length",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "vanguard-ingest-round-seconds",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "basalt-dag-unknown-order",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "basalt-dag-edge-height",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "basalt-store-initial-copy",
+      "current": true,
+      "candidate": false
+    },
+    {
+      "id": "basalt-store-gate-noop",
+      "current": false,
+      "candidate": false
+    },
+    {
+      "id": "basalt-store-gate-mutates",
+      "current": true,
+      "candidate": true
+    }
+  ],
+  "gained": 0,
+  "lost": 2,
+  "p": 0.5,
+  "verdict": "no_clear_difference",
+  "settings": {
+    "current": {
+      "reviewMethod": "baseline",
+      "reasoningLevel": "off",
+      "reasoningCapTokens": 2048
+    },
+    "candidate": {
+      "reviewMethod": "baseline",
+      "reasoningLevel": "medium",
+      "reasoningCapTokens": 8192
+    }
+  }
+}
