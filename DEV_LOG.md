@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 79 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 80 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,24 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 80 — 2026-10-05 (RG-P8-18: the Reviewer's reply is decoded against its JSON schema, before the Reviewer bake-off)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. No helpers. The owner chose this before the bake-off.
+
+- **The evidence:** across R3b, R3c and the Gemma run, gpt-oss-20b, GLM-4.7-Flash and Gemma-4-26B-A4B failed reviews on malformed JSON well under the 1,200-token answer cap. The longest replies were 629, 847 and 324 tokens, read from each run's `model/usage` events. A malformed reply fails the review (RG-P8-16), so a bake-off measured formatting luck as much as review skill. Only Qwen 3.8 reached the cap (1,158 tokens), which is verbosity, not format.
+- **The change (tests first, each seen failing):**
+  - **`InferenceRequest.responseSchema`:** `HttpInferenceAdapter` sends it as `response_format` (json_schema, strict) to an OpenAI-compatible server such as llama-server, and as `format` to Ollama, only when no tools are offered (`response_schema.spec.ts`, both server kinds, with and without a schema).
+  - **The schema:** `REVIEW_REPLY_SCHEMA` in `review_copy.ts` is the shape the reply text asks for: criteria with the verdicts met, unmet and unclear, assumptions, preferences and outside. It sits inside `reviewCopy`, so the Review role's context version names it, and results before and after it are not compared.
+  - **The call:** `reviewCard` sends the schema on every review, under both methods (`review_method.spec.ts`).
+  - **The prompt is unchanged:** prompt-lint baseline, prompt literals and docs pass.
+- **Spec:** review-git RG-P8-18 and its State row, with the evidence.
+- **Gate:** `pnpm gate` on this exact tree: tsc 0, biome 0, vitest 0: 817 files, 6,421 passed, 70 skipped (an earlier run had two load flakes while the research workflow tested alongside; both passed alone twice, and this run is clean).
+- **Where the cards stop:**
+  - **Next:**
+    - the research workflow (launched beside this commit, on disjoint files);
+    - the Reviewer bake-off on the schema-constrained Reviewer (Muse Glimmer 30B, Mistral Small 3.2, Devstral Small 2, Ministral-3-14B-Reasoning and Qwen 3.8, the last measured only), when memory allows;
+    - then C2d.
 
 ### Entry 79 — 2026-10-05 (B1 PASS again on the C4 build: injection run 6 at 14/14, containment green on macOS and Linux)
 

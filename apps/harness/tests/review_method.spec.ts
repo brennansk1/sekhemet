@@ -14,6 +14,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { reviewCard } from "../src/learning/review.js";
 import {
+  REVIEW_REPLY_SCHEMA,
   reviewCopy,
   reviewCopyFor,
   reviewMethod,
@@ -196,6 +197,29 @@ function scriptedReviewer(picked: ReturnType<typeof twoDefects>["picked"]) {
   };
   return { adapter, requests };
 }
+
+describe("the Reviewer's reply is constrained to its schema (owner, 2026-10-05)", () => {
+  it("names REVIEW_REPLY_SCHEMA on every review request, under both methods", async () => {
+    const { set, picked } = twoDefects();
+    const { adapter, requests } = scriptedReviewer(picked);
+    await reviewerAB(set, {
+      current: { method: "baseline", adapter },
+      candidate: { method: "prove", adapter },
+      only: picked.map((p) => p.id),
+    });
+    expect(requests.length).toBeGreaterThan(0);
+    for (const r of requests) expect(r.responseSchema).toEqual(REVIEW_REPLY_SCHEMA);
+    // The schema is the shape the reply text asks for, verdicts included.
+    const props = REVIEW_REPLY_SCHEMA.properties;
+    expect(Object.keys(props).sort()).toEqual([
+      "assumptions",
+      "criteria",
+      "outside",
+      "preferences",
+    ]);
+    expect(props.criteria.items.properties.verdict.enum).toEqual(["met", "unmet", "unclear"]);
+  });
+});
 
 describe("the paired seeded-set A/B (R3b, R3c; RG-P8-17)", () => {
   it("reviews each item under both arms, pairs them, and adopts nothing", async () => {

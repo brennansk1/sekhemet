@@ -69,6 +69,14 @@ export interface ChatTurn {
 
 export interface InferenceRequest {
   systemPrompt?: string;
+  /**
+   * The JSON schema the reply must follow, decoded against by the server:
+   * `response_format` json_schema on an OpenAI-compatible server
+   * (llama-server), `format` on Ollama. Ignored when tools are offered (the
+   * tool-call constraint applies then). The Reviewer's reply uses it (owner,
+   * 2026-10-05): a malformed reply fails a review, whatever its judgement.
+   */
+  responseSchema?: Readonly<Record<string, unknown>>;
   /** The user message. Ignored when `messages` is set. */
   prompt: string;
   /** Images for the `prompt` user message (vision models only, X3). */

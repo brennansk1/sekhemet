@@ -177,6 +177,51 @@ const proveCopy = {
   ask: PROVE_ASK,
 } as const;
 
+/**
+ * The reply's JSON schema (owner, 2026-10-05): the server decodes the
+ * Reviewer's reply against it, so every reply parses and a review is judged
+ * on what it found, not on its punctuation (small models wrote malformed JSON
+ * well under the answer cap). It is the shape the reply text asks for; it is
+ * part of the copy module, so the Review role's context version names it.
+ */
+const entry = (extra: Record<string, unknown>) =>
+  ({
+    type: "object",
+    properties: { ...extra, at: { type: "string" }, note: { type: "string" } },
+    required: [...Object.keys(extra), "at", "note"],
+    additionalProperties: false,
+  }) as const;
+export const REVIEW_REPLY_SCHEMA = {
+  type: "object",
+  properties: {
+    criteria: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          n: { type: "integer" },
+          verdict: { type: "string", enum: ["met", "unmet", "unclear"] },
+          at: { type: "string" },
+          note: { type: "string" },
+        },
+        required: ["n", "verdict", "at", "note"],
+        additionalProperties: false,
+      },
+    },
+    assumptions: {
+      type: "array",
+      items: entry({ n: { type: "integer" }, contradicted: { type: "boolean" } }),
+    },
+    preferences: {
+      type: "array",
+      items: entry({ n: { type: "integer" }, broken: { type: "boolean" } }),
+    },
+    outside: { type: "array", items: entry({}) },
+  },
+  required: ["criteria", "assumptions", "preferences", "outside"],
+  additionalProperties: false,
+} as const;
+
 /** One method's copy. */
 export function reviewCopyFor(method: ReviewMethod): {
   system: string;
@@ -205,6 +250,7 @@ export const reviewCopy = {
     return reviewMethod() === "prove" ? PROVE_ASK : BASELINE_ASK;
   },
   template: reviewTask,
+  replySchema: REVIEW_REPLY_SCHEMA,
   noCitation: baselineCopy.noCitation,
   noTest: baselineCopy.noTest,
   noTestUnlinked: baselineCopy.noTestUnlinked,

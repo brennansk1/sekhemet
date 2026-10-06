@@ -13,7 +13,7 @@ import {
   extractJsonObject,
 } from "@sekhemet/models";
 import { reviewCoverage } from "@sekhemet/ui";
-import { type ReviewPromptData, reviewCopy } from "./review_copy.js";
+import { REVIEW_REPLY_SCHEMA, type ReviewPromptData, reviewCopy } from "./review_copy.js";
 
 /**
  * The Reviewer (review-git §2.3, P8): a registry role of another model family
@@ -561,6 +561,7 @@ export async function reviewCard(
       systemPrompt: reviewCopy.system,
       prompt,
       toolArm: "arm_b_json",
+      responseSchema: REVIEW_REPLY_SCHEMA,
       temperature: 0,
       maxTokens: REVIEW_ANSWER_TOKENS,
       ...reviewReasoning(model),

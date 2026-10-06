@@ -1332,6 +1332,9 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
         type: "function",
         function: { name: t.name, description: t.description, parameters: t.parameters },
       }));
+    } else if (req.responseSchema && !(req.tools && req.tools.length > 0)) {
+      // The reply's own schema (the Reviewer's): Ollama's structured output.
+      payload.format = req.responseSchema;
     }
     const level = this.reasoningFor(req);
     if (level === "off") {
@@ -1447,6 +1450,12 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       payload.response_format = {
         type: "json_schema",
         json_schema: { name: "tool_calls", strict: true, schema: constrainedToolSchema(req.tools) },
+      };
+    } else if (req.responseSchema && !hasTools) {
+      // The reply's own schema (the Reviewer's): decoded against by the server.
+      payload.response_format = {
+        type: "json_schema",
+        json_schema: { name: "reply", strict: true, schema: req.responseSchema },
       };
     } else if (this.options.nativeTools !== false && hasTools && req.tools) {
       payload.tools = req.tools.map((t) => ({
