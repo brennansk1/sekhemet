@@ -103,7 +103,7 @@ import { lostRecordReporter, reportLostRecord } from "./lost_records.js";
 import { loadBaseline, recordBaselineShrink } from "./onboard.js";
 import { fullContextVersion, rolePromptVersion } from "./prompt_versions.js";
 import { buildReproRecord } from "./repro.js";
-import { workerWebDocs } from "./research/service.js";
+import { ledgerAppender, workerWebDocs } from "./research/service.js";
 import { Tracer, toolCallSpan, traced } from "./tracing.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { cardVision } from "./vision_check.js";
@@ -567,7 +567,10 @@ async function executeCardIn(
   }
 
   const worktreePath = join(ctx.repoPath, ".sekhemet", "worktrees", card.id);
-  const webDocs = await workerWebDocs(ctx.repoPath).catch(() => undefined);
+  // DS-N9-9: with research on, each docs request is a harness/egress event.
+  const webDocs = await workerWebDocs(ctx.repoPath, {
+    log: ledgerAppender(ctx.cardStore),
+  }).catch(() => undefined);
   // DS-P2-1, -2: card zero's generator steps may reach their registry — never
   // on an air-gapped install, where nothing leaves the machine.
   const zeroSteps = cardZeroSteps(card);

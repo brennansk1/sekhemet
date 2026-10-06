@@ -15,7 +15,8 @@ import {
 import { basename, join } from "node:path";
 import { approveSkill } from "@sekhemet/context";
 import { type RegistryLookup, onPath } from "@sekhemet/gates";
-import { type EventLog, parseToml } from "@sekhemet/kernel";
+import type { EventLog } from "@sekhemet/kernel";
+import { pinsOf } from "@sekhemet/loop";
 import { type ModelRegistry, readChatTemplate, templateChecksum } from "@sekhemet/models";
 import {
   EgressProxy,
@@ -76,7 +77,11 @@ function addVersion(map: Record<string, string[]>, name: string, version: string
   map[name] = list.sort();
 }
 
-/** Every package and version the project's lockfiles pin. */
+/**
+ * Every package and version the project's lockfiles pin, read through the
+ * one pins reader (design-stage DS-N9-7), in the mirror's shape: npm, PyPI
+ * (names lower-cased) and crates. Go modules are not mirrored.
+ */
 export function allowlistFromLockfiles(repo: string): MirrorAllowlist {
   const out: MirrorAllowlist = {
     npm: {},
@@ -84,54 +89,10 @@ export function allowlistFromLockfiles(repo: string): MirrorAllowlist {
     crates: {},
     generatedAt: new Date().toISOString(),
   };
-  const pnpm = join(repo, "pnpm-lock.yaml");
-  if (existsSync(pnpm)) {
-    // v9 keys: `  name@1.2.3:` / `  '@scope/name@1.2.3':` under packages:/snapshots:
-    for (const m of readFileSync(pnpm, "utf8").matchAll(
-      /^ {2}'?(@?[^@'\s][^@'\s]*)@(\d[^:'\s(]*)[^:]*'?:\s*$/gm,
-    )) {
-      addVersion(out.npm, m[1] as string, m[2] as string);
-    }
-  }
-  const npmLock = join(repo, "package-lock.json");
-  if (existsSync(npmLock)) {
-    const lock = JSON.parse(readFileSync(npmLock, "utf8")) as {
-      packages?: Record<string, { version?: string }>;
-    };
-    for (const [path, p] of Object.entries(lock.packages ?? {})) {
-      const name = path.split("node_modules/").at(-1);
-      if (name && p.version) addVersion(out.npm, name, p.version);
-    }
-  }
-  const req = join(repo, "requirements.txt");
-  if (existsSync(req)) {
-    for (const m of readFileSync(req, "utf8").matchAll(/^([A-Za-z0-9_.-]+)==([^\s;#]+)/gm)) {
-      addVersion(out.pypi, (m[1] as string).toLowerCase(), m[2] as string);
-    }
-  }
-  // poetry.lock and uv.lock: `[[package]]` tables with name and version (B1 review).
-  for (const lock of ["poetry.lock", "uv.lock"]) {
-    const path = join(repo, lock);
-    if (!existsSync(path)) continue;
-    try {
-      const pkgs = (parseToml(readFileSync(path, "utf8")).package ?? []) as unknown;
-      for (const p of Array.isArray(pkgs) ? pkgs : []) {
-        const { name, version } = p as { name?: unknown; version?: unknown };
-        if (typeof name === "string" && typeof version === "string") {
-          addVersion(out.pypi, name.toLowerCase(), version);
-        }
-      }
-    } catch {
-      // An unreadable lockfile pins nothing.
-    }
-  }
-  const cargo = join(repo, "Cargo.lock");
-  if (existsSync(cargo)) {
-    for (const m of readFileSync(cargo, "utf8").matchAll(
-      /\[\[package\]\]\s*\nname = "([^"]+)"\s*\nversion = "([^"]+)"/g,
-    )) {
-      addVersion(out.crates, m[1] as string, m[2] as string);
-    }
+  for (const pin of pinsOf(repo)) {
+    if (pin.eco === "npm") addVersion(out.npm, pin.name, pin.version);
+    else if (pin.eco === "python") addVersion(out.pypi, pin.name.toLowerCase(), pin.version);
+    else if (pin.eco === "rust") addVersion(out.crates, pin.name, pin.version);
   }
   return out;
 }

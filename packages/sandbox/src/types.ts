@@ -9,6 +9,14 @@ export interface SandboxOptions {
    */
   readOnlyPaths?: string[];
   /**
+   * Security item 8c (design-stage DS-N9-17): paths whose contents the
+   * command may not read — files and directory listings — except the
+   * granted roots and read-only grants inside them, which stay as granted.
+   * A research packet's probe: the repository hidden, its installed
+   * dependencies readable. Metadata stays readable so paths resolve.
+   */
+  hiddenReadPaths?: string[];
+  /**
    * Private scratch directory granted for temporary files.
    *
    * Supplied per execution so toolchains have a TMPDIR without every sandbox

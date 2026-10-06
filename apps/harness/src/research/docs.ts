@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { htmlToText } from "./web.js";
 
 /**
@@ -268,47 +269,166 @@ export function excerptAround(text: string, q: string[], chars: number): string 
   return `${bestAt > 0 ? "… " : ""}${text.slice(bestAt, bestAt + chars)}${bestAt + chars < text.length ? " …" : ""}`;
 }
 
+/** A heading-sized chunk of a page: its section's heading and that heading's anchor. */
+export interface PageChunk {
+  /** Position in the page, from 0. */
+  index: number;
+  /** The section's heading text, without the `#` marks; "" before the first heading. */
+  heading: string;
+  /** The heading's anchor as a documentation site writes it ("timeouts", "usage-1"). */
+  anchor: string;
+  /** The chunk, verbatim from the page. */
+  text: string;
+}
+
+/** One excerpt for a question (design-stage DS-N9-10): a chunk, where it is and its hashes. */
+export interface Excerpt {
+  url: string;
+  anchor: string;
+  heading: string;
+  text: string;
+  /** SHA-256 of `text`. */
+  sha256: string;
+  /** SHA-256 of the whole page the chunk was cut from. */
+  pageSha256: string;
+}
+
+const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+
+/** A heading's anchor, as GitHub and most documentation generators write it. */
+function slug(heading: string): string {
+  return heading
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+    .trim()
+    .replace(/\s+/g, "-");
+}
+
+/** A chunk's characters at most (DS-N9-10). */
+export const CHUNK_CHARS = 1200;
+
 /**
- * The parts of a long page about `focus`, in page order: the page is cut at
- * headings and paragraphs, chunks are scored with BM25 against the focus
- * terms, and the best are kept up to `maxChars`. Several relevant sections
- * survive, not just the single densest window (what a coding agent's page
- * fetch does when asked a question about a page).
+ * A paragraph as pieces of at most `CHUNK_CHARS`: whole lines packed, and a
+ * line longer than that cut at `CHUNK_CHARS`, so each piece stays verbatim.
  */
-export function focusChunks(text: string, focus: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  const q = terms(focus);
-  if (q.length === 0) return `${text.slice(0, maxChars)}\n… (truncated)`;
-  // Chunks: split before headings, then pack paragraphs to ~1200 characters.
-  const chunks: string[] = [];
+function pieces(para: string): string[] {
+  if (para.length <= CHUNK_CHARS) return [para];
+  const out: string[] = [];
+  let cur = "";
+  for (const line of para.split("\n")) {
+    if (line.length > CHUNK_CHARS) {
+      if (cur) out.push(cur);
+      cur = "";
+      for (let i = 0; i < line.length; i += CHUNK_CHARS) out.push(line.slice(i, i + CHUNK_CHARS));
+      continue;
+    }
+    if (cur && cur.length + 1 + line.length > CHUNK_CHARS) {
+      out.push(cur);
+      cur = "";
+    }
+    cur += (cur ? "\n" : "") + line;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/**
+ * A page cut into heading-sized chunks: split before every heading, then
+ * paragraphs packed to at most 1,200 characters, a longer paragraph cut at
+ * its line ends (DS-N9-10). Each chunk is verbatim, so its hash can be
+ * checked against the cached page later.
+ */
+export function pageChunks(text: string): PageChunk[] {
+  const out: PageChunk[] = [];
+  const used = new Map<string, number>();
   for (const section of text.split(/\n(?=#{1,6} )/)) {
+    const head = /^#{1,6} (.+)/.exec(section)?.[1]?.trim() ?? "";
+    let anchor = "";
+    if (head) {
+      const base = slug(head);
+      const n = used.get(base) ?? 0;
+      used.set(base, n + 1);
+      anchor = n === 0 ? base : `${base}-${n}`;
+    }
     let cur = "";
-    for (const para of section.split(/\n{2,}/)) {
-      if (cur.length + para.length > 1200 && cur) {
-        chunks.push(cur);
-        cur = "";
-      }
+    const push = () => {
+      out.push({ index: out.length, heading: head, anchor, text: cur });
+      cur = "";
+    };
+    for (const para of section.split(/\n{2,}/).flatMap(pieces)) {
+      if (cur && cur.length + 2 + para.length > CHUNK_CHARS) push();
       cur += (cur ? "\n\n" : "") + para;
     }
-    if (cur) chunks.push(cur);
+    if (cur) push();
   }
-  const docs = chunks.map((c) => c.toLowerCase());
+  return out;
+}
+
+/** BM25 score of each chunk against the question's terms. */
+function chunkScores(chunks: readonly PageChunk[], question: string): number[] {
+  const q = terms(question);
+  const docs = chunks.map((c) => c.text.toLowerCase());
   const avg = docs.reduce((n, d) => n + d.length, 0) / Math.max(1, docs.length);
   const df = new Map(q.map((w) => [w, docs.filter((d) => d.includes(w)).length]));
   const N = docs.length;
-  const score = (d: string) =>
+  return docs.map((d) =>
     q.reduce((s, w) => {
       const tf = d.split(w).length - 1;
       if (tf === 0) return s;
       const idf = Math.log(1 + (N - (df.get(w) ?? 0) + 0.5) / ((df.get(w) ?? 0) + 0.5));
       return s + (idf * tf * 2.2) / (tf + 1.2 * (0.25 + (0.75 * d.length) / avg));
-    }, 0);
-  const ranked = docs.map((d, i) => ({ i, s: score(d) })).sort((a, b) => b.s - a.s);
+    }, 0),
+  );
+}
+
+/**
+ * The parts of a page that answer `question` (design-stage DS-N9-10): at
+ * most `max` heading-sized chunks, best first (page order on a tie), each
+ * with its anchor, heading and the SHA-256 of the chunk and of the page.
+ * Deterministic and model-free: the same page and question give the same
+ * excerpts. A chunk that shares no term with the question is never one.
+ */
+export function excerpts(
+  text: string,
+  question: string,
+  opts: { max?: number; url?: string; pageSha256?: string } = {},
+): Excerpt[] {
+  const chunks = pageChunks(text);
+  const scores = chunkScores(chunks, question);
+  const pageSha256 = opts.pageSha256 ?? sha256(text);
+  return chunks
+    .map((c, i) => ({ c, s: scores[i] ?? 0 }))
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s || a.c.index - b.c.index)
+    .slice(0, opts.max ?? 5)
+    .map(({ c }) => ({
+      url: opts.url ?? "",
+      anchor: c.anchor,
+      heading: c.heading,
+      text: c.text,
+      sha256: sha256(c.text),
+      pageSha256,
+    }));
+}
+
+/**
+ * The parts of a long page about `focus`, in page order: the page is cut at
+ * headings and paragraphs (`pageChunks`), chunks are scored with BM25 against
+ * the focus terms, and the best are kept up to `maxChars`. Several relevant
+ * sections survive, not just the single densest window (what a coding agent's
+ * page fetch does when asked a question about a page).
+ */
+export function focusChunks(text: string, focus: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  if (terms(focus).length === 0) return `${text.slice(0, maxChars)}\n… (truncated)`;
+  const chunks = pageChunks(text);
+  const scores = chunkScores(chunks, focus);
+  const ranked = chunks.map((c, i) => ({ i, s: scores[i] ?? 0 })).sort((a, b) => b.s - a.s);
   const keep = new Set<number>([0]); // the page's opening says what the page is
-  let used = (chunks[0] ?? "").length;
+  let used = (chunks[0]?.text ?? "").length;
   for (const { i, s } of ranked) {
     if (s <= 0) break;
-    const len = (chunks[i] ?? "").length;
+    const len = (chunks[i]?.text ?? "").length;
     if (used + len > maxChars) continue;
     keep.add(i);
     used += len;
@@ -317,7 +437,7 @@ export function focusChunks(text: string, focus: string, maxChars: number): stri
   let last = -1;
   for (const i of [...keep].sort((a, b) => a - b)) {
     if (last !== -1 && i > last + 1) out.push("…");
-    out.push(chunks[i] ?? "");
+    out.push(chunks[i]?.text ?? "");
     last = i;
   }
   return out.join("\n\n");

@@ -249,6 +249,28 @@ export function keychainRules(env: NodeJS.ProcessEnv = process.env): string {
   ].join("\n");
 }
 
+/** Whether `p` is `dir` or below it (both canonical). */
+function within(dir: string, p: string): boolean {
+  return p === dir || p.startsWith(`${dir}/`);
+}
+
+/**
+ * Item 8c: each hidden path's contents unreadable, then each granted root
+ * and read-only grant inside one readable again (the later rule wins).
+ */
+export function hiddenReadRules(options: SandboxOptions, roots: readonly string[]): string {
+  const hidden = [...new Set((options.hiddenReadPaths ?? []).map(realPath))];
+  if (hidden.length === 0) return "";
+  const grants = [...new Set([...roots, ...(options.readOnlyPaths ?? [])].map(realPath))].filter(
+    (g) => hidden.some((h) => within(h, g)),
+  );
+  return [
+    ";; Item 8c: hidden from reads, the grants inside excepted.",
+    ...hidden.map((h) => `  (deny file-read-data (subpath "${quote(h)}"))`),
+    ...grants.map((g) => `  (allow file-read-data (subpath "${quote(g)}"))`),
+  ].join("\n");
+}
+
 /**
  * Item 10a (NEW-security-13): a card's view of other projects, other cards'
  * worktrees and the workspace's state, denied for reading and writing. Placed
@@ -343,6 +365,10 @@ export function generateSeatbeltProfile(options: SandboxOptions): string {
       ].join("\n")
     : "";
 
+  // Item 8c: a hidden path's contents are unreadable, the grants inside it
+  // excepted (later rules win); the secret and isolation denials still follow.
+  const hidden = hiddenReadRules(options, roots);
+
   // S3c, security item 10 (SEC-23): the user's secret-bearing paths and the
   // project ledgers above each root are never readable, whatever else is.
   const secretRules = [
@@ -375,6 +401,7 @@ export function generateSeatbeltProfile(options: SandboxOptions): string {
 ;; Reads are broad: compilers and runtimes must load system libraries.
 (allow file-read*)
 ${homeRules}
+${hidden}
 ${secretRules}
 
 ;; Writes are confined to explicitly granted subpaths.

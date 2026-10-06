@@ -243,7 +243,7 @@ export function researchPolicy(repoPath: string): {
  */
 export function researchFetch(
   repoPath: string,
-  log: EventLog,
+  log: Pick<EventLog, "append">,
 ): (input: string | URL, init?: RequestInit) => Promise<Response> {
   const { policy, project, user } = researchPolicy(repoPath);
   const n = { project };
@@ -283,7 +283,7 @@ export function researchFetch(
  */
 export function researchGate(
   repoPath: string,
-  log: EventLog,
+  log: Pick<EventLog, "append">,
 ): (url: string, via: string) => Promise<void> {
   const { policy, project, user } = researchPolicy(repoPath);
   const n = { project };

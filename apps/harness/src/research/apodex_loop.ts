@@ -225,6 +225,25 @@ export const APODEX_LOCAL_TOOLS: ToolDefinition[] = [
       required: ["name", "pattern"],
     },
   },
+  {
+    // Design-stage DS-N9-13; the words are the Researcher's copy module's.
+    name: "probe",
+    description: researchCopy.probeTool.description,
+    parameters: {
+      type: "object",
+      properties: {
+        package: { type: "string", description: researchCopy.probeTool.package },
+        language: {
+          type: "string",
+          enum: ["node", "python"],
+          description: researchCopy.probeTool.language,
+        },
+        code: { type: "string", description: researchCopy.probeTool.code },
+        statement: { type: "string", description: researchCopy.probeTool.statement },
+      },
+      required: ["package", "language", "code", "statement"],
+    },
+  },
 ];
 
 export const FINALIZE_ANSWER: ToolDefinition = {
@@ -547,7 +566,8 @@ async function runApodexTool(
           : urls.map(() => infosRaw.join(" "));
     const results = await Promise.all(
       urls.map(async (u, i) => {
-        const page = await fetchPage(u, web, 80_000);
+        // DS-N9-10: the question reaches the page reader's ranking too.
+        const page = await fetchPage(u, web, 80_000, infos[i] || undefined);
         if (isFetchRefusal(page)) {
           return { url: u, info: `[ERROR]: Scraping failed: ${page}` };
         }

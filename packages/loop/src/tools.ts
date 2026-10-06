@@ -48,6 +48,14 @@ function freePort(): Promise<number> {
   });
 }
 import { matchesGlob } from "@sekhemet/sandbox";
+import {
+  declaredDependencies,
+  dependenciesNamedIn,
+  dependencyFile,
+  dependencyFiles,
+  parseDependencySpec,
+  resolveDependency,
+} from "./ecosystems/index.js";
 import { type ToolObservation, clampObservation, denied, fail, ok } from "./observation.js";
 import { PathEscapeError, canonicalizeRoot, resolveInWorktree } from "./paths.js";
 import { findSymbol, listSymbolNames } from "./symbols.js";
@@ -2184,31 +2192,48 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
 
   /**
    * What is already installed. Writing a helper the project already has a
-   * dependency for is the second most common waste; this lists package.json
-   * dependencies (and whether each is present in node_modules).
+   * dependency for is the second most common waste; this lists the declared
+   * dependencies of every ecosystem (package.json, pyproject.toml and
+   * requirements.txt, go.mod, Cargo.toml) with the version in use: the
+   * installed copy, else the lockfile pin, and both when they differ
+   * (design-stage DS-N9-1, DS-N9-5).
    */
   private dependencies(query: string): ToolObservation {
     const pkgPath = join(this.root, "package.json");
-    if (!existsSync(pkgPath)) return fail("dependencies", "no package.json in this project");
+    const hasPackageJson = existsSync(pkgPath);
+    const declared = declaredDependencies(this.root);
+    if (!hasPackageJson && declared.length === 0)
+      return fail("dependencies", "no package.json in this project");
     try {
-      const pkg = JSON.parse(this.readText(pkgPath)) as Record<
-        string,
-        Record<string, string> | undefined
-      >;
+      // A package.json that does not parse is reported, as before.
+      if (hasPackageJson) JSON.parse(this.readText(pkgPath));
       const rows: string[] = [];
-      for (const field of ["dependencies", "devDependencies", "peerDependencies"]) {
-        for (const [name, version] of Object.entries(pkg[field] ?? {})) {
-          if (query && !name.toLowerCase().includes(query.toLowerCase())) continue;
-          const present = existsSync(join(this.root, "node_modules", name));
-          rows.push(`${name}@${version} (${field}${present ? "" : ", not installed"})`);
-        }
+      let otherEcosystem = false;
+      const q = query.toLowerCase();
+      for (const d of declared) {
+        if (q && ![d.name, ...d.aliases].some((n) => n.toLowerCase().includes(q))) continue;
+        const dep = resolveDependency(this.root, `${d.eco}:${d.name}`);
+        rows.push(
+          workerCopy.dependencyRow(
+            d.eco,
+            d.name,
+            d.spec,
+            d.field,
+            dep?.installedVersion,
+            dep?.pinnedVersion,
+          ),
+        );
+        if (d.eco !== "npm") otherEcosystem = true;
       }
       const note =
         "Prefer these and Node's built-in modules (node:fs, node:path, node:crypto, node:sqlite, node:test...) over writing your own. New packages cannot be installed from here.";
+      const notes = [hasPackageJson ? note : "", otherEcosystem ? workerCopy.dependenciesNote : ""]
+        .filter(Boolean)
+        .join("\n");
       return ok(
         "dependencies",
         `${rows.length} dependencies`,
-        `${rows.join("\n") || "(none match)"}\n\n${note}`,
+        `${rows.join("\n") || "(none match)"}\n\n${notes}`,
       );
     } catch (err) {
       return fail("dependencies", err instanceof Error ? err.message : String(err));
@@ -2218,10 +2243,13 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
   /**
    * L10, tiered documentation lookup:
    *   1. the project's own docs (root guides, then docs/**.md);
-   *   2. a dependency's docs AT ITS INSTALLED VERSION: its README and its
-   *      type declarations (`.d.ts`) from node_modules, or a local mirror
-   *      under `.sekhemet/docs/<name>@<version>/`;
-   * cached on disk per (library, version, query) under `.sekhemet/docs-cache`.
+   *   2. a dependency's docs AT THE VERSION IN USE, in every ecosystem
+   *      (design-stage DS-N9-5): npm's README and type declarations, a
+   *      Python distribution's METADATA, stubs and sources, a Go module's
+   *      README and sources, a Rust crate's README and `src/` — or a local
+   *      mirror under `.sekhemet/docs/<name>@<version>/`;
+   * cached on disk per `<eco>:<name>@<installed version>:<query>` under
+   * `.sekhemet/docs-cache` (`<pin> (not installed)` while nothing is installed).
    * A dependency named in the query is searched without being asked for.
    */
   private async docs(query: string, library?: string): Promise<ToolObservation> {
@@ -2263,24 +2291,29 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
       }
     }
 
-    // Tier 2: dependencies at their installed version.
+    // Tier 2: dependencies at the version in use, in every ecosystem.
     const libs = library
-      ? [library]
-      : this.dependencyNames().filter((d) => query.toLowerCase().includes(d.toLowerCase()));
+      ? [{ spec: library, word: undefined }]
+      : dependenciesNamedIn(this.root, query);
+    let libraryHit = false;
     for (const lib of libs.slice(0, 3)) {
       // The library's own name is how it was picked, not what to look for in it.
-      const within = library
+      const within = lib.word
         ? query
-        : query.replace(new RegExp(lib.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), "").trim() ||
-          query;
-      const block = this.libraryDocs(lib, within, matchLines);
-      if (block) found.push(block);
+            .replace(new RegExp(lib.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), "")
+            .trim() || query
+        : query;
+      const block = this.libraryDocs(lib.spec, within, matchLines);
+      if (block) {
+        found.push(block);
+        libraryHit = true;
+      }
     }
 
     // Tier 3: the library's official documentation on the web, only when
     // the installed copy had nothing on this (a harness-supplied fetcher:
     // llms.txt, the sitemap, a polite cached fetch; no model involved).
-    if (library && this.options.webDocs && !found.some((b) => b.includes(`=== ${library} `))) {
+    if (library && this.options.webDocs && !libraryHit) {
       try {
         const web = (await this.options.webDocs(library, query)).trim();
         if (web) {
@@ -2308,73 +2341,65 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
     );
   }
 
-  private dependencyNames(): string[] {
-    try {
-      const pkg = JSON.parse(readFileSync(join(this.root, "package.json"), "utf8")) as Record<
-        string,
-        Record<string, string> | undefined
-      >;
-      return Object.keys({ ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) });
-    } catch {
-      return [];
-    }
-  }
-
   private libraryDocs(
-    lib: string,
+    spec: string,
     query: string,
     matchLines: (label: string, text: string, max?: number, q?: string) => string | undefined,
   ): string | undefined {
-    if (!/^(@[\w.-]+\/)?[\w.-]+$/.test(lib)) return undefined;
-    const dir = join(this.root, "node_modules", lib);
-    let version = "not installed";
-    try {
-      version = (JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { version: string })
-        .version;
-    } catch {
-      // Not installed: a mirror may still exist.
-    }
+    const { name } = parseDependencySpec(spec);
+    const dep = resolveDependency(this.root, spec);
+    if (!dep && !/^(@[\w.-]+\/)?[\w.-]+$/.test(name)) return undefined;
+    const eco = dep?.eco ?? "npm";
+    const lib = dep?.name ?? name;
+    // Not installed and not pinned: a mirror may still exist under this name.
+    const version = dep?.version ?? "not installed";
     const cacheDir = join(this.root, ".sekhemet", "docs-cache");
+    // Keyed on the installed copy: a package installed after a lookup that
+    // found it only pinned is read, not answered from that miss (DS-N9-5).
+    const held = dep?.installedVersion ?? `${version} (not installed)`;
     const key = createHash("sha256")
-      .update(`${lib}@${version}:${query}`)
+      .update(`${eco}:${lib}@${held}:${query}`)
       .digest("hex")
       .slice(0, 24);
     const cached = join(cacheDir, `${key}.txt`);
     if (existsSync(cached)) return readFileSync(cached, "utf8") || undefined;
 
     const blocks: string[] = [];
-    const sources: string[] = [];
     const mirror = join(this.root, ".sekhemet", "docs", `${lib}@${version}`);
     if (existsSync(mirror)) {
+      const sources: string[] = [];
       this.walk(mirror, (f) => {
         if (f.endsWith(".md")) sources.push(f);
         return sources.length < 200;
       });
-    }
-    for (const name of ["README.md", "readme.md", "README"]) {
-      if (existsSync(join(dir, name))) {
-        sources.push(join(dir, name));
-        break;
+      for (const src of sources) {
+        try {
+          const block = matchLines(
+            `${lib}@${version}/${relative(mirror, src)}`,
+            readFileSync(src, "utf8"),
+            6,
+            query,
+          );
+          if (block) blocks.push(block);
+        } catch {
+          // Unreadable file: skip.
+        }
+        if (blocks.length >= 5) break;
       }
     }
-    if (existsSync(dir)) {
-      this.walk(dir, (f) => {
-        if (f.endsWith(".d.ts") && !f.includes(`${join(dir, "node_modules")}`)) sources.push(f);
-        return sources.length < 400;
-      });
-    }
-    for (const src of sources) {
-      const label = `${lib}@${version}/${relative(existsSync(mirror) && src.startsWith(mirror) ? mirror : dir, src)}`;
-      try {
-        const block = matchLines(label, readFileSync(src, "utf8"), 6, query);
+    // The installed copy's files, every read confined to the package (DS-N9-6).
+    if (dep?.installed && blocks.length < 5) {
+      for (const rel of dependencyFiles(dep, 400)) {
+        const read = dependencyFile(dep, rel, 400_000);
+        if (!read.ok) continue;
+        const block = matchLines(`${lib}@${version}/${read.file}`, read.text, 6, query);
         if (block) blocks.push(block);
-      } catch {
-        // Unreadable file: skip.
+        if (blocks.length >= 5) break;
       }
-      if (blocks.length >= 5) break;
     }
+    const label = workerCopy.dependencyVersion(eco, dep?.installedVersion, dep?.pinnedVersion);
     const out =
-      blocks.length > 0 ? `=== ${lib} ${version} (installed) ===\n${blocks.join("\n")}` : "";
+      blocks.length > 0 ? `=== ${lib} ${version} (${label}) ===\n${blocks.join("\n")}` : "";
     try {
       mkdirSync(cacheDir, { recursive: true });
       writeFileSync(cached, out);

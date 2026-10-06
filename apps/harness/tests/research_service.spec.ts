@@ -737,6 +737,9 @@ describe("web docs for the Worker", () => {
     writeSettings(repo, { researchWeb: true });
     const docs = await workerWebDocs(repo);
     expect(typeof docs).toBe("function");
-    expect(await docs?.("nosuchlib", "x")).toMatch(/No known documentation home/);
+    // DS-N9-12: the web tier reads only a dependency the project pins or a
+    // library with a known documentation home; any other name sends nothing.
+    expect(await docs?.("nosuchlib", "x")).toBe("");
+    expect(await docs?.("https://evil.example/x", "x")).toBe("");
   });
 });

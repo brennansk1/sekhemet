@@ -1,5 +1,6 @@
 import type { EventLog } from "@sekhemet/kernel";
 import type { CardStore } from "@sekhemet/kernel";
+import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { mergeNetworkConfigs } from "@sekhemet/sandbox";
 import { networkConfigs } from "../config_apply.js";
 import type { NetworkTable } from "../config_apply.js";
@@ -19,6 +20,7 @@ import {
 import { runnerLease } from "../runner_lease.js";
 import type { ConfigWrite } from "../team/config_audit.js";
 import { DEPS_DEV_HOST, depsDevVersion } from "./deps_dev.js";
+import type { PlanResearcherBatch } from "./packet.js";
 import type { ResearchDeps } from "./researcher.js";
 import {
   type DeepAnswer,
@@ -271,7 +273,13 @@ export function deepPriorArtFor(o: {
   researcher: string | undefined;
   /** Asks the Researcher; the product loads it once, asks, and unloads it. */
   ask: (question: string) => Promise<DeepAnswer>;
-}): DeepPriorArt {
+  /**
+   * The plan's one Researcher load (DS-N9-16): the deep question and the
+   * research packet's questions together. Checked against the lease as
+   * `ask` is.
+   */
+  batch?: PlanResearcherBatch;
+}): DeepPriorArt & { batch?: PlanResearcherBatch } {
   if (o.offline) return { skipped: "plan ran offline (--offline or SEKHEMET_OFFLINE)" };
   if (!o.allowed) return { skipped: "research is off for this plan, so nothing was looked up" };
   if (!o.researcher)
@@ -291,12 +299,22 @@ export function deepPriorArtFor(o: {
   if (now) return { skipped: now };
   // Planning can take minutes: a card started meanwhile is caught here,
   // just before the Researcher would load beside it.
+  const batch = o.batch;
   return {
     run: async (question) => {
       const later = busy();
       if (later) throw new DeepQuestionSkipped(later);
       return o.ask(question);
     },
+    ...(batch
+      ? {
+          batch: async (q: Parameters<PlanResearcherBatch>[0]) => {
+            const later = busy();
+            if (later) throw new DeepQuestionSkipped(later);
+            return batch(q);
+          },
+        }
+      : {}),
   };
 }
 
@@ -323,37 +341,92 @@ export function deepQuestionDeps(o: {
 }
 
 /**
- * The Researcher for the brief's deep question (DS-P7-10): loaded once,
- * asked once at the deep effort, unloaded. Its registry tools fetch through
- * the research policy like the survey's (fetch_allow, fetch_deny, each
- * request logged as `harness/egress`); its web is the project's research
- * web access. The caller releases the Planner's model first.
+ * The Researcher for the plan (DS-P7-10, DS-N9-16): loaded once, asked the
+ * brief's deep question at the deep effort with nothing of the repository,
+ * then each research-packet question at the quick effort with the tools
+ * that read the installed dependencies (`deps_source`, `deps_grep`,
+ * `probe`) and never the project's own; unloaded after the last. Its
+ * registry tools fetch through the research policy like the survey's
+ * (fetch_allow, fetch_deny, each request logged as `harness/egress`); its
+ * web is the project's research web access. A packet answer is kept as a
+ * note, never in research memory. The caller releases the Planner's model
+ * first.
  */
 export function planResearcher(o: {
   repoPath: string;
   log: EventLog;
   cardStore?: CardStore;
   model: string;
-}): (question: string) => Promise<DeepAnswer> {
-  return async (question) => {
+  /** The Researcher's hold; the shared model access's by default (tests hand one in). */
+  hold?: () => { acquire: () => Promise<LocalInferenceAdapter>; release: () => Promise<void> };
+}): PlanResearcherBatch {
+  return async ({ deep, packet }) => {
     const { web } = await researchSources(o.repoPath, { log: o.log });
-    const model = researcherModel(o.model, sharedModelAccess(), o.log);
-    const service = new ResearchService({
-      repoPath: o.repoPath,
-      web,
-      log: o.log,
-      ...(o.cardStore ? { cardStore: o.cardStore } : {}),
-      model: model.acquire,
-      tools: deepQuestionDeps({
+    const model = o.hold ? o.hold() : researcherModel(o.model, sharedModelAccess(), o.log);
+    const fetchJson = jsonOnce(researchFetch(o.repoPath, o.log));
+    const service = (tools: ResearchServiceTools) =>
+      new ResearchService({
         repoPath: o.repoPath,
-        fetchJson: jsonOnce(researchFetch(o.repoPath, o.log)),
-      }),
+        web,
+        log: o.log,
+        ...(o.cardStore ? { cardStore: o.cardStore } : {}),
+        model: model.acquire,
+        tools,
+      });
+    const failed = (err: unknown) => ({
+      failed: err instanceof Error ? err.message : String(err),
     });
     try {
-      const r = await service.ask(question, { deep: true });
-      return { answer: r.answer, sources: r.sources, grounded: r.grounded };
+      const out: Awaited<ReturnType<PlanResearcherBatch>> = { packet: [], model: o.model };
+      if (deep !== undefined) {
+        try {
+          const r = await service(deepQuestionDeps({ repoPath: o.repoPath, fetchJson })).ask(deep, {
+            deep: true,
+          });
+          out.deep = { answer: r.answer, sources: r.sources, grounded: r.grounded };
+        } catch (err) {
+          out.deep = failed(err);
+        }
+      }
+      const asker = packet.length
+        ? service(packetQuestionDeps({ repoPath: o.repoPath, fetchJson }))
+        : undefined;
+      for (const question of packet) {
+        try {
+          const r = await (asker as ResearchService).ask(question, {
+            effort: "quick",
+            fresh: true,
+            remember: false,
+          });
+          out.packet.push({
+            answer: r.answer,
+            sources: r.sources,
+            grounded: r.grounded,
+            evidence: r.evidence,
+            ...(r.probeClaims ? { probeClaims: r.probeClaims } : {}),
+          });
+        } catch (err) {
+          out.packet.push(failed(err));
+        }
+      }
+      return out;
     } finally {
       await model.release().catch(() => undefined);
     }
   };
+}
+
+type ResearchServiceTools = Pick<ResearchDeps, "fetchJson" | "libraries" | "repository">;
+
+/**
+ * The Researcher's tools for a research-packet question (DS-N9-16): the
+ * registries through the research policy, and of the repository tools only
+ * those that read the installed dependencies — the question carries a
+ * symbol and `pkg@ver` alone, and the project's own code stays unread.
+ */
+export function packetQuestionDeps(o: {
+  repoPath: string;
+  fetchJson: Fetcher;
+}): ResearchServiceTools {
+  return { ...deepQuestionDeps(o), repository: "dependencies" };
 }

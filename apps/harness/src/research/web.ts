@@ -285,10 +285,17 @@ export async function fetchPage(
     } catch (err) {
       return asRefusal(u.hostname, err);
     }
-    const r = await cfg.crawler.crawl(u.toString());
+    // DS-N9-10: the question reaches Crawl4AI's BM25 filter; the raw page is
+    // cached once under `crawl:<url>`, so a later question re-ranks the same
+    // bytes and never forks the cache.
+    const r = await cfg.crawler.crawl(u.toString(), query);
     if (r.ok && r.markdown && r.markdown.length > 200) {
-      const text = `${r.title ? `# ${r.title}\n\n` : ""}${r.markdown}`;
+      const title = r.title ? `# ${r.title}\n\n` : "";
+      const text = `${title}${r.markdown}`;
       cfg.polite?.store(key, text);
+      const filtered = query ? (r.fitMarkdown ?? "").trim() : "";
+      if (filtered && text.length > maxChars && title.length + filtered.length <= maxChars)
+        return `${title}${filtered}`;
       return fit(text);
     }
     // Fall through to the plain reader.

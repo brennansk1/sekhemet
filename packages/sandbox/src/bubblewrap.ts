@@ -194,6 +194,11 @@ export function bubblewrapArgv(
     "--tmpfs",
     "/tmp",
     ...homeMount,
+    // Item 8c: a hidden path is an empty tmpfs; the binds after it (the
+    // writable roots and read-only grants inside it) are seen through it.
+    ...[
+      ...new Set((options.hiddenReadPaths ?? []).filter((p) => existsSync(p)).map(realPath)),
+    ].flatMap((p) => ["--tmpfs", p]),
     ...writeRoots.flatMap((p) => ["--bind", p, p]),
     ...readOnly.flatMap((p) => ["--ro-bind", p, p]),
     ...secretMasks.flatMap((m) => m.argv),

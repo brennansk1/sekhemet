@@ -658,6 +658,15 @@ Not a chat assistant (the conversation plans and reports; code is written on car
 - **Where:** `packages/sandbox/src/seccomp.ts`, `executor.ts`; security.md item 15, SEC-15; tests `seccomp.spec.ts`, `linux_sockets.spec.ts`.
 - **Reopen if:** a Linux tool a card needs breaks on the refusal with the network granted, or the network-granted posture gains an egress proxy (then the empty namespace with relays is the better answer).
 
+### DEC-59 — research like an engineer: notes are ledger events and cited data
+**The Researcher researches the way a software engineer does, adapted to small local models: installed dependencies at their installed version in npm, Python, Go and Rust; docs at the pinned version; short excerpts focused on the question; every answer tagged with its pkg@ver; unknown APIs answered in a research packet before a card runs; small probes in the no-network sandbox; and durable research notes.** *Owner, 2026-10-05 (scope B plus Go and Rust, after the lead's design from docs/research and current studies); lead, for the rulings below.*
+- **(a) Notes are not a new store.** A note is a pair of ledger events (`research/note_admitted`, `research/note_retired`) plus the existing fetched-bytes cache, so the event log stays the only durable channel and DEC-22's ban on a seventh store holds. An erased note is a named gap on replay.
+- **(b) Notes are cited data, not learned rules.** A note (question, excerpt, citation with its content hash, pkg@ver, the check it survived) is admitted only with a grounded check (an executed probe, or a citation the reference checker verified), reaches the Worker as research data in the dossier as research does today, and is retired on a lockfile change or when a card it fed fails on it. DEC-28's person approval applies only if a note is promoted to a rule.
+- **(c) What the packet sends.** With research web access on (offline stays the default), the research packet sends only identifier-shaped words from a card's spec (no spaces, no prose) as its questions; nothing else of the card leaves the machine, and every request is logged as egress.
+- **Not in this decision (after 0.9.0):** the Worker's own mid-card research request, the Worker's probe (an A/B under DEC-28 first), a local clone of a reference repository, error-message research beyond the repair batch, and research output shaped like the agent-computer interface.
+- **Where:** `lead-work/research_design.md` (the evidence); design-stage NEW-design-stage-9 (DS-N9-*), worker-loop, context, models, security 33a, gates (the shared probe runner).
+- **Reopen if:** the research golden set (once a person confirms it) or the frozen-suite A/B shows the packet or the notes make cards worse.
+
 ## Founder decisions on record
 
 - **Name:** Sekhemet, a deliberate variant spelling, paired with its descriptor where the product introduces itself.

@@ -69,37 +69,96 @@ function fail(excerpt: string, extra: Partial<CompleteGateFailure> = {}): Comple
   };
 }
 
-async function reproduce(
-  claim: ReportedClaim & { reproduce: NonNullable<ReportedClaim["reproduce"]> },
-  timeoutMs: number,
-): Promise<{ ok: boolean; detail: string }> {
+/** What `runProbe` runs: code for a trusted interpreter, and the harness's grants. */
+export interface ProbeRunOptions {
+  language: "node" | "python";
+  code: string;
+  /**
+   * The Python interpreter, chosen by the harness (the project's environment,
+   * DS-N9-17); default the trusted `python3`. Node is always the harness's own.
+   * Never a program a report or a model names.
+   */
+  interpreter?: string;
+  /** Harness-chosen paths the code may read and never write. */
+  readOnly?: string[];
+  /**
+   * Harness-chosen paths whose contents the code may not read, the
+   * read-only grants inside them excepted (security item 8c: a research
+   * packet's probe reads the dependencies, never the project).
+   */
+  hiddenReads?: string[];
+  timeoutMs: number;
+  maxMemoryBytes?: number;
+  /** Variables on top of the sandbox's allowlist; HOME is the scratch directory. */
+  env?: Record<string, string>;
+}
+
+export interface ProbeRun {
+  /** Exit 0, not killed. */
+  ok: boolean;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  oomKilled: boolean;
+  durationMs: number;
+  notStarted?: true;
+  /** `exit N` and the last two lines of stderr, or why it was not started. */
+  detail: string;
+}
+
+function interpreterFor(opts: ProbeRunOptions): { program: string; args: string[] } | undefined {
+  if (opts.language === "node") return { program: process.execPath, args: ["-e", opts.code] };
+  if (opts.language === "python") {
+    const python = opts.interpreter ?? resolveProgram("python3");
+    return python ? { program: python, args: ["-I", "-c", opts.code] } : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Run Node or Python code confined (gates rule 27a; design-stage DS-N9-17):
+ * one runner for the claim gate and the Researcher's probe. A fresh scratch
+ * directory is the only writable root and the working directory, the
+ * read-only grants are readable and never writable, and there is no egress
+ * port, so the code can neither write the repository nor reach the network.
+ */
+export async function runProbe(opts: ProbeRunOptions): Promise<ProbeRun> {
+  const interpreter = interpreterFor(opts);
+  if (!interpreter) {
+    return {
+      ok: false,
+      exitCode: 127,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      oomKilled: false,
+      durationMs: 0,
+      notStarted: true,
+      detail: `no interpreter for ${String(opts.language)}`,
+    };
+  }
   const scratch = mkdtempSync(join(tmpdir(), "sekhemet-claim-"));
   try {
-    const interpreter =
-      claim.reproduce.language === "node"
-        ? { program: process.execPath, args: ["-e", claim.reproduce.code] }
-        : claim.reproduce.language === "python"
-          ? (() => {
-              const python = resolveProgram("python3");
-              return python
-                ? { program: python, args: ["-I", "-c", claim.reproduce.code] }
-                : undefined;
-            })()
-          : undefined;
-    if (!interpreter) {
-      return { ok: false, detail: `no interpreter for ${String(claim.reproduce.language)}` };
-    }
-    // The scratch directory is the only writable root: the repository is
-    // neither the root nor writable, and there is no egress port.
     const r = await runConfined(interpreter.program, interpreter.args, {
       root: scratch,
       cwd: scratch,
-      env: { HOME: scratch },
-      timeoutMs,
+      env: { ...opts.env, HOME: scratch },
+      timeoutMs: opts.timeoutMs,
+      ...(opts.readOnly?.length ? { readOnly: opts.readOnly } : {}),
+      ...(opts.hiddenReads?.length ? { hiddenReads: opts.hiddenReads } : {}),
+      ...(opts.maxMemoryBytes ? { maxMemoryBytes: opts.maxMemoryBytes } : {}),
     });
     const stderr = r.stderr.trim().split("\n").slice(-2).join(" ").slice(0, 200);
     return {
-      ok: r.exitCode === 0,
+      ok: r.exitCode === 0 && !r.timedOut && !r.oomKilled,
+      exitCode: r.exitCode,
+      stdout: r.stdout,
+      stderr: r.stderr,
+      timedOut: r.timedOut,
+      oomKilled: r.oomKilled,
+      durationMs: r.durationMs,
+      ...(r.notStarted ? { notStarted: true as const } : {}),
       detail: `exit ${r.exitCode}${stderr ? `: ${stderr}` : ""}`,
     };
   } finally {
@@ -158,7 +217,14 @@ export async function runClaimGate(opts: {
       continue;
     }
     if (c.reproduce && typeof c.reproduce.code === "string") {
-      const r = await reproduce(c as Parameters<typeof reproduce>[0], opts.timeoutMs);
+      // The repository is a read-only grant: a probe's program reads the
+      // project's installed dependencies and runs here unchanged (DS-N9-18).
+      const r = await runProbe({
+        language: c.reproduce.language,
+        code: c.reproduce.code,
+        readOnly: [opts.root],
+        timeoutMs: opts.timeoutMs,
+      });
       if (r.ok) {
         verdicts.push({ id, verdict: "reproduced" });
         continue;

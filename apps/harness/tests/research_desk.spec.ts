@@ -1,9 +1,11 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   depsFile,
+  depsGrep,
   depsOutline,
   installed,
   manifestVersions,
@@ -76,6 +78,86 @@ describe("installed dependency source (tier 1)", () => {
   it("rejects a name that is not a package name", () => {
     expect(packageDir(root, "../etc")).toBeUndefined();
     expect(packageDir(root, "a b")).toBeUndefined();
+  });
+});
+
+describe("installed dependency source in Python, Go and Rust (DS-N9-1, DS-N9-6)", () => {
+  /** A project with a real venv, a Go module cache and a Cargo registry tree. */
+  function polyglot(): { root: string; gomod: string; cargo: string } {
+    const root = mkdtempSync(join(tmpdir(), "desk-poly-"));
+    execFileSync("python3", ["-m", "venv", "--without-pip", join(root, ".venv")]);
+    const lib = join(root, ".venv", "lib");
+    const site = join(lib, readdirSync(lib)[0] as string, "site-packages");
+    mkdirSync(join(site, "attrs-23.2.0.dist-info"), { recursive: true });
+    writeFileSync(
+      join(site, "attrs-23.2.0.dist-info", "METADATA"),
+      "Metadata-Version: 2.1\nName: attrs\nVersion: 23.2.0\n",
+    );
+    writeFileSync(
+      join(site, "attrs-23.2.0.dist-info", "RECORD"),
+      "attr/__init__.py,,\nattrs-23.2.0.dist-info/METADATA,,\n",
+    );
+    writeFileSync(join(site, "attrs-23.2.0.dist-info", "top_level.txt"), "attr\n");
+    mkdirSync(join(site, "attr"));
+    writeFileSync(join(site, "attr", "__init__.py"), "def define(cls):\n    return cls\n");
+    writeFileSync(join(root, "requirements.txt"), "attrs==23.2.0\n");
+    const gomod = mkdtempSync(join(tmpdir(), "desk-gomod-"));
+    writeFileSync(join(root, "go.mod"), "module x\n\nrequire github.com/spf13/cobra v1.8.0\n");
+    mkdirSync(join(gomod, "github.com", "spf13", "cobra@v1.8.0"), { recursive: true });
+    writeFileSync(
+      join(gomod, "github.com", "spf13", "cobra@v1.8.0", "command.go"),
+      "package cobra\n\nfunc (c *Command) Execute() error { return nil }\n",
+    );
+    const cargo = mkdtempSync(join(tmpdir(), "desk-cargo-"));
+    writeFileSync(
+      join(root, "Cargo.lock"),
+      '[[package]]\nname = "anyhow"\nversion = "1.0.86"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n',
+    );
+    const crate = join(cargo, "registry", "src", "index.crates.io-x", "anyhow-1.0.86");
+    mkdirSync(join(crate, "src"), { recursive: true });
+    writeFileSync(join(crate, "Cargo.toml"), '[package]\nname = "anyhow"\n');
+    writeFileSync(
+      join(crate, "src", "lib.rs"),
+      "/// Return early with an error.\npub fn bail() {}\n",
+    );
+    return { root, gomod, cargo };
+  }
+
+  const { root, gomod, cargo } = polyglot();
+  const env = { GOMODCACHE: process.env.GOMODCACHE, CARGO_HOME: process.env.CARGO_HOME };
+  beforeAll(() => {
+    process.env.GOMODCACHE = gomod;
+    process.env.CARGO_HOME = cargo;
+  });
+  afterAll(() => {
+    for (const [k, v] of Object.entries(env)) {
+      if (v === undefined) Reflect.deleteProperty(process.env, k);
+      else process.env[k] = v;
+    }
+  });
+
+  it("resolves each ecosystem's package, with an optional ecosystem prefix", () => {
+    expect(installed(root, "attrs")).toMatchObject({ ecosystem: "python", version: "23.2.0" });
+    expect(installed(root, "python:attr")?.name).toBe("attrs");
+    expect(installed(root, "go:cobra")).toMatchObject({ ecosystem: "go", version: "v1.8.0" });
+    expect(installed(root, "anyhow")).toMatchObject({ ecosystem: "rust", version: "1.0.86" });
+    expect(installed(root, "npm:anyhow")).toBeUndefined();
+  });
+
+  it("reads, outlines and searches inside the package, and refuses to walk out", () => {
+    expect(depsFile(root, "attrs", "attr/__init__.py")).toContain("def define");
+    expect(depsFile(root, "attrs", "../../../../pyvenv.cfg")).toBe("Invalid path.");
+    expect(depsFile(root, "cobra", "../cobra@v1.8.0/command.go")).toBe("Invalid path.");
+    expect(depsOutline(root, "anyhow")).toContain("anyhow@1.0.86 (rust)");
+    expect(depsOutline(root, "anyhow")).toContain("src/lib.rs");
+    expect(depsGrep(root, "rust:anyhow", "pub fn bail")).toContain("lib.rs:2:pub fn bail");
+    expect(depsGrep(root, "go:cobra", "Execute")).toContain("command.go:3:");
+  });
+
+  it("reports declared dependencies of every ecosystem with their installed versions", () => {
+    expect(manifestVersions(root)).toEqual(
+      expect.arrayContaining([{ name: "attrs", version: "23.2.0" }]),
+    );
   });
 });
 

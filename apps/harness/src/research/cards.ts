@@ -150,6 +150,8 @@ export function claimsReport(card: CardRecord, answer: ResearchAnswer): string {
       ...(reason ? { unreproducible: reason } : {}),
     };
   });
+  // DS-N9-13: each probe that exited 0, with the program that ran as its reproduction.
+  claims.push(...(answer.probeClaims ?? []));
   return `${JSON.stringify({ card: card.id, claims }, null, 2)}\n`;
 }
 

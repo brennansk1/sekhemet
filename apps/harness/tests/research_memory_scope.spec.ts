@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InferenceRequest, InferenceResponse, LocalInferenceAdapter } from "@sekhemet/models";
 import { afterEach, describe, expect, it } from "vitest";
-import { ResearchMemory, ResearchService, packagesInQuestion } from "../src/research/service.js";
+import {
+  ResearchMemory,
+  ResearchService,
+  packagesInQuestion,
+  pinsInQuestion,
+} from "../src/research/service.js";
 
 /**
  * Design-stage DS-N2-5: a cached answer recorded for another repository, or
@@ -109,5 +114,76 @@ describe("research memory is scoped to the repository and the installed version 
     expect(
       memory.recall("How do I validate input with zod?", { repo: a, packages: { zod: "3.22.4" } }),
     ).toBeUndefined();
+  });
+});
+
+describe("every research question carries the pins of the packages it names (DS-N9-11)", () => {
+  /** A Go module and a Rust crate pinned by their lockfiles, neither installed. */
+  const polyglot = (): string => {
+    const repo = mkdtempSync(join(tmpdir(), "pins-repo-"));
+    dirs.push(repo);
+    writeFileSync(
+      join(repo, "go.mod"),
+      "module example.com/app\n\ngo 1.22\n\nrequire github.com/spf13/cobra v1.8.0\n",
+    );
+    writeFileSync(
+      join(repo, "go.sum"),
+      "github.com/spf13/cobra v1.8.0 h1:abc=\ngithub.com/spf13/cobra v1.8.0/go.mod h1:def=\n",
+    );
+    writeFileSync(
+      join(repo, "Cargo.toml"),
+      '[package]\nname = "app"\n\n[dependencies]\nserde = "1"\n',
+    );
+    writeFileSync(
+      join(repo, "Cargo.lock"),
+      'version = 3\n\n[[package]]\nname = "serde"\nversion = "1.0.200"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n',
+    );
+    return repo;
+  };
+
+  it("finds a Go module by its path or its last element, and a crate by its name", () => {
+    const repo = polyglot();
+    const cobra = { eco: "go", name: "github.com/spf13/cobra", version: "v1.8.0" };
+    expect(pinsInQuestion(repo, "How does cobra register a subcommand?")).toEqual([cobra]);
+    expect(pinsInQuestion(repo, "Is github.com/spf13/cobra's Command.Execute safe?")).toEqual([
+      cobra,
+    ]);
+    expect(pinsInQuestion(repo, "Does serde derive Deserialize for enums?")).toEqual([
+      { eco: "rust", name: "serde", version: "1.0.200" },
+    ]);
+    expect(packagesInQuestion(repo, "serde and cobra")).toEqual({
+      "go:github.com/spf13/cobra": "v1.8.0",
+      "rust:serde": "1.0.200",
+    });
+    expect(pinsInQuestion(repo, "How do I read a file?")).toEqual([]);
+  });
+
+  it("sends the pins with the question and records them on research/asked", async () => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const { EventLog, initSchema } = await import("@sekhemet/kernel");
+    const db = new DatabaseSync(":memory:");
+    initSchema(db);
+    const log = new EventLog(db);
+    const repo = repoWith("3.22.4");
+    const seen: string[] = [];
+    const m = model();
+    const generate = m.generate.bind(m);
+    m.generate = async (req) => {
+      seen.push(JSON.stringify(req.messages ?? req.prompt));
+      return generate(req);
+    };
+    const memDir = mkdtempSync(join(tmpdir(), "mem-"));
+    dirs.push(memDir);
+    await new ResearchService({
+      repoPath: repo,
+      log,
+      memory: new ResearchMemory(join(memDir, "m.jsonl")),
+      tools: { fetchJson: async () => ({ readme: "zod docs", license: "MIT" }) },
+      model: async () => m,
+    }).ask("How do I validate input with zod?");
+    expect(seen[0]).toMatch(/zod@3\.22\.4/);
+    const e = (await log.getEventsByTypes(["research/asked"]))[0];
+    expect(e?.payload).toMatchObject({ pins: ["npm:zod@3.22.4"] });
+    db.close();
   });
 });

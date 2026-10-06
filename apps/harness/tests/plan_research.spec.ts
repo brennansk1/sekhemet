@@ -1,12 +1,19 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { EventLog, initSchema } from "@sekhemet/kernel";
+import { MockInferenceAdapter } from "@sekhemet/models";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { main } from "../src/index.js";
-import { RESEARCH_HOSTS, planResearch, registrySearch } from "../src/research/plan_research.js";
+import { packetQuestion } from "../src/research/packet.js";
+import {
+  RESEARCH_HOSTS,
+  planResearch,
+  planResearcher,
+  registrySearch,
+} from "../src/research/plan_research.js";
 import { priorArtLines, queryFor, reuseSurvey } from "../src/research/reuse.js";
 import { searchPapers } from "../src/research/web.js";
 import { UNLISTED_YES_HOSTS, researchFetch } from "../src/research_consent.js";
@@ -422,5 +429,62 @@ describe("DS-S8-8: a yes covers exactly the hosts its question named (lead rulin
     expect(urls).toEqual([]);
     await planResearch({ repoPath: repo, log, newProject: true, print, ask, fetchImpl: f });
     expect(ask).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("DS-N9-16: one Researcher load answers the deep question and the packet's questions", () => {
+  it("loads once, gives packet questions the dependency tools but not the project's, and releases after the last", async () => {
+    vi.stubEnv("SEKHEMET_CONFIG_DIR", join(root, "user"));
+    const usage = { promptTokens: 1, completionTokens: 1, durationMs: 1 };
+    const model = new MockInferenceAdapter("generic", [
+      { text: "Not settled.", toolCalls: [], usage },
+    ]);
+    const order: string[] = [];
+    let holds = 0;
+    const batch = planResearcher({
+      repoPath: repo,
+      log,
+      model: "generic",
+      hold: () => {
+        holds++;
+        return {
+          acquire: async () => {
+            order.push("acquire");
+            return model;
+          },
+          release: async () => {
+            order.push("release");
+          },
+        };
+      },
+    });
+    const question = packetQuestion({
+      cardId: "c1",
+      kind: "member",
+      written: "zod.ipv4",
+      eco: "npm",
+      pkg: "zod",
+      version: "3.23.8",
+      symbol: "ipv4",
+      missing: "ipv4",
+    });
+    const out = await batch({ deep: "What do teams use for invoices?", packet: [question] });
+    expect(holds).toBe(1);
+    expect(order.filter((o) => o === "release")).toEqual(["release"]);
+    expect(order.at(-1)).toBe("release");
+    expect(out.deep && "answer" in out.deep).toBe(true);
+    expect(out.packet).toHaveLength(1);
+    const offered = (needle: string) =>
+      model.callHistory
+        .filter((r) => (r.tools ?? []).length > 0 && JSON.stringify(r).includes(needle))
+        .map((r) => (r.tools ?? []).map((t) => t.name))[0] ?? [];
+    const deepTools = offered("invoices");
+    const packetTools = offered("`ipv4`");
+    expect(deepTools.length).toBeGreaterThan(0);
+    for (const name of ["git_history", "module_api", "deps_source", "deps_grep", "probe"])
+      expect(deepTools).not.toContain(name);
+    for (const name of ["deps_source", "deps_grep", "probe"]) expect(packetTools).toContain(name);
+    for (const name of ["git_history", "module_api"]) expect(packetTools).not.toContain(name);
+    expect(existsSync(join(root, "user", "research", "memory.jsonl"))).toBe(false);
   });
 });

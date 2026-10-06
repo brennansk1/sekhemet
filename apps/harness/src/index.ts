@@ -211,6 +211,7 @@ import { applyWorkerOverride, gateWorker, verifiedQueueRoles } from "./qualify.j
 import { diffTrajectories, formatDiff, formatTrajectory, trajectories } from "./replay.js";
 import { isResearchCard, runResearchCard } from "./research/cards.js";
 import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
+import type { PlanResearcherBatch } from "./research/packet.js";
 import { deepPriorArtFor, planResearch, planResearcher } from "./research/plan_research.js";
 import { type FailingCard, type RepairResearch, researchBeforeRepair } from "./research/repair.js";
 import { ResearchService, researchSources } from "./research/service.js";
@@ -1821,20 +1822,27 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const researcherName =
       roleModelName("researcher", flagged("--researcher"), { registry }) ??
       process.env.SEKHEMET_RESEARCHER;
+    // DS-N9-16: the research packet's questions go in the same load.
+    const researcherLoad: PlanResearcherBatch = async (q) => {
+      await planAccess?.release("plan").catch(() => undefined);
+      return planResearcher({
+        repoPath: config.repoPath,
+        log,
+        cardStore,
+        model: researcherName as string,
+      })(q);
+    };
     const deep = deepPriorArtFor({
       repoPath: config.repoPath,
       allowed: research !== undefined,
       offline,
       researcher: researcherName,
       ask: async (question) => {
-        await planAccess?.release("plan").catch(() => undefined);
-        return planResearcher({
-          repoPath: config.repoPath,
-          log,
-          cardStore,
-          model: researcherName as string,
-        })(question);
+        const d = (await researcherLoad({ deep: question, packet: [] })).deep;
+        if (!d || "failed" in d) throw new Error(d?.failed ?? "no answer");
+        return d;
       },
+      batch: researcherLoad,
     });
     // EXT-20: the servers the person approved offer their tools to the
     // Planner while it sketches, within the prompt budget.

@@ -1,5 +1,11 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ReportedClaim } from "@sekhemet/gates";
+import type { CardRecord } from "@sekhemet/kernel";
 import type { InferenceRequest, InferenceResponse, LocalInferenceAdapter } from "@sekhemet/models";
-import { describe, expect, it } from "vitest";
+import { ProcessSandbox } from "@sekhemet/sandbox";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   EXTRACT_INFO_PROMPT,
   formatFetchResults,
@@ -9,7 +15,16 @@ import {
   truncateMiddle,
 } from "../src/research/apodex.js";
 import { EvidenceLedger, asList, verifyReferences } from "../src/research/apodex_loop.js";
-import { investigate, research } from "../src/research/researcher.js";
+import { claimsReport } from "../src/research/cards.js";
+import {
+  PROBE_BUDGET,
+  type ResearchAnswer,
+  investigate,
+  research,
+  researchTools,
+  runResearchTool,
+  withClaims,
+} from "../src/research/researcher.js";
 
 /** A scripted Apodex: `main` answers the research turns, `extract` answers web_fetch extraction. */
 function apodex(
@@ -669,4 +684,123 @@ describe("papers as sources", () => {
     expect(r.evidence[0]).toMatchObject({ kind: "paper", ref: "https://arxiv.org/abs/2105.01234" });
     expect(r.confidence).toBe(0.25);
   });
+});
+
+describe("the Researcher's probe tool (DS-N9-13)", () => {
+  const confines = new ProcessSandbox({ engine: "native" }).confinement !== "none";
+  const made: string[] = [];
+  afterEach(() => {
+    for (const d of made.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+  /** A project with one installed CommonJS package. */
+  function project(): string {
+    const repo = mkdtempSync(join(tmpdir(), "probe-tool-"));
+    made.push(repo);
+    writeFileSync(
+      join(repo, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { "cjs-calc": "1.0.0" } }),
+    );
+    const pkg = join(repo, "node_modules", "cjs-calc");
+    mkdirSync(join(pkg, "lib"), { recursive: true });
+    writeFileSync(
+      join(pkg, "package.json"),
+      JSON.stringify({ name: "cjs-calc", version: "1.0.0", main: "lib/index.js" }),
+    );
+    writeFileSync(join(pkg, "lib", "index.js"), "exports.add = (a, b) => a + b;\n");
+    return repo;
+  }
+  const probeCall = (code: string, pkg = "cjs-calc") => ({
+    id: "p1",
+    name: "probe",
+    arguments: { package: pkg, language: "node", code, statement: "add sums two numbers" },
+  });
+
+  it("is offered to both pipelines, with a budget per effort of 2, 4 and 6", () => {
+    expect(researchTools(false).map((t) => t.name)).toContain("probe");
+    expect(PROBE_BUDGET).toEqual({ quick: 2, standard: 4, exhaustive: 6 });
+  });
+
+  it("refuses a probe past the budget, an uninstalled package and the brief's deep question, before running", async () => {
+    const repo = project();
+    const spent = await runResearchTool(probeCall("console.log(1)"), {
+      repoPath: repo,
+      probeBudget: { max: 2, used: 2 },
+    });
+    expect(spent.text).toMatch(/probe budget.*\(2 probes\) is spent/i);
+    expect(spent.source).toBeUndefined();
+    const missing = await runResearchTool(probeCall("console.log(1)", "left-pad"), {
+      repoPath: repo,
+      probeBudget: { max: 2, used: 0 },
+    });
+    expect(missing.text).toMatch(/left-pad has no installed copy/);
+    const off = await runResearchTool(probeCall("console.log(1)"), {
+      repoPath: repo,
+      repository: false,
+    });
+    expect(off.text).toMatch(/off for this question/);
+  });
+
+  it.runIf(confines)(
+    "runs a probe in the sandbox; one that exits 0 adds its executable claim to the claims report",
+    async () => {
+      const repo = project();
+      const probeClaims: ReportedClaim[] = [];
+      const budget = { max: 2, used: 0 };
+      const ok = await runResearchTool(
+        probeCall(
+          'const { add } = require("cjs-calc");\nif (add(2, 3) !== 5) process.exit(1);\nconsole.log("sum", add(2, 3));',
+        ),
+        { repoPath: repo, probeBudget: budget, probeClaims },
+      );
+      expect(budget.used).toBe(1);
+      expect(ok.text).toMatch(/exit 0/);
+      expect(ok.text).toMatch(/<untrusted source="probe">\nsum 5/);
+      expect(ok.source?.ref).toMatch(/^probe cjs-calc@1\.0\.0 [0-9a-f]{12}$/);
+      expect(probeClaims).toHaveLength(1);
+      expect(probeClaims[0]).toMatchObject({ kind: "executable" });
+      expect(probeClaims[0]?.reproduce?.code).toMatch(/require\("cjs-calc"\)/);
+
+      const failed = await runResearchTool(probeCall("process.exit(3);"), {
+        repoPath: repo,
+        probeBudget: budget,
+        probeClaims,
+      });
+      expect(failed.text).toMatch(/exit 3/);
+      expect(probeClaims).toHaveLength(1);
+
+      const answer: ResearchAnswer = {
+        ...withClaims({
+          answer: "It sums [1].",
+          sources: [],
+          evidence: [],
+          grounded: true,
+          confidence: 0.5,
+          badCitations: [],
+        }),
+        probeClaims,
+      };
+      const report = JSON.parse(claimsReport({ id: "c1" } as CardRecord, answer)) as {
+        claims: ReportedClaim[];
+      };
+      expect(report.claims.some((c) => c.reproduce?.code.includes("cjs-calc"))).toBe(true);
+    },
+  );
+
+  it.runIf(confines)(
+    "a packet question's probe reads the dependencies, never the project (DS-N9-17)",
+    async () => {
+      const repo = project();
+      mkdirSync(join(repo, "src"));
+      writeFileSync(join(repo, "src", "secret.ts"), "export const key = 'SECRET_FROM_PROJECT';\n");
+      const r = await runResearchTool(
+        probeCall(
+          `const { add } = require("cjs-calc");\nlet seen = "unread";\ntry { seen = require("node:fs").readFileSync(${JSON.stringify(join(repo, "src", "secret.ts"))}, "utf8"); } catch (e) { seen = e.code; }\nconsole.log(add(2, 3), seen);`,
+        ),
+        { repoPath: repo, repository: "dependencies", probeBudget: { max: 2, used: 0 } },
+      );
+      expect(r.text).toMatch(/exit 0/);
+      expect(r.text).not.toContain("SECRET_FROM_PROJECT");
+      expect(r.text).toMatch(/5 (EPERM|EACCES|ENOENT)/);
+    },
+  );
 });

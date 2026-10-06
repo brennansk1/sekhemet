@@ -219,6 +219,10 @@ export class RobotsGate {
   }
 }
 
+/** A documentation URL at an exact version: docs.rs, pkg.go.dev, unpkg, Read the Docs. */
+const PINNED_DOCS =
+  /^(crawl:)?https:\/\/(docs\.rs\/[^/]+\/v?\d+\.\d+[^/]*\/|pkg\.go\.dev\/[^@?#]+@v?\d+\.\d+|unpkg\.com\/(@[^/@]+\/)?[^/@]+@\d+\.\d+[^/]*\/|[a-z0-9-]+\.readthedocs\.io\/[a-z]{2}(-[a-z]+)?\/v?\d+\.\d+[^/]*\/)/i;
+
 /** Response bodies on disk, keyed by URL, with a time-to-live. */
 export class ResearchCache {
   constructor(
@@ -243,6 +247,9 @@ export class ResearchCache {
   static ttlFor(key: string): number {
     const day = 24 * 3600 * 1000;
     if (key.startsWith("pinned:") || /\b[0-9a-f]{40}\b/.test(key)) return Number.POSITIVE_INFINITY;
+    // Documentation at a package's exact version (design-stage DS-N9-8): a
+    // release's docs do not change, unlike `latest` or `stable`.
+    if (PINNED_DOCS.test(key)) return Number.POSITIVE_INFINITY;
     if (
       /search|\/api\/papers\/search|export\.arxiv\.org\/api\/query|api\.openalex\.org\/works\?search/.test(
         key,

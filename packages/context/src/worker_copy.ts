@@ -239,6 +239,29 @@ export const workerCopy = {
   symbolNotDeclared: (symbol: string): string =>
     `${symbol}: grep_search(query="${symbol}") finds where it is declared or used.`,
 
+  // --- installed dependencies in every ecosystem (design-stage DS-N9-1, -5) ----
+  /**
+   * The version a dependency is read at, as the `docs` header and the
+   * `dependencies` row say it: the installed copy, else the lockfile pin, and
+   * the pin as well when the two differ. npm, the ecosystem the tool first
+   * served, is not named.
+   */
+  dependencyVersion: (eco: string, installed?: string, pinned?: string): string =>
+    `${eco === "npm" ? "" : `${eco}, `}${installed === undefined ? "not installed" : "installed"}${pinned !== undefined && pinned !== installed ? `; the lockfile pins ${pinned}` : ""}`,
+  /** One row of `dependencies`: the declared requirement, where it is declared, and the version in use. */
+  dependencyRow: (
+    eco: string,
+    name: string,
+    spec: string | undefined,
+    field: string,
+    installed?: string,
+    pinned?: string,
+  ): string =>
+    `${spec ? (eco === "npm" ? `${name}@${spec}` : `${name} ${spec}`) : name} (${eco === "npm" ? "" : `${eco}, `}${field}, ${installed === undefined ? "not installed" : `${installed} installed`}${pinned !== undefined && pinned !== installed ? `; the lockfile pins ${pinned}` : ""})`,
+  /** The line under `dependencies` for Python, Go and Rust packages. */
+  dependenciesNote:
+    "Prefer these and the language's standard library over writing your own; adding a package is a person's decision, outside this card.",
+
   // --- browse's refusals (security items 12 and 42a, F29) ---------------------
   // New tool refusals a security fix requires, not a prompt change: each is one
   // plain sentence that says what browse opens, so it adds no negation.

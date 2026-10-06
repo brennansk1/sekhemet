@@ -111,16 +111,22 @@ export function srtFilesystem(
   const homeAllow = options.denyHomeReads
     ? [...homeToolchainPaths(home).map(realPath), ...(vendor ? [vendor] : []), ...relayDir]
     : [];
+  // Item 8c: hidden paths, and the grants inside them read back.
+  const hidden = [...new Set((options.hiddenReadPaths ?? []).map(realPath))];
+  const inHidden = [
+    ...new Set([...realRoots, ...(options.readOnlyPaths ?? []).map(realPath)]),
+  ].filter((g) => hidden.some((h) => g === h || g.startsWith(`${h}/`)));
   return {
     denyRead: [
       ...homeDeny,
+      ...hidden,
       ...secretReadDenies(home),
       ...sessionSecretDenies(),
       ...ledgerReadDenies(roots),
       // Item 10a: the card's view of other projects (no glob on Linux).
       ...(options.denyPaths ?? []).filter((p) => platform() === "darwin" || !p.includes("*")),
     ],
-    allowRead: [...realRoots, ...homeAllow],
+    allowRead: [...new Set([...realRoots, ...homeAllow, ...inHidden])],
     allowWrite,
     denyWrite,
   };

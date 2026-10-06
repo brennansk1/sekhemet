@@ -1,6 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import {
+  type Ecosystem,
+  type InstalledDependency,
+  declaredDependencies,
+  dependencyFile,
+  dependencyFiles,
+  dependencyGrep,
+  resolveDependency,
+} from "@sekhemet/loop";
 
 /**
  * The installed dependency's own source (tier 1 of the knowledge tiers).
@@ -13,136 +20,81 @@ import { dirname, join, relative, resolve, sep } from "node:path";
  * pnpm stores packages behind symlinks in a content-addressed store, so the
  * directory is resolved and then realpath'd; reads are confined to the
  * resolved package directory so a traversal cannot walk out of it.
+ *
+ * Every ecosystem the loop's adapters read is served (design-stage
+ * DS-N9-1..6): npm under node_modules, Python from the venv's .dist-info,
+ * Go under the module cache, Rust under Cargo's registry sources.
  */
-
-const NAME = /^(@[\w.-]+\/)?[\w.-]+$/;
 
 export interface InstalledPackage {
   name: string;
   version: string;
   dir: string;
-  /** What `main`, `module`, `exports` and `types` point at, as declared. */
+  /** What `main`, `module`, `exports` and `types` point at, as declared (npm); import names (Python). */
   entries: string[];
+  /** The ecosystem it was found in (design-stage DS-N9-1). */
+  ecosystem: Ecosystem;
+  /** The lockfile's pin, when it differs from the installed version. */
+  pinnedVersion?: string;
 }
 
-/** Where a dependency is installed for this project, walking up node_modules. */
+/** Where a dependency is installed for this project, in any ecosystem. */
 export function packageDir(repoPath: string, name: string): string | undefined {
-  if (!NAME.test(name)) return undefined;
-  let here = resolve(repoPath);
-  for (;;) {
-    const candidate = join(here, "node_modules", ...name.split("/"));
-    if (existsSync(join(candidate, "package.json"))) {
-      try {
-        return realpathSync(candidate);
-      } catch {
-        return candidate;
-      }
-    }
-    const up = dirname(here);
-    if (up === here) return undefined;
-    here = up;
-  }
+  return installed(repoPath, name)?.dir;
 }
 
-function entryPoints(pkg: Record<string, unknown>): string[] {
-  const out = new Set<string>();
-  for (const k of ["main", "module", "types", "typings"]) {
-    const v = pkg[k];
-    if (typeof v === "string") out.add(v);
-  }
-  const exp = pkg.exports;
-  const walk = (v: unknown, depth = 0): void => {
-    if (depth > 4) return;
-    if (typeof v === "string") return void out.add(v);
-    if (v && typeof v === "object")
-      for (const inner of Object.values(v as Record<string, unknown>)) walk(inner, depth + 1);
-  };
-  walk(exp);
-  return [...out];
-}
-
-/** The installed package: version, directory, declared entry points. */
+/**
+ * The installed package: version, directory, declared entry points. A name
+ * may carry an ecosystem prefix (`python:requests`, `go:cobra`,
+ * `rust:serde`); without one, npm, Python, Go and Rust are tried in turn.
+ */
 export function installed(repoPath: string, name: string): InstalledPackage | undefined {
-  const dir = packageDir(repoPath, name);
-  if (!dir) return undefined;
-  try {
-    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as Record<
-      string,
-      unknown
-    >;
-    return {
-      name,
-      version: typeof pkg.version === "string" ? pkg.version : "unknown",
-      dir,
-      entries: entryPoints(pkg),
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-/** A path is only readable when it stays inside the package directory. */
-function inside(dir: string, path: string): string | undefined {
-  const full = resolve(dir, path);
-  const rel = relative(dir, full);
-  return rel && !rel.startsWith("..") && !rel.startsWith(sep) ? full : undefined;
-}
-
-/** One file from inside an installed package. */
-export function depsFile(repoPath: string, name: string, path: string, maxBytes = 60_000): string {
-  const pkg = installed(repoPath, name);
-  if (!pkg) return `${name} is not installed in this project.`;
-  // Said plainly up front, and caught again by `inside`: a traversal is a
-  // bad request, not a missing file, and the message should say so.
-  if (path.split(/[\\/]/).includes("..")) return "Invalid path.";
-  const full = inside(pkg.dir, path);
-  if (!full || !existsSync(full)) return `No ${path} in ${name}@${pkg.version}.`;
-  try {
-    const text = readFileSync(full, "utf8");
-    return text.length > maxBytes
-      ? `${text.slice(0, maxBytes)}\n[truncated at ${maxBytes} bytes]`
-      : text;
-  } catch {
-    return `Cannot read ${path} in ${name}@${pkg.version}.`;
-  }
-}
-
-const SKIP = new Set(["node_modules", ".git", ".bin", "test", "tests", "__tests__"]);
-
-/** The files that carry the interface: entry points, declarations, README. */
-export function depsOutline(repoPath: string, name: string, limit = 60): string {
-  const pkg = installed(repoPath, name);
-  if (!pkg) return `${name} is not installed in this project.`;
-  const found: string[] = [];
-  const walk = (dir: string, depth: number): void => {
-    if (depth > 3 || found.length >= limit) return;
-    let items: string[];
-    try {
-      items = readdirSync(dir);
-    } catch {
-      return;
-    }
-    for (const item of items) {
-      if (found.length >= limit) return;
-      if (SKIP.has(item) || item.startsWith(".")) continue;
-      const full = join(dir, item);
-      let s: ReturnType<typeof statSync>;
-      try {
-        s = statSync(full);
-      } catch {
-        continue;
-      }
-      if (s.isDirectory()) walk(full, depth + 1);
-      else if (/\.(d\.ts|d\.mts|d\.cts)$|^readme|^changelog|\.(mjs|cjs|js|ts)$/i.test(item))
-        found.push(relative(pkg.dir, full));
-    }
+  const dep = resolveDependency(repoPath, name);
+  if (!dep?.installed || !dep.root) return undefined;
+  return {
+    name: dep.name,
+    version: dep.version,
+    dir: dep.root,
+    entries: dep.entries,
+    ecosystem: dep.eco,
+    ...(dep.pinnedVersion && dep.pinnedVersion !== dep.version
+      ? { pinnedVersion: dep.pinnedVersion }
+      : {}),
   };
-  walk(pkg.dir, 0);
-  const decls = found.filter((f) => /\.d\./.test(f));
-  const docs = found.filter((f) => /^readme|^changelog/i.test(f));
+}
+
+function installedDep(repoPath: string, name: string): InstalledDependency | undefined {
+  const dep = resolveDependency(repoPath, name);
+  return dep?.installed ? dep : undefined;
+}
+
+/** One file from inside an installed package, confined to it (DS-N9-6). */
+export function depsFile(repoPath: string, name: string, path: string, maxBytes = 60_000): string {
+  const dep = installedDep(repoPath, name);
+  if (!dep) return `${name} is not installed in this project.`;
+  const read = dependencyFile(dep, path, maxBytes);
+  if (read.ok) return read.truncated ? `${read.text}\n[truncated at ${maxBytes} bytes]` : read.text;
+  // A traversal or a link out of the package is a bad request, not a missing file.
+  if (read.reason === "invalid") return "Invalid path.";
+  if (read.reason === "missing") return `No ${path} in ${dep.name}@${dep.version}.`;
+  return `Cannot read ${path} in ${dep.name}@${dep.version}.`;
+}
+
+/** The files that carry the interface: entry points, declarations, stubs, sources, README. */
+export function depsOutline(repoPath: string, name: string, limit = 60): string {
+  const dep = installedDep(repoPath, name);
+  if (!dep?.root) return `${name} is not installed in this project.`;
+  const found = dependencyFiles(dep, limit);
+  const isDoc = (f: string) => /(^|\/)(readme|changelog)[^/]*$|METADATA$|(^|\/)doc\.go$/i.test(f);
+  const docs = found.filter(isDoc);
+  const decls = found.filter((f) => !isDoc(f));
+  const eco = dep.eco === "npm" ? "" : ` (${dep.eco})`;
   return [
-    `${name}@${pkg.version} at ${pkg.dir}`,
-    pkg.entries.length ? `entry points: ${pkg.entries.join(", ")}` : "",
+    `${dep.name}@${dep.version}${eco} at ${dep.root}`,
+    dep.pinnedVersion && dep.pinnedVersion !== dep.version
+      ? `lockfile pins ${dep.pinnedVersion}`
+      : "",
+    dep.eco === "npm" && dep.entries.length ? `entry points: ${dep.entries.join(", ")}` : "",
     docs.length ? `docs: ${docs.join(", ")}` : "",
     decls.length ? `declarations:\n${decls.slice(0, 40).join("\n")}` : "",
   ]
@@ -150,43 +102,54 @@ export function depsOutline(repoPath: string, name: string, limit = 60): string 
     .join("\n");
 }
 
-/** Search inside an installed package. ripgrep when present, else a plain walk. */
+/**
+ * Search inside an installed package: ripgrep over the package's own paths
+ * when present (it follows no symlink), else the confined walk.
+ */
 export function depsGrep(repoPath: string, name: string, pattern: string, limit = 40): string {
-  const pkg = installed(repoPath, name);
-  if (!pkg) return `${name} is not installed in this project.`;
+  const dep = installedDep(repoPath, name);
+  if (!dep?.root) return `${name} is not installed in this project.`;
   const p = pattern.slice(0, 200);
   if (!p) return "Empty pattern.";
+  const label = `${dep.name}@${dep.version}`;
   try {
     const out = execFileSync(
       "rg",
-      ["--no-heading", "--line-number", "--max-count", "3", "-m", String(limit), "-e", p, "."],
-      { cwd: pkg.dir, encoding: "utf8", timeout: 15_000, maxBuffer: 4 * 1024 * 1024 },
+      [
+        "--no-heading",
+        "--line-number",
+        "--max-count",
+        "3",
+        "-m",
+        String(limit),
+        "-e",
+        p,
+        "--",
+        ...(dep.owned ?? ["."]),
+      ],
+      { cwd: dep.root, encoding: "utf8", timeout: 15_000, maxBuffer: 4 * 1024 * 1024 },
     ).trim();
     return out
-      ? `${name}@${pkg.version}:\n${out.split("\n").slice(0, limit).join("\n")}`
-      : `No match for "${p}" in ${name}@${pkg.version}.`;
+      ? `${label}:\n${out.split("\n").slice(0, limit).join("\n")}`
+      : `No match for "${p}" in ${label}.`;
   } catch (err) {
-    const e = err as { status?: number };
-    if (e.status === 1) return `No match for "${p}" in ${name}@${pkg.version}.`;
-    return `Search failed in ${name}@${pkg.version}.`;
+    const e = err as { status?: number; code?: string };
+    if (e.status === 1) return `No match for "${p}" in ${label}.`;
+    if (e.code !== "ENOENT") return `Search failed in ${label}.`;
   }
+  const hits = dependencyGrep(dep, p, limit);
+  return hits.length
+    ? `${label}:\n${hits.map((h) => `${h.file}:${h.line}:${h.text}`).join("\n")}`
+    : `No match for "${p}" in ${label}.`;
 }
 
-/** Every dependency this project declares, with the version actually installed. */
+/** Every dependency this project declares, in every ecosystem, with the version actually installed. */
 export function manifestVersions(repoPath: string): { name: string; version: string }[] {
-  try {
-    const pkg = JSON.parse(readFileSync(join(repoPath, "package.json"), "utf8")) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-    const names = [
-      ...Object.keys(pkg.dependencies ?? {}),
-      ...Object.keys(pkg.devDependencies ?? {}),
-    ];
-    return names
-      .map((n) => ({ name: n, version: installed(repoPath, n)?.version ?? "" }))
-      .filter((d) => d.version);
-  } catch {
-    return [];
+  const out: { name: string; version: string }[] = [];
+  for (const d of declaredDependencies(repoPath)) {
+    const dep = resolveDependency(repoPath, `${d.eco}:${d.name}`);
+    if (dep?.installed && !out.some((o) => o.name === d.name))
+      out.push({ name: d.name, version: dep.version });
   }
+  return out;
 }

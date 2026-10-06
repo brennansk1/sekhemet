@@ -14,6 +14,7 @@ export * from "./tool_schema.js";
 export * from "./parse_gate.js";
 export * from "./manager.js";
 export * from "./api_surface.js";
+export * from "./ecosystems/index.js";
 export * from "./working_memory.js";
 export * from "./budget.js";
 export * from "./ts_service.js";

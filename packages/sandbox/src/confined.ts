@@ -7,6 +7,7 @@ import {
   sampleTreeMemory,
   stopProcessTree,
 } from "./executor.js";
+import { ledgerReadDenies } from "./seatbelt.js";
 import type { ExecutionResult, SandboxOptions } from "./types.js";
 
 /**
@@ -28,6 +29,19 @@ export interface ConfinedOptions {
   cwd?: string;
   /** Further harness-chosen writable directories (a browser profile). Never model-supplied. */
   writable?: string[];
+  /**
+   * Harness-chosen paths the process may read and never write (DS-N9-17: a
+   * research probe's repository and dependency roots). Never model-supplied.
+   * A project ledger inside one stays unreadable (SEC-23).
+   */
+  readOnly?: string[];
+  /**
+   * Harness-chosen paths whose contents are unreadable, the writable roots
+   * and read-only grants inside them excepted (security item 8c: a research
+   * packet's probe sees the dependencies, never the project). Never
+   * model-supplied.
+   */
+  hiddenReads?: string[];
   /** Variables the caller names, on top of the allowlist (item 6). Keys and tokens are dropped. */
   env?: Record<string, string>;
   /** The egress proxy's loopback port: the only way out when given (S5). */
@@ -95,8 +109,17 @@ function callerEnv(env: Record<string, string> | undefined): Record<string, stri
 }
 
 function sandboxOptions(options: ConfinedOptions, place: ConfinedPlacement): SandboxOptions {
+  const readOnly = [...new Set((options.readOnly ?? []).map(canonical))];
+  // Every engine masks the ledgers above a writable root; those inside a
+  // read-only grant are masked here, as bubblewrap already does (SEC-23).
+  const ledgers = readOnly.length > 0 ? ledgerReadDenies(readOnly) : [];
   return {
     allowedPaths: [place.root, ...(options.writable ?? []).map(canonical)],
+    ...(readOnly.length ? { readOnlyPaths: readOnly } : {}),
+    ...(options.hiddenReads?.length
+      ? { hiddenReadPaths: [...new Set(options.hiddenReads.map(canonical))] }
+      : {}),
+    ...(ledgers.length ? { denyPaths: ledgers } : {}),
     allowNetwork: false,
     timeoutMs: options.timeoutMs,
     cwd: place.cwd,

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { allocationBudget, charsForTokens, estimatePromptTokens } from "@sekhemet/context";
-import { moduleApiSummary } from "@sekhemet/loop";
+import type { ReportedClaim } from "@sekhemet/gates";
+import { dependencyRuntime, moduleApiSummary, resolveDependency } from "@sekhemet/loop";
 import {
   type ChatTurn,
   type LocalInferenceAdapter,
@@ -21,9 +22,10 @@ import {
 import { type Claim, type Disagreement, type RiskVector, extractClaims } from "./claims.js";
 import { critiquePass } from "./critique.js";
 import { depsFile, depsGrep, depsOutline, installed } from "./deps.js";
-import { readDocs } from "./docs.js";
 import type { ResearchEffort } from "./effort.js";
 import { type LoopFinding, type LoopResult, runResearchLoop } from "./loop.js";
+import { readDocsAtPin } from "./pinned_docs.js";
+import { runResearchProbe } from "./probe.js";
 import { codeSearch, issueSearch, parseSlug, releasesBetween, repoFile, repoTree } from "./repo.js";
 import { researchCopy } from "./research_copy.js";
 import {
@@ -95,6 +97,11 @@ export interface ResearchAnswer {
   disagreements?: Disagreement[];
   /** The critique pass's verdict on each candidate revision (DS-N2-6). */
   critique?: { accepted: boolean; reason: string }[];
+  /**
+   * The executable claims of the probes that exited 0 (DS-N9-13): each with
+   * the program that ran as its reproduction, for the claims report.
+   */
+  probeClaims?: ReportedClaim[];
 }
 
 export interface ResearchDeps {
@@ -111,7 +118,12 @@ export interface ResearchDeps {
    * packages, type declarations) are neither offered nor run — the brief's
    * deep question, whose queries must carry nothing of it (design-stage S8).
    */
-  repository?: boolean;
+  /**
+   * `"dependencies"`: only the tools that read the installed dependencies
+   * (`deps_source`, `deps_grep`, `probe`) — the research packet's questions,
+   * which carry a symbol and `pkg@ver` alone (design-stage DS-N9-16).
+   */
+  repository?: boolean | "dependencies";
   /** Web, papers and GitHub access; undefined keeps the Researcher offline. */
   web?: WebConfig | undefined;
   /** Model turns before it must answer. Defaults: 3, or 12 for Apodex. */
@@ -138,7 +150,21 @@ export interface ResearchDeps {
    * tools runs its native loop and every other model the tool loop.
    */
   pipeline?: "native" | "tool-loop";
+  /**
+   * Probes this question may still run (DS-N9-13): the effort's budget,
+   * shared by its sub-questions. Absent, the quick budget.
+   */
+  probeBudget?: { max: number; used: number };
+  /** Where a probe that exits 0 leaves its executable claim (DS-N9-13). */
+  probeClaims?: ReportedClaim[];
 }
+
+/** Probes per researched question, by effort (design-stage DS-N9-13). */
+export const PROBE_BUDGET: Readonly<Record<ResearchEffort, number>> = {
+  quick: 2,
+  standard: 4,
+  exhaustive: 6,
+};
 
 /** Whether a model runs the native (Apodex) loop: the recorded verdict first (DS-N2-9). */
 function runsNative(model: LocalInferenceAdapter, deps: Pick<ResearchDeps, "pipeline">): boolean {
@@ -302,7 +328,22 @@ export function researchTools(web: boolean): ToolDefinition[] {
 }
 
 /** The tools that read this repository, off when `ResearchDeps.repository` is false. */
-const REPOSITORY_TOOLS = new Set(["module_api", "git_history", "deps_source", "deps_grep"]);
+const REPOSITORY_TOOLS = new Set([
+  "module_api",
+  "git_history",
+  "deps_source",
+  "deps_grep",
+  "probe",
+]);
+
+/** The tools that read the project itself, off for a packet question (DS-N9-16). */
+const PROJECT_TOOLS = new Set(["module_api", "git_history"]);
+
+/** Whether a repository tool is off for these dependencies (`ResearchDeps.repository`). */
+function repositoryToolOff(deps: Pick<ResearchDeps, "repository">, name: string): boolean {
+  if (deps.repository === false) return REPOSITORY_TOOLS.has(name);
+  return deps.repository === "dependencies" && PROJECT_TOOLS.has(name);
+}
 
 /**
  * JSON through the web access's fetch: with `[network] research = "yes"` that
@@ -348,8 +389,7 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
   const s = (k: string, max = 200) => String(a[k] ?? "").slice(0, max);
   const refused = budgetRefusal(call, deps);
   if (refused) return { text: refused };
-  if (deps.repository === false && REPOSITORY_TOOLS.has(call.name))
-    return { text: researchCopy.repositoryOff(call.name) };
+  if (repositoryToolOff(deps, call.name)) return { text: researchCopy.repositoryOff(call.name) };
   try {
     if (call.name === "find_library") {
       const q = s("query", 120);
@@ -412,6 +452,9 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
         ? { text, source: src("source", `${name}@${v.version} source search`, text) }
         : { text };
     }
+    // DS-N9-13: a short program against the installed dependency, in the
+    // claim gate's sandbox with no network; one that exits 0 is a claim.
+    if (call.name === "probe") return await runProbeTool(a, deps);
 
     const web = deps.web;
     if (!web) return { text: researchCopy.webOff(call.name) };
@@ -545,18 +588,18 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
         : { text };
     }
     if (call.name === "read_docs") {
-      const fetchText = async (u: string) => {
-        const t = await fetchPageRaw(u, web);
-        return t;
-      };
-      const r = await readDocs(s("library", 300), s("question", 400), fetchText);
-      if (typeof r === "string") return { text: r };
-      if (r.pages.length === 0) return { text: `No readable pages under ${r.root}.` };
-      const text = r.pages.map((p) => `## ${p.title}\n${p.url}\n${p.text}`).join("\n\n");
-      return {
-        text: `${r.available ? `(${r.available} pages in the set; the ${r.pages.length} most relevant)\n` : ""}${text}`,
-        source: src("documentation", r.pages[0]?.url ?? r.root, text, r.pages[0]?.title),
-      };
+      // DS-N9-12: a dependency the project pins is read at that version; the
+      // brief's deep question reads nothing of the repository, its pins included.
+      const r = await readDocsAtPin(
+        deps.repository === false ? undefined : deps.repoPath,
+        s("library", 300),
+        s("question", 400),
+        (u) => fetchPageRaw(u, web),
+        { fetchApi: (u) => fetchPageRaw(u, web, false) },
+      );
+      return r.url
+        ? { text: r.text, source: src("documentation", r.url, r.text, r.title) }
+        : { text: r.text };
     }
     if (call.name === "github_search") {
       const q = s("query");
@@ -571,12 +614,74 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
   return { text: `Unknown tool ${call.name}.` };
 }
 
-/** Raw HTML for the docs reader, through the same polite fetcher. */
-async function fetchPageRaw(url: string, web: WebConfig): Promise<string | undefined> {
+/** Raw HTML for the docs reader, through the same polite fetcher (robots for page reads). */
+async function fetchPageRaw(url: string, web: WebConfig, page = true): Promise<string | undefined> {
   const res = web.polite
-    ? await web.polite.fetch(url, {}, true)
+    ? await web.polite.fetch(url, {}, page)
     : await (web.fetch ?? fetch)(url, { signal: AbortSignal.timeout(12_000) });
   return res.ok ? res.text() : undefined;
+}
+
+/** `<untrusted source="…">` around text a program or a page wrote: data, never instructions. */
+function wrapUntrusted(source: string, text: string): string {
+  const safe = text.replace(/<\/?untrusted[^>]*>/gi, "[tag removed]");
+  return `<untrusted source="${source}">\n${safe}\n</untrusted>`;
+}
+
+/**
+ * The `probe` tool (DS-N9-13): the effort's budget is checked, and the
+ * package resolved to its installed copy, before anything runs; then D's
+ * runner (`runResearchProbe`) runs it in the claim gate's sandbox. A probe
+ * that exits 0 leaves its executable claim in `deps.probeClaims`.
+ */
+async function runProbeTool(a: Record<string, unknown>, deps: ResearchDeps): Promise<ToolResult> {
+  deps.probeBudget ??= { max: PROBE_BUDGET.quick, used: 0 };
+  const budget = deps.probeBudget;
+  if (budget.used >= budget.max) return { text: researchCopy.probesSpent(budget.max) };
+  const pkg = String(a.package ?? a.name ?? "").slice(0, 200);
+  const dep = pkg ? resolveDependency(deps.repoPath, pkg) : undefined;
+  if (!dep?.installed) return { text: researchCopy.probeNotInstalled(pkg || "(no package)") };
+  budget.used++;
+  const outcome = await runResearchProbe(
+    {
+      language: String(a.language ?? ""),
+      code: String(a.code ?? ""),
+      target: { eco: dep.eco, name: dep.name, version: dep.version },
+      statement: String(a.statement ?? "").slice(0, 300),
+    },
+    {
+      repoPath: deps.repoPath,
+      runtime: dependencyRuntime(deps.repoPath, dep.eco),
+      // DS-N9-17: a packet question's Researcher holds the web, so its
+      // probe reads the dependencies and nothing else of the project.
+      scope: deps.repository === "dependencies" ? "dependencies" : "repository",
+    },
+  );
+  if (outcome.status === "refused") {
+    // A refusal ran nothing, so it spends nothing.
+    budget.used--;
+    return { text: researchCopy.probeRefused(outcome.refusal, outcome.limit, outcome.actual) };
+  }
+  if (outcome.status === "documented") {
+    // Go and Rust have no probe runner: nothing ran, so nothing is spent.
+    budget.used--;
+    const reason = outcome.claim.unreproducible ?? "";
+    deps.probeClaims?.push(outcome.claim);
+    return { text: researchCopy.probeDocumented(outcome.target, reason) };
+  }
+  const r = outcome.result;
+  const text = researchCopy.probeRan(
+    r.target,
+    r.exitCode,
+    r.timedOut,
+    wrapUntrusted("probe", r.output),
+  );
+  if (!outcome.claim) return { text };
+  deps.probeClaims?.push(outcome.claim);
+  return {
+    text,
+    source: src("source", `probe ${r.target} ${r.codeSha256.slice(0, 12)}`, r.output),
+  };
 }
 
 /** The vendor's evaluation prompt (model card §3.3), used when Apodex drives. */
@@ -713,7 +818,7 @@ export async function research(
   const tools = [
     ...researchTools(Boolean(deps.web)),
     ...(deps.mcp?.toolDefinitions() ?? []),
-  ].filter((t) => deps.repository !== false || !REPOSITORY_TOOLS.has(t.name));
+  ].filter((t) => !repositoryToolOff(deps, t.name));
   const maxRounds = deps.maxRounds ?? (apodex ? 12 : 3);
   const evidence: Source[] = [];
   const head = `${ROLE_BRIEF}\n\nQUESTION\n${question}`;

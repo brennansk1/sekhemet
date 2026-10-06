@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -141,6 +142,92 @@ describe("loop tools, wave 2 (L7, L9, L10, L16, G6, G7)", () => {
       arguments: { query: "email", library: "tinylib" },
     });
     expect(asked).toEqual(["zod:email"]);
+  });
+
+  it("docs reads a package installed after a lookup that found it only pinned (DS-N9-5)", async () => {
+    writeFileSync(join(root, "package.json"), JSON.stringify({ dependencies: { tinylib: "^1" } }));
+    writeFileSync(
+      join(root, "package-lock.json"),
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: { "": {}, "node_modules/tinylib": { version: "1.2.3" } },
+      }),
+    );
+    const before = await run("docs", { query: "frobnicate", library: "tinylib" });
+    expect(before.content).toContain("No documentation found");
+    const pkg = join(root, "node_modules", "tinylib");
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(
+      join(pkg, "package.json"),
+      JSON.stringify({ name: "tinylib", version: "1.2.3", types: "index.d.ts" }),
+    );
+    writeFileSync(
+      join(pkg, "index.d.ts"),
+      "export declare function frobnicate(n: number): void;\n",
+    );
+    const after = await run("docs", { query: "frobnicate", library: "tinylib" });
+    expect(after.content).toContain("tinylib@1.2.3/index.d.ts:1");
+  });
+
+  it("docs and dependencies serve Python, Go and Rust at the version in use (DS-N9-5)", async () => {
+    // A real venv with an installed distribution, pinned at another version.
+    execFileSync("python3", ["-m", "venv", "--without-pip", join(root, ".venv")]);
+    const lib = join(root, ".venv", "lib");
+    const site = join(lib, readdirSync(lib)[0] as string, "site-packages");
+    const info = join(site, "requests-2.32.3.dist-info");
+    mkdirSync(info, { recursive: true });
+    writeFileSync(
+      join(info, "METADATA"),
+      "Metadata-Version: 2.1\nName: requests\nVersion: 2.32.3\n\nUse a Session to persist cookies.\n",
+    );
+    writeFileSync(
+      join(info, "RECORD"),
+      "requests/sessions.pyi,,\nrequests-2.32.3.dist-info/METADATA,,\n",
+    );
+    writeFileSync(join(info, "top_level.txt"), "requests\n");
+    mkdirSync(join(site, "requests"));
+    writeFileSync(
+      join(site, "requests", "sessions.pyi"),
+      "class Session:\n    def mount(self, prefix: str) -> None: ...\n",
+    );
+    writeFileSync(join(root, "requirements.txt"), "requests==2.31.0\n");
+    // A Cargo crate pinned but absent from the registry sources.
+    writeFileSync(
+      join(root, "Cargo.toml"),
+      '[package]\nname = "app"\n\n[dependencies]\nrand = "0.8"\n',
+    );
+    writeFileSync(
+      join(root, "Cargo.lock"),
+      '[[package]]\nname = "rand"\nversion = "0.8.5"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n',
+    );
+    const saved = process.env.CARGO_HOME;
+    process.env.CARGO_HOME = join(root, "no-cargo-home");
+    try {
+      const obs = await run("docs", { query: "mount", library: "requests" });
+      expect(obs.content).toContain(
+        "=== requests 2.32.3 (python, installed; the lockfile pins 2.31.0) ===",
+      );
+      expect(obs.content).toContain("requests@2.32.3/requests/sessions.pyi:2");
+      const key = createHash("sha256")
+        .update("python:requests@2.32.3:mount")
+        .digest("hex")
+        .slice(0, 24);
+      expect(readdirSync(join(root, ".sekhemet", "docs-cache"))).toContain(`${key}.txt`);
+      // Named in the query, the Python dependency is searched without library=.
+      const implicit = await run("docs", { query: "requests cookies" });
+      expect(implicit.content).toContain("METADATA");
+      const deps = await run("dependencies", {});
+      expect(deps.ok).toBe(true);
+      expect(deps.content).toContain(
+        "requests ==2.31.0 (python, requirements.txt, 2.32.3 installed; the lockfile pins 2.31.0)",
+      );
+      expect(deps.content).toContain(
+        "rand 0.8 (rust, dependencies, not installed; the lockfile pins 0.8.5)",
+      );
+    } finally {
+      if (saved === undefined) Reflect.deleteProperty(process.env, "CARGO_HOME");
+      else process.env.CARGO_HOME = saved;
+    }
   });
 
   it("refuses a write that adds a credential, and writes atomically (L16, G7, G14)", async () => {

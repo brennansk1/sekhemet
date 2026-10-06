@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 80 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 81 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,80 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 81 — 2026-10-05 (Research like an engineer, adapted to agents: installed dependencies in npm, Python, Go and Rust, docs at the pinned version, question-focused excerpts, the research packet, durable research notes, Researcher probes; DEC-59)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. The owner asked for research that works the way a software engineer researches, adapted to how agents' context and memory differ, grounded in our research. The lead's design (`lead-work/research_design.md`) rests on:
+- **studies of how developers look things up:** Brandt CHI 2009, Meng 2019, the SO 2025 survey;
+- **how agents differ:** our PROMPT_RESEARCH, WORKER_METHOD_LITERATURE and PAPER_REVIEWS, plus CodeRAG-Bench, the version-drift studies, GitChameleon 2.0, the memory papers, and the finding that AGENTS.md-style files do not help.
+
+The owner chose scope B plus Go and Rust, and approved DEC-59. One workflow ran 11 agents, 2.32M tokens, none failed:
+- a read-only scoper;
+- four builders (A and D first, then B and C);
+- two reviews in parallel (containment and memory, correctness and fit for agents);
+- a fixer, a blocker re-check, a sweep and a gate.
+
+- **Installed dependencies, every ecosystem (DS-N9-1..7, A):**
+  - One adapter interface: the installed version (else the lockfile pin, labelled), the source root, the API surface for a symbol, and local docs at that version, with no network.
+  - **Python:** `.dist-info` and `.pyi` before `.py`; `inspect` runs only in the sandbox.
+  - **Go:** go.mod against go.sum, GOMODCACHE with case escaping, and `go doc` offline only when `go` exists.
+  - **Rust:** the project's own Cargo.lock entry, and registry source with `#[macro_export]`.
+  - **Containment:** every read stays inside the package root.
+  - **Reach:** the Worker's `docs` and `dependencies` and the Researcher's deps tools serve all four ecosystems. The cache is keyed on ecosystem, name, installed version and query. One pins reader is shared with airgap.
+- **Docs at the pinned version (DS-N9-8, -12, B):**
+  - `pinned_docs.ts` resolves docs.rs, pkg.go.dev, Read the Docs and unpkg at the pinned version. A page for another version is used only when too few pinned pages exist, and is labelled and ranked last.
+  - **The Worker's web tier:** reads only a pinned dependency or a library with a known documentation home. The review's blocker was that the Worker could reach any URL; now a URL or any other name sends nothing, and every request is a `harness/egress` event.
+- **Excerpts focused on the question (DS-N9-10, -11, B):** the question reaches Crawl4AI's filter and the plain reader's ranking; at most 5 verbatim excerpts of at most 1,200 characters each, with anchor and hash.
+- **Version awareness (item 4):** every Researcher question carries the pins; answers and notes record pkg@ver; a lockfile change retires matching notes.
+- **The research packet (DS-N9-15, -16, -22, C):**
+  - **Flagging:** before a card runs, unknown members and packages in its spec are flagged with no model, at most 4 per card and 8 per plan.
+  - **Local answers:** from the installed packages, cited with file hashes.
+  - **Questions:** only identifier-shaped words reach the Research model, inside the planning swap that already happens, with no extra load for the packet alone (DEC-59 (c)).
+  - **Results:** one cited `card/research` dossier entry per flag.
+  - **Not yet:** checking identifiers against the project's own code, as DS-N9-15 states with its reason.
+- **Durable research notes (DS-N9-19..21, C; DEC-59 (a), (b)):**
+  - The `note_admitted`, `note_retired` and `note_fed` ledger events plus the existing cache, so no new store.
+  - Admission is model-free and grounded: a matching file hash, a chunk of the cached page, or a probe that names the member in the Research model's own code, never the harness prelude (a review blocker, fixed).
+  - Retired on a lockfile change or when a card fails on one. They reach the Worker as research data.
+- **Probes (DS-N9-17, -18, D):**
+  - **One runner:** shared by the probe and the claim gate (`runProbe`).
+  - **Limits:** at most 30 lines or 2,000 characters, node or python only, refused unrun otherwise.
+  - **Where it runs:** `runConfined` with no network, a fresh scratch directory and the dependency roots read-only (`confined.ts` `readOnly`, set by the harness only); 10 s and 512 MB.
+  - **The project's ledger stays denied:** before the fix, Seatbelt let a probe read `.sekhemet/*.db`.
+  - **The result:** an exit-0 probe becomes an executable claim "reproduced at pkg@ver".
+- **Review:** 6 blockers and 14 majors, all fixed or, for DEC-59, recorded by the lead; the re-check confirmed them.
+  - **Blockers:**
+    - the Worker reaching any URL;
+    - an ungrounded probe admitting a note;
+    - DEC-59 unrecorded (twice);
+    - GT-T2-3's one-parser rule broken by new regular expressions;
+    - specs not true for items 1, 4 and 7.
+  - **Majors:**
+    - Rust picking the wrong version;
+    - the docs cache hiding a later install;
+    - excerpt size;
+    - Rust macros;
+    - no cap per plan;
+    - unstated context versions;
+    - the repo-map half;
+    - card text leaving the machine.
+- **The gate's three failures, fixed by the lead:**
+  - **A retired word:** "the Researcher" in the packet line became "the Research model" (DEC-52). `research_packet.spec.ts`'s check of that line follows the new words (caught by the first gate on this tree).
+  - **DS-N9-12 tightened the Worker's web tier,** so `research_service.spec.ts` now asserts it: an unknown name and a URL return nothing.
+  - **TEAM-25's `ECONNRESET` under load** passed when run alone.
+- **DEC-59 recorded** in DECISIONS.md, with the packet's egress rule (c).
+- **What this changes elsewhere, stated plainly:**
+  - **The Worker's and the Research model's context versions change.** nail-mtp must be re-qualified before its next live run, and the paired frozen-suite A/B under DEC-28 is pending (the Worker now sees research packet entries).
+  - **The Worker loop changed,** so the frozen suite must be re-run (DoD §5.3.4).
+  - **`tools.ts` and `confined.ts` changed,** so B1's injection evidence is stale again. B1 is re-run on the release candidate.
+- **Gate:** `pnpm gate` on this exact tree: tsc 0, biome 0, vitest 0: 830 files, 6,548 passed, 71 skipped.
+- **Where the cards stop:**
+  - Research items 1–7 are built.
+  - **Next:**
+    - re-qualify nail-mtp;
+    - the Reviewer bake-off on the schema-constrained Reviewer;
+    - the research golden set once a person confirms it;
+    - C2d (entry-point tests), C5, C6 and C7.
 
 ### Entry 80 — 2026-10-05 (RG-P8-18: the Reviewer's reply is decoded against its JSON schema, before the Reviewer bake-off)
 

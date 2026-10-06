@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { CardStore, EventLog } from "@sekhemet/kernel";
+import type { AppendEventParams, CardStore, EventLog } from "@sekhemet/kernel";
+import { type Ecosystem, dependenciesNamedIn, resolveDependency } from "@sekhemet/loop";
 import type { LocalInferenceAdapter, ModelHold } from "@sekhemet/models";
 import { type EffectiveNetworkPolicy, policyAllowsEveryHost } from "@sekhemet/sandbox";
 import { effectiveConfig, explicitNetworkMode } from "../config_apply.js";
@@ -16,9 +17,11 @@ import { researchPipelineAdvice } from "../research_bakeoff.js";
 import { researchFetch, researchGate, researchPolicy } from "../research_consent.js";
 import { userPaths } from "../user_dir.js";
 import { crawl4aiInstalled } from "./crawl4ai.js";
-import { installed } from "./deps.js";
 import { EFFORT_CAPS, RESEARCH_EFFORTS, type ResearchEffort, effortOfLabels } from "./effort.js";
+import { readDocsAtPin, workerMayRead } from "./pinned_docs.js";
+import { researchCopy } from "./research_copy.js";
 import {
+  PROBE_BUDGET,
   type ResearchAnswer,
   type ResearchDeps,
   investigate,
@@ -76,21 +79,49 @@ const canonicalRepo = (path: string): string => {
   }
 };
 
+/** A dependency a question names, at the version the project pins (DS-N9-11). */
+export interface QuestionPin {
+  eco: Ecosystem;
+  name: string;
+  version: string;
+}
+
 /**
- * The packages installed in this repository that a question names, with their
- * installed versions: an answer about `zod` at 3.x is not an answer at 4.x.
+ * The project's dependencies a question names, in any ecosystem, at the
+ * version in use (installed, else the lockfile's pin; design-stage DS-N9-11):
+ * a word or path that resolves to a dependency (`zod`, `@scope/pkg`,
+ * `github.com/spf13/cobra`), or a declared dependency named by an alias (a
+ * Go module's last element). An answer about `zod` at 3.x is not an answer
+ * at 4.x.
  */
-export function packagesInQuestion(repoPath: string, question: string): Record<string, string> {
-  const out: Record<string, string> = {};
+export function pinsInQuestion(repoPath: string, question: string): QuestionPin[] {
+  const out = new Map<string, QuestionPin>();
+  const add = (spec: string) => {
+    const dep = resolveDependency(repoPath, spec);
+    if (dep?.version)
+      out.set(`${dep.eco}:${dep.name}`, { eco: dep.eco, name: dep.name, version: dep.version });
+  };
   const tokens = new Set(
-    (question.match(/@?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?/gi) ?? [])
+    (question.match(/@?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*/gi) ?? [])
       .map((t) => t.toLowerCase().replace(/[.]+$/, ""))
       .filter((t) => t.length >= 2),
   );
-  for (const name of [...tokens].sort()) {
-    const pkg = installed(repoPath, name);
-    if (pkg) out[name] = pkg.version;
-  }
+  for (const token of [...tokens].sort()) add(token);
+  for (const { spec } of dependenciesNamedIn(repoPath, question)) add(spec);
+  return [...out.values()].sort(
+    (a, b) => a.eco.localeCompare(b.eco) || a.name.localeCompare(b.name),
+  );
+}
+
+/**
+ * The packages a question names with their versions, as research memory
+ * scopes an answer (DS-N2-5): an npm package by its name, another
+ * ecosystem's as `eco:name`.
+ */
+export function packagesInQuestion(repoPath: string, question: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const p of pinsInQuestion(repoPath, question))
+    out[p.eco === "npm" ? p.name : `${p.eco}:${p.name}`] = p.version;
   return out;
 }
 
@@ -207,7 +238,11 @@ function ignoredLines(policy: EffectiveNetworkPolicy): string[] {
 /** Sources for this project, starting the private SearXNG when web access is on. */
 export async function researchSources(
   repoPath: string,
-  opts: { forceWeb?: boolean; ensure?: typeof ensureSearxng; log?: EventLog } = {},
+  opts: {
+    forceWeb?: boolean;
+    ensure?: typeof ensureSearxng;
+    log?: Pick<EventLog, "append">;
+  } = {},
 ): Promise<{ web: WebConfig | undefined; status: SourceStatus }> {
   // NEW-security-8 (security item 29a): `[network] research` in config.toml.
   const { policy, project } = researchPolicy(repoPath);
@@ -317,6 +352,11 @@ export interface AskOptions {
   /** Skip memory (always research afresh). */
   fresh?: boolean;
   /**
+   * False: the answer is not written to research memory. The research
+   * packet keeps its answers as ledger notes instead (DS-N9-16, DEC-59 a).
+   */
+  remember?: boolean;
+  /**
    * The question carries text that stays on this machine (the repair
    * question: a card's spec, a gate's output, DS-N5-1): refused rather than
    * sent to a Researcher whose server is remote.
@@ -339,7 +379,7 @@ export class ResearchService {
       today?: string;
       maxRounds?: number;
       /** Tool dependencies passed through (registries, fetchers; injectable for tests). */
-      tools?: Pick<ResearchDeps, "fetchJson" | "libraries">;
+      tools?: Pick<ResearchDeps, "fetchJson" | "libraries" | "repository">;
       onEvent?: (line: string) => void;
       mcp?: import("../mcp_client.js").McpHub | undefined;
       /** The ledger: every question, its sources and verdict, recorded (X5). */
@@ -359,11 +399,12 @@ export class ResearchService {
     const effort: ResearchEffort =
       opts.effort ?? effortOfLabels(card?.labels) ?? (opts.deep ? "standard" : "quick");
     const caps = EFFORT_CAPS[effort];
-    const scope: MemoryScope = {
-      repo: this.deps.repoPath,
-      packages: packagesInQuestion(this.deps.repoPath, question),
-      effort,
-    };
+    // DS-N9-11: the pins of the packages the question names go with it.
+    const pins = pinsInQuestion(this.deps.repoPath, question);
+    const packages: Record<string, string> = {};
+    for (const p of pins) packages[p.eco === "npm" ? p.name : `${p.eco}:${p.name}`] = p.version;
+    const scope: MemoryScope = { repo: this.deps.repoPath, packages, effort };
+    const asked = pins.length > 0 ? `${question}\n\n${researchCopy.pins(pins)}` : question;
     const known = opts.fresh ? undefined : this.memory.recall(question, scope);
     let result: AskResult;
     if (known) {
@@ -392,7 +433,11 @@ export class ResearchService {
             (v) => v.model === model.modelId,
           )?.recommended
         : undefined;
+      // DS-N9-13: the effort's probes, shared by every sub-question.
+      const probeClaims: NonNullable<ResearchDeps["probeClaims"]> = [];
       const rdeps: ResearchDeps = {
+        probeBudget: { max: PROBE_BUDGET[effort], used: 0 },
+        probeClaims,
         ...(pipeline ? { pipeline } : {}),
         repoPath: this.deps.repoPath,
         web: this.deps.web,
@@ -406,16 +451,26 @@ export class ResearchService {
       // sub-question, and the critique pass's candidates.
       const r =
         effort === "quick"
-          ? await research(model, question, { ...rdeps, maxPages: caps.pagesPerSubQuestion })
-          : await investigate(model, question, rdeps, {
+          ? await research(model, asked, { ...rdeps, maxPages: caps.pagesPerSubQuestion })
+          : await investigate(model, asked, rdeps, {
               maxItems: caps.subQuestions,
               subRounds: caps.turnsPerSubQuestion,
               pagesPerSubQuestion: caps.pagesPerSubQuestion,
               critiqueCandidates: caps.critiqueCandidates,
             });
-      result = { ...r, effort, fromMemory: false };
+      result = {
+        ...r,
+        effort,
+        fromMemory: false,
+        ...(probeClaims.length > 0 ? { probeClaims } : {}),
+      };
       // Keep only what can be trusted later: grounded, cited, confident.
-      if (r.grounded && r.badCitations.length === 0 && r.confidence >= 0.35) {
+      if (
+        opts.remember !== false &&
+        r.grounded &&
+        r.badCitations.length === 0 &&
+        r.confidence >= 0.35
+      ) {
         this.memory.remember({
           question,
           answer: r.answer,
@@ -445,6 +500,8 @@ export class ResearchService {
           confidence: result.confidence,
           sources: result.sources.slice(0, 20),
           badCitations: result.badCitations,
+          // DS-N9-11: the dependency versions the question was asked about.
+          pins: pins.map((p) => `${p.eco}:${p.name}@${p.version}`),
           ms: Date.now() - askedAt,
         },
       })
@@ -496,29 +553,58 @@ export function oneShotResearcher(
 
 /**
  * Official documentation for the Worker's `docs` tool, from the web, without
- * any model: the docs reader (llms.txt first, then the sitemap), the polite
- * fetcher (robots, pacing, 7-day cache) and focused excerpts. Undefined when
- * the project has research web access off or config.toml says offline.
+ * any model (design-stage DS-N9-12): a dependency the project pins is read
+ * at that version through the pinned resolver (`readDocsAtPin`), any other
+ * library from its known documentation home, and a URL or any other name
+ * sends nothing (`workerMayRead`); the polite fetcher (robots,
+ * pacing, the cache) and focused excerpts either way. With `research =
+ * "yes"` and the ledger handed in, every request goes through the research
+ * policy and is a `harness/egress` event (DS-N9-9). Undefined when research
+ * is off or config.toml says offline: nothing is sent.
  */
 export async function workerWebDocs(
   repoPath: string,
+  opts: { log?: Pick<EventLog, "append"> } = {},
 ): Promise<((library: string, query: string) => Promise<string>) | undefined> {
-  const { web } = await researchSources(repoPath, { ensure: async () => undefined });
+  const { web } = await researchSources(repoPath, {
+    ensure: async () => undefined,
+    ...(opts.log ? { log: opts.log } : {}),
+  });
   if (!web) return undefined;
-  const { readDocs } = await import("./docs.js");
   const polite = web.polite;
-  const fetchText = async (u: string) => {
-    const res = polite ? await polite.fetch(u, {}, true) : await fetch(u);
+  const fetchVia = (page: boolean) => async (u: string) => {
+    const res = polite ? await polite.fetch(u, {}, page) : await fetch(u);
     return res.ok ? res.text() : undefined;
   };
   return async (library, query) => {
-    const r = await readDocs(library, query, fetchText, {
-      maxFetch: 6,
-      maxPages: 2,
-      charsPerPage: 2500,
-    });
-    if (typeof r === "string") return r;
-    if (r.pages.length === 0) return `No readable documentation pages under ${r.root}.`;
-    return r.pages.map((p) => `## ${p.title}\n${p.url}\n${p.text}`).join("\n\n");
+    if (!workerMayRead(repoPath, library)) return "";
+    return (
+      await readDocsAtPin(repoPath, library, query, fetchVia(true), {
+        maxFetch: 6,
+        maxPages: 2,
+        charsPerPage: 2500,
+        fetchApi: fetchVia(false),
+      })
+    ).text;
+  };
+}
+
+/**
+ * The ledger as `workerWebDocs` records on it, from a card store (the card
+ * runner holds no `EventLog` of its own): each request a project-wide
+ * `harness/egress` event.
+ */
+export function ledgerAppender(
+  store: Pick<CardStore, "recordLedgerEvent">,
+): Pick<EventLog, "append"> {
+  return {
+    append: <T>(e: AppendEventParams<T>) =>
+      store.recordLedgerEvent<T>({
+        type: e.type,
+        actor: e.actor,
+        payload: e.payload,
+        ...(e.principal ? { principal: e.principal } : {}),
+        ...(e.private ? { private: e.private } : {}),
+      }),
   };
 }

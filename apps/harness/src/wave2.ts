@@ -120,6 +120,14 @@ import {
   speculativeProbe,
 } from "./qualify.js";
 import { reuseQueriesAdmitted } from "./research/capability_queries.js";
+import {
+  PACKET_MAX_QUESTIONS,
+  type PacketOutcome,
+  type PacketSummary,
+  type PlanResearcherBatch,
+  finishPacket,
+  preparePacket,
+} from "./research/packet.js";
 import { researchCopy } from "./research/research_copy.js";
 import {
   type DeepAnswer,
@@ -297,8 +305,10 @@ export async function planCommand(
     /**
      * The brief's deep question (DS-P7-10): the Researcher's to answer, or
      * why it may not; omitted, Prior art says no Researcher is configured.
+     * With `batch`, the research packet's questions go in the same load
+     * (DS-N9-16).
      */
-    deep?: DeepPriorArt;
+    deep?: DeepPriorArt & { batch?: PlanResearcherBatch };
     /** The resolved Worker's window; omitted, read from the registry (PM-13). */
     workerWindowTokens?: number;
     /**
@@ -481,13 +491,34 @@ export async function planCommand(
         .catch(() => undefined);
     }
   }
-  // DS-P7-10: the brief's one deep question, asked after the plan so the
-  // Planner's model is done with; its answer, cited, or why it did not run.
-  if (writesBrief) {
-    const outcome = await deepQuestion(options.deep, needs, stack);
+  // DS-N9-15, -16: the research packet's model-free half — each new card's
+  // unknown members and packages, answered by a research note or the
+  // installed package where they can be.
+  const packet = await preparePacket(
+    k,
+    result.created.map((s) => s.id),
+  ).catch(() => undefined);
+  // DS-P7-10, DS-N9-16: after the plan, so the Planner's model is done with,
+  // one Researcher load answers the brief's deep question and the packet's
+  // questions; the brief gets the deep answer, cited, or why it did not run.
+  const researched = await researcherSession(options.deep, {
+    deep: writesBrief ? deepQuestionOf(needs, stack) : undefined,
+    packet: packet?.questions.map((q) => q.question) ?? [],
+  });
+  if (writesBrief && researched.deep) {
     writeFileSync(
       briefPath,
-      appendPriorArt(readFileSync(briefPath, "utf8"), deepPriorArtLines(outcome)),
+      appendPriorArt(readFileSync(briefPath, "utf8"), deepPriorArtLines(researched.deep)),
+    );
+  }
+  if (packet && packet.cards.length > 0) {
+    const summary = await finishPacket(k, packet, researched.packet);
+    print(
+      packetLine(
+        summary,
+        packet.questions.length > 0 ? researched.packet.notAsked : undefined,
+        packet.unasked,
+      ),
     );
   }
   return {
@@ -507,24 +538,82 @@ const LANGUAGE: Record<ReuseStack, string> = {
 const NO_RESEARCHER =
   "no Research model is configured (name one with --researcher or SEKHEMET_RESEARCHER)";
 
-/** Ask the brief's deep question from the needs' keywords only, or say why not (DS-P7-10). */
-async function deepQuestion(
-  deep: DeepPriorArt | undefined,
+/** The brief's deep question from the needs' keywords only, or why it is not asked (DS-P7-10). */
+function deepQuestionOf(
   needs: readonly string[],
   stack: ReuseStack,
-): Promise<{ answer: DeepAnswer } | { skipped: string }> {
-  if (!deep) return { skipped: NO_RESEARCHER };
-  if ("skipped" in deep) return deep;
+): { question: string } | { skipped: string } {
   const keywords = needs.map(queryFor).filter(Boolean);
   if (keywords.length === 0) return { skipped: "the request has no keyword to ask about" };
-  try {
-    return { answer: await deep.run(researchCopy.priorArtQuestion(keywords, LANGUAGE[stack])) };
-  } catch (err) {
-    if (err instanceof DeepQuestionSkipped) return { skipped: err.message };
-    return {
-      skipped: `the Research model failed (${err instanceof Error ? err.message : String(err)})`,
-    };
+  return { question: researchCopy.priorArtQuestion(keywords, LANGUAGE[stack]) };
+}
+
+const failure = (err: unknown) =>
+  err instanceof DeepQuestionSkipped
+    ? err.message
+    : `the Research model failed (${err instanceof Error ? err.message : String(err)})`;
+
+/**
+ * The plan's Researcher (DS-P7-10, DS-N9-16): the deep question and the
+ * packet's questions in one load when the Researcher may run and takes a
+ * batch; otherwise the deep question alone, as before, and the packet's
+ * questions unasked, with the reason.
+ */
+async function researcherSession(
+  deep: (DeepPriorArt & { batch?: PlanResearcherBatch }) | undefined,
+  ask: { deep: { question: string } | { skipped: string } | undefined; packet: readonly string[] },
+): Promise<{
+  deep?: { answer: DeepAnswer } | { skipped: string };
+  packet: { answers?: PacketOutcome[]; model?: string; notAsked?: string };
+}> {
+  if (!deep || "skipped" in deep) {
+    const why = deep ? deep.skipped : NO_RESEARCHER;
+    return { ...(ask.deep ? { deep: { skipped: why } } : {}), packet: { notAsked: why } };
   }
+  const question = ask.deep && "question" in ask.deep ? ask.deep.question : undefined;
+  // The brief's line when its question has no keyword to ask about.
+  const unasked = ask.deep && "skipped" in ask.deep ? ask.deep : undefined;
+  const brief = (outcome: { answer: DeepAnswer } | { skipped: string }) =>
+    ask.deep ? { deep: unasked ?? outcome } : {};
+  // DS-N9-16: the packet rides the deep question's load, never one of its own.
+  if (deep.batch && question !== undefined) {
+    try {
+      const r = await deep.batch({
+        ...(question !== undefined ? { deep: question } : {}),
+        packet: ask.packet,
+      });
+      const d = r.deep;
+      return {
+        ...brief(
+          !d
+            ? { skipped: "the Research model gave no answer" }
+            : "failed" in d
+              ? { skipped: `the Research model failed (${d.failed})` }
+              : { answer: d },
+        ),
+        packet: { answers: r.packet, ...(r.model ? { model: r.model } : {}) },
+      };
+    } catch (err) {
+      return { ...brief({ skipped: failure(err) }), packet: { notAsked: failure(err) } };
+    }
+  }
+  const packet = {
+    notAsked:
+      question === undefined
+        ? "this plan asks no deep question, and the packet loads no Researcher of its own"
+        : "this Researcher takes the deep question only",
+  };
+  if (question === undefined) return { ...(unasked ? { deep: unasked } : {}), packet };
+  try {
+    return { deep: { answer: await deep.run(question) }, packet };
+  } catch (err) {
+    return { deep: { skipped: failure(err) }, packet };
+  }
+}
+
+/** One line for the person: what the packet found and how each was answered (DS-N9-16). */
+function packetLine(s: PacketSummary, notAsked: string | undefined, unasked = 0): string {
+  return `Research packet: ${plural(s.flagged, "unknown API reference")} in ${plural(s.cards, "issue")}; ${s.answeredLocally} answered from the installed packages, ${s.reused} from research notes, ${s.askedResearcher} by the Research model${notAsked ? ` (the Research model was not asked: ${notAsked})` : ""}${unasked ? `; ${unasked} past the plan's ${PACKET_MAX_QUESTIONS} questions answered locally` : ""}.`;
 }
 
 /**

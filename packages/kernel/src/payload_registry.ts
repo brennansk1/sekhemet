@@ -120,6 +120,11 @@ const CACHE_STATE = v.picklist(["cold", "warm"]);
 const MS = v.pipe(v.number(), v.minValue(0));
 /** A probability, such as a paired test's p. */
 const PROBABILITY = v.pipe(v.number(), v.minValue(0), v.maxValue(1));
+/** A research note's id (design-stage DS-N9-19): `rn_` and 16 hex of its key's SHA-256. */
+const RESEARCH_NOTE_ID = v.pipe(
+  v.string(),
+  v.regex(/^rn_[0-9a-f]{16}$/, "a research note id (rn_…)"),
+);
 /** A research pipeline (harness `ResearchPipeline`, DS-N2-9). */
 const RESEARCH_PIPELINE = v.picklist(["native", "tool-loop"]);
 const BYTES = v.pipe(v.number(), v.integer(), v.minValue(0));
@@ -1677,6 +1682,79 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
   // models MD-N11-1..3, design-stage DS-N2-9: one research golden-set run —
   // per model and pipeline its measures and grades, the pipeline verdicts and
   // MD-N11-2's adoption verdicts. Each verdict's reason is free text: private.
+  // design-stage DS-N9-15..22, DEC-59 (a): the research packet's counts per
+  // card, and research notes as ledger events — no other store. A note's
+  // identifiers, versions, citation hashes and check are structural; the
+  // question, the excerpt (untrusted text read from a package or a page) and
+  // the repository's path go only in the erasable private part.
+  "research/packet": {
+    card: s(ID),
+    flagged: s(COUNT),
+    answeredLocally: s(COUNT),
+    askedResearcher: s(COUNT),
+    reused: s(COUNT),
+    symbols: priv("free_text", v.array(TEXT)),
+    notAsked: priv("free_text", TEXT),
+  },
+  "research/note_admitted": {
+    noteId: s(RESEARCH_NOTE_ID),
+    symbol: s(ID),
+    missing: s(ID),
+    ecosystem: s(v.picklist(["npm", "python", "go", "rust"])),
+    package: s(ID),
+    version: s(ID),
+    citation: s(
+      v.variant("kind", [
+        v.strictObject({
+          kind: v.literal("local"),
+          ref: ID,
+          file: ID,
+          line: v.pipe(v.number(), v.integer(), v.minValue(1)),
+          fileSha256: SHA256,
+        }),
+        v.strictObject({
+          kind: v.literal("web"),
+          ref: ID,
+          url: ID,
+          cacheKey: ID,
+          sha256: SHA256,
+          pageSha256: SHA256,
+          fetchedAt: ID,
+        }),
+        v.strictObject({ kind: v.literal("probe"), ref: ID, sha256: SHA256 }),
+      ]),
+    ),
+    check: s(
+      v.variant("kind", [
+        v.strictObject({
+          kind: v.literal("citation"),
+          detail: v.literal("symbol present in excerpt; hash matches source"),
+        }),
+        v.strictObject({
+          kind: v.literal("probe"),
+          codeSha256: SHA256,
+          language: v.picklist(["node", "python"]),
+          exitCode: v.literal(0),
+        }),
+      ]),
+    ),
+    at: s(ID),
+    answeredBy: s(v.picklist(["local", "researcher"])),
+    model: s(ID, true),
+    question: priv("free_text", TEXT),
+    excerpt: priv("free_text", TEXT),
+    repo: priv("personal", TEXT),
+  },
+  "research/note_retired": {
+    noteId: s(RESEARCH_NOTE_ID),
+    reason: s(v.picklist(["lockfile", "card_failed", "source_changed", "erased", "person"])),
+    cardId: s(ID, true),
+    detail: priv("free_text", TEXT),
+  },
+  "research/note_fed": {
+    noteId: s(RESEARCH_NOTE_ID),
+    cardId: s(ID),
+  },
   "research/golden_run": {
     setHash: s(SHA256),
     setVersion: s(ID),

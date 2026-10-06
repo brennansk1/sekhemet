@@ -155,4 +155,103 @@ export const researchCopy = {
     `${host} is not covered by your yes to research: you said no to it ([network] research_hosts_declined)`,
   hostAwaitsYes: (host: string) =>
     `${host} awaits a yes: the research question you answered did not name it (a new project's plan in a terminal asks; or add it to [network] research_hosts)`,
+
+  /**
+   * A page for another version than the project pins, or an unknown one
+   * (design-stage DS-N9-8): it ranks after every page at the pinned version.
+   */
+  docsForVersion: (found: string | undefined, pinned: string) =>
+    `[docs for ${found ?? "an unknown version"}; project pins ${pinned}]`,
+
+  /** The head of documentation read at the pinned version (DS-N9-8, -10). */
+  pinnedDocsHead: (name: string, version: string) =>
+    `Documentation for ${name} at ${version}, the version this project pins: the parts of each page about the question, best first.`,
+
+  /** A documentation set's size, when its pages were enumerated. */
+  docsSetSize: (available: number, read: number) =>
+    `(${available} pages in the set; the ${read} most relevant)`,
+
+  /** A documentation root whose pages were all too short to read. */
+  noReadableDocs: (root: string) => `No readable documentation pages under ${root}.`,
+
+  /**
+   * The pins of the packages a question names (DS-N9-11), appended to the
+   * question so the answer is for the versions the project runs.
+   */
+  pins: (pins: readonly { eco: string; name: string; version: string }[]) =>
+    `PROJECT PINS\nThis project pins ${pins.map((p) => `${p.name}@${p.version} (${p.eco})`).join(", ")}. Answer for these versions, and say when a source documents another one.`,
+
+  /** The `probe` tool (DS-N9-13): its description and arguments. */
+  probeTool: {
+    description:
+      "Run a program of at most 30 lines against a package installed in this project, sandboxed and offline, to check how its API behaves at the installed version. The program exits 0 when the statement holds and prints what it checked.",
+    package: "The installed package (prefix python:, go: or rust: for another ecosystem).",
+    language: "node for an npm package, python for a Python one.",
+    code: "The program: Node code uses `require(name)` or `await load(name)`; Python code imports the package.",
+    statement: "What the program shows, in one sentence, naming the API and the package.",
+  },
+
+  /** The question's probes are spent (DS-N9-13). */
+  probesSpent: (max: number) =>
+    `The probe budget for this question (${max} probes) is spent. Answer from the probes and sources you have.`,
+
+  /** A probe of a package with nothing installed to run against. */
+  probeNotInstalled: (pkg: string) =>
+    `${pkg} has no installed copy in this project, so a probe has nothing to run against. Read its documentation or source instead.`,
+
+  /** A probe refused before it ran (DS-N9-17's limits). */
+  probeRefused: (refusal: string, limit?: number, actual?: number | string) =>
+    refusal === "too_many_lines"
+      ? `Probe refused before running: ${actual} lines, and the limit is ${limit}. Shorten it.`
+      : refusal === "too_many_chars"
+        ? `Probe refused before running: ${actual} characters, and the limit is ${limit}. Shorten it.`
+        : `Probe refused before running: language "${actual}" is for another ecosystem; use node for npm packages and python for Python ones.`,
+
+  /** A Go or Rust statement, recorded as documented (DS-N9-18). */
+  probeDocumented: (target: string, reason: string) =>
+    `Recorded for ${target}: ${reason}. Cite the documentation or source that states it.`,
+
+  /** A probe that ran: its exit code and the program's own output, untrusted. */
+  probeRan: (target: string, exitCode: number, timedOut: boolean, output: string) =>
+    `Probe against ${target} ran: exit ${exitCode}${timedOut ? " (timed out)" : ""}. ${exitCode === 0 ? "The statement holds at this version; cite this probe for it." : "The statement is unconfirmed at this version."}\n${output}`,
+
+  /**
+   * The research packet's question to the Researcher (design-stage
+   * DS-N9-16): the symbol and `pkg@ver` alone — never the card's text — so
+   * it may leave the machine. Also the question a research note answers.
+   */
+  packetQuestion: (symbol: string, pkg: string, version: string, eco: string) =>
+    `In ${pkg}@${version} (${eco}), what is the API for \`${symbol}\`? The installed package's declarations lack it. Give the API this version has for that purpose, with its signature, and cite the documentation or source at ${version}.`,
+
+  /** The packet's question about a package the project has installed under another name, or lacks. */
+  packetPackageQuestion: (name: string) =>
+    `What is the \`${name}\` package, which registry publishes it, and what does it provide? Cite its registry or documentation page.`,
+
+  /**
+   * The packet's dossier entries (DS-N9-22): research data for the card,
+   * each at most 400 characters, read by the Coding model as untrusted.
+   */
+  packet: {
+    /** A member the installed package lacks, with the nearest it declares. */
+    local: (written: string, target: string, near: readonly string[]) =>
+      `\`${written}\` is missing from ${target}'s API. Closest at that version: ${near.join("; ")}.`,
+    /** One near member: its signature, its type and where it is declared. */
+    member: (signature: string, container: string | undefined, ref: string) =>
+      `\`${signature}\` (${container ? `in ${container}, ` : ""}${ref})`,
+    /** A member the installed package lacks, with every declared name far from it. */
+    absent: (written: string, target: string) =>
+      `\`${written}\` is missing from ${target}'s API, and every name it declares is far from it.`,
+    /** A research note fed to the card (DS-N9-20). */
+    note: (written: string, target: string, checked: string, excerpt: string) =>
+      `\`${written}\` at ${target} (research note, ${checked}): ${excerpt}`,
+    /** How a note was checked. */
+    checkedBy: (kind: "probe" | "citation") =>
+      kind === "probe" ? "shown by a sandboxed probe" : "its cited source re-checked",
+    /** A Researcher's answer that is not a note: plain research. */
+    research: (written: string, target: string, answer: string) =>
+      `Researcher on \`${written}\` at ${target}: ${answer}`,
+    /** A package the project lacks: its pin, and installed packages with near names. */
+    package: (name: string, pinned: string | undefined, near: readonly string[]) =>
+      `\`${name}\` is absent from this project's installed packages${pinned ? `; its lockfile pins ${pinned}, so it needs installing first` : ""}${near.length ? `; installed packages with near names: ${near.join(", ")}` : ""}.`,
+  },
 } as const;

@@ -10,10 +10,11 @@ it is given. Robots, pacing and private-address refusal happen in the harness
 (polite.ts) before a URL ever reaches it.
 
 POST /md {"url": str, "query": str | null}
-  -> {"ok": true, "title": str, "markdown": str, "fit": bool, "links": int}
-  With a query, BM25 filtering keeps the parts of the page about the query
-  (Crawl4AI's "fit markdown"); without one, pruning drops navigation and
-  boilerplate.
+  -> {"ok": true, "title": str, "markdown": str, "fitMarkdown": str, "links": int}
+  `markdown` is the whole page (Crawl4AI's raw markdown), which the harness
+  caches once whatever the question. With a query, `fitMarkdown` is what BM25
+  filtering kept of the page for it (Crawl4AI's "fit markdown"), or "" when
+  the filter kept too little to trust; without one it is "".
 GET /health -> {"ok": true}
 """
 
@@ -24,7 +25,7 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig
-from crawl4ai.content_filter_strategy import BM25ContentFilter, PruningContentFilter
+from crawl4ai.content_filter_strategy import BM25ContentFilter
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 
 PORT = int(os.environ.get("SEKHEMET_CRAWL4AI_PORT", "11235"))
@@ -38,11 +39,7 @@ loop.run_until_complete(crawler.start())
 
 
 async def crawl(url, query):
-    content_filter = (
-        BM25ContentFilter(user_query=query, bm25_threshold=1.0)
-        if query
-        else PruningContentFilter(threshold=0.45, threshold_type="dynamic")
-    )
+    content_filter = BM25ContentFilter(user_query=query, bm25_threshold=1.0) if query else None
     cfg = CrawlerRunConfig(
         cache_mode=CacheMode.BYPASS,  # the harness caches; one cache, one TTL
         markdown_generator=DefaultMarkdownGenerator(content_filter=content_filter),
@@ -56,13 +53,13 @@ async def crawl(url, query):
     md = result.markdown
     fit = (md.fit_markdown or "").strip()
     raw = (md.raw_markdown or "").strip()
-    # A filter that keeps almost nothing has misread the page: fall back to the whole.
-    use_fit = len(fit) >= min(800, len(raw) // 4)
+    # A filter that keeps almost nothing has misread the page: the whole page answers.
+    use_fit = bool(query) and len(fit) >= min(800, len(raw) // 4)
     return {
         "ok": True,
         "title": (result.metadata or {}).get("title") or "",
-        "markdown": fit if use_fit else raw,
-        "fit": use_fit,
+        "markdown": raw,
+        "fitMarkdown": fit if use_fit else "",
         "links": len((result.links or {}).get("internal", [])),
         "status": result.status_code,
     }

@@ -9,7 +9,7 @@ import { USER_AGENT } from "./polite.js";
  * Crawl4AI (Apache-2.0, https://github.com/unclecode/crawl4ai) as the
  * Researcher's page reader: a real browser renders JavaScript-built pages
  * (most modern docs) and the page comes back as clean markdown, filtered to
- * the parts about the question (BM25 "fit markdown").
+ * the parts about the question (BM25 "fit markdown"), beside the whole page.
  *
  * This product includes software developed by UncleCode
  * (https://x.com/unclecode) as part of the Crawl4AI project
@@ -26,8 +26,14 @@ export const CRAWL4AI_HOME =
 export interface CrawlResult {
   ok: boolean;
   title?: string;
+  /** The whole page as Markdown (Crawl4AI's raw markdown): what the cache keeps. */
   markdown?: string;
-  fit?: boolean;
+  /**
+   * The parts Crawl4AI's BM25 filter kept for the question (its "fit
+   * markdown", design-stage DS-N9-10); "" when there was no question or the
+   * filter kept too little to trust.
+   */
+  fitMarkdown?: string;
   error?: string;
 }
 
