@@ -1,0 +1,182 @@
+{
+  "M4": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,restart": "Server identity and evidence provenance are read from the local inference server and the harness repository. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "retry": "MD-M4-5: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "M7 and M11": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,restart": "The speculative-decoding decision is recorded per host and policy from a local A/B over recorded prompts. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "retry": "MD-M11-1: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-models-1": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The machine profile is computed by `sekhemet calibrate` from this host's hardware. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-models-2": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Throughput floors and the memory watchdog act on this host while a card runs. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "error": "MD-N2-5: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-models-3": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,undo,retry": "Reserved hours and the overnight window are read from `[machine]` and applied by the local scheduler. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, undo or retry path, so the path is not one this feature has."
+    },
+    "gap": {
+      "concurrent": "MD-N3-4: no test cites it in or above a test that reaches a door (the entry-point report's strong link).",
+      "restart": "MD-N3-5: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-models-4": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,undo,retry,restart": "Roles and the registry resolve a model for a caller in process from local configuration. No criterion of this feature names a empty, loading, slow, model-down, offline, access, undo, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "large_data": "MD-N4-10: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-models-5": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Qualification arms are scored by `sekhemet qualify` on this host and recorded in evidence. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-models-6": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Competence rows are written to the local ledger when a card finishes. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-models-7": {
+    "na": {
+      "empty,loading,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "Model files and their hashes are checked on local disk; no weights are downloaded unasked. No criterion of this feature names a empty, loading, slow, model-down, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "error": "MD-N7-5: no test cites it in or above a test that reaches a door (the entry-point report's strong link).",
+      "offline": "MD-N7-1, MD-N7-4: no test cites them in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-models-8": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Qualification of an (engine, build, model, template) combination is recorded per host before use. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-models-9": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The residency scheduler decides loads and swaps in process against usable memory. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-models-10": {
+    "na": {
+      "loading,error,slow,model_down,offline,permission,large_data,concurrent,retry,restart": "Role assignments are recorded and restorable with `sekhemet models restore`. No criterion of this feature names a loading, error, slow, model-down, offline, access, large-data, concurrency, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-models-11": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,retry,restart": "The Researcher bake-off runs local candidates on a fixed question set and keeps the previous assignment. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "undo": "MD-N11-3: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-models-12": {
+    "na": {
+      "slow,model_down,permission,concurrent,undo,retry,restart": "Folders are scanned for model headers on local disk and fitted to roles in process. No criterion of this feature names a slow, model-down, access, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-models-13": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,concurrent,undo,retry,restart": "Found models are matched and their speed predicted from local specs, with research only when allowed. No criterion of this feature names a empty, loading, error, slow, model-down, offline, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-models-14": {
+    "na": {
+      "loading,offline,permission,concurrent,restart": "Load and unload costs are recorded by the scheduler and shown on the dashboard's models view. No criterion of this feature names a loading, offline, access, concurrency or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "empty": "MD-N14-15, MD-N14-21: no test cites them in or above a test that reaches a door (the entry-point report's strong link).",
+      "error": "MD-N14-6: no test cites it in or above a test that reaches a door (the entry-point report's strong link).",
+      "slow": "MD-N14-8, MD-N14-8a, MD-N14-17, MD-N14-19, MD-N14-20, MD-N14-27, MD-N14-29, MD-N14-32, MD-N14-33, MD-N14-33a, MD-N14-38: no test cites them in or above a test that reaches a door (the entry-point report's strong link).",
+      "model_down": "MD-N14-27: no test cites it in or above a test that reaches a door (the entry-point report's strong link).",
+      "large_data": "MD-N14-8a, MD-N14-15, MD-N14-16, MD-N14-17, MD-N14-19, MD-N14-20, MD-N14-23, MD-N14-29, MD-N14-33: no test cites them in or above a test that reaches a door (the entry-point report's strong link).",
+      "undo": "MD-N14-7, MD-N14-29, MD-N14-36: no test cites them in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-models-15": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The Team image and its compose file are built and checked from the repository's own files. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "error": "MD-N15-1, MD-N15-2: no test cites them in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-models-16": {
+    "na": {
+      "loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "First run and `doctor` find the local llama-server and read its build number. No criterion of this feature names a loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "empty": "MD-N16-1, MD-N16-3: no test cites them in or above a test that reaches a door (the entry-point report's strong link).",
+      "error": "MD-N16-2: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-models-17": {
+    "na": {
+      "empty,loading,error,offline,permission,large_data,undo,retry,restart": "A machine-wide model lease file under the user directory serialises loads across processes. No criterion of this feature names a empty, loading, error, offline, access, large-data, undo, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "slow": "MD-N17-2, MD-N17-5: no test cites them in or above a test that reaches a door (the entry-point report's strong link).",
+      "model_down": "MD-N17-5: no test cites it in or above a test that reaches a door (the entry-point report's strong link).",
+      "concurrent": "MD-N17-1, MD-N17-2, MD-N17-5: no test cites them in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-models-18": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry": "Downloads keep a `.part` file on local disk and resume it with a Range request when a person asks. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo or retry path, so the path is not one this feature has."
+    }
+  },
+  "NEW-models-19": {
+    "na": {
+      "loading,error,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "The engine download fetches only the pinned asset for this platform when a person chooses it. No criterion of this feature names a loading, error, slow, model-down, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-models-20": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Cloud-hosted Ollama models are refused from their tag and details at assignment. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "error": "MD-N20-2: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-models-21": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,concurrent,undo,retry,restart": "Per-(model, role) settings resolve from five groups and are checked against the qualified combination. No criterion of this feature names a empty, loading, error, slow, model-down, offline, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-models-22": {
+    "na": {
+      "loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The shipped set and supported hosts are read from one table each, checked against PROVENANCE. No criterion of this feature names a loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "error": "MD-N22-4: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "§6 v1 acceptance": {
+    "na": {
+      "empty,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The models acceptance list is checked against launch arguments, the watchdog and qualification on this host. No criterion of this feature names a empty, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "loading": "MD-8: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "_ceiling": {
+    "gaps": 24
+  }
+}

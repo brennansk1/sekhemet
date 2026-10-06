@@ -1,0 +1,63 @@
+{
+  "S9": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Trust for project hooks, MCP servers and skills is decided on this machine from the trust store and the approval record before anything loads. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "S4": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The MCP move tool refuses a forbidden target in process against the local board. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-extensibility-5": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Plugins are not supported: a `.sekhemet/plugins/` folder is ignored and `doctor` says so, a fixed answer with no runtime path. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-extensibility-1": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Card lifecycle hooks run as local child processes on accept and status change, with the outcome recorded on the card. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-extensibility-2": {
+    "na": {
+      "empty,loading,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Hook configuration is parsed and hooks are run as local child processes with a timeout; their failures are the error and slow columns. No criterion of this feature names a empty, loading, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-extensibility-3": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The MCP server answers JSON-RPC over stdio or local HTTP from the local ledger and registry, read-only for evidence. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-extensibility-4": {
+    "na": {
+      "empty,loading,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "Skills are files read, selected and budgeted in process for a card's prompt; their evals run confined with no network. No criterion of this feature names a empty, loading, slow, model-down, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-extensibility-6": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "`sekhemet_run_gates` is a pre-check over MCP that runs the local gate pipeline and records nothing. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-extensibility-7": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The editor guide's snippets are checked by the docs test, which starts each documented command on this machine. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-extensibility-8": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Seshat's MCP tools are pinned by a person's approval of their name, description and schema, read from the local approval record. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "§6 v1 acceptance": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The acceptance list exercises hooks, skills, ACP and MCP on this machine. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "error": "EXT-30: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "_ceiling": {
+    "gaps": 1
+  }
+}

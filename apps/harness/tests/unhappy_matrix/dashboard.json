@@ -1,0 +1,236 @@
+{
+  "P3": {
+    "na": {
+      "model_down": "The board renders the ledger's cards; no column, tile or header reads a model, so a model that is down changes nothing on it.",
+      "offline": "Covered by §6's DB-4 (Offline since…, frozen clocks, every action disabled) in dashboard_faults_ui.spec.ts; P3 adds no offline behaviour of its own.",
+      "permission": "Who may move or edit a tile is the level gate's (DB-N9-17, NEW-dashboard-9); P3's columns and tiles show the same to every level.",
+      "concurrent": "Two people moving one tile is presence and conflict (DB-N9-20, NEW-dashboard-9; DB-5 patches one tile per frame); P3 states no conflict rule of its own.",
+      "undo": "Undo of a move or an edit is NEW-dashboard-16's (DB-N16-1, dashboard_faults_ui.spec.ts); P3 adds none.",
+      "retry": "The board re-reads on each stream frame and on reconnect (§6 DB-4, DB-5); P3 sends no request a person retries.",
+      "restart": "The board is a projection of the ledger re-read on load; a server restart is a reconnect (DB-4), with no P3 state to recover."
+    },
+    "gap": {
+      "error": "DB-P3-2, DB-P3-6: no entry test yet (unit-only in packages/ui/tests); not in this group's C2d list.",
+      "slow": "DB-P3-11: no entry test yet (unit-only); not in this group's C2d list."
+    }
+  },
+  "P4": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,concurrent,undo,retry,restart": "Tips are local copy and numbers the page already holds (lib/learn.ts); a ? opens a popover with no request, so loading, failure, network, model, access, conflict, undo, retry and restart do not arise."
+    }
+  },
+  "P5": {
+    "na": {
+      "empty,loading,error,slow,offline,permission,large_data,concurrent,undo,retry,restart": "P5's criteria are Seshat's words and the palette's entries (DB-P5-4..-7): what the panel and palette say, not a data path; their failure states are Seshat's (planner-pm PM-01, seshat_no_model_ui.spec.ts)."
+    }
+  },
+  "P11": {
+    "na": {
+      "loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The navigation is one static keymap (nav.ts) drawn from the page's state; it requests nothing and keeps nothing, so none of these paths exists. A view a person cannot open is the level gate's (DB-N9-17)."
+    },
+    "gap": {
+      "empty": "DB-P11-1: not marked built (an orphan in the §4 table); no entry test."
+    }
+  },
+  "P12": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Colour and contrast are a static property of the rendered page (styles, tokens, copy or a pure model); it loads nothing, sends nothing and holds no state, so no data, network, access, timing, concurrency, undo, retry or restart path exists."
+    }
+  },
+  "P13": {
+    "na": {
+      "empty,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Where done is drawn is the requirement graph's display (story map, release report); its failure, access and concurrency are the API's (planner-pm P13, project_done.spec.ts over HTTP); the page side adds no path."
+    },
+    "gap": {
+      "loading": "DB-P13-9: an orphan (no §4 row); no entry test."
+    }
+  },
+  "T5": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "T5 is how the server's routes are split into modules, a structural property checked by enumeration (DB-T5-1); no request path of its own."
+    }
+  },
+  "S3c": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "S3c's page-side hardening (CSP, no inline script, escaping) is a static property of the served page, checked by server.spec.ts and the DOM refusal scan; no data path."
+    }
+  },
+  "NEW-dashboard-1": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The gates strip renders one evidence bundle the page already loaded (DB-N1-1..4, dashboard_issue_entry_ui.spec.ts); its load and failure are the issue page's (ERR-03), and it holds no state."
+    }
+  },
+  "NEW-dashboard-2": {
+    "na": {
+      "empty,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "One vocabulary and its tests are words and models (DB-N2-1..11); the paths they touch are owned by the board (§6), Integrations (DB-N2-7) and Runs (DB-N2-11), each tested there."
+    }
+  },
+  "NEW-dashboard-3": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The Steps tab's live output is a stream of frames painted as they come (DB-N3-1, -2, dashboard_issue_entry_ui.spec.ts); a dropped stream is DB-4's, and it keeps nothing to undo, retry or restore."
+    }
+  },
+  "NEW-dashboard-4": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,large_data,concurrent,undo,retry,restart": "Settings are Configuration's sections; their saves and refusals are the config API's (config_routes.spec.ts, config_api.spec.ts); the section split adds no path."
+    }
+  },
+  "NEW-dashboard-5": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,large_data,concurrent,undo,retry,restart": "Review for a team is the review desk's rules (who may accept, what must be opened); its failures are Accept's (§6 DB-1, DB-N2-2, dashboard_faults_ui.spec.ts) and its HTTP routes (review_desk_api.spec.ts)."
+    }
+  },
+  "NEW-dashboard-6": {
+    "na": {
+      "empty,slow,offline,concurrent,undo,retry": "The Configuration page's own states are named by its criteria (loading, error, model down, permission, large lists, restart); an empty page, slow reads, the network, two editors, undo and retry are the config API's and the stream's, with no rule of the page's own."
+    }
+  },
+  "NEW-models-3 (the control)": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Reserve now on the dashboard is not built (§4: not-built; the CLI's `dev reserve` is surface NEW-models-3); no path to test until it is."
+    }
+  },
+  "NEW-dashboard-7": {
+    "na": {
+      "empty,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Professional language is the words on screen (DEC-31), checked by scans over every view (professional_words_ui.spec.ts); it adds no data path."
+    },
+    "gap": {
+      "loading": "DB-N7-1: an orphan; no entry test.",
+      "error": "DB-N7-1, DB-N7-4: orphans; no entry test."
+    }
+  },
+  "NEW-dashboard-8": {
+    "na": {
+      "empty,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The issue page's agent panel shows the Agent's state as the server set it (DEC-34); its actions' refusals are the routes' (issue_actions_api.spec.ts, issue_actions_ui.spec.ts) and the level gate's."
+    }
+  },
+  "NEW-dashboard-9": {
+    "na": {
+      "error,model_down,offline,large_data,undo,retry,restart": "The pages for working together read the Team's people, invites and inbox; their errors and access are the team routes' (members_invites_api.spec.ts, team_identity.spec.ts), and they hold no undoable or restartable state."
+    },
+    "gap": {
+      "empty": "DB-N9-21: no test cites it in or above a test that reaches a door (the entry-point report's strong link).",
+      "loading": "DB-N9-5, DB-N9-9: no test cites them in or above a test that reaches a door (the entry-point report's strong link).",
+      "slow": "DB-N9-9: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-models-14 (the view)": {
+    "na": {
+      "empty,model_down,offline,permission,concurrent,undo,restart": "Model details read the model library's files and records; a model being down does not apply to a file, the network is the download's (DB-NM14-5), access is Configuration's (DB-N6-15), and the view holds nothing to undo or restart."
+    }
+  },
+  "NEW-dashboard-10": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,large_data,concurrent,undo,restart": "Intake is filing and triaging issues through the board's routes (intake_triage.spec.ts, intake_search_ui.spec.ts); its states are the board's and the level gate's."
+    }
+  },
+  "NEW-dashboard-11": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The sprint lifecycle is the cycle routes' (sprint_lifecycle.spec.ts, sprint_lifecycle_ui.spec.ts); its criteria state the flow, and its failures are those routes' refusals."
+    }
+  },
+  "NEW-dashboard-12": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,concurrent,undo,retry,restart": "Full-text search is one read (`/api/search`, full_text_search.spec.ts); an empty result is the filter's 'No issues match', its access is the project's visibility (PM-N9-8)."
+    }
+  },
+  "NEW-dashboard-13": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Practice lessons are Tips' popovers (a static property of the rendered page (styles, tokens, copy or a pure model); it loads nothing, sends nothing and holds no state, so no data, network, access, timing, concurrency, undo, retry or restart path exists)."
+    }
+  },
+  "NEW-dashboard-14": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The Definition of done and Ready to start are read-only displays (DB-N14-1, -2, dashboard_pages_entry_ui.spec.ts, dashboard_issue_entry_ui.spec.ts); they enforce nothing (DB-N14-3), so they add no path."
+    }
+  },
+  "NEW-dashboard-15": {
+    "na": {
+      "empty,loading,error,slow,offline,permission,large_data,concurrent,undo,retry,restart": "New issue by type posts one proposal (board_edits_undo_api.spec.ts DB-N15-1, -2); its refusals are the create route's and the level gate's."
+    }
+  },
+  "NEW-dashboard-16": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,retry,restart": "Undo is a compensating request on a toast (DB-N16-1..3); offline disables it with every action (DB-4), a refused undo names the person (DB-N16-2, board_edits_undo_api.spec.ts)."
+    }
+  },
+  "NEW-dashboard-17": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,large_data,concurrent,undo,retry,restart": "Accepting without the diff is a criteria view for a person who manages the work (DB-N17-1, shell_status_states_ui.spec.ts); Accept's own states are §6's."
+    }
+  },
+  "NEW-dashboard-18": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Status as a grid is layout at widths (DB-N18-1, -2, dashboard_pages_entry_ui.spec.ts); a static property of the rendered page (styles, tokens, copy or a pure model); it loads nothing, sends nothing and holds no state, so no data, network, access, timing, concurrency, undo, retry or restart path exists."
+    }
+  },
+  "NEW-dashboard-19": {
+    "na": {
+      "empty,loading,slow,model_down,offline,large_data,concurrent,undo,retry,restart": "The approved mockups are layouts of pages whose data paths are their own features'."
+    }
+  },
+  "NEW-dashboard-20": {
+    "na": {
+      "empty,loading,error,model_down,offline,permission,concurrent,undo,retry,restart": "Primary buttons and the accent are a static property of the rendered page (styles, tokens, copy or a pure model); it loads nothing, sends nothing and holds no state, so no data, network, access, timing, concurrency, undo, retry or restart path exists."
+    },
+    "gap": {
+      "slow": "DB-N20-3: an orphan; the token test is unit-level.",
+      "large_data": "DB-N20-3: as slow."
+    }
+  },
+  "NEW-dashboard-21": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,retry,restart": "Won't do, Reopen and Revert are three routes with Undo (issue_actions_api.spec.ts, issue_actions_ui.spec.ts, dashboard_faults_ui.spec.ts DB-N16-1, -3); offline and access are DB-4's and the level gate's."
+    }
+  },
+  "NEW-dashboard-22": {
+    "na": {
+      "empty,loading,error,model_down,offline,large_data,concurrent,undo,retry,restart": "A notification is raised from stream events in this browser (notify_ui.spec.ts); the stream's states are §6's, and a notification has nothing to undo or retry."
+    }
+  },
+  "NEW-dashboard-23": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The professional words are copy (a static property of the rendered page (styles, tokens, copy or a pure model); it loads nothing, sends nothing and holds no state, so no data, network, access, timing, concurrency, undo, retry or restart path exists)."
+    },
+    "gap": {
+      "error": "DB-N23-5, DB-N23-6: orphans; no entry test."
+    }
+  },
+  "NEW-dashboard-24": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,large_data,concurrent,undo,retry,restart": "Network activity is a read-only list of recorded egress (network_activity_ui.spec.ts); it records and offers nothing (DB-N24-3)."
+    }
+  },
+  "NEW-dashboard-25": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The switchers choose a project or a workspace in this browser (DB-N25-1..4, dashboard_board_entry_ui.spec.ts, shell_status_states_ui.spec.ts); the lists are reads whose failures are the shell's (ERR-01..04)."
+    }
+  },
+  "NEW-dashboard-26": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,concurrent,undo,retry": "Many projects on one server is the project cap and cross-project lists (projects_api.spec.ts, project_cap_ui.spec.ts); their states are those routes'."
+    }
+  },
+  "NEW-dashboard-27": {
+    "na": {
+      "empty,error,slow,model_down,offline,large_data,concurrent,undo,retry,restart": "Configuration › Models in three layers is a presentation of the config API's roles and checks (config_customize_ui.spec.ts, config_first_hour_ui.spec.ts); its states are that API's."
+    }
+  },
+  "W9": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,concurrent,undo,retry,restart": "The §A budgets are measurements of load, layout shift and interaction latency on the 500-issue board (perf/budgets_ui.spec.ts, release gate); they are not a data path."
+    },
+    "gap": {
+      "error": "DB-W9-1: an orphan; measured in the release gate only (SEKHEMET_PERF=1).",
+      "large_data": "DB-W9-1: as error."
+    }
+  },
+  "§6 v1 acceptance": {
+    "na": {
+      "loading,slow,model_down,permission,undo,retry,restart": "§6 is the acceptance list; each of its twelve criteria names its own state, and the columns no §6 criterion names are covered by the feature that owns them."
+    }
+  },
+  "_ceiling": {
+    "gaps": 14
+  }
+}

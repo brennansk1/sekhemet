@@ -1,0 +1,122 @@
+{
+  "M9": {
+    "na": {
+      "empty,loading,error,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "One measurement path is how m0, the bake-off, the rule gate and the suite run a card through the product; its outages and restarts are the queue's and runtime's paths, and no criterion names an empty, loading, failure, access, scale, concurrency, undo, retry or restart state for the path itself."
+    },
+    "gap": {
+      "slow": "MS-M9-3: no entry test yet."
+    }
+  },
+  "M10": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Mutation scores are computed by improve --mutants and the card's mutation gate (mutation_cli.spec.ts) over one accepted commit or one card; the refusals are M10's own error cells, and there is no loading state, model, network, access level, large data set, second writer, undo, retry or resume in a campaign."
+    }
+  },
+  "M12": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Statistics over recorded runs are pure computations on result files (measure compare, measure_compare_cli.spec.ts): nothing loads, waits, calls a model or the network, needs an access level, is edited concurrently, undone, retried or resumed, and an empty run compares nothing by construction."
+    }
+  },
+  "T7": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry": "The suite's tooling (reference solutions, independent mode, interleaving, the planning measure) runs offline from fixtures on one machine; no criterion names an empty, loading, slow, outage, access, scale, concurrency or undo path for it beyond the gaps named."
+    },
+    "gap": {
+      "restart": "MS-T7-5: no entry test yet."
+    }
+  },
+  "T8": {
+    "na": {
+      "empty,loading,slow,model_down,offline,large_data,concurrent,undo,retry,restart": "Self-improvement inlets read the ledger and propose candidates a person admits (skills_improve_cli.spec.ts, queue_context_cli.spec.ts); they have no loading state, model or network dependency of their own, no large data path, no second writer, and a proposal is retired rather than undone or retried."
+    },
+    "gap": {
+      "permission": "MS-T8-15: no entry test yet."
+    }
+  },
+  "T11": {
+    "na": {
+      "loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Evaluation assets are files with a manifest of hashes checked when a criterion is scored; no criterion names a loading, failure, slow, outage, access, scale, concurrency, undo, retry or restart path beyond the missing-asset gap named."
+    },
+    "gap": {
+      "empty": "MS-T11-7: no entry test yet."
+    }
+  },
+  "NEW-measurement-1": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Run provenance is what a measured run records (the suite hash, dist hashes, the isolated configuration); no criterion names an empty, loading, failure, slow, outage, access, scale, concurrency, undo, retry or restart path for it."
+    }
+  },
+  "NEW-measurement-2": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Doctor's inputs and the rule-cost report are computed from the ledger in one read; no criterion names an empty, loading, failure, slow, outage, access, scale, concurrency, undo, retry or restart path for them."
+    }
+  },
+  "NEW-measurement-3": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The register's phase limit is one refusal in register advance (MS-N3-1), a command over a checked-in file; no criterion names any of these twelve paths for it."
+    }
+  },
+  "NEW-measurement-4": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry": "Test-quality measures are part of the planning measure's report on fixtures, offline; no criterion names an empty, loading, slow, outage, access, scale, concurrency, undo or retry path beyond the gaps named."
+    },
+    "gap": {
+      "error": "MS-TQ-1: no entry test yet.",
+      "restart": "MS-TQ-1: no entry test yet."
+    }
+  },
+  "NEW-measurement-5": {
+    "na": {
+      "empty,slow,model_down,offline,permission,concurrent,undo": "The quick and overnight benchmarks' outages and memory refusals are the models spec's (MD-N3, MD-N9); no criterion here names an empty, slow, offline, access, concurrency or undo path beyond the gaps named."
+    },
+    "gap": {
+      "loading": "MS-N5-1: no entry test yet.",
+      "error": "MS-N5-4: no entry test yet.",
+      "large_data": "MS-N5-3, MS-N5-4a, MS-N5-6, MS-N5-7: no entry test yet.",
+      "retry": "MS-N5-10: no entry test yet.",
+      "restart": "MS-N5-12: no entry test yet."
+    }
+  },
+  "NEW-measurement-6": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Model usage is one ledger event per request through the one path to a model; no criterion names an empty, loading, slow, outage, access, scale, concurrency, undo, retry or restart path for the record beyond the gap named."
+    },
+    "gap": {
+      "error": "MS-N6-2: no entry test yet."
+    }
+  },
+  "NEW-measurement-7": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,undo,retry,restart": "Find best settings is a screen started by a person from Configuration; its stop and its host-limit refusal are named in the gaps, and no criterion names an empty, loading, slow, offline, access, scale, undo, retry or restart path."
+    },
+    "gap": {
+      "error": "MS-N7-2, MS-N7-4: no entry test yet.",
+      "concurrent": "MS-N7-2: no entry test yet."
+    }
+  },
+  "NEW-measurement-8": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Per-run settings and the history view read recorded runs; no criterion names an empty, loading, failure, slow, outage, access, scale, concurrency, undo, retry or restart path for them."
+    }
+  },
+  "NEW-models-14 (the measurement)": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,restart": "Scheduling changes are admitted from recorded replays and placement gains from recorded loads; no criterion names an empty, loading, failure, slow, outage, access, scale, concurrency, undo or restart path beyond the replay gap named."
+    },
+    "gap": {
+      "retry": "MS-NM14-1: no entry test yet."
+    }
+  },
+  "§6 v1 acceptance": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,restart": "Measurement's acceptance list is about refusing incomparable runs and counting policies honestly; none of its items names an empty, loading, slow, outage, access, scale, concurrency, undo or restart path beyond the gaps named."
+    },
+    "gap": {
+      "error": "MS-2: no entry test yet.",
+      "retry": "MS-3: no entry test yet."
+    }
+  },
+  "_ceiling": {
+    "gaps": 17
+  }
+}

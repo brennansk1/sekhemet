@@ -1,0 +1,102 @@
+{
+  "P1": {
+    "na": {
+      "loading,slow,model_down,offline,large_data,concurrent,undo,restart": "A plan is one `sekhemet plan` run that writes its cards to the ledger in one pass (planner_plan_cli.spec.ts); no criterion of the planner's contract names a loading view, a slow or absent network (it plans offline), a large backlog, a second writer, an undo or a restart mid-plan."
+    }
+  },
+  "P2": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Starting a project by conversation is Seshat's start_project proposal applied once by a person (start_project_http.spec.ts, design-stage DS-P2-6); the planner side adds no state of its own that loads, fails, waits on a model or network, is shared, undone, retried or restarted."
+    }
+  },
+  "P6": {
+    "na": {
+      "empty,loading,slow,offline,permission,large_data,concurrent,undo,restart": "Seshat's answers are read from the ledger and the scripted model's reply over HTTP (seshat_answers_http.spec.ts); an answer has no empty board path of its own, no loading view beyond the thread's, no network, no access level beyond the thread's, and nothing to undo, share or restart."
+    }
+  },
+  "P13": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Project done is computed from requirements on each read (project_done.spec.ts over HTTP); a computation has no loading, slow, model, network, access, size, concurrency, undo, retry or restart path the requirements criteria name."
+    }
+  },
+  "NEW-planner-pm-1": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Points are written once per planned card from its difficulty (planner_plan_cli.spec.ts, PM-N1-1, -2); a number on a card has no error, timing, model, network, access, size, concurrency, undo, retry or restart path."
+    }
+  },
+  "NEW-planner-pm-2": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "A signal's response is a proposal or a suggestion recorded by the queue's prelude (planner_signals_queue_cli.spec.ts, PM-N2-1); it changes no field, so there is nothing to undo, retry, restart or race, and it reads only the ledger."
+    }
+  },
+  "NEW-planner-pm-3": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The split-to-horizon rule is one comparison of a card's size estimate with the measured horizon when a card is planned or asked about (seshat_answers_http.spec.ts, PM-P6-9); it has no loading, failure, network, access, size, concurrency, undo, retry or restart path."
+    }
+  },
+  "NEW-planner-pm-4": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The goal loop re-evaluates from the ledger and the repository's files at the queue's prelude and the server's tick (planner_signals_queue_cli.spec.ts, PM-N4-1 to -5); no criterion names an empty, loading, failing, slow, model, network, access, size, concurrency, undo, retry or restart path for it."
+    }
+  },
+  "NEW-planner-pm-5": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Each signal response is recorded once as a proposal or suggestion on the ledger (planner_signals_queue_cli.spec.ts, PM-N5-1 to -4); none of its criteria names an empty, loading, error, slow, model, network, access, size, concurrency, undo, retry or restart path."
+    }
+  },
+  "NEW-planner-pm-6": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Planning on an existing codebase adds characterize cards and fault localisation to one `plan` run on the repository as it is; its criteria name no loading view, network, model outage, access level, data size, second writer, undo, retry or restart."
+    }
+  },
+  "NEW-planner-pm-8": {
+    "na": {
+      "empty,loading,error,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Dependencies are derived once per queue ordering from the cards' declared scope and the source index; apart from the wait PM-N8-1 names, no criterion names an empty, loading, failing, model, network, access, size, concurrency, undo, retry or restart path."
+    },
+    "gap": {
+      "slow": "PM-N8-1: no entry test yet."
+    }
+  },
+  "NEW-planner-pm-7": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Test approval by depth profile is a person's `sekhemet approve` recorded once on the ledger (planner_plan_cli.spec.ts approves through it); its criteria name no loading, failing, slow, model, network, access, size, concurrency, undo, retry or restart path."
+    }
+  },
+  "NEW-planner-pm-9": {
+    "na": {
+      "empty,loading,error,model_down,offline,large_data,concurrent,restart": "How Seshat speaks is the text of its replies and notices (seshat_answers_http.spec.ts, notify_slack_http.spec.ts); apart from the budget, access and undo paths its criteria name and the tests cover, it has no empty, loading, error, model, network, size or restart path."
+    }
+  },
+  "NEW-planner-pm-10": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,concurrent,undo,retry,restart": "A long message is read whole within one request to the dashboard (pm_long_message.spec.ts, seshat_composer_ui.spec.ts); its criteria name the size limit and the refusals, which are covered, and no empty, loading, slow, model, network, access, concurrency, undo, retry or restart path."
+    }
+  },
+  "NEW-planner-pm-11": {
+    "na": {
+      "empty,loading,error,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The retrospective is a report computed from the ledger when asked (releases_retro_ui.spec.ts); its criteria name no empty, loading, error, model, network, access, size, concurrency, undo, retry or restart path."
+    }
+  },
+  "NEW-planner-pm-12": {
+    "na": {
+      "loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The open Next release is a projection of the ledger shown on request (next_release.spec.ts over HTTP); its criteria name no loading, error, slow, model, network, access, size, concurrency, undo, retry or restart path."
+    }
+  },
+  "NEW-planner-pm-13": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The sprint lifecycle is a person's start and close of a cycle over HTTP (sprint_lifecycle.spec.ts); its criteria name no empty, loading, slow, model, network, access, size, concurrency, undo, retry or restart path."
+    }
+  },
+  "§6 v1 acceptance": {
+    "na": {
+      "empty,loading,model_down,offline,permission,undo,restart": "The v1 acceptance list restates the features' own criteria; no acceptance criterion names an empty, loading, model-down, offline, access, undo or restart path for the planner or Seshat."
+    },
+    "gap": {
+      "slow": "PM-5, PM-6: no entry test yet.",
+      "retry": "PM-11: no entry test yet."
+    }
+  },
+  "_ceiling": {
+    "gaps": 3
+  }
+}

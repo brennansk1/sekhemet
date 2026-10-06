@@ -148,6 +148,94 @@ describe("the reachability gate", () => {
     expect(findUnreachable(root)).toEqual([]);
   });
 
+  // GT-T2-5 (FINDINGS_C1 TST-04): the gate read dynamic imports from the index
+  // but never used them, so lazily imported production code read as dead.
+  it("counts an export reached only through a destructured dynamic `import()` (GT-T2-5)", () => {
+    const root = repo({ "src/util.ts": "", "src/app.ts": "" });
+    write(root, "src/util.ts", "export const pad = 1;\n");
+    write(
+      root,
+      "src/app.ts",
+      'export async function run() {\n  const { pad } = await import("./util.js");\n  return pad;\n}\n',
+    );
+    expect(findUnreachable(root).filter((u) => u.file === "src/util.ts")).toEqual([]);
+  });
+
+  it("counts every export of a module bound whole by a dynamic `import()` (GT-T2-5)", () => {
+    const root = repo({ "src/util.ts": "", "src/app.ts": "" });
+    write(root, "src/util.ts", "export const pad = 1;\nexport const trim = 2;\n");
+    write(
+      root,
+      "src/app.ts",
+      'export async function run() {\n  const util = await import("./util.js");\n  return util;\n}\n',
+    );
+    expect(findUnreachable(root).filter((u) => u.file === "src/util.ts")).toEqual([]);
+  });
+
+  // Review blocker: the names a dynamic import reads are known whenever it is
+  // destructured or read as `(await import()).x`, so an unused sibling export
+  // is still dead; only a module object that escapes uses the whole surface.
+  it("still reports an unused sibling of a destructured dynamic `import()` (GT-T2-5)", () => {
+    const root = repo({ "src/util.ts": "", "src/app.ts": "" });
+    write(root, "src/util.ts", "export const pad = 1;\nexport const trim = 2;\n");
+    write(
+      root,
+      "src/app.ts",
+      'export async function run() {\n  const { pad: p } = await import("./util.js");\n  return p;\n}\n',
+    );
+    expect(findUnreachable(root).filter((u) => u.file === "src/util.ts")).toEqual([
+      { file: "src/util.ts", name: "trim" },
+    ]);
+  });
+
+  it("counts only the member read as `(await import()).x` (GT-T2-5)", () => {
+    const root = repo({ "src/util.ts": "", "src/app.ts": "" });
+    write(root, "src/util.ts", "export const pad = 1;\nexport const trim = 2;\n");
+    write(
+      root,
+      "src/app.ts",
+      'export async function run() {\n  return (await import("./util.js")).pad;\n}\n',
+    );
+    expect(findUnreachable(root).filter((u) => u.file === "src/util.ts")).toEqual([
+      { file: "src/util.ts", name: "trim" },
+    ]);
+  });
+
+  it("counts only the members read through a dynamic import's bound module object (GT-T2-5)", () => {
+    const root = repo({ "src/util.ts": "", "src/app.ts": "" });
+    write(root, "src/util.ts", "export const pad = 1;\nexport const trim = 2;\n");
+    write(
+      root,
+      "src/app.ts",
+      'export async function run() {\n  const util = await import("./util.js");\n  return util.pad;\n}\n',
+    );
+    expect(findUnreachable(root).filter((u) => u.file === "src/util.ts")).toEqual([
+      { file: "src/util.ts", name: "trim" },
+    ]);
+  });
+
+  it("counts the whole surface when a dynamic import's module object escapes (GT-T2-5)", () => {
+    const root = repo({ "src/util.ts": "", "src/app.ts": "" });
+    write(root, "src/util.ts", "export const pad = 1;\nexport const trim = 2;\n");
+    write(
+      root,
+      "src/app.ts",
+      'export function run() {\n  return import("./util.js").then((m) => register(m));\n}\ndeclare function register(m: unknown): void;\n',
+    );
+    expect(findUnreachable(root).filter((u) => u.file === "src/util.ts")).toEqual([]);
+  });
+
+  it("does not count a dynamic `import()` in a card's own unit test as use (GT-T2-5)", () => {
+    const root = repo({ "src/util.ts": "" });
+    write(root, "src/util.ts", "export const pad = 1;\n");
+    write(
+      root,
+      "tests/util.spec.ts",
+      'it("x", async () => { const { pad } = await import("../src/util.js"); });\n',
+    );
+    expect(findUnreachable(root)).toEqual([{ file: "src/util.ts", name: "pad" }]);
+  });
+
   // GT-IX-1: a verdict read from a file the parser had to recover is not a pass.
   const passing: GateRunner = {
     runGates: async () => ({ passed: true, failures: [], durationMs: 0, rungResults: [] }),

@@ -1,0 +1,84 @@
+{
+  "P2": {
+    "na": {
+      "loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Starting a project is a draft Seshat proposes from the request with no model or network of its own (draftProjectGroup) and a person applies once; nothing exists before Apply (DS-N7-5) and card zero's checks are derived by the queue's prelude from what is on the tree. No criterion names a loading, slow, outage, access, scale, concurrency, undo, retry or restart path for it; those are the PM thread's and the queue's (planner-pm, runtime)."
+    },
+    "gap": {
+      "error": "DS-P2-3: no entry test yet."
+    }
+  },
+  "P14": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,large_data,concurrent,undo,retry,restart": "The depth profile, comparables and the story-map walk are proposed once per brief from the request's words; research being off is DS-P14-9 (the permission column). There is no list to be empty or large, no model call or network read of its own beyond research's, no second writer, and a choice is changed by choosing again (sekhemet depth), not undone or retried."
+    },
+    "gap": {
+      "permission": "DS-P14-9: no entry test yet."
+    }
+  },
+  "NEW-design-stage-1": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,concurrent,undo,restart": "The design stage decides the level, the stack and the questions from the request's words alone (designStage is pure and runs inside plan and Seshat, design_stage_cli.spec.ts); it loads nothing, calls no model or network, writes no shared record, and has nothing to fail, wait on, guard, edit concurrently, undo or resume."
+    },
+    "gap": {
+      "large_data": "DS-N1-4: no entry test yet."
+    }
+  },
+  "NEW-design-stage-3": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "No criterion names these paths for the project documents: they are written by code from the ledger inside the Accept and release transactions (DS-N3-1), a merged edit comes back as proposals a person applies (DS-N3-2, docs_proposals_cli.spec.ts), and a person's own file is never overwritten (DS-N3-5); no model, network, access level or long wait is involved."
+    }
+  },
+  "P7": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The survey's licence, popularity and relevance filters are judgements over what the registries returned (plan_research_cli.spec.ts, research_cli.spec.ts); its unreachable, refused and offline paths are S8's (DS-S8-1, -5, -7, -8), a need keeps at most three candidates by design, and it writes no record a person edits, so concurrency, undo and restart do not arise."
+    }
+  },
+  "S8": {
+    "na": {
+      "loading,error,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "S8 is the switch and the queries: whether research may leave the machine and what it sends (plan_research_cli.spec.ts). An unreachable source is DS-S8-5's 'not searched (unreachable)' and a refused host DS-S8-7's and DS-S8-8's, whose words this column's pattern does not read; the survey has no loading state, model, access level, large data, second writer, undo or resume of its own."
+    }
+  },
+  "NEW-design-stage-2": {
+    "na": {
+      "empty,loading,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "Verified research reports are produced by one Research run and judged by code (claims, citations, the critique gate; research_card_cli.spec.ts, research_cli.spec.ts); a report has no empty, loading or slow state of its own, no access level, no second writer, and a rerun is a new report, not an undo, retry or resume."
+    }
+  },
+  "NEW-design-stage-5": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Research before repair is one question per failing card inside the queue's repair batch (research_repair_cli.spec.ts); a model or network outage, a slow answer and a restart are the queue's paths (runtime, worker-loop), and the batch has no empty, loading, access, scale, concurrency or undo state of its own."
+    }
+  },
+  "NEW-design-stage-4": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Research effort and the network rules are settings read at the start of a run (research_cli.spec.ts); the refusals are DS-N4-1 and DS-N4-3's own, in words this column's pattern does not read, and there is no list, loading state, access level, second writer, undo or restart that belongs to them."
+    }
+  },
+  "NEW-design-stage-6": {
+    "na": {
+      "loading,slow,permission,large_data,undo,restart": "A take-over reads a repository once and records what it found (takeover_cli.spec.ts); a second take-over is a new inventory against the same baseline, who may approve its plan in the Team setup is the teams spec's (TEAM-56), and no criterion names a loading, slow, large-repository, undo or restart path for it."
+    }
+  },
+  "NEW-design-stage-7": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The start page draws the conversation and the draft (the dashboard group's start_page_draft_ui.spec.ts); no criterion names an empty, loading, failure, slow, outage, access, scale, concurrency, undo, retry or restart state for it, and it creates nothing before approval (DS-N7-5)."
+    }
+  },
+  "NEW-design-stage-8": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Choosing the folder or an existing repository is one form on the start page (start_page_workspace_ui.spec.ts); an occupied folder is DS-N8-3's own case, and no criterion names a loading, slow, outage, access, scale, concurrency, undo, retry or restart path for it."
+    }
+  },
+  "NEW-design-stage-9": {
+    "na": {
+      "empty,loading,slow,permission,large_data,undo,restart": "The packet, the notes and the dependency adapters read installed packages on this machine and the pinned docs through the polite fetcher (research_packet_cli.spec.ts, research_cli.spec.ts); no criterion names an empty, loading, slow, access, scale, undo or restart path, and a plan is planned again rather than undone."
+    }
+  },
+  "§6 v1 acceptance": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The design stage's acceptance list is about what is said and created for a request (one card for a small change, a person's brief kept, defaults recorded as assumptions); none of its items names an empty, loading, failure, slow, outage, access, scale, concurrency, undo, retry or restart path."
+    }
+  },
+  "_ceiling": {
+    "gaps": 3
+  }
+}

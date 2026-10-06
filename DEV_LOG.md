@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 81 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 82 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,71 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 82 — 2026-10-06 (C2d: entry-point tests. Built criteria tested only by unit tests fell from 520 to 36; the analyzer is permanent; reachability sees dynamic imports; about 20 product findings)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. One workflow: 13 agents, 6.1M tokens.
+- **The 5-hour limit:** reached midway, with G5, G6, both reviews, the sweep and the gate failed. At the reset (13:10) the run resumed from its journal, so the finished agents replayed from cache.
+- **The shape:** an analyzer; six test writers by spec group, two at a time, test files only; two reviews; a fixer; a blocker re-check; a sweep; the gate. A helper fixed the gate's one product race.
+
+- **The analyzer, permanent (TST-01's fix route):**
+  - **What:** C1's one-off analysis became `scripts/entry_points.mjs` (rules in its header, root from the module, about 0.8 s). It writes `docs/reference/ENTRY_POINTS.md`, indexed in docs/README.md.
+  - **The ceiling:** `entry_points_ceiling.json` only falls; it started at 520 unit-only and 1 no-test.
+  - **Its test:** `entry_points.spec.ts` has a positive and a negative case for every class.
+  - **Two deliberate widenings over C1:** it follows helper modules in the test folders, and it expands `X-1..12` ranges.
+  - **C1's hand verdicts** are kept as `REVIEWED`, and can only raise a class.
+- **TST-04, the reachability gate and dynamic imports (GT-T2-5, test first):**
+  - **The first fix** counted a dynamically imported module's whole surface as used. The review called that a loosening (a blocker).
+  - **The final fix:** `dynamicUse()` in the index records the names a dynamic import is destructured into or read as. The whole surface counts only when the module object escapes (a rest element, `.then`, passed on).
+  - **A negative test:** in place.
+  - **Measured, before the narrowing:** 1,352 unreachable exports in "every" mode before, 944 after.
+- **Entry-point tests, by group (test files only):**
+
+  | Group | Specs | Reached through an entry point |
+  | --- | --- | --- |
+  | G1 | dashboard, surface, teams, extensibility | 82 of 87; DB-1..DB-12 cited with fault injection (TST-02) |
+  | G2 | design-stage, measurement, context | 83 of 89 |
+  | G3 | planner-pm, integrations | 86 of 92 |
+  | G4 | gates, worker-loop, runtime | 72 of 88 |
+  | G5 | kernel, models | 71 of 91 |
+  | G6 | review-git, security | 79 of 89 |
+
+  - **TST-03:** the unhappy-path matrix is a test with checked-in n/a tables (`apps/harness/tests/unhappy_matrix/*.json`).
+  - **Browser specs:** they run in their own vitest project, one fork and one file at a time, after the others (`vitest.config.ts`, `scripts/test_split.mjs`).
+  - **No real model ports:** spawned commands are refused ports 11434, 8098, 8099 and 8080.
+- **The totals, from the sweep's analyzer run:**
+
+  | Count | Before | After |
+  | --- | --- | --- |
+  | Built criteria | 732 | 742 |
+  | Entry-strict | 181 | 651 |
+  | **Unit-only** | **520** | **36** |
+  | No-test | 1 | 1 (DB-NM14-4) |
+  | Reasoned n/a | 4 | 23 |
+  | Built but cited by no test | 35 | 8 |
+
+  §G 14 (no unit-only built criterion) is **not yet met**: 36 remain, each listed with its reason in ENTRY_POINTS.md. SPEC-01: status conflicts 131 → 141 and orphans 415 → 400, both still open.
+- **Product findings** (plus `tracing.ts`'s missing busy timeout): criteria marked built that fail through their real entry point. No test was weakened or skipped; all are in `lead-work/c2d_findings.md` and routed to C5 and C6. Examples:
+  - K-N6-1: an issue filed from the New issue form records no owner (`run_routes.ts:204`);
+  - MD-N2-4: the high-pressure "mask older observations" action is never carried out (`PressureControls.takeMaskingRequest` has no caller);
+  - the split route answers a refused split with a 500;
+  - `runPackageGates` (`wave2.ts:2287`) has no caller;
+  - an older doctor test (SEC-52b) reaches the host's real Ollama port;
+  - about a dozen more across planner, gates, review-git and security.
+- **A disclosure:** one writer's exploratory run, not a committed test, of `plan` with research allowed sent about 13 read-only GETs carrying a test spec's keywords to the real registry.npmjs.org, api.github.com and api.deps.dev. Its preload intercepted `fetch` but not `node:https`. The committed helper (`tests/support/g2_model.ts`) reroutes `node:http` and `node:https` too.
+- **Review:** 2 blockers (the loosened reachability gate; §G 14 not met, now stated) and 13 majors. The fixer handled them, and the re-check confirmed the gate fix.
+- **The gate's one failure, a real race (RUN-2):** when two `queue` processes start together, the second sometimes stops with SQLite's "database is locked" instead of the lease refusal. It happened in about 1 of 3 runs, even alone, so it is a product bug, not a flake. A helper found the cause with `SEKHEMET_DEBUG`: `KERNEL_PRAGMA_SQL` set `busy_timeout` last, so `journal_mode = WAL` ran with no busy handler and failed at once (SQLITE_BUSY_RECOVERY, errcode 261) while the other process recovered the WAL index, in `initSchema` before the lease is taken (5 of 8 runs). The fix sets `busy_timeout` first (`schema.ts`, kernel rule 38). A new kernel test (`pragmas.spec.ts`, a real child process holding the ledger for 500 ms) failed first. RUN-2 then passed 15 of 15 runs, and all 318 kernel tests pass. `tracing.ts:43` opens `traces.db` the same way after the lease is taken; it is routed to C5.
+- **The final gate's one failure, another real race (DB-6):** `dashboard_board_entry_ui.spec.ts` failed once under the gate's load, with the scroll at 236 for 120. The board told its own opening scroll (to the working column) from a person's by a one-shot flag:
+  - **First path:** a person's scroll in the same frame reached the board as one coalesced event, read as the board's own.
+  - **Second path:** a re-render before that event arrived scrolled the board back.
+  - **The fix:** the board records where it scrolled itself (`autoScrollTo`), and any position elsewhere is the person's (`board.js`; dashboard DB-6 note).
+  - **Proof:** a new test drives both scrolls in one microtask. It failed first (236 for 120), and the file then passed 5 of 5 runs.
+- **Gate:** `pnpm gate` on this exact tree: tsc 0, biome 0, vitest 0: 911 files, 7,072 passed, 71 skipped.
+- **Where the cards stop:**
+  - C2d is done, with 36 unit-only criteria and the product findings routed onward.
+  - **Next:**
+    - the Reviewer bake-off (the machine is free);
+    - C5 (install, docs, journeys, plus the findings above and F31), C6 and C7.
 
 ### Entry 81 — 2026-10-05 (Research like an engineer, adapted to agents: installed dependencies in npm, Python, Go and Rust, docs at the pinned version, question-focused excerpts, the research packet, durable research notes, Researcher probes; DEC-59)
 

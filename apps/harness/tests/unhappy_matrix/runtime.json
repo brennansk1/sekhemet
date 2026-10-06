@@ -1,0 +1,142 @@
+{
+  "NEW-runtime-1": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,undo,retry": "One supervisor and its atomic lease are about which process runs (runtime_entry_cli.spec.ts races and kills them); no criterion names an empty, loading, error, slow, outage, offline, access, scale, undo or retry path."
+    }
+  },
+  "NEW-runtime-2": {
+    "na": {
+      "empty,loading,model_down,offline,permission,large_data,undo,retry": "Kills that reach every descendant are exercised on real process trees (runtime_entry_cli.spec.ts); no criterion names an empty, loading, outage, offline, access, scale, undo or retry path."
+    }
+  },
+  "NEW-runtime-3": {
+    "na": {
+      "empty,slow,model_down,offline,permission,retry": "Crash recovery and bounded rounds; no criterion names an empty, slow, outage, offline, access or retry path beyond those covered and the restart gap named."
+    }
+  },
+  "NEW-runtime-4": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,concurrent,undo,restart": "Bounded disk (logs, spans, worktrees) is local housekeeping; no criterion names an empty, loading, error, slow, outage, offline, access, concurrency, undo or restart path beyond the retry gap named."
+    }
+  },
+  "NEW-runtime-5": {
+    "na": {
+      "empty,loading,error,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "The night's promises (scan, watchdog, server reuse, reservation) run on this machine; no criterion names an empty, loading, error, slow, outage, access, scale, concurrency, undo, retry or restart path."
+    }
+  },
+  "NEW-runtime-6": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,undo,retry,restart": "The fair scheduler and per-slot leases order local work; no criterion names an empty, loading, error, slow, outage, offline, access, undo, retry or restart path for them."
+    }
+  },
+  "NEW-runtime-7": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,concurrent,undo,retry,restart": "Budgets the spec names are enforced in process; no criterion names a path but the scale gap named."
+    },
+    "gap": {
+      "large_data": "RUN-37: no entry test yet. RUN-38: no entry test yet."
+    }
+  },
+  "NEW-runtime-8": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Backup, restore, export and upgrades are proven by the ledger commands (ledger_cmds.spec.ts); no criterion of this section names any of the twelve unhappy paths in its words."
+    }
+  },
+  "NEW-runtime-9": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Telemetry is written locally as specified (run_reports.spec.ts); no criterion names any of the twelve unhappy paths for it."
+    }
+  },
+  "NEW-runtime-10": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry": "Pausing a project is a ledger fact the runner reads; no criterion names a path but the restart gap named."
+    }
+  },
+  "NEW-runtime-11": {
+    "na": {
+      "loading,error,slow,model_down,offline,permission,large_data,retry,restart": "Backups that survive the repository are written to the user directory (backup_sets.spec.ts); no criterion names a loading, error, slow, outage, offline, access, scale, retry or restart path beyond those covered."
+    }
+  },
+  "NEW-runtime-12": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,undo,retry,restart": "Keeping the machine awake is an operating-system assertion held while work runs; no criterion names a path but the concurrency gap named."
+    },
+    "gap": {
+      "concurrent": "RUN-65: no entry test yet."
+    }
+  },
+  "NEW-runtime-13": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo": "A full disk is a named stop; no criterion names an empty, loading, slow, outage, offline, access, scale, concurrency or undo path beyond the gaps named."
+    },
+    "gap": {
+      "error": "RUN-70: no entry test yet.",
+      "retry": "RUN-69: no entry test yet.",
+      "restart": "RUN-70: no entry test yet."
+    }
+  },
+  "NEW-runtime-14": {
+    "na": {
+      "loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The Team server's health route answers one GET; no criterion names a path but the empty gap named."
+    },
+    "gap": {
+      "empty": "RUN-72: no entry test yet."
+    }
+  },
+  "NEW-runtime-15": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Starting the dashboard at login installs one login item; no criterion names any of the twelve unhappy paths for it."
+    }
+  },
+  "NEW-runtime-16": {
+    "na": {
+      "empty,loading,error,model_down,offline,permission,concurrent,undo,retry,restart": "One server for many project roots resolves each root locally; no criterion names a path other than the scale one covered and the slow gap named."
+    },
+    "gap": {
+      "slow": "RUN-81: no entry test yet."
+    }
+  },
+  "NEW-runtime-17": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The machine's list of workspaces is a local file the status API reads (workspace_status_api.spec.ts); no criterion names any of the twelve unhappy paths in its words."
+    }
+  },
+  "NEW-runtime-18": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,retry,restart": "Backups per workspace are local sets (backup_sets.spec.ts); no criterion names a path other than the undo one covered."
+    }
+  },
+  "NEW-runtime-19": {
+    "na": {
+      "empty,loading,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "A record that cannot be written is the error path itself (runtime_entry_cli.spec.ts fails the write inside SQLite); no criterion names an empty, loading, slow, outage, access, scale, concurrency, undo, retry or restart path."
+    }
+  },
+  "T5": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The server's route groups and their one guard are a property of how routes are mounted; no criterion of T5 names any of the twelve unhappy paths."
+    }
+  },
+  "P9 (DEC-06, DEC-35)": {
+    "na": {
+      "loading,error,slow,model_down,offline,large_data,undo,retry,restart": "Team-setup binding and sessions; no criterion names a loading, error, slow, outage, offline, scale, undo, retry or restart path beyond the gaps named."
+    },
+    "gap": {
+      "empty": "RUN-23: no entry test yet.",
+      "permission": "RUN-23: no entry test yet.",
+      "concurrent": "RUN-25: no entry test yet."
+    }
+  },
+  "§6 v1 acceptance": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,concurrent,undo,restart": "The v1 acceptance list restates the runtime's rules; none names a path other than the gaps listed."
+    },
+    "gap": {
+      "error": "RUN-26: no entry test yet.",
+      "large_data": "RUN-29: no entry test yet.",
+      "retry": "RUN-28: no entry test yet. RUN-50: no entry test yet."
+    }
+  },
+  "_ceiling": {
+    "gaps": 13
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "M1": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Prompt coherence is a property of the assembled prompt and its copy modules, checked over the prompts every card sends (queue_context_cli.spec.ts); assembly is in memory, with nothing to load, wait on, reach over a network, guard by access, edit concurrently, undo, retry or resume."
+    }
+  },
+  "M5": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Data contracts are a section of the assembled prompt; no criterion names any of these twelve paths for them, and pressure trimming is M5's own rule (CX-M5-1)."
+    }
+  },
+  "M8": {
+    "na": {
+      "loading,slow,model_down,offline,permission,concurrent,undo,restart": "The cache prefix and masking are how consecutive steps of one attempt are assembled (queue_context_cli.spec.ts); no criterion names a loading, slow, outage, offline, access, concurrency, undo or restart path for assembly beyond the gaps named."
+    },
+    "gap": {
+      "empty": "CX-M8-5: no entry test yet.",
+      "error": "CX-M8-8: no entry test yet.",
+      "large_data": "CX-M8-6: no entry test yet.",
+      "retry": "CX-M8-3: no entry test yet."
+    }
+  },
+  "P1": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,concurrent,undo,retry,restart": "Scope declaration reads the repository map and the index on this machine; no criterion names an empty, loading, failure, slow, outage, offline, access, concurrency, undo, retry or restart path for it beyond the benchmark gap named."
+    },
+    "gap": {
+      "large_data": "CX-P1-5: no entry test yet."
+    }
+  },
+  "T2": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The index-backed map and roles are computed from the repository on this machine with no model or network; no criterion names any of these twelve paths for them."
+    }
+  },
+  "NEW-context-1": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Token counting uses the server's /tokenize or one fallback ratio; no criterion names an empty, loading, failure, slow, outage, offline, access, scale, concurrency, undo, retry or restart path for it."
+    }
+  },
+  "NEW-context-2": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,concurrent,undo,retry,restart": "The zone caps are asserted on every assembled prompt; no criterion names an empty, loading, failure, slow, outage, offline, access, concurrency, undo, retry or restart path for them beyond the large-prompt gaps named."
+    },
+    "gap": {
+      "large_data": "CX-N2-1, CX-N2-2, CX-N2-3: no entry test yet."
+    }
+  },
+  "NEW-context-3": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,concurrent,undo,retry,restart": "Typed sections, cuts and the volatile tail are how every role's prompt is assembled (queue_context_cli.spec.ts, research_repair_cli.spec.ts); no criterion names an empty, loading, failure, slow, outage, offline, access, concurrency, undo, retry or restart path beyond the large-prompt gaps named."
+    },
+    "gap": {
+      "large_data": "CX-N3-1, CX-N3-8: no entry test yet."
+    }
+  },
+  "NEW-context-4": {
+    "na": {
+      "loading,slow,model_down,offline,large_data,concurrent,undo,retry,restart": "Rule scoping, ranking and rotation are applied when a card's prompt is assembled (queue_context_cli.spec.ts); there is no loading state, model, network, large data, second writer, undo, retry or restart of their own, and a rule is retired rather than undone."
+    },
+    "gap": {
+      "permission": "CX-N4-7: no entry test yet."
+    }
+  },
+  "NEW-context-5": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The ranked map's weighting, its content-keyed cache and the condensing report are computed in memory per run (queue_context_cli.spec.ts); no criterion names any of these twelve paths for them."
+    }
+  },
+  "NEW-context-6": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Prompt versions are hashes computed by the build and compared when a role's model is gated (prompt_version_cli.spec.ts); no criterion names an empty, loading, slow, outage, offline, access, scale, concurrency, undo, retry or restart path beyond the release-gate gap named."
+    },
+    "gap": {
+      "error": "CX-N6-2: no entry test yet."
+    }
+  },
+  "§6 v1 acceptance": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,restart": "Context's acceptance list is about determinism, pressure, condensing, subtasks and rule timing; none of its items names an empty, loading, slow, outage, offline, access, scale, concurrency, undo or restart path beyond the gaps named."
+    },
+    "gap": {
+      "error": "CX-3: no entry test yet.",
+      "retry": "CX-1: no entry test yet."
+    }
+  },
+  "_ceiling": {
+    "gaps": 11
+  }
+}

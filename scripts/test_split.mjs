@@ -34,6 +34,23 @@ export function isIntegrationSpec(source) {
   return INTEGRATION_SIGNALS.some((re) => re.test(source));
 }
 
+/**
+ * A spec that drives a real Chromium (playwright-core, @playwright/test, or a
+ * product gate that launches one). These run in their own project, one file
+ * at a time after the others, so at most one Chromium is open on the 24 GB
+ * host and their timing assertions do not share the machine with the rest.
+ */
+export const BROWSER_SIGNALS = [
+  /from\s*["'](?:playwright-core|@playwright\/test)["']/,
+  /\bchromium\.launch/,
+  /\bheadless Chromium\b/,
+];
+
+/** Is this spec's source a browser test? */
+export function isBrowserSpec(source) {
+  return BROWSER_SIGNALS.some((re) => re.test(source));
+}
+
 function specs(dir, out = []) {
   for (const name of readdirSync(dir)) {
     if (name === "node_modules" || name === "dist") continue;
@@ -44,10 +61,14 @@ function specs(dir, out = []) {
   return out;
 }
 
-/** Every spec under the packages and apps test folders, split in two. */
+/**
+ * Every spec under the packages and apps test folders, split in three: unit,
+ * integration, and the browser specs taken out of either (`isBrowserSpec`).
+ */
 export function splitSpecs(root) {
   const unit = [];
   const integration = [];
+  const browser = [];
   for (const group of ["packages", "apps"]) {
     for (const pkg of readdirSync(join(root, group))) {
       let files = [];
@@ -57,9 +78,15 @@ export function splitSpecs(root) {
         continue;
       }
       for (const f of files) {
-        (isIntegrationSpec(readFileSync(f, "utf8")) ? integration : unit).push(relative(root, f));
+        const source = readFileSync(f, "utf8");
+        const list = isBrowserSpec(source)
+          ? browser
+          : isIntegrationSpec(source)
+            ? integration
+            : unit;
+        list.push(relative(root, f));
       }
     }
   }
-  return { unit: unit.sort(), integration: integration.sort() };
+  return { unit: unit.sort(), integration: integration.sort(), browser: browser.sort() };
 }

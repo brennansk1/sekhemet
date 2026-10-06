@@ -42,7 +42,10 @@ import {
  * appears in an import clause or is read as `ns.name` through a namespace
  * import, without resolving which module that clause names. A module's every
  * export is used when its namespace is used whole, or when an entry point
- * re-exports it with `export *`, directly or through other barrels (GT-T2-1).
+ * re-exports it with `export *`, directly or through other barrels (GT-T2-1),
+ * or when production code reads it through a dynamic `import()`: the names
+ * it is destructured into or read as, or its whole surface when the module
+ * object escapes (GT-T2-5).
  * Every fact comes from the source index (T2). A gate that wrongly fails a card costs a repair cycle and teaches the
  * model the gate is noise; one that misses some dead code costs a line. Only
  * exports the card itself added are judged, so it never fails a card for code
@@ -85,6 +88,15 @@ function usesOf(index: SourceIndex, file: string): { names: Set<string>; whole: 
       names.add(b.imported);
       // A default import is known by the name it is given.
       if (b.imported === "default") names.add(b.local);
+    }
+    // A dynamic `import()` reads the names it is destructured into or read
+    // as (its bindings, above), or the members of the name it is bound to
+    // (its namespace, below). One whose module object escapes reads names
+    // the index cannot see, so the whole surface counts (GT-T2-5).
+    if (imp.kind === "dynamic" && !imp.namespace && imp.bindings.length === 0) {
+      const target = index.resolve(file, imp.specifier);
+      if (target.kind === "file") for (const f of starClosure(index, target.path)) whole.add(f);
+      continue;
     }
     if (!imp.namespace) continue;
     for (const m of imp.namespace.members) names.add(m);

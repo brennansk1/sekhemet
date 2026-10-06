@@ -157,7 +157,7 @@ describe("PM-N10: long messages to Seshat", () => {
     noteChars = 0;
   });
 
-  it("accepts a 20,000-character message whole, commits it as a project document and reads it whole", async () => {
+  it("PM-N10-1, PM-N10-3: accepts a 20,000-character message whole, commits it as a project document and reads it whole", async () => {
     expect(TWENTY_K.length).toBe(20_000);
     const before = await replies();
     const headBefore = git("rev-parse", "main");
@@ -230,7 +230,7 @@ describe("PM-N10: long messages to Seshat", () => {
     expect(listed?.documents?.[0]).toMatchObject({ id: doc.id, name: "prompt.md" });
   });
 
-  it("reads a document too long for the window in parts, every character, before answering", async () => {
+  it("PM-N10-3: reads a document too long for the window in parts, every character, before answering", async () => {
     window = 6144;
     const before = await replies();
     const sent = await post("/api/pm/messages", { text: TWENTY_K });
@@ -259,7 +259,7 @@ describe("PM-N10: long messages to Seshat", () => {
     expect(reply.cites?.some((c) => c.documentId === doc.id)).toBe(true);
   });
 
-  it("condenses notes too long to sit beside the prompt, so the reply is made from them and cites it", async () => {
+  it("PM-N10-3: condenses notes too long to sit beside the prompt, so the reply is made from them and cites it", async () => {
     // A 200,000-character brief at Seshat's default window: its notes alone
     // are longer than the prompt can hold, so they are read again, in parts.
     window = 8192;
@@ -285,7 +285,7 @@ describe("PM-N10: long messages to Seshat", () => {
     expect(read?.condensed).toBeGreaterThanOrEqual(1);
   });
 
-  it("never cites a document it could not hold, even as notes, and says so", async () => {
+  it("PM-N10-3: never cites a document it could not hold, even as notes, and says so", async () => {
     // Notes that never get shorter than the prompt can hold.
     window = 8192;
     noteChars = 40_000;
@@ -302,7 +302,7 @@ describe("PM-N10: long messages to Seshat", () => {
     expect(reply.text).toContain(doc.path as string);
   });
 
-  it("reads a long message as a document, never routing it by a phrase inside it", async () => {
+  it("PM-N10-3: reads a long message as a document, never routing it by a phrase inside it", async () => {
     const before = await replies();
     // "assign … to" and a status word inside a brief are the brief's words, not a request.
     const text = `Status: please assign the night shift to Maria.\n\n${TWENTY_K}`.slice(0, 20_000);
@@ -311,7 +311,7 @@ describe("PM-N10: long messages to Seshat", () => {
     expect(reply.text).toBe("I read the brief. One question first.");
   });
 
-  it("refuses a body over the request cap with its size, before anything is recorded", async () => {
+  it("PM-N10-4: refuses a body over the request cap with 413 and its size, before anything is recorded", async () => {
     const messages = (await thread()).length;
     const head = git("rev-parse", "main");
     const huge = JSON.stringify({ text: "x".repeat(SESHAT_MESSAGE_MAX_BYTES + 10) });
@@ -357,13 +357,20 @@ describe("PM-N10: long messages to Seshat", () => {
     expect(held?.text).toBe(text);
   });
 
-  it("refuses more documents than one message carries, plainly", async () => {
+  it("PM-N10-4: refuses more documents than one message carries with 400, naming the count and the limit, before anything is recorded", async () => {
+    const messages = (await thread()).length;
+    const head = git("rev-parse", "main");
     const sent = await post("/api/pm/messages", {
       text: "Many",
       documents: Array.from({ length: 11 }, (_, i) => ({ name: `${i}.md`, text: "x" })),
     });
     expect(sent.status).toBe(400);
-    expect(((await sent.json()) as { error: string }).error).toContain("11 documents");
+    const refused = ((await sent.json()) as { error: string }).error;
+    expect(refused).toContain("11 documents");
+    expect(refused).toContain("at most 10");
+    // Nothing recorded: no message, no document committed.
+    expect((await thread()).length).toBe(messages);
+    expect(git("rev-parse", "main")).toBe(head);
   });
 
   it("posts a long weekly update whole", async () => {

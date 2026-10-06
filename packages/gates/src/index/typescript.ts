@@ -6,6 +6,7 @@ import type {
   DeclarationFact,
   DeclarationKind,
   ExportFact,
+  ImportBinding,
   ImportFact,
   LanguageAdapter,
   OperatorFact,
@@ -496,7 +497,7 @@ function collect(
         imports.push({
           specifier: spec,
           kind: "dynamic",
-          bindings: [],
+          ...dynamicUse(node),
           line: lineOf(sf, node.getStart(sf)),
         });
       } else if (
@@ -531,9 +532,19 @@ function collect(
   for (const s of statements) visit(s);
 
   // What each namespace import's local name is used for: members, or whole.
+  // A dynamic import bound to a name is a namespace too (GT-T2-5); two bound
+  // to one name cannot be told apart by name, so both count as used whole.
   const namespaces = imports.filter((i) => i.namespace);
   if (namespaces.length > 0) {
-    const byLocal = new Map(namespaces.map((i) => [i.namespace?.local ?? "", i]));
+    const byLocal = new Map<string, ImportFact>();
+    for (const i of namespaces) {
+      const local = i.namespace?.local ?? "";
+      const seen = byLocal.get(local);
+      if (seen?.namespace && i.namespace) {
+        seen.namespace.escapes = true;
+        i.namespace.escapes = true;
+      } else byLocal.set(local, i);
+    }
     const members = new Map<string, Set<string>>();
     const walk = (node: ts.Node): void => {
       if (ts.isIdentifier(node) && byLocal.has(node.text)) {
@@ -541,6 +552,9 @@ function collect(
         const own =
           ts.isNamespaceImport(parent) ||
           ts.isImportEqualsDeclaration(parent) ||
+          (byLocal.get(node.text)?.kind === "dynamic" &&
+            ts.isVariableDeclaration(parent) &&
+            parent.name === node) ||
           (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
           (ts.isQualifiedName(parent) && parent.right === node);
         if (!own) {
@@ -575,6 +589,59 @@ function collect(
     testBlocks,
     ambientModules,
   };
+}
+
+/**
+ * Which names a dynamic `import()` reads (GT-T2-5): the names it is
+ * destructured into, the member read as `(await import()).x`, or, when it is
+ * bound to a name, a namespace whose members the namespace walk collects.
+ * Anything else (a rest element, `.then(m => ...)`, the module passed on)
+ * reads names the index cannot see: no bindings and no namespace, which the
+ * consumer takes as the whole surface.
+ */
+function dynamicUse(call: ts.CallExpression): Pick<ImportFact, "bindings" | "namespace"> {
+  let outer: ts.Node = call;
+  while (
+    ts.isAwaitExpression(outer.parent) ||
+    ts.isParenthesizedExpression(outer.parent) ||
+    ts.isNonNullExpression(outer.parent) ||
+    ts.isAsExpression(outer.parent)
+  )
+    outer = outer.parent;
+  const parent = outer.parent;
+  const named = (name: string): ImportBinding => ({ imported: name, local: name, typeOnly: false });
+  // `import(x).then(...)` is the promise's method, not the module's member.
+  if (
+    ts.isPropertyAccessExpression(parent) &&
+    parent.expression === outer &&
+    !(outer === call && ["then", "catch", "finally"].includes(parent.name.text))
+  ) {
+    return { bindings: [named(parent.name.text)] };
+  }
+  if (
+    ts.isElementAccessExpression(parent) &&
+    parent.expression === outer &&
+    ts.isStringLiteralLike(parent.argumentExpression)
+  ) {
+    return { bindings: [named(parent.argumentExpression.text)] };
+  }
+  if (ts.isVariableDeclaration(parent) && parent.initializer === outer) {
+    if (ts.isIdentifier(parent.name)) {
+      return { bindings: [], namespace: { local: parent.name.text, members: [], escapes: false } };
+    }
+    if (ts.isObjectBindingPattern(parent.name)) {
+      const bindings: ImportBinding[] = [];
+      for (const el of parent.name.elements) {
+        const key = el.propertyName ?? el.name;
+        const imported = ts.isIdentifier(key) || ts.isStringLiteralLike(key) ? key.text : undefined;
+        if (el.dotDotDotToken || imported === undefined) return { bindings: [] };
+        const local = ts.isIdentifier(el.name) ? el.name.text : imported;
+        bindings.push({ imported, local, typeOnly: false });
+      }
+      return { bindings };
+    }
+  }
+  return { bindings: [] };
 }
 
 function provenance(file: string): {

@@ -1,0 +1,75 @@
+{
+  "S5": {
+    "na": {
+      "empty,slow,model_down,offline,permission,large_data,retry,restart": "Accept, reject, send-back and revert are local git and ledger decisions on one card in Review: no model, no network and no list; the empty, slow, outage, offline, access, scale, retry and restart paths are no S5 criterion's (the crash sweep is NEW-review-git-8's, team access NEW-review-git-5's)."
+    }
+  },
+  "S6": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,concurrent,undo,retry,restart": "ReviewWIP is a number derived on the board from the recorded human decisions and the review budget; no S6 criterion names an empty, loading, slow, outage, offline, access, concurrency, undo, retry or restart path for it."
+    },
+    "gap": {
+      "error": "RG-S6-7: the review rate (decisions faster than 500 changed lines an hour) is computed by BoardServiceImpl.reviewRate but no route, page or command reports it (C2d finding)."
+    }
+  },
+  "P8": {
+    "na": {
+      "empty,loading,slow,offline,permission,concurrent,undo,restart": "The Reviewer is a local model reading one card's evidence in the queue; its unavailable and over-long paths are the model_down and large_data columns, and no P8 criterion names an empty, loading, slow, offline, access, concurrency, undo or restart path."
+    },
+    "gap": {
+      "retry": "RG-P8-3: several cards passing in one pass held in Verify until Smart Swap's tour loads the Reviewer needs a two-card queue on a host where the roles do not co-reside; no entry test yet."
+    }
+  },
+  "NEW-review-git-1": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,undo,retry,restart": "The rebase before Verify runs in the card's worktree inside one queue pass, with the Worker's remaining budget; no criterion names an empty, loading, slow, outage, offline, access, scale, undo, retry or restart path for it."
+    }
+  },
+  "NEW-review-git-2": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Restacking a stacked child onto the integration branch and re-running its gates is a local git and gate step; no criterion names an empty, loading, slow, outage, offline, access, scale, concurrency, undo, retry or restart path."
+    }
+  },
+  "NEW-review-git-3": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Per-package gates inside the card's verification and two-card cross-repository plans name no unhappy path; the package gate's failure is its verdict (review_git_workspace_cli.spec.ts), not an error state of the feature."
+    }
+  },
+  "NEW-review-git-4": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The release version is computed from the squashes since the last tag and tagged only on a person's confirmation; no criterion names an unhappy path, and nothing is sent anywhere."
+    }
+  },
+  "NEW-review-git-5": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,large_data,concurrent,undo,retry,restart": "Who may accept and who should look are permission rules over the project's Accept holders and CODEOWNERS; no criterion names an empty, loading, error, slow, outage, offline, scale, concurrency, undo, retry or restart path beyond the permission column."
+    }
+  },
+  "NEW-review-git-6": {
+    "na": {
+      "loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Request changes is send-back under the industry's word, one implementation for the CLI and the desk; its only unhappy path is the empty reason, the empty column."
+    }
+  },
+  "NEW-review-git-7": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Push to a remote after Accept and on release is opt-in; no criterion of the feature names an unhappy path (its integration failures are integrations.md's)."
+    }
+  },
+  "NEW-review-git-8": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,undo,retry,restart": "Accept's crash safety is the accept_started record, the lock and the start-up sweep (review_git_crash_cli.spec.ts); no criterion names another unhappy path for it."
+    }
+  },
+  "§6 v1 acceptance": {
+    "na": {
+      "loading,slow,model_down,offline,large_data,concurrent,undo,retry,restart": "The v1 acceptance list restates send-back, squash trailers and external review cards; none of its criteria names a loading, slow, outage, offline, scale, concurrency, undo, retry or restart path."
+    },
+    "gap": {
+      "error": "RG-7: an external review card whose gates fail recorded as findings and never shown as passing; no entry test yet.",
+      "permission": "RG-2: a squash message lacking Card, Agent-Model, Agent-Harness or Agent-Role refused before any ref moves; the CLI always writes the trailers, so no door can produce the missing one (n/a candidate)."
+    }
+  },
+  "_ceiling": {
+    "gaps": 4
+  }
+}

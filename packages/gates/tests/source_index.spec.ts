@@ -79,6 +79,38 @@ describe("the source index's facts (IX-1)", () => {
     expect(bySpec["./cjs.js"]?.kind).toBe("require");
   });
 
+  it("GT-T2-5: reads the names a dynamic import is destructured into or read as", () => {
+    const facts = typescriptAdapter.facts(
+      "src/m.ts",
+      [
+        "export async function f() {",
+        '  const { a, b: c } = await import("./d1.js");',
+        '  const e = (await import("./d2.js")).e;',
+        '  const m = await import("./d3.js");',
+        '  const { x, ...rest } = await import("./d4.js");',
+        '  void import("./d5.js").then((n) => n);',
+        "  return [a, c, e, m.g, m.h(), x, rest];",
+        "}",
+      ].join("\n"),
+    );
+    const bySpec = Object.fromEntries(facts.imports.map((i) => [i.specifier, i]));
+    expect(bySpec["./d1.js"]?.bindings.map((b) => [b.imported, b.local])).toEqual([
+      ["a", "a"],
+      ["b", "c"],
+    ]);
+    expect(bySpec["./d2.js"]?.bindings.map((b) => b.imported)).toEqual(["e"]);
+    expect(bySpec["./d3.js"]?.namespace).toEqual({
+      local: "m",
+      members: ["g", "h"],
+      escapes: false,
+    });
+    // A rest element or a module object passed on reads unknown names.
+    expect(bySpec["./d4.js"]?.bindings).toEqual([]);
+    expect(bySpec["./d4.js"]?.namespace).toBeUndefined();
+    expect(bySpec["./d5.js"]?.bindings).toEqual([]);
+    expect(bySpec["./d5.js"]?.namespace).toBeUndefined();
+  });
+
   it("marks a namespace used whole as escaping", () => {
     const facts = typescriptAdapter.facts(
       "src/m.ts",

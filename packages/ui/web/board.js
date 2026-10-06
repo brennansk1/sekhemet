@@ -76,7 +76,8 @@ const ui = {
   barHost: null,
   cycHost: null,
   userScrolled: false,
-  autoScroll: false,
+  /** Where the board last scrolled itself to (the working column), until its scroll event. */
+  autoScrollTo: null,
   mode: "columns",
   layoutKey: "",
   html: new Map(),
@@ -287,8 +288,12 @@ function ensureLayout(columns, fit) {
   board.addEventListener(
     "scroll",
     () => {
-      if (ui.autoScroll) ui.autoScroll = false;
-      else ui.userScrolled = true;
+      // DB-6: the board's own scroll and a person's in the same frame arrive
+      // as one event; it is the board's only if the board is where the board
+      // put it, else the person scrolled and their position is kept.
+      const own = ui.autoScrollTo !== null && Math.abs(board.scrollLeft - ui.autoScrollTo) <= 1;
+      ui.autoScrollTo = null;
+      if (!own) ui.userScrolled = true;
       // U6: a culled column scrolled into view gets its tiles back.
       if (!ui.hFrame && $(".list[data-culled]", board))
         ui.hFrame = requestAnimationFrame(() => {
@@ -632,6 +637,12 @@ function paintBoardLevelNote() {
 function openOnWorkingColumn() {
   const board = $(".board", ui.root);
   if (!board || ui.userScrolled || ui.fit.mode === "one") return;
+  // DB-6: moved since the board last put it, before that scroll's event
+  // arrived: a person scrolled, and their position stays.
+  if (ui.autoScrollTo !== null && Math.abs(board.scrollLeft - ui.autoScrollTo) > 1) {
+    ui.userScrolled = true;
+    return;
+  }
   const max = board.scrollWidth - board.clientWidth;
   if (max <= 1) return;
   const cols = $$(":scope > .col[data-col]", board);
@@ -645,7 +656,7 @@ function openOnWorkingColumn() {
   while (i > 0 && at(i) > max) i--;
   const want = Math.max(0, at(i));
   if (Math.abs(board.scrollLeft - want) > 1) {
-    ui.autoScroll = true;
+    ui.autoScrollTo = want;
     board.scrollLeft = want;
   }
 }

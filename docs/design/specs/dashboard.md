@@ -892,7 +892,7 @@ All criteria in §5, plus:
 - **DB-3** WHEN one shell state is active and another begins THE SYSTEM SHALL show only the higher-priority bar (ledger altered > offline > no Worker model > memory pause > review full > Worker paused for Seshat).
 - **DB-4** WHEN the stream is silent for more than 10 s and `/api/meta` fails THE SYSTEM SHALL show *Offline since …*, freeze timestamps and disable every action.
 - **DB-5** WHEN a stream frame changes one card THE SYSTEM SHALL patch that tile only, keeping scroll position, focus and any open drawer.
-- **DB-6** WHEN a card is parked through the API THE SYSTEM SHALL show it in On hold within 1 s with the scroll position preserved.
+- **DB-6** WHEN a card is parked through the API THE SYSTEM SHALL show it in On hold within 1 s with the scroll position preserved. *(C2d: the board told its own opening scroll from a person's by a one-shot flag, and a person's scroll in the same frame (one coalesced scroll event) or before a re-render was overwritten by the board's next frame. The board now records where it scrolled itself (`autoScrollTo`) and treats any position elsewhere as the person's: `board.js`; `dashboard_board_entry_ui.spec.ts` "a person's scroll in the same frame…", deterministic, failed first at 236 for 120.)*
 - **DB-7** WHEN a Seshat reply mentions an id that is not a card THE SYSTEM SHALL render it as plain text.
 - **DB-8** WHEN a proposal is stale THE SYSTEM SHALL disable its Apply and say why.
 - **DB-9** WHEN 500 cards are loaded THE SYSTEM SHALL scroll the board with no main-thread task over 50 ms and under 50 MB of DOM memory.

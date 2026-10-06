@@ -1,0 +1,127 @@
+{
+  "P10": {
+    "na": {
+      "loading,slow,permission,concurrent,undo,restart": "The first run is one command in one terminal for one person; there is no level, no second writer, nothing to undo but the files it wrote once (SUR-3), and nothing slow it waits on (it downloads nothing, SUR-49)."
+    },
+    "gap": {
+      "offline": "SUR-48a: an orphan; no entry test.",
+      "large_data": "SUR-37: no entry test (onboard_b41.spec.ts in process).",
+      "retry": "SUR-38: no entry test."
+    }
+  },
+  "S10": {
+    "na": {
+      "empty,loading,slow,model_down,offline,large_data,concurrent,undo,retry,restart": "S10 is the command line's contract (exit codes, unknown flags, errors, --version), spawned in cli_exit.spec.ts; it has no data path of its own."
+    }
+  },
+  "NEW-models-3 (the command side)": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,retry,restart": "Reserve and release append one ledger event each from the terminal; no data load, network or model is involved."
+    },
+    "gap": {
+      "undo": "SUR-54: no entry test."
+    }
+  },
+  "T4": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,restart": "T4 is index.ts as a command registry, a structural property (cli_registry.spec.ts)."
+    },
+    "gap": {
+      "retry": "SUR-19: no entry test."
+    }
+  },
+  "T10": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Executable documentation checks run the documents' commands in the docs test; they are a check of the repository, not a product path."
+    },
+    "gap": {
+      "error": "SUR-20, SUR-21, SUR-22, SUR-23, SUR-24: no entry test."
+    }
+  },
+  "NEW-surface-1": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "One user directory is where files are kept (SUR-25, -26, surface_commands_cli.spec.ts); a path rule has no data, network, access or timing state."
+    }
+  },
+  "NEW-surface-3": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The card layer of the configuration is one more layer read when a card runs (SUR-40, evidence_fields.spec.ts); it adds no path."
+    }
+  },
+  "NEW-surface-4": {
+    "na": {
+      "loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "One install path per audience is the documented install (README, install_package.spec.ts); it is not a runtime path."
+    },
+    "gap": {
+      "empty": "SUR-41: no entry test."
+    }
+  },
+  "NEW-surface-5": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "One recorded run profile is what a run records (SUR-44, -45); it adds no path of its own."
+    }
+  },
+  "NEW-surface-6": {
+    "na": {
+      "empty,loading,error,slow,offline,permission,large_data,concurrent,undo,retry,restart": "ask is one question and one reply (SUR-51, surface_commands_cli.spec.ts); its model-down path is SUR-51's second clause, and a queue running is waited on (ask_cmd.ts)."
+    }
+  },
+  "NEW-surface-2": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,concurrent,undo,retry,restart": "board --terminal prints the board once (SUR-27, surface_commands_cli.spec.ts); it reads the ledger and writes nothing."
+    }
+  },
+  "NEW-surface-7": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,retry,restart": "Upgrade and uninstall are the release's commands (upgrade_release.spec.ts); their paths are the criteria's own (error, undo)."
+    },
+    "gap": {
+      "error": "SUR-60: no entry test.",
+      "undo": "SUR-60: no entry test."
+    }
+  },
+  "NEW-surface-8": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,undo,retry,restart": "doctor's checks each state their own condition (SUR-83, -86, -88, -89 spawned in surface_commands_cli.spec.ts); doctor reads and changes nothing, so undo, retry and restart do not apply."
+    },
+    "gap": {
+      "error": "SUR-64, SUR-65: orphans; no entry test.",
+      "concurrent": "SUR-63: an orphan; no entry test."
+    }
+  },
+  "NEW-surface-9": {
+    "na": {
+      "empty,loading,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "Learning that a release exists is one check of a feed (next_release.spec.ts); its offline and error paths are the criteria's own."
+    },
+    "gap": {
+      "error": "SUR-69: an orphan; no entry test.",
+      "offline": "SUR-68: an orphan; no entry test."
+    }
+  },
+  "NEW-surface-10": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "--json is the output form of commands (cli_json.spec.ts, spawned); it adds no path."
+    }
+  },
+  "NEW-surface-11": {
+    "na": {
+      "loading,slow,model_down,offline,permission,large_data,concurrent,retry,restart": "The command line in a workspace of many projects resolves which project a folder is (workspace_cli.spec.ts); its states are its criteria's (empty, error, undo)."
+    }
+  },
+  "NEW-surface-12": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,undo,retry": "Observability and the reliability rows of doctor report state; they change nothing, so undo and retry do not apply."
+    }
+  },
+  "§6 v1 acceptance": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,retry,restart": "§6 is the acceptance list; each of its six criteria names its own state, and the columns none names are covered by the feature that owns them."
+    },
+    "gap": {
+      "undo": "SUR-30: an orphan; no entry test."
+    }
+  },
+  "_ceiling": {
+    "gaps": 14
+  }
+}

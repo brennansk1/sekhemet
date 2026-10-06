@@ -1,0 +1,110 @@
+{
+  "S7": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,retry,restart": "Card writes are validated against the one schema registry and appended in one SQLite transaction on this machine. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "undo": "K-S7-3: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "S4": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Transitions are checked against the stored status inside the kernel's write path before any append. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "error": "K-S4-3: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-kernel-1": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The hash chain is verified over the local SQLite ledger, incrementally from the last verified seq. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-kernel-2": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Principals are stored on each event in the local ledger and reproduced by replay. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "error": "K-N2-3: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "P3": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Issue keys are assigned from the project's prefix inside the create transaction and reproduced by replay. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-kernel-3": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,concurrent,undo,restart": "Holds and pull-request states are ledger events the kernel appends and replays locally. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, concurrency, undo or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "retry": "K-N3-6: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-kernel-4": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,restart": "Migrations run at open on the local database, each in its own transaction after a backup. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "retry": "K-N4-4: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-kernel-5": {
+    "na": {
+      "empty,loading,model_down,offline,permission,concurrent,undo,retry,restart": "Entry conditions and derived states are computed by the kernel from the ledger in the write path. No criterion of this feature names a empty, loading, model-down, offline, access, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "large_data": "K-N5-7: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-kernel-6": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Owner, delegate, accepter and builtBy are fields of card events, written and replayed locally. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-kernel-7": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,large_data,concurrent,restart": "Erasure deletes private rows and blobs in the local ledger and is re-applied after a restore. No criterion of this feature names a empty, loading, error, slow, model-down, offline, large-data, concurrency or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-kernel-8": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Traceability links and gate-result sources are ledger events read by the review entry condition. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-kernel-9": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,restart": "Kind, change and split are stored on the card at creation and read from the projection. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-kernel-10": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "`on_behalf_of` is stored on each Worker event and covered by the chain hash. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-kernel-11": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,retry,restart": "Durability is SQLite's `synchronous = FULL` with WAL on this machine, measured and fault-injected locally. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-kernel-12": {
+    "na": {
+      "loading,error,slow,model_down,offline,permission,large_data,concurrent,restart": "One workspace ledger holds every project's events on one server, with roots registered and moved by the CLI. No criterion of this feature names a loading, error, slow, model-down, offline, access, large-data, concurrency or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "retry": "K-N12-5: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "§6 v1 acceptance": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,concurrent,undo,retry,restart": "The kernel's acceptance list is checked against the local ledger and board. No criterion of this feature names a empty, loading, slow, model-down, offline, access, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "error": "K-1, K-4, K-5, K-6, K-7: no test cites them in or above a test that reaches a door (the entry-point report's strong link).",
+      "large_data": "K-6: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "_ceiling": {
+    "gaps": 9
+  }
+}

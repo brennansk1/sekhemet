@@ -1,0 +1,134 @@
+{
+  "S1": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The git preflight refuses a hostile worktree before any git command; its unhappy path is the refusal, the error column, and no S1 criterion names another."
+    }
+  },
+  "S2": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Dependency trees are confined per card (caches inside the worktree, the main node_modules read-only); their unhappy path is the refused write, the error column."
+    }
+  },
+  "S3": {
+    "na": {
+      "empty,loading,error,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "The one egress policy is a decision per request, recorded; its paths are the refusals named by host (the offline column) and no S3 criterion names an empty, loading, error state, slow, outage, access, scale, concurrency, undo, retry or restart path."
+    }
+  },
+  "S3a": {
+    "na": {
+      "empty,loading,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "One confined execution path for every command the harness runs over worktree content; no S3a criterion names an empty, loading, slow, outage, access, scale, concurrency, undo, retry or restart path."
+    },
+    "gap": {
+      "error": "SEC-17c: bubblewrap installed but unable to start a sandbox is a Linux host's path; no entry test on this macOS host (Linux runner, B1).",
+      "offline": "SEC-17a: `sekhemet improve --validate-tools` drops the failure it records (wave2.ts prints only the status), so the refused connection is recorded nowhere a person can see (C2d finding). SEC-19a: difftastic resolved from the allowlist under limits has no entry test yet."
+    }
+  },
+  "S3b": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Failing closed is a property of the sandbox's start (no engine, no run); no S3b criterion names one of the twelve paths."
+    }
+  },
+  "S3c": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,large_data,undo,retry,restart": "Secrets and the dashboard: the keychain, redaction and the page's write token; their unhappy paths are access (permission) and a stale token (concurrent); no criterion names another."
+    }
+  },
+  "S9": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Workspace trust is a hash pinned per file in the user directory; its paths are tested as untrusted content (security_untrusted_cli.spec.ts) and no S9 criterion names one of the twelve paths."
+    }
+  },
+  "NEW-security-1": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Flagging files that execute later is a mark on the card's evidence (security_later_http.spec.ts); no criterion names one of the twelve paths."
+    }
+  },
+  "NEW-security-2": {
+    "na": {
+      "empty,loading,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "The air-gap self-test and signed manifests run once on the air-gapped machine; their paths are a failed check (error) and the missing signature offline; no criterion names another."
+    }
+  },
+  "NEW-security-3": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Small hardening items (environment and path rules) name none of the twelve unhappy paths."
+    }
+  },
+  "NEW-security-4": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Injection fixtures run against the real Worker are B1's milestone runs on a loaded model, not a path a person meets; no criterion names one of the twelve."
+    }
+  },
+  "NEW-security-5": {
+    "na": {
+      "empty,loading,error,slow,model_down,permission,large_data,undo,retry,restart": "Docs and skills for the air-gapped project: a bundle at pinned versions, staleness against the lockfile, signed skill updates; their paths are offline and a stale bundle (concurrent), no other."
+    }
+  },
+  "NEW-security-6": {
+    "na": {
+      "empty,loading,error,model_down,offline,permission,large_data,concurrent,undo,restart": "An Ask-tier command waits for a person's answer on the decision queue; its paths are the wait (slow) and the no-retry rule (retry), and no criterion names another."
+    },
+    "gap": {
+      "slow": "SEC-47: a person's allow before the timeout runs the command once, recorded with who answered; no entry test yet.",
+      "retry": "SEC-48: no answer after 60 s denies the command and tells the model not to retry; no entry test yet."
+    }
+  },
+  "NEW-security-7": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Erasing a secret the scanner missed is one `sekhemet erase` run recorded as ledger/erased; no criterion names one of the twelve paths."
+    }
+  },
+  "NEW-security-8": {
+    "na": {
+      "loading,error,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "The one-time research question and research's exception to mode: its paths are the unanswered question (empty) and offline; no criterion names another."
+    }
+  },
+  "NEW-security-9": {
+    "na": {
+      "empty,loading,error,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "Model downloads under the network policy; the only named path is the offline refusal."
+    }
+  },
+  "NEW-security-10": {
+    "na": {
+      "empty,slow,model_down,offline,permission,concurrent,undo,retry,restart": "The model folder scan opens headers only, and the hub look-up is a research request; their paths are the skipped file (error, large_data, loading); no criterion names another."
+    }
+  },
+  "NEW-security-11": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "What leaves the machine is listed from the ledger's egress records; no criterion names one of these paths."
+    },
+    "gap": {
+      "error": "SEC-N11-1: the Privacy and network page generated from the policy's host list, with a test failing on an unlisted host; a documentation property with no door (n/a candidate)."
+    }
+  },
+  "NEW-security-12": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Another coding agent's configuration flagged as running later is a mark on the evidence; no criterion names one of the twelve paths."
+    }
+  },
+  "NEW-security-13": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "A card sees only its own project: sandbox denies over named paths (security_isolation_cli.spec.ts); no criterion names one of the twelve paths."
+    }
+  },
+  "NEW-security-14": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The credential store per workspace and its one-time move (security_team_http.spec.ts); no criterion names one of the twelve paths."
+    }
+  },
+  "NEW-design-stage-6 (the security side)": {
+    "na": {
+      "empty,loading,error,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "Another agent's configuration inert until approved and a taken-over repository's history scanned; the named path is offline (no MCP server, no .envrc), no other."
+    }
+  },
+  "§6 v1 acceptance": {
+    "na": {
+      "loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The v1 acceptance list restates the containment and supply-chain rules; none of its criteria names a loading, slow, outage, offline, access, scale, concurrency, undo, retry or restart path."
+    },
+    "gap": {
+      "empty": "SEC-39: an empty allowlist refuses every proxied request; with an empty allowlist the card gets no proxy at all, so no entry test proves the proxy's refusal yet."
+    }
+  },
+  "_ceiling": {
+    "gaps": 6
+  }
+}

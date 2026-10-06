@@ -1,0 +1,124 @@
+{
+  "M1": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Coherent tool feedback is how one step's observations are worded, in process; no criterion names a loading, slow, outage, offline, access, scale, concurrency, undo, retry or restart path beyond the gap named."
+    },
+    "gap": {
+      "error": "WL-M1-5: no entry test yet."
+    }
+  },
+  "M2": {
+    "na": {
+      "slow,model_down,offline,permission,concurrent,undo,retry,restart": "The tool arms differ in what one step offers; no criterion names a slow, outage, offline, access, concurrency, undo, retry or restart path for them (worker_loop_entry_cli.spec.ts covers the others)."
+    }
+  },
+  "M3": {
+    "na": {
+      "empty,loading,error,model_down,offline,permission,concurrent,undo,retry,restart": "Separate budgets and finish_reason are read per request from the engine's reply; no criterion names an empty, loading, outage, offline, access, concurrency, undo, retry or restart path beyond the gaps named."
+    },
+    "gap": {
+      "slow": "WL-M3-2: no entry test yet.",
+      "large_data": "WL-M3-5: no entry test yet. WL-M3-2: no entry test yet."
+    }
+  },
+  "T3": {
+    "na": {
+      "loading,slow,model_down,offline,permission,concurrent,undo,restart": "Phases, the verification controller and the stop-reason table are computed per step in the run; no criterion names a loading, slow, outage, offline, access, concurrency, undo or restart path beyond the gaps named."
+    },
+    "gap": {
+      "empty": "WL-T3-2: no entry test yet.",
+      "error": "WL-T3-9: no entry test yet.",
+      "large_data": "WL-T3-12: no entry test yet.",
+      "retry": "WL-T3-6: no entry test yet."
+    }
+  },
+  "NEW-worker-loop-1": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,concurrent,undo,retry,restart": "Repetition refusals compare a step's calls with the attempt's earlier ones in process; no criterion names any path but the scale gap named."
+    },
+    "gap": {
+      "large_data": "WL-N1-1: no entry test yet."
+    }
+  },
+  "NEW-worker-loop-2": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The ladder's fields are what a repair rung carries; no criterion names any path but the error gap named."
+    },
+    "gap": {
+      "error": "WL-N2-1: no entry test yet."
+    }
+  },
+  "NEW-worker-loop-3": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Removing the session's direct-tool API is a property of the source, with no runtime path to fail, wait, go offline, be refused, scale, race, undo, retry or restart."
+    }
+  },
+  "NEW-worker-loop-4": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "ask's decision request and its delivery at the next step boundary (worker_loop_entry_cli.spec.ts) name none of the twelve paths in their criteria: the person's answer is a write on the ledger the run reads."
+    }
+  },
+  "NEW-worker-loop-5": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,undo,restart": "The attempt record, the grounded re-plan and equal repair chances are ledger facts of one attempt; no criterion names a path but the concurrency and retry gaps named."
+    },
+    "gap": {
+      "concurrent": "WL-N5-3: no entry test yet.",
+      "retry": "WL-N5-4: no entry test yet."
+    }
+  },
+  "NEW-worker-loop-6": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Mechanical edits (rename_symbol) are applied through the language server in the worktree (worker_loop_entry_cli.spec.ts); no criterion names any of the twelve paths for them."
+    }
+  },
+  "NEW-worker-loop-8": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "MCP tools without their prefill cost is how tools are listed in the prompt; no criterion names any of the twelve unhappy paths for it."
+    }
+  },
+  "NEW-worker-loop-9": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The evidence-gated commit is an experiment arm of one attempt; no criterion names any of the twelve unhappy paths for it."
+    }
+  },
+  "NEW-worker-loop-7": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,concurrent,undo,retry,restart": "Language servers start lazily, capped, and fall back when absent (worker_loop_entry_cli.spec.ts); no criterion names a loading, slow, outage, offline, access, concurrency, undo, retry or restart path for them."
+    }
+  },
+  "NEW-worker-loop-10": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry": "Collaborating on a running issue goes through the card commands and the board (card_cli.spec.ts, worker_loop_entry_cli.spec.ts); no criterion names a path other than the restart one covered."
+    }
+  },
+  "NEW-worker-loop-11": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry": "disk_low is a stop reason with its table row and its stop; no criterion names an empty, loading, slow, outage, offline, access, scale, concurrency, undo or retry path beyond the gaps named."
+    },
+    "gap": {
+      "error": "WL-N11-2: no entry test yet. WL-N11-3: no entry test yet.",
+      "restart": "WL-N11-2: no entry test yet."
+    }
+  },
+  "NEW-worker-loop-12": {
+    "na": {
+      "empty,loading,offline,permission,large_data,concurrent,undo,restart": "model_unavailable is the Worker's outage itself (worker_loop_entry_cli.spec.ts kills the engine); no criterion names an empty, loading, offline, access, scale, concurrency, undo or restart path for it."
+    }
+  },
+  "§6 v1 acceptance": {
+    "na": {
+      "loading,model_down,offline,permission,concurrent,undo,restart": "The v1 acceptance list restates the loop's rules; none names a loading, outage, offline, access, concurrency, undo or restart path, and the named ones are the gaps listed."
+    },
+    "gap": {
+      "empty": "WL-11: no entry test yet. WL-15: no entry test yet.",
+      "error": "WL-8: no entry test yet. WL-9: no entry test yet.",
+      "slow": "WL-2: no entry test yet.",
+      "large_data": "WL-13: no entry test yet.",
+      "retry": "WL-1: no entry test yet."
+    }
+  },
+  "_ceiling": {
+    "gaps": 18
+  }
+}

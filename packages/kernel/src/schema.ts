@@ -35,13 +35,20 @@ export const LEDGER_SYNC_DECISION = {
   evidence: "evidence/append_sync_2026-10-05.json",
 } as const;
 
+/**
+ * `busy_timeout` comes first: every pragma before it runs with no busy
+ * handler, and `journal_mode = WAL` reads the file, so a second process
+ * opening the ledger while the first recovers its WAL index
+ * (SQLITE_BUSY_RECOVERY) or holds it failed at once with "database is
+ * locked" instead of waiting (RUN-2, runtime.md).
+ */
 export const KERNEL_PRAGMA_SQL = `
+PRAGMA busy_timeout = 5000;
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = ${LEDGER_SYNC_DECISION.synchronous};
 PRAGMA fullfsync = ${LEDGER_SYNC_DECISION.fullfsync ? "ON" : "OFF"};
 PRAGMA checkpoint_fullfsync = ${LEDGER_SYNC_DECISION.checkpointFullfsync ? "ON" : "OFF"};
 PRAGMA foreign_keys = ON;
-PRAGMA busy_timeout = 5000;
 `;
 
 /** The `cards` shape, derived from the one card column table (rule 38, K-N4-4). */

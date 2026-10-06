@@ -1,0 +1,50 @@
+{
+  "P9": {
+    "na": {
+      "empty,model_down,offline,undo": "GitHub, the notifier and people in the Team setup run against local stubs over HTTP and the CLI (integrations_github_http.spec.ts, notify_slack_http.spec.ts, integrations_team_http.spec.ts); no P9 criterion names an empty tracker, a model, an offline mode of its own (the network policy's refusal is security's) or an undo."
+    }
+  },
+  "NEW-integrations-1": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "An import is idempotent by the entity's externalRef and updatedAt (INT-11d, integrations_github_http.spec.ts); its criteria name only the error path, covered, and no empty, loading, slow, model, network, access, size, concurrency, undo, retry or restart path."
+    }
+  },
+  "NEW-integrations-2": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,large_data,undo,retry,restart": "Owner, delegate and accepter are written once per sync and checked at Accept (INT-36, INT-39 to INT-41 over HTTP); apart from the access and concurrency paths, covered, no criterion names an empty, loading, error, slow, model, network, size, undo, retry or restart path."
+    }
+  },
+  "NEW-integrations-3": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "An external result is recorded once per check run with its source (integrations item 15a); its criteria name no empty, loading, error, slow, model, network, access, size, concurrency, undo, retry or restart path."
+    }
+  },
+  "NEW-integrations-4": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,undo,restart": "Reconciling inherited issues is one take-over read and one person's apply (takeover_issues_cli.spec.ts, INT-42 to INT-44); apart from the second-run and apply-once paths, covered, no criterion names an empty, loading, error, slow, model, network, access, size, undo or restart path."
+    }
+  },
+  "NEW-integrations-5": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The Jira export is a file written from the board in Jira Cloud's columns on request (jira_export.spec.ts over HTTP); its criteria name no empty, loading, error, slow, model, network, access, size, concurrency, undo, retry or restart path."
+    }
+  },
+  "NEW-integrations-6": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Check Run annotations are posted in batches of 50 when a pull request is opened through the App (INT-47, INT-47a, integrations_github_http.spec.ts); the batching has no empty, loading, error, slow, model, network, access, concurrency, undo, retry or restart path of its own."
+    }
+  },
+  "S3c": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Integration secrets live in the keychain or a 0600 file chosen by the person (security's S3c tests); no integrations criterion of S3c names an empty, loading, error, slow, model, network, access, size, concurrency, undo, retry or restart path."
+    }
+  },
+  "§6 v1 acceptance": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The v1 acceptance list restates P9's criteria; no acceptance criterion names an empty, loading, error, slow, model, network, access, size, concurrency, undo, retry or restart path of its own."
+    }
+  },
+  "_ceiling": {
+    "gaps": 0
+  }
+}

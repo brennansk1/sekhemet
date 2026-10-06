@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error: a plain ESM script, shared with vitest.config.ts.
-import { isIntegrationSpec, splitSpecs } from "../../../scripts/test_split.mjs";
+import { isBrowserSpec, isIntegrationSpec, splitSpecs } from "../../../scripts/test_split.mjs";
 import { runDevCommand } from "../src/wave2.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -24,7 +24,41 @@ describe("X23: test:unit and test:integration", () => {
     expect(isIntegrationSpec('execFileSync("git", ["init"])')).toBe(true);
     expect(isIntegrationSpec("const db = new DatabaseSync(':memory:')")).toBe(false);
     expect(scripts["test:unit"]).toBe("vitest run --project unit");
-    expect(scripts["test:integration"]).toBe("vitest run --project integration");
+    expect(scripts["test:integration"]).toBe("vitest run --project integration --project browser");
+  });
+
+  // C2d review: one Chromium at a time. A spec that drives a browser is in
+  // the browser project alone, which runs its files in one fork, one after
+  // another, after the unit and integration projects.
+  it("runs every browser spec in its own serial project, after the others", async () => {
+    const s = splitSpecs(ROOT) as { unit: string[]; integration: string[]; browser: string[] };
+    for (const f of [
+      "apps/harness/tests/dashboard_faults_ui.spec.ts",
+      "apps/harness/tests/dashboard_pages_entry_ui.spec.ts",
+      "apps/harness/tests/a11y.spec.ts",
+      "packages/gates/tests/visual_design.spec.ts",
+    ]) {
+      expect(s.browser, f).toContain(f);
+      expect(s.integration, f).not.toContain(f);
+      expect(s.unit, f).not.toContain(f);
+    }
+    // Built at run time, so this file's own source is not a browser spec.
+    expect(isBrowserSpec(`import { chromium } from ${'"playwright'}-core";`)).toBe(true);
+    expect(isBrowserSpec('execFileSync("git", ["init"])')).toBe(false);
+    const { default: config } = (await import("../../../vitest.config.ts")) as {
+      default: { test: { projects: { test: Record<string, unknown> }[] } };
+    };
+    const browser = config.test.projects.find((p) => p.test.name === "browser")?.test;
+    expect(browser).toMatchObject({
+      include: s.browser,
+      fileParallelism: false,
+      poolOptions: { forks: { singleFork: true } },
+      sequence: { groupOrder: 1 },
+    });
+    for (const p of config.test.projects) {
+      if (p.test.name === "browser") continue;
+      expect(p.test.sequence ?? {}).not.toHaveProperty("groupOrder");
+    }
   });
 });
 

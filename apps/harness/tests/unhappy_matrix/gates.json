@@ -1,0 +1,83 @@
+{
+  "T1": {
+    "na": {
+      "loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The one gate pipeline runs on this machine's worktree with no model and no network; its failure paths are the error column (an unavailable gate is never a pass), and no T1 criterion names a loading, slow, outage, offline, access, scale, concurrency, undo, retry or restart path."
+    }
+  },
+  "T2": {
+    "na": {
+      "empty,loading,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The source index answers from the files of one worktree in process, a derived cache rebuilt on demand (IX-3); no criterion names a loading, outage, offline, access, scale, concurrency, undo, retry or restart path for it."
+    },
+    "gap": {
+      "slow": "GT-T2-4: a test over Sekhemet's own repository with every export treated as added; no command a person runs judges every export (n/a candidate, gate internals)."
+    }
+  },
+  "M6": {
+    "na": {
+      "loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The repair contract shapes failures the gates already produced, in process; no criterion names a loading, slow, outage, offline, access, scale, concurrency, undo, retry or restart path for it."
+    }
+  },
+  "P1": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Red-first runs the staged acceptance tests once on the base before any step; no P1 criterion names an empty, loading, slow, outage, offline, access, scale, concurrency, undo, retry or restart path beyond the gap named."
+    },
+    "gap": {
+      "error": "GT-P1-2: no entry test yet."
+    }
+  },
+  "NEW-gates-1": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The unenforced-invariant list is read from the brief on this machine and served to the board and the standup (gates_entry_http.spec.ts); no criterion names any of these twelve paths for it."
+    }
+  },
+  "NEW-gates-2": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Judging only what the card wrote reads the card's diff against the configured base in its worktree; no criterion names a loading, slow, outage, offline, access, scale, concurrency, undo, retry or restart path."
+    }
+  },
+  "NEW-gates-3": {
+    "na": {
+      "empty,loading,model_down,offline,permission,large_data,concurrent,undo,restart": "Gate economics (cache, order, impacted tests, quarantine, one style fix) is local to one verification; no criterion names a loading, outage, offline, access, scale, concurrency, undo or restart path for it."
+    }
+  },
+  "NEW-gates-4": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The visual layer runs a confined local browser against the project's own page; no criterion names a loading, slow, outage, offline, access, scale, concurrency, undo, retry or restart path beyond its error cases."
+    }
+  },
+  "NEW-gates-5": {
+    "na": {
+      "empty,loading,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "Templates, the claim gate and the bundled rules run locally inside verification; no criterion names a loading, slow, outage, access, scale, concurrency, undo, retry or restart path beyond the gaps named."
+    },
+    "gap": {
+      "error": "GT-N5-3: a research card's claim gate through the queue; no entry test yet.",
+      "offline": "GT-N5-4: semgrep is resolved only from the fixed allowlisted paths and is not installed here; no entry test yet."
+    }
+  },
+  "NEW-gates-6": {
+    "na": {
+      "loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry": "Test strength is judged before the first step on the worktree as it stands; no criterion names a loading, slow, outage, offline, access, scale, concurrency, undo or retry path for it."
+    }
+  },
+  "NEW-gates-7": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The onboarding baseline, supersession, tool-applied lines and workspace order are facts of one verification on this machine; no criterion names any path but the error column for them."
+    }
+  },
+  "NEW-gates-8": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The card's change field and its test-strength record are stored facts of the card; no criterion of NEW-gates-8 names any of the twelve unhappy paths."
+    }
+  },
+  "§6 v1 acceptance": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The v1 acceptance list restates the rules each workstream proves; none names a loading, slow, outage, offline, access, scale, concurrency, undo, retry or restart path, and the error criteria are the gap named."
+    },
+    "gap": {
+      "error": "GT-2: no entry test yet. GT-3: no entry test yet. GT-4: no entry test yet. GT-5: no entry test yet. GT-6: no entry test yet. GT-7: no entry test yet. GT-8: no entry test yet. GT-9: no entry test yet. GT-10: no entry test yet."
+    }
+  },
+  "_ceiling": {
+    "gaps": 5
+  }
+}

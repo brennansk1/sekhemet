@@ -1,0 +1,82 @@
+{
+  "NEW-teams-1": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Solo and Team setups are chosen at start; the setup token is a local file of mode 0600. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-teams-2": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,large_data,concurrent,undo,retry,restart": "Access levels are checked by the server on every write, per project. No criterion of this feature names a empty, loading, error, slow, model-down, offline, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-teams-3": {
+    "na": {
+      "empty,loading,slow,model_down,offline,large_data,concurrent,undo,retry": "Built-in accounts, invites, passwords and sessions are handled by the Team server. No criterion of this feature names a empty, loading, slow, model-down, offline, large-data, concurrency, undo or retry path, so the path is not one this feature has."
+    },
+    "gap": {
+      "error": "TEAM-35: no test cites it in or above a test that reaches a door (the entry-point report's strong link).",
+      "restart": "TEAM-35: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-teams-4": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Identity-provider sign-in maps a claim to a level, or refuses in strict mode. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-teams-5": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,large_data,concurrent,undo,retry,restart": "The Agent and Seshat appear as AI teammates on an issue, acting on behalf of the person who started them. No criterion of this feature names a empty, loading, error, slow, model-down, offline, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-teams-6": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,large_data,concurrent,restart": "Seshat's suggestions are posted, applied or dismissed by people, with auto-apply rules an Admin sets. No criterion of this feature names a empty, loading, error, slow, model-down, offline, large-data, concurrency or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-teams-7": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The Inbox collects mentions, delegations and watched changes per person. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-teams-8": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Accept is held to the branch and to open review threads in the Team setup. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-teams-9": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Presence shows who views an issue, from the live stream, writing nothing. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-teams-10": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Audit lists the recorded security events, and configuration drift is recorded at start. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-teams-11": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,concurrent,undo,retry,restart": "Project health, the weekly update and the per-person Agent cap are recorded on the ledger. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-teams-12": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The Team compose profiles and `doctor`'s https check are read from the server's own configuration. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    },
+    "gap": {
+      "error": "TEAM-47: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
+    }
+  },
+  "NEW-teams-13": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Removing a person lists, pauses, refuses and notifies from the ledger's own records. No criterion of this feature names a empty, loading, error, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "NEW-teams-14": {
+    "na": {
+      "empty,loading,error,slow,model_down,offline,large_data,concurrent,undo,retry,restart": "Projects are created, adopted, approved and moved within one workspace's server. No criterion of this feature names a empty, loading, error, slow, model-down, offline, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
+    }
+  },
+  "_ceiling": {
+    "gaps": 3
+  }
+}

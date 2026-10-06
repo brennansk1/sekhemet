@@ -7,7 +7,11 @@ import { splitSpecs } from "./scripts/test_split.mjs";
 const EXCLUDE = ["**/node_modules/**", "**/dist/**", "fixtures/**"];
 // X23: `pnpm test:unit` (mocked, in-memory) and `pnpm test:integration`
 // (real git, fixtures, on-disk SQLite, servers), split by what each spec does.
-const split = splitSpecs(import.meta.dirname) as { unit: string[]; integration: string[] };
+const split = splitSpecs(import.meta.dirname) as {
+  unit: string[];
+  integration: string[];
+  browser: string[];
+};
 
 export default defineConfig({
   test: {
@@ -44,6 +48,21 @@ export default defineConfig({
       {
         extends: true,
         test: { name: "integration", include: split.integration, testTimeout: 30_000 },
+      },
+      // The specs that drive a real Chromium: one file at a time, in one fork,
+      // after every other project has finished, so at most one Chromium is
+      // open and its timing assertions (Undo's 10 s, Accept's 3 s grace, the
+      // offline check's 10 s) do not share the host with the rest (C2d review).
+      {
+        extends: true,
+        test: {
+          name: "browser",
+          include: split.browser,
+          testTimeout: 30_000,
+          fileParallelism: false,
+          poolOptions: { forks: { singleFork: true } },
+          sequence: { groupOrder: 1 },
+        },
       },
     ],
   },

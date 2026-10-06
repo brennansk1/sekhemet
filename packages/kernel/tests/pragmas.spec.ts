@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -72,5 +73,40 @@ describe("@sekhemet/kernel connection pragmas on a real database file (K23)", ()
 
     holder.close();
     waiter.close();
+  });
+
+  it("waits out a lock another process holds while the connection is being opened (RUN-2)", async () => {
+    // The race RUN-2 met: two `queue` processes open the same ledger at the
+    // same moment and one is still recovering the WAL index (SQLITE_BUSY_RECOVERY)
+    // when the other runs the connection pragmas. Every pragma before the busy
+    // timeout ran with no busy handler, so `journal_mode = WAL` failed at once.
+    // Here another process holds the file exclusively for a moment instead.
+    const file = join(dir, "events.db");
+    const first = open();
+    initSchema(first);
+    first.close();
+    const holder = spawn(
+      process.execPath,
+      [
+        "-e",
+        `const { DatabaseSync } = require("node:sqlite");
+const db = new DatabaseSync(${JSON.stringify(file)});
+db.exec("PRAGMA locking_mode = EXCLUSIVE; BEGIN IMMEDIATE; INSERT INTO projects (id, name, root_path, created_at, updated_at) VALUES ('proj_x', 'x', '/x', '', ''); COMMIT;");
+process.stdout.write("held\\n");
+setTimeout(() => db.close(), 500);`,
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    const exited = new Promise((ok) => holder.once("exit", ok));
+    await new Promise((ok) => holder.stdout?.once("data", ok));
+
+    const opener = open();
+    const started = Date.now();
+    expect(() => initSchema(opener)).not.toThrow();
+    // It waited for the other process rather than failing at once.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(300);
+    expect(opener.prepare("SELECT COUNT(*) AS n FROM projects").get()).toMatchObject({ n: 1 });
+    opener.close();
+    await exited;
   });
 });

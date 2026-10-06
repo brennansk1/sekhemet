@@ -1,0 +1,7 @@
+{
+  "note": "The entry-point report's counts (scripts/entry_points.mjs) as this tree measures them: built criteria classed unit-only or no-test, and the SPEC-01 status conflicts and orphans. entry_points.spec.ts asserts each equals the tree's count, so a change that moves one updates this file in the same commit, and that none is above the file at the merge base with main, so they only fall (FINISH_LINE_PLAN C2d, §G 14: unit-only and no-test go to 0). Recorded 2026-10-06 in C2d's fix round.",
+  "unitOnly": 36,
+  "noTest": 1,
+  "conflicts": 141,
+  "orphans": 400
+}
