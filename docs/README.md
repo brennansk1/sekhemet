@@ -18,6 +18,12 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [DEFINITION_OF_DONE.md](../DEFINITION_OF_DONE.md) | What "finished" means for the harness. |
 | [DEV_LOG.md](../DEV_LOG.md) | Dated record of who did what, newest first. |
 
+## docs/: for people using Sekhemet
+
+| File | Purpose |
+|---|---|
+| [FEATURES.md](FEATURES.md) | The full feature catalogue, each capability with its status mark; moved out of the README. |
+
 ## design/: how the product works and looks
 
 | File | Purpose |
@@ -82,6 +88,8 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | File | Purpose |
 |---|---|
 | [INSTALL.md](reference/INSTALL.md) | The two install paths — the npm package for a person, the server image for a team with its identity proxy and separate inference container — and the source install. |
+| [STATUS.md](reference/STATUS.md) | Where the project stands, the milestones and measurements in brief, the path to 1.0 and the proposals after it; moved out of the README. |
+| [MODELS.md](reference/MODELS.md) | The engine, supported hardware, the shipped model set with sizes and licences, fetching and verifying models, the reasoning floor. |
 | [MILESTONES.md](reference/MILESTONES.md) | The plan's milestones the owner sees, each with the evidence file its runner (`pnpm milestone <id>`) produced on the reference machine, the commit and date, and PASS, FAIL or NOT RUN with the reason. |
 | [SUITE_RUNS.md](reference/SUITE_RUNS.md) | Every recorded frozen-suite score with its hash, and why the failures failed. |
 | [PHASE0.md](reference/PHASE0.md) | The go/no-go measurement and its verdict: what was measured, what it does not establish, and how to reproduce it. |

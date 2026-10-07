@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 83 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 84 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,30 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 84 — 2026-10-07 (The README redesigned per the marketing report's §6; the detail moved to FEATURES.md, MODELS.md and STATUS.md)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver, at the owner's request ("update the README as well"). A helper drafted it; the lead reviewed it and corrected two claims.
+
+- **README.md:** down from 635 lines to 248, following the marketing report's §6.2 outline.
+  - **The opening:** the title, descriptor, tagline and pronunciation; four badges (the licence shown as source-available); one paragraph; "Checks decide completion, and the model never certifies its own work"; the pre-release notice.
+  - **How it works:** six steps and the mermaid diagram, whose edge now reads "request changes" (DEC-52).
+  - **The quickstart:** from source, since no npm package exists until 0.9.0. Clone, install and build, `doctor`, `models fetch --recommended`, then run. The build steps were tried in a scratch clone; `models fetch` was not run.
+  - **The models:** the four-role table, with Review unfilled.
+  - **How it compares:** a table of facts each vendor states.
+  - **What Sekhemet does not do yet:** Review unfilled (the best candidate caught 4 of 22), 24 GB minimum, no Windows, local models slower, B4.4 not run, the DEC-47 O-13 omissions, not published.
+  - **The rest:** security in five bullets; project status in one paragraph; the licence in plain words ("source-available, not open source", with FSL's terms from LICENSE); contributing (a CLA before outside code, DEC-54); the documentation index.
+- **Honesty rules:**
+  - Every claim was checked against the repository. There is no demo, logo, Discussions link or results grid, only a line that results will be published whatever they show.
+  - The only timing given is a measured one (SUITE_RUNS: 3.6 to 4.5 hours for the 30-issue suite).
+  - "served by llama.cpp's `llama-server`" is kept (`doctor_engine.spec.ts`).
+- **Moved, not deleted:** `docs/FEATURES.md` (the catalogue, updated for C2b to C4 and DEC-59), `docs/reference/MODELS.md` (the shipped set, fetching, verifying), `docs/reference/STATUS.md` (status, milestones, measurements, the roadmap), and INSTALL.md's from-source walk-through. All are indexed in docs/README.md (`docs.spec.ts`).
+- **The lead's corrections:**
+  - nail-mtp is re-qualified, at 99.3% on 17e2d25 (2026-10-06), not owed;
+  - B1 passed but is re-run on the release candidate after the research change to the sandbox.
+- **Still to do:** SPINE's claims table is stale (B1 "fail", Linux "preview", Cyber-Tiel as the Worker, 16–128 GB). It is fixed with C5's pre-publication pass.
+- **Gate:** `pnpm gate` on this exact tree: tsc 0, biome 0, vitest 0: 911 files, 7,072 passed, 71 skipped. It ran with one worker, after two runs with two workers timed out (69 and 132 timeouts, none in the changed files) while swap sat at about 6 GB. A C2d queue test was found to leave a spawned `sekhemet queue` running after vitest exits; it is routed to C5 with F31.
+- **Where the cards stop:** unchanged; next is C5, once the owner gives the go.
 
 ### Entry 83 — 2026-10-07 (The Reviewer bake-off on the schema-constrained Reviewer, partly run; downloads on the owner's yes; the host's memory and disk; C5 prepared, not launched)
 

@@ -1,6 +1,6 @@
 # Installing Sekhemet
 
-One install path per audience ([surface](../design/specs/surface.md) item 31, NEW-surface-4; owner decision O9 in [DEC-29](../design/DECISIONS.md)). Neither artefact is published yet: each is built from this repository, and where it goes is the owner's decision.
+One install path per audience ([surface](../design/specs/surface.md) item 31, NEW-surface-4; owner decision O9 in [DEC-29](../design/DECISIONS.md)). Neither artefact is published yet: each is built from this repository, and where it goes is the owner's decision. Until the npm package is published, a person installs [from source](#from-source).
 
 ## For one person: the npm package
 
@@ -68,3 +68,129 @@ Repository processes run confined by bubblewrap, which needs unprivileged user n
 ## From source
 
 For developing the harness and for the air-gap kit, the source install of [DEC-21](../design/DECISIONS.md) remains: `pnpm install && pnpm build`, then `node apps/harness/dist/index.js`.
+
+Until the npm package is published (with the public pre-release 0.9.0), this is also how a person installs Sekhemet. The [README](../../README.md#quickstart) gives the short version; the full walk-through follows.
+
+### Requirements
+
+| | |
+| --- | --- |
+| **Operating system** | macOS on Apple silicon, or Linux x64. Windows is not supported in v1. |
+| **Memory** | 24 GB or more. 16 GB is not supported in v1 ([DEC-47](../design/DECISIONS.md#dec-47--the-finish-line-decisions)). |
+| **Node.js** | 22.13 or newer (the built-in `node:sqlite`); developed and tested on Node 26. |
+| **pnpm** | 10 (the repository pins `pnpm@10.30.3`). |
+| **git** | Any recent version. |
+| **Inference** | llama.cpp's `llama-server`, build b10809 or later ([The inference engine](#the-inference-engine)), and GGUF model files. |
+| **Linux only** | `bubblewrap` and `socat` from your distribution. |
+
+macOS needs nothing extra for the sandbox: Seatbelt is built in.
+
+**Ubuntu 24.04 and later.** AppArmor stops bubblewrap from creating the namespaces it needs until a profile allows it. `sekhemet doctor` says so, and every command is refused until the profile is in place. Add the profile with:
+
+```bash
+printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' 'profile bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' | sudo tee /etc/apparmor.d/bwrap
+```
+
+```bash
+sudo apparmor_parser -r /etc/apparmor.d/bwrap
+```
+
+### Build it
+
+```bash
+git clone https://github.com/brennansk1/sekhemet.git
+cd sekhemet
+pnpm install
+pnpm build
+```
+
+`pnpm build` runs `tsc -b` over every package. pnpm may warn that it ignored the build scripts of `@biomejs/biome` and `esbuild`; the harness does not need them to run.
+
+From a checkout, `pnpm sekhemet <command>` runs `node apps/harness/dist/index.js <command>` inside the checkout. To run it in your own project, point an alias at the built file (the commands below use `sekhemet` for short):
+
+```bash
+alias sekhemet="node $PWD/apps/harness/dist/index.js"
+```
+
+Check the machine, the inference server, the sandbox and the model weights:
+
+```bash
+sekhemet doctor
+```
+
+Each failed check names what to do next.
+
+### Models
+
+Fetch the recommended set: it prints each file, its size and licence and the total, then asks before downloading anything (about 42 GB for the three filled roles; [MODELS.md](MODELS.md)):
+
+```bash
+mkdir -p ~/.sekhemet/models
+sekhemet models fetch --recommended --folder ~/.sekhemet/models
+```
+
+`~/.sekhemet/models` is the folder Sekhemet reads by default (`SEKHEMET_MODELS_DIR` names another); the folder must exist before a download.
+
+Or register a GGUF file you already have:
+
+```bash
+sekhemet models add <path-to.gguf>
+```
+
+A model is used for a role only once it is verified on this machine; `sekhemet doctor` names any verification owed and the command that runs it (for example `sekhemet qualify --models nail-mtp`), which loads the model.
+
+### Use it
+
+In your project's repository, set up on first run and open the board. The first run checks the machine, says which models it found, derives the checks from the project and asks once; with no model set up it opens the Configuration page:
+
+```bash
+sekhemet
+```
+
+Describe what you want; Sekhemet plans the work and runs it:
+
+```bash
+sekhemet "<what you want>"
+```
+
+Ask Seshat how it is going, from the terminal:
+
+```bash
+sekhemet ask "<question>"
+```
+
+See the next issue waiting on you:
+
+```bash
+sekhemet review
+```
+
+Accept it, which merges it to `main`:
+
+```bash
+sekhemet accept <issue>
+```
+
+Or request changes with a reason (`send-back` is the old name, kept as an alias):
+
+```bash
+sekhemet request-changes <issue> "<reason>"
+```
+
+Start the web dashboard on its own (it listens on `http://127.0.0.1:4040`):
+
+```bash
+sekhemet serve
+```
+
+Adopt an unfinished project instead of starting a new one:
+
+```bash
+sekhemet take-over
+```
+
+Every other command, including `run`, `queue`, `plan`, `gate`, `park`, `revert`, `release`, `benchmark`, `log`, `backup`, `restore`, `engine`, `mcp` and `acp`, is listed by:
+
+```bash
+sekhemet dev --help
+```
