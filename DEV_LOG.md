@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 82 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 83 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,35 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 83 — 2026-10-07 (The Reviewer bake-off on the schema-constrained Reviewer, partly run; downloads on the owner's yes; the host's memory and disk; C5 prepared, not launched)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. No code changed; this entry records what ran outside the repository. Each run below used a frozen snapshot of a01201f, one model at a time, with DEC-42 checks before each load.
+
+- **The Reviewer bake-off** (`measure reviewer`, the 22-defect seeded set, with RG-P8-18's JSON schema; a 2-defect smoke run before each full run):
+
+  | Candidate | Result |
+  | --- | --- |
+  | Muse Glimmer 30B (UD-Q3_K_XL) | **Impractical here.** Its first smoke review spent all 1,200 tokens thinking. With the thinking allowance the harness then learned, the second timed out at 300 s, at this host's dense-model speed. The model loaded on llama.cpp b10809 (architecture `muse-glimmer`). |
+  | Mistral Small 3.2 24B (Ollama Q4_K_M) | Smoke 0/2, both replies parsed cleanly, so the schema works. The full run was stopped by the swap guard (above 4 GB after the Muse run). |
+  | Devstral Small 2, Ministral-3-14B-Reasoning, Qwen 3.8 (measured only, rule 2.3.7) | Not run: DEC-42 skipped each, with swap at 5.5 GB. |
+
+  - **Earlier, on 2026-10-05, without the schema:**
+    - Gemma-4-26B-A4B was not admitted: 0/16 with 1 failed, and it could not reach 0.30.
+    - Qwen 3.8 was stopped by the swap guard at item 3.
+  - **The Review role stays unfilled.**
+  - **Still to run,** once memory allows (60% free; DEC-42): Mistral Small's full run, Devstral, Ministral and Qwen 3.8.
+- **Downloads on the owner's yes,** each SHA-256 verified against Hugging Face, all Apache-2.0:
+  - Gemma-4-26B-A4B UD-IQ4_XS, Devstral Small 2 IQ4_XS, Muse Glimmer 30B UD-Q3_K_XL and Ministral-3-14B-Reasoning Q6_K, registered with their model cards' sampling;
+  - **Clef-Flash** (Cloudflare's 9B decision model, Qwen3.5 base), the full BF16 release, 17 files verified, at `AI-Models/llm/clef-flash`. Not run and not integrated: a post-0.9.0 candidate for visual gates and triage, which needs the owner's yes to build. Its Q8 Ollama build waits on the owner updating Ollama from 0.35.0 to 0.35.1 or later.
+- **The host:**
+  - **Disk:** the owner had the eight largest Hugging Face cache models moved to the external drive with symlinks (2026-10-05). Sekhemet's temp leftovers are cleared, and 39 GB are free.
+  - **Memory:** swap drained to 1.8 GB after the bake-off's model processes exited. The owner's own apps leave about 53% free, under DEC-42's 60% for a model load.
+  - **Owed:** F31 (slot saves and test temp folders accumulate) is routed to C5.
+- **C5 prepared** (`lead-work/c5.js`): install, upgrade and uninstall; the Team image (INS-01); doctor's next steps; the docs and the README redesign; the pre-publication pass; W10's journeys; plus C2d's product findings, F31, socat and the relay on ::1. Not launched: the owner asked to commit and push for now.
+- **Where the cards stop:**
+  - **Milestones:** B1, B3 and B4.10 PASS. B2.5 needs the golden-brief labels; B4.4 and B4.11 need live runs after C5.
+  - **Next:** C5, then C6 and C7, and the rest of the bake-off when memory allows.
 
 ### Entry 82 — 2026-10-06 (C2d: entry-point tests. Built criteria tested only by unit tests fell from 520 to 36; the analyzer is permanent; reachability sees dynamic imports; about 20 product findings)
 
