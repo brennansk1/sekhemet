@@ -85,23 +85,35 @@ export function cardStepCap(
   return cap.otherwise !== undefined && cap.otherwise > 0 ? cap.otherwise : undefined;
 }
 
-/** Whether the user (not the built-in default) chose network.mode, and what. */
+const MODE_STRICTNESS: Record<string, number> = { offline: 0, allowlist: 1, open: 2 };
+
+/**
+ * Whether the user (not the built-in default) chose network.mode, and what.
+ * A project's `mode` may only narrow the user's (DS-N4-4, security item 28):
+ * with both set, the stricter one; a project's alone narrows the default.
+ */
 export function explicitNetworkMode(repoPath: string, argv: string[] = []): string | undefined {
   const cli = cliOverrides(argv).network as TomlTable | undefined;
   if (typeof cli?.mode === "string") return cli.mode;
-  for (const path of [
-    join(repoPath, ".sekhemet", "config.toml"),
-    process.env.SEKHEMET_USER_CONFIG ?? join(userDir(), "config.toml"),
-  ]) {
-    if (!existsSync(path)) continue;
-    try {
-      const mode = (parseToml(readFileSync(path, "utf8")).network as TomlTable | undefined)?.mode;
-      if (typeof mode === "string") return mode;
-    } catch {
-      // An unreadable file sets nothing.
-    }
-  }
-  return undefined;
+  const { user, project } = networkConfigs(repoPath);
+  if (user.mode && project.mode)
+    return (MODE_STRICTNESS[project.mode] ?? 2) < (MODE_STRICTNESS[user.mode] ?? 2)
+      ? project.mode
+      : user.mode;
+  return user.mode ?? project.mode;
+}
+
+/**
+ * The hosts an `allowlist` mode reads (DS-N4-4): the user's `fetch_allow`,
+ * narrowed to those a project's list also names; a project's list alone when
+ * the user named none (it narrows the default, never widens the user's).
+ */
+export function explicitNetworkAllow(repoPath: string): string[] {
+  const { user, project } = networkConfigs(repoPath);
+  if (!user.fetchAllow) return project.fetchAllow ?? [];
+  const mine = user.fetchAllow.map((h) => h.toLowerCase());
+  const theirs = project.fetchAllow?.map((h) => h.toLowerCase());
+  return theirs ? mine.filter((h) => theirs.includes(h)) : mine;
 }
 
 /** Queue defaults from config: models and step budget, where flags left them open. */

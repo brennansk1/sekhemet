@@ -22,6 +22,9 @@ export default defineConfig({
     // RED until an agent implements them; running them here would report the
     // harness as broken for doing exactly what it is supposed to do.
     exclude: EXCLUDE,
+    // F31: every temporary folder of the run under one folder, removed at the
+    // end with any process still running from it.
+    globalSetup: ["./apps/harness/tests/support/global_tmp.ts"],
     // Tests never read the owner's real ~/.sekhemet/config.toml (B1 review),
     // nor read or write the owner's workspace trust store (S9).
     env: {

@@ -59,7 +59,8 @@ describe("Backup (SUR-83, RUN-63)", () => {
     const w = await workspace();
     const none = backupCheck(w.folder);
     expect(none.status).toBe("warn");
-    expect(none.detail).toMatch(/no backup .*Do: run `sekhemet backup`/i);
+    expect(none.detail).toMatch(/no backup /i);
+    expect(none.do).toBe("run `sekhemet backup`.");
     const t0 = new Date();
     const set = await writeBackupSet({ workspaceFolder: w.folder, db: w.db, log: w.log, now: t0 });
     const fresh = backupCheck(w.folder, new Date(t0.getTime() + 2 * 3_600_000));
@@ -73,7 +74,8 @@ describe("Backup (SUR-83, RUN-63)", () => {
     await w.log.append({ type: "test/noted", actor: "harness", payload: { n: 2 } });
     const stale = backupCheck(w.folder, new Date(t0.getTime() + 49 * 3_600_000));
     expect(stale.status).toBe("warn");
-    expect(stale.detail).toMatch(/49 hours old.*recorded since.*Do: run `sekhemet backup`/);
+    expect(stale.detail).toMatch(/49 hours old.*recorded since/);
+    expect(stale.do).toBe("run `sekhemet backup`.");
     w.db.close();
   });
 

@@ -1,7 +1,11 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { PRIMARY_COMMANDS } from "../src/cli_commands.js";
+import { COMMAND_REGISTRY, GLOBAL_OPTIONS } from "../src/commands/registry.js";
+import { BIN, cliEnv, place } from "./support/cli_spawn.js";
 
 /**
  * Documentation stays organised because the build says so (the user's third
@@ -15,6 +19,10 @@ const ROOT_ALLOWED = new Set([
   "CLAUDE.md",
   "DEFINITION_OF_DONE.md",
   "DEV_LOG.md",
+  // Keep a Changelog, bundled in the npm package for What's new (surface SUR-68).
+  "CHANGELOG.md",
+  // This machine's operations, git-ignored and imported by CLAUDE.md (DEC-54 c2).
+  "CLAUDE.local.md",
 ]);
 
 function markdownUnder(dir: string): string[] {
@@ -41,10 +49,11 @@ describe("documentation hygiene", () => {
     expect(missing).toEqual([]);
   });
 
-  it("has no broken relative links in the root docs or docs/", () => {
+  it("has no broken relative links in the root docs, docs/ or the community files in .github/", () => {
     const files = [
       ...[...ROOT_ALLOWED].map((n) => join(ROOT, n)).filter(existsSync),
       ...markdownUnder(DOCS),
+      ...(existsSync(join(ROOT, ".github")) ? markdownUnder(join(ROOT, ".github")) : []),
     ];
     const broken: string[] = [];
     for (const file of files) {
@@ -201,5 +210,110 @@ describe("the design: spine and specifications", () => {
     ];
     const absolute = files.filter((f) => /\]\(file:\/\//.test(readFileSync(f, "utf8")));
     expect(absolute.map((f) => relative(ROOT, f))).toEqual([]);
+  });
+});
+
+/**
+ * What the README and the guide tell a person to type is what the built
+ * command takes (FINISH_LINE_PLAN W3; surface SUR-20, SUR-60, SUR-69). Each
+ * check runs the built binary, as a person would, and compares.
+ */
+const runBuilt = (args: string[]) => {
+  const p = place("sek-docs-cli-");
+  const r = spawnSync(process.execPath, [BIN, ...args], {
+    cwd: p.repo,
+    env: cliEnv(p),
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+  return { code: r.status, stdout: r.stdout, out: `${r.stdout}${r.stderr}` };
+};
+
+/** The rows of the markdown table between a generated block's markers. */
+function blockRows(text: string, name: string): string[][] {
+  const start = text.indexOf(`<!-- generated:${name}:start -->`);
+  const end = text.indexOf(`<!-- generated:${name}:end -->`);
+  if (start === -1 || end === -1) return [];
+  return text
+    .slice(start, end)
+    .split("\n")
+    .filter((l) => l.startsWith("| `"))
+    .map((l) =>
+      l
+        .slice(1, -1)
+        .split(/(?<!\\)\|/)
+        // A table cell as written: pipes escaped, `<` and `>` as entities outside code.
+        .map((c) => c.trim().replace(/\\\|/g, "|").replace(/&lt;/g, "<").replace(/&gt;/g, ">")),
+    );
+}
+
+describe("the README and the guide against the built command", () => {
+  it("SUR-20: the README's command table is the front door `sekhemet --help` prints, row for row", () => {
+    const rows = blockRows(readFileSync(join(ROOT, "README.md"), "utf8"), "readme-commands");
+    const table = rows.map(([usage = "", what = ""]) => ({
+      usage: usage.replace(/^`|`$/g, ""),
+      what,
+    }));
+    expect(table).toEqual(PRIMARY_COMMANDS.map((c) => ({ usage: c.usage, what: c.what })));
+    const help = runBuilt(["--help"]);
+    expect(help.code).toBe(0);
+    for (const row of table) expect(help.stdout).toContain(`${row.usage}`);
+    for (const row of table) expect(help.stdout).toContain(row.what);
+  });
+
+  it("SUR-60: every command and flag on the Upgrade and uninstall page is the registry's, and the built help names each flag", () => {
+    const text = readFileSync(join(DOCS, "guide", "upgrade-and-uninstall.md"), "utf8");
+    const lines = [...text.matchAll(/^(?:\$ )?sekhemet ([a-z][^\n#]*)$/gm)].map((m) =>
+      (m[1] ?? "").trim(),
+    );
+    // The page gives the upgrade, the rollback and the uninstall lines.
+    for (const needed of ["uninstall --dry-run", "uninstall --yes", "restore", "backup --list"])
+      expect(
+        lines.some((l) => l.startsWith(needed)),
+        needed,
+      ).toBe(true);
+    const wrong: string[] = [];
+    const flagsOf = new Map<string, Set<string>>();
+    for (const line of lines) {
+      const [name = "", ...rest] = line.split(/\s+/);
+      const spec = COMMAND_REGISTRY.find((c) => c.name === name);
+      if (!spec) {
+        wrong.push(`${name}: not in the command registry`);
+        continue;
+      }
+      for (const w of rest.filter((x) => x.startsWith("--"))) {
+        const flag = w.slice(2).split("=")[0] ?? "";
+        if (!Object.hasOwn(spec.options, flag) && !Object.hasOwn(GLOBAL_OPTIONS, flag))
+          wrong.push(`${name} --${flag}: not a flag it takes`);
+        else flagsOf.set(name, (flagsOf.get(name) ?? new Set()).add(flag));
+      }
+      if (!flagsOf.has(name)) flagsOf.set(name, new Set());
+    }
+    expect(wrong).toEqual([]);
+    for (const [name, flags] of flagsOf) {
+      const help = runBuilt([name, "--help"]);
+      expect(help.code, name).toBe(0);
+      for (const f of flags) expect(help.stdout, `${name} --${f}`).toContain(`--${f}`);
+    }
+  });
+
+  it("SUR-69: SECURITY.md names the versions that receive fixes, covers the version the built command reports, and gives a private route", () => {
+    const security = readFileSync(join(ROOT, ".github", "SECURITY.md"), "utf8");
+    const rows = [
+      ...security.matchAll(/^\| *`?(\d+)\.(\d+|x)(?:\.(?:\d+|x))?`?[^|]*\| *(Yes|No)\b/gm),
+    ];
+    const supported = rows.filter((m) => m[3] === "Yes");
+    expect(supported.length).toBeGreaterThan(0);
+    const version = runBuilt(["--version"]).stdout.trim();
+    const [major, minor] = version.split(".");
+    expect(
+      rows.some((m) => m[1] === major && (m[2] === minor || m[2] === "x")),
+      `SECURITY.md has no row for ${version}`,
+    ).toBe(true);
+    expect(security).toMatch(/security\/advisories\/new/);
+    // The front door's help names where support and a private report go.
+    const help = runBuilt(["--help"]).stdout;
+    expect(help).toMatch(/SUPPORT\.md/);
+    expect(help).toMatch(/privately/);
   });
 });

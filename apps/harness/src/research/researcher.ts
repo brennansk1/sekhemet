@@ -913,19 +913,22 @@ export async function research(
         maxTokens: 1500,
         purpose: "planning",
       });
-      if (res.toolCalls.length === 0 || last) {
-        const text = stripReasoning(res.text);
+      // finalize_answer is the clean exit the prompt names: its content is the answer.
+      const final = finalized(res.toolCalls);
+      if (final !== undefined || res.toolCalls.length === 0 || last) {
+        const said = final ?? res.text;
+        const text = stripReasoning(said);
         // An answer that cites nothing although sources exist gets one chance
         // to attach them; a cited answer is what the team can check.
         if (!last && evidence.length > 0 && !/\[\d+\]/.test(text) && !/^not settled/i.test(text)) {
-          turns.push({ role: "assistant", content: res.text });
+          turns.push({ role: "assistant", content: said });
           turns.push({
             role: "user",
             content: `Rewrite the answer citing the sources as [n].\n\nSOURCES\n${sourceList(evidence)}`,
           });
           continue;
         }
-        return finish(res.text);
+        return finish(said);
       }
       const calls = res.toolCalls
         .slice(0, 6)
@@ -961,6 +964,8 @@ export async function research(
       maxTokens: last ? 900 : 1200,
       purpose: "planning",
     });
+    const final = finalized(res.toolCalls);
+    if (final !== undefined) return finish(final);
     if (res.toolCalls.length === 0 || last) return finish(res.text);
     const calls = res.toolCalls.slice(0, 6);
     const outputs = await execute(calls);
@@ -969,6 +974,14 @@ export async function research(
     );
   }
   return finish("");
+}
+
+/** The answer a turn gave through `finalize_answer`, when it called it. */
+function finalized(calls: readonly ToolCall[]): string | undefined {
+  const call = calls.find((c) => c.name === FINALIZE_TOOL.name);
+  if (!call) return undefined;
+  const content = (call.arguments as Record<string, unknown> | undefined)?.content;
+  return typeof content === "string" ? content : "";
 }
 
 function parseList(text: string): string[] {

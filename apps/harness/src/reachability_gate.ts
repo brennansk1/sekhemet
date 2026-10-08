@@ -14,6 +14,8 @@ import {
   announceGateStart,
   createSourceIndex,
   gateCopy,
+  isUnreadableReason,
+  unavailableGate,
 } from "@sekhemet/gates";
 
 /**
@@ -323,7 +325,7 @@ function verdictFailures(
       gate: "reachability",
       layer: "hygiene",
       exitCode: 1,
-      errorExcerpt: `${file}: does not parse cleanly (${reason}); the issue did not change it, so the verdict on what it uses is partial`,
+      errorExcerpt: `${file}: ${notJudgedBecause(reason)}; the issue did not change it, so the verdict on what it uses is partial`,
       suggestedFixFiles: [],
       location: { file, line: 0, column: 0 },
       expected: `${file} parses without errors, or the onboarding baseline records it`,
@@ -339,13 +341,15 @@ function verdictFailures(
       gate: "reachability",
       layer: "hygiene",
       exitCode: 1,
-      errorExcerpt: `${file}: does not parse cleanly (${reason}), so its exports cannot be judged`,
+      errorExcerpt: `${file}: ${notJudgedBecause(reason)}, so its exports cannot be judged`,
       suggestedFixFiles: [file],
       location: { file, line: 0, column: 0 },
       expected: `${file} parses without errors`,
       actual: reason,
       minimalRepro: RERUN_GATES,
-      suggestedAction: gateCopy.sourceNotParsed("reachability", file, reason),
+      suggestedAction: isUnreadableReason(reason)
+        ? gateCopy.sourceUnreadable("reachability", file, reason)
+        : gateCopy.sourceNotParsed("reachability", file, reason),
     }));
   return [
     ...unparsed,
@@ -368,6 +372,11 @@ function verdictFailures(
       }),
     ),
   ];
+}
+
+/** A partial file's reason in a failure: "could not be read (…)" as it is, else a parse. */
+export function notJudgedBecause(reason: string): string {
+  return isUnreadableReason(reason) ? reason : `does not parse cleanly (${reason})`;
 }
 
 export function reachabilityGate(
@@ -415,7 +424,25 @@ export function withReachabilityGate(
       // DB-N2-10: the page names this check while it runs.
       announceGateStart(runOptions, { gate: "reachability", rung: "hygiene" });
       const started = Date.now();
-      const verdict = judgeReachability(cwd, base, contract);
+      let verdict: ReachabilityVerdict;
+      try {
+        verdict = judgeReachability(cwd, base, contract);
+      } catch (err) {
+        // GT-T1-2: a gate that throws is unavailable with the error, and
+        // every other gate's outcome is kept.
+        const down = unavailableGate(
+          "reachability",
+          "hygiene",
+          "hygiene",
+          err instanceof Error ? err.message : String(err),
+        );
+        return {
+          ...res,
+          passed: false,
+          failures: [...res.failures, down.failure],
+          rungResults: [...(res.rungResults ?? []), down.outcome],
+        };
+      }
       const failures = verdictFailures(verdict, baselined);
       const open = verdict.partial.filter((p) => !baselined.has(p.file));
       const known = verdict.partial.filter((p) => baselined.has(p.file));

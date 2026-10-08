@@ -112,9 +112,13 @@ function testGates(
   baseline?: BaselineInForce,
 ): (cwd: string) => Promise<boolean> {
   return async (cwd) => {
-    const config = loadGatesConfig(existsSync(join(cwd, ".sekhemet", "gates.toml")) ? cwd : repo);
+    // The checkout's own gates.toml when it carries one, else the repository's
+    // (an untracked gates.toml, `.sekhemet/` wholly ignored, is not in the
+    // checkout): the runner verifies the file it was loaded from.
+    const configRoot = existsSync(join(cwd, ".sekhemet", "gates.toml")) ? cwd : repo;
+    const config = loadGatesConfig(configRoot);
     let runner: GateRunner = new DeterministicGateRunner(new ProcessSandbox(), {
-      repoRoot: cwd,
+      repoRoot: configRoot,
       expectedConfigSha256: config.sha256,
     });
     // A pre-existing failure the baseline records is not the tree's to answer for.

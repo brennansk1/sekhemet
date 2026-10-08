@@ -79,6 +79,15 @@ export const reviewCommand: CommandHandler = async (args, env) => {
     console.log(
       `\n  ${accept}\n  sekhemet request-changes ${card.id} "<what to change>"\n  sekhemet park ${card.id}`,
     );
+    // RG-S6-7: decisions read faster than 500 changed lines an hour are
+    // reported beside the rest, never refused (research RG-T5).
+    const rate = await boardService.reviewRate(card.projectId);
+    if (rate.fast.length > 0) {
+      const named = rate.fast.map((d) => `${d.cardId} (${d.linesPerHour} lines an hour)`);
+      console.log(
+        `\n  ${rate.fast.length} of ${rate.decisions} review decisions read faster than 500 changed lines an hour: ${named.join(", ")}. Reported, not refused.`,
+      );
+    }
     return 0;
   } finally {
     db.close();

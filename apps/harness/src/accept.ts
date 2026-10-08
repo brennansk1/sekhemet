@@ -17,7 +17,7 @@ import { contextForCard, projectRootOf } from "./card_root.js";
 import { ownersOf } from "./codeowners.js";
 import { effectiveConfig } from "./config_apply.js";
 import { localPersonDetails } from "./ledger_cmds.js";
-import { latestLedgerEvidence } from "./ledger_evidence.js";
+import { cardBranchHead, latestLedgerEvidence } from "./ledger_evidence.js";
 import { reportLostRecord } from "./lost_records.js";
 import {
   openThreadRefusal,
@@ -381,6 +381,26 @@ export async function ledgerBundle(
 }
 
 /**
+ * The external checks `[review] blocking_checks` declares whose latest result
+ * at the card branch's head failed (INT-37, K-N8-4), by name.
+ */
+async function failedBlockingChecks(ctx: AcceptContext, cardId: string): Promise<string[]> {
+  const blocking = new Set(effectiveConfig(ctx.repoPath).config.review.blockingChecks);
+  if (blocking.size === 0) return [];
+  const record = await latestLedgerEvidence(ctx.cardStore, cardId);
+  const head = cardBranchHead(ctx.repoPath, cardId);
+  if (!record || !head) return [];
+  const latest = new Map<string, boolean>();
+  for (const r of ctx.cardStore.runs.listGateResults(record.attemptId)) {
+    const ref = r.externalRef;
+    if (r.source !== "external" || !ref || ref.headSha !== head || !blocking.has(ref.checkName))
+      continue;
+    latest.set(ref.checkName, r.passed);
+  }
+  return [...latest].filter(([, passed]) => !passed).map(([name]) => name);
+}
+
+/**
  * `GateStatus` from the evidence, never hard-coded (RG-S5-7). A gate that
  * could not run is `unavailable`, never `fail`: it gave no verdict on the
  * work (gates rule 9). A real failure beside it is still `fail`.
@@ -675,6 +695,16 @@ export async function acceptPreconditions(
     throw new AcceptRefusedError(
       "evidence_failed",
       `${cardId}'s latest evidence ${(ev.rungResults ?? []).length === 0 ? "ran no checks" : "did not pass every blocking check"}`,
+    );
+  }
+  // INT-37, K-N8-4: a check the project declares blocking that failed at the
+  // card branch's head refuses Accept, as it refuses Review's entry; an
+  // undeclared one is advisory and one at another head is no evidence.
+  const failing = await failedBlockingChecks(ctx, cardId);
+  if (failing.length > 0) {
+    throw new AcceptRefusedError(
+      "evidence_failed",
+      `${cardId}'s blocking ${failing.length === 1 ? "check" : "checks"} ${failing.join(", ")} failed at the issue branch's head ([review] blocking_checks); nothing is accepted until ${failing.length === 1 ? "it passes" : "they pass"}`,
     );
   }
   const ledger = ctx.cardStore.verifyLedger();

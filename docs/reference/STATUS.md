@@ -86,7 +86,7 @@ Kept for the record. The C-sprints above replaced this order on 2026-10-01; each
 | W4 | Spec truth and the v1 scope: every row re-marked against the code | Next |
 | W16 | Completeness audit: hollow controls and missing features | To do |
 | W5 | UI/UX audit: heuristics, walkthroughs, the design system | To do |
-| W3 | Docs, install and CLI: a user guide, a CLI reference, per-command help, CHANGELOG, SECURITY.md | To do |
+| W3 | Docs, install and CLI: a user guide, a CLI reference, per-command help, CHANGELOG, SECURITY.md | Built in C5: the [user guide](../guide/index.md), its CLI reference, troubleshooting, privacy and editor pages generated from the product's tables and checked by the build, per-command help, the CHANGELOG, and SECURITY, CONTRIBUTING, CODE_OF_CONDUCT and SUPPORT in `.github/`; the clean-machine walk (§G 8) remains |
 | W6 | UI fixes and accessibility: tokens, visual baselines, axe on every page | To do |
 | W8 | Reliability and upgrade: fault injection, crash reports, upgrade tests | To do |
 | W7 | Supply chain: OSV, an SBOM, provenance (CI deferred) | To do |

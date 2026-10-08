@@ -62,6 +62,7 @@ import {
   answer,
   summarizeConversation,
 } from "../src/pm/agent.js";
+import { WORKER_QUESTION_COPY } from "../src/pm/pm_copy.js";
 import type { PmMessage } from "../src/pm/types.js";
 import { capabilityQueries } from "../src/research/capability_queries.js";
 
@@ -683,13 +684,13 @@ async function renderTemplates(): Promise<Template[]> {
   } as unknown as LearningStore;
   const consolidate = await capture((m) => consolidateWithManager(m, learning));
   t.push(...requestTemplates("seshat.consolidate", consolidate));
-  // Seshat answering a Worker's question inline (index.ts askTeam).
+  // Seshat answering a Worker's question inline (askTeam; moved from index.ts
+  // to the queue's registry command, commands/queue.ts, with `queue` in C5,
+  // and its words into the PM copy module): the same text the static
+  // template read, system then prompt, each placeholder "x".
   t.push({
     name: "seshat.ask_team.static_index_ts",
-    text: staticTemplate(
-      "apps/harness/src/index.ts",
-      "You are Seshat, the project manager. A teammate",
-    ),
+    text: `${WORKER_QUESTION_COPY.system}\n${WORKER_QUESTION_COPY.prompt("x", "x", "x", "x")}`,
   });
 
   // --- Reviewer ---

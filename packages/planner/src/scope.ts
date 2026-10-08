@@ -18,18 +18,18 @@ const DEFAULT_TEST_DIR = "tests";
  * claim `src/service.ts` cannot run concurrently, which is what the INVEST
  * independence check exists to prevent.
  */
-function conventionalName(slice: SpidrSliceKind, slug: string): string {
+function conventionalName(slice: SpidrSliceKind, slug: string, ext = ".ts"): string {
   switch (slice) {
     case "interface":
-      return `${slug}_types.ts`;
+      return `${slug}_types${ext}`;
     case "data":
-      return `${slug}_store.ts`;
+      return `${slug}_store${ext}`;
     case "path":
-      return `${slug}.ts`;
+      return `${slug}${ext}`;
     case "rule":
-      return `${slug}_rules.ts`;
+      return `${slug}_rules${ext}`;
     case "spike":
-      return `${slug}_spike.ts`;
+      return `${slug}_spike${ext}`;
   }
 }
 
@@ -98,12 +98,13 @@ export function selectScopeFiles(
 
   if (files.length === 0) {
     const sourceDir = map?.sourceDir ?? DEFAULT_SOURCE_DIR;
-    const base = `${sourceDir}/${conventionalName(slice, slug)}`;
+    const ext = map?.sourceExt ?? ".ts";
+    const base = `${sourceDir}/${conventionalName(slice, slug, ext)}`;
     /** Two slices with the same slug would otherwise collide and be serialized. */
     let invented = base;
     let suffix = 2;
     while (taken.has(invented)) {
-      invented = base.replace(/\.ts$/, `_${suffix}.ts`);
+      invented = `${base.slice(0, -ext.length)}_${suffix}${ext}`;
       suffix += 1;
     }
     files.push(invented);

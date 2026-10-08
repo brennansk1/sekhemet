@@ -120,7 +120,7 @@ The design mentions **Seshat zero times**, yet it locks model roles as "never as
 | 10 | Design `:3153` "ui… React / Tailwind"; AGENTS.md:90 "TanStack Virtual canvas" | `packages/ui` depends only on kernel and board; no React, Tailwind or TanStack anywhere |
 | 11 | Design `:3342` `calibrate… writes ~/.sekhemet/config.toml`, `board → opens web UI` | Mostly true, but the list omits the front door entirely. `packages/sdk` is missing from every layout list |
 | 12 | README.md:137 names "`Board-Native Local-First AI Coding Harness — Design v2.md`" | The file is `docs/design/HARNESS_DESIGN.md` |
-| 13 | AGENTS.md:105 links `file:///Users/brennankelley/Desktop/Sekhemet/DEFINITION_OF_DONE.md` | That path is the **main checkout**, where `main` is **240 commits behind** this branch and still holds the old CLAUDE.md (claude-3-7-sonnet, Gemini relay). `docs.spec.ts:54` skips `file:` links |
+| 13 | AGENTS.md:105 links `file://<home>/Desktop/Sekhemet/DEFINITION_OF_DONE.md` | That path is the **main checkout**, where `main` is **240 commits behind** this branch and still holds the old CLAUDE.md (claude-3-7-sonnet, Gemini relay). `docs.spec.ts:54` skips `file:` links |
 | 14 | DEV_LOG.md:1-6 "Multi-Agent Relay Ledger… Claude Opus 5… Zero-Loss Quota Relay Protocol" | AGENTS.md:63 says the relay is retired |
 | 15 | PROVENANCE.md licences: "pixelmatch — Library adopted"; "Stryker… Adopted per language"; SWE-Pruner "tool and weights adopted" | `grep` finds no pixelmatch or stryker anywhere in the code, and the pruner is deferred (design `:53`) |
 | 16 | NAMING.md:32 "renamed from Seshat" | Renamed to Seshat, so this is a self-reference left by an edit |

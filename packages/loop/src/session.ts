@@ -163,6 +163,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private card: CardRecord;
 
   private history: TurnHistoryItem[] = [];
+  /** The next prompt masks every earlier observation (models MD-N2-4). */
+  private maskAllNext = false;
   private lastGateFailure: GateFailure | undefined;
   /** Every failure from the last verification, ranked; the prompt shows several. */
   private lastGateFailures: GateFailure[] = [];
@@ -1233,7 +1235,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       }
     };
 
-    for (const name of this.card.acceptanceTests ?? []) add(`tests/${name}`, "acceptance test");
+    for (const name of this.card.acceptanceTests ?? []) {
+      add(name.startsWith("tests/") ? name : `tests/${name}`, "acceptance test");
+    }
     for (const path of this.options.scopeFiles ?? []) add(path, "scope file");
     return pinned;
   }
@@ -1532,6 +1536,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         : {}),
       skills,
       turns: this.history,
+      ...(this.maskAllNext ? { maskAllObservations: true } : {}),
       gateFailures: this.lastGateFailures,
       ...(this.lastGateFailures.length > 0
         ? { failureCode: this.failureCode(this.lastGateFailures) }
@@ -1607,6 +1612,14 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
           cut: p.cut,
         }
       : undefined;
+  }
+
+  /**
+   * The memory watchdog's `high` stage (models MD-N2-4): the next turn's
+   * prompt shows every earlier observation as a pointer, once.
+   */
+  public maskObservationsNextTurn(): void {
+    this.maskAllNext = true;
   }
 
   public async executeTurn(): Promise<TurnResult> {
@@ -1708,6 +1721,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     const turnIndex = this.stepsUsed;
 
     const built = this.buildPrompt();
+    this.maskAllNext = false;
     const { systemPrompt, prompt } = built;
     this.lastSystemPrompt = systemPrompt;
     if (built.stop) {

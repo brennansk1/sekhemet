@@ -143,6 +143,7 @@ import { hookEngineFor } from "./user_hooks.js";
 import { approveBaseline, visualCandidates } from "./visual_baseline.js";
 import { modelRegistry } from "./wave2.js";
 import {
+  HEALTH_ROUTE,
   MISDIRECTED,
   SAFE_METHODS,
   allowedHosts,
@@ -503,6 +504,8 @@ export function startDashboardServer(
       ),
     registry: configRegistry,
     ...(options.headroomProbe !== undefined ? { headroomProbe: options.headroomProbe } : {}),
+    // MD-N15-3: the Team server's engines, checked at its start (team/serve.ts).
+    ...(serverIdentity.teamEngines ? { teamEngines: serverIdentity.teamEngines } : {}),
     ...(options.cardStore ? { cardStore: options.cardStore } : {}),
     // Review capacity (DB-N4-2): a project's limit from its own minutes a
     // day, recomputed for that project alone; who may change it, and why not.
@@ -1460,6 +1463,21 @@ export function startDashboardServer(
       json(res, 421, { error: MISDIRECTED, refused: "host" });
       return;
     }
+    // RUN-72: the health route answers before any identity, with no data.
+    if (url === HEALTH_ROUTE && SAFE_METHODS.has((req.method ?? "GET").toUpperCase())) {
+      let up = false;
+      try {
+        up = log.verifyHeadSync().valid;
+      } catch {
+        up = false;
+      }
+      res.writeHead(up ? 200 : 503, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      res.end(up ? "ok\n" : "unavailable\n");
+      return;
+    }
     // The page's token is in the session answer: never kept by a cache.
     if (url === "/api/session") res.setHeader("Cache-Control", "no-store");
     // SEC-25: in Solo every write carries this start's token, with or without
@@ -2375,10 +2393,19 @@ export function startDashboardServer(
 
     // --- Run records, decisions, integrity (K8, K16-K20, S8) ------------------
     if (url === "/api/integrity") {
-      const chain = await log.verifyHashChain();
-      const projections = options.cardStore
-        ? await options.cardStore.verifyProjections()
-        : undefined;
+      // K-N1-8: when another connection wrote since the last full check, the
+      // whole chain; K-N1-9: a row that cannot be replayed is a named
+      // failure, never a 500.
+      const chain = await log.verifyHashChain({ full: "if-written-elsewhere" });
+      let projections: unknown;
+      try {
+        projections = options.cardStore ? await options.cardStore.verifyProjections() : undefined;
+      } catch (err) {
+        projections = {
+          valid: false,
+          reason: `the board could not be rebuilt from the Activity log: ${describeError(err)}`,
+        };
+      }
       json(res, 200, { chain, ...(projections ? { projections } : {}) });
       return;
     }

@@ -8,6 +8,12 @@ export interface CardTransition {
   actor: string;
   reason?: string;
   /**
+   * The stored stop reason a runner's move to Parked rests on, when the park
+   * comes before any attempt is recorded (worker-loop rule 31: vacuous tests,
+   * a refused red-first check). Read only for the runner's own moves.
+   */
+  stopReason?: string;
+  /**
    * The person moving the card (rule 19). An `override:` reason is refused
    * without one (rule 28, K-S4-5); until principals are opaque ids on every
    * event (NEW-kernel-2) it is recorded in the `card/override` payload.

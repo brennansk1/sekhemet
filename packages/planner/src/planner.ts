@@ -31,11 +31,13 @@ export { ClarEvalAmbiguityClassifier, scoreFindings } from "./ambiguity.js";
 
 /**
  * The plan's first line when no planning model answered (§2.1.2, PM-P1-3):
- * the cards use only the spec's own words, and a criterion without an
- * example keeps its card in Planning until a person or a model gives one.
+ * the issues use only the spec's own words, and a criterion without an
+ * example keeps its issue in Planning until a person or a model gives one.
+ * In the person's words (surface SUR-97): *issue*, not *card*; the one
+ * sentence `sekhemet plan`, Seshat's `/plan` and each issue's notes say.
  */
 export const PLANNED_WITHOUT_MODEL =
-  "Planned without a model: every card uses only the spec's own words, and a criterion with no example keeps its card in Planning.";
+  "Planned without a model: each issue uses only the spec's own words, and a criterion with no example keeps its issue in Planning.";
 
 /**
  * The Planner role's model (§2.1.2, PM-P1-2): the one named on the command

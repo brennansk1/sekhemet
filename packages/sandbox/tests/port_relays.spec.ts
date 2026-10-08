@@ -181,6 +181,59 @@ describe("DEC-50: the host side of the relays", () => {
   });
 });
 
+/** Whether this host has an IPv6 loopback to listen on. */
+async function hasIpv6Loopback(): Promise<boolean> {
+  const s = createServer();
+  return new Promise((r) => {
+    s.once("error", () => r(false));
+    s.listen(0, "::1", () => s.close(() => r(true)));
+  });
+}
+
+/**
+ * C5 (security item 14b's named limit): a server listening on `::1` alone
+ * was not reached, since each half of a relay connected to `127.0.0.1` only.
+ * Each half now tries both loopbacks, and an outward relay listens on both.
+ */
+describe("14b (C5): the relays reach a server on either loopback", () => {
+  it("inward: a host port listening on ::1 alone is reached through the socket", async () => {
+    if (!(await hasIpv6Loopback())) return;
+    const s = createServer((c) => c.end("PONG6"));
+    servers.push(s);
+    const port: number = await new Promise((r) =>
+      s.listen(0, "::1", () => r((s.address() as AddressInfo).port)),
+    );
+    const plan = relayPlan([port], scratch(), () => true);
+    const host = startHostRelays(plan);
+    try {
+      expect(await readAll(connect(plan[0]?.socket as string))).toBe("PONG6");
+    } finally {
+      host.close();
+    }
+  });
+
+  it("outward: the host's port is reached on [::1] as on 127.0.0.1", async () => {
+    if (!(await hasIpv6Loopback())) return;
+    const probe = createServer();
+    const port: number = await new Promise((r) =>
+      probe.listen(0, "127.0.0.1", () => r((probe.address() as AddressInfo).port)),
+    );
+    await new Promise((r) => probe.close(() => r(undefined)));
+    const plan = relayPlan([port], scratch(), () => false);
+    await listenUnix(plan[0]?.socket as string, (c) => {
+      c.once("data", (d) => c.end(`ECHO ${String(d)}`));
+    });
+    const host = startHostRelays(plan);
+    try {
+      await host.ready;
+      expect(await readAll(connect(port, "127.0.0.1"), "v4")).toBe("ECHO v4");
+      expect(await readAll(connect(port, "::1"), "v6")).toBe("ECHO v6");
+    } finally {
+      host.close();
+    }
+  });
+});
+
 /**
  * Security item 14b: an outward relay's socket is in the command's own
  * scratch directory, which the command can write. The host half, unconfined,
@@ -336,6 +389,59 @@ describe.each(ENGINES)("DEC-50: a card's dev server across namespaces (%s engine
           },
         );
         expect(client.stdout).toContain("DEV");
+      } finally {
+        server?.kill("SIGKILL");
+        await new Promise((r) => server?.once("exit", r));
+      }
+    },
+  );
+
+  it.runIf(confines && linux)(
+    "C5: a dev server listening on ::1 alone is reached from the host's 127.0.0.1 and ::1, and from another confined command",
+    async () => {
+      if (!(await hasIpv6Loopback())) return;
+      const work = scratch();
+      const probe = createServer();
+      const port: number = await new Promise((r) =>
+        probe.listen(0, "127.0.0.1", () => r((probe.address() as AddressInfo).port)),
+      );
+      await new Promise((r) => probe.close(() => r(undefined)));
+      const server = await sandbox.spawnBackgroundAsync(
+        process.execPath,
+        [
+          "-e",
+          `require('net').createServer(c=>c.end('DEV6')).listen(${port},'::1',()=>console.log('up'))`,
+        ],
+        { allowedPaths: [work], allowNetwork: false, timeoutMs: 0, cwd: work, localPorts: [port] },
+      );
+      expect(server).not.toBeNull();
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const t = setTimeout(() => reject(new Error("the dev server did not start")), 15_000);
+          server?.stdout.on("data", (d) => {
+            if (String(d).includes("up")) {
+              clearTimeout(t);
+              resolve();
+            }
+          });
+        });
+        expect(await readAll(connect(port, "127.0.0.1"))).toBe("DEV6");
+        expect(await readAll(connect(port, "::1"))).toBe("DEV6");
+        const client = await sandbox.execute(
+          process.execPath,
+          [
+            "-e",
+            `const s=require('net').connect(${port},'127.0.0.1');s.on('data',d=>{console.log(String(d));process.exit(0)});s.on('error',e=>{console.log('REFUSED '+e.code);process.exit(3)})`,
+          ],
+          {
+            allowedPaths: [work],
+            allowNetwork: false,
+            timeoutMs: 20_000,
+            cwd: work,
+            localPorts: [port],
+          },
+        );
+        expect(client.stdout).toContain("DEV6");
       } finally {
         server?.kill("SIGKILL");
         await new Promise((r) => server?.once("exit", r));

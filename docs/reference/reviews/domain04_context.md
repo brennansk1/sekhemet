@@ -1,6 +1,6 @@
 # Domain 4: Context and prompts (Phase A review, read-only)
 
-**Evidence base.** Code at `468f67f`. 109–120 real Worker prompts (`/tmp/claude-501/suite/{onyx,chronicle}/.sekhemet/blobs`; most are from run 5, before `c5d5bff`, and the chronicle ones are from the run in progress). 100 real onyx turns in `traces.db` (`gen_ai.chat` spans: real token counts and server cache-hit rate). My scripts only read these files.
+**Evidence base.** Code at `468f67f`. 109–120 real Worker prompts (`<scratch>/suite/{onyx,chronicle}/.sekhemet/blobs`; most are from run 5, before `c5d5bff`, and the chronicle ones are from the run in progress). 100 real onyx turns in `traces.db` (`gen_ai.chat` spans: real token counts and server cache-hit rate). My scripts only read these files.
 
 ## 1. Positioning: what the 3B-active Worker actually sees
 

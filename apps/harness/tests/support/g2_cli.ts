@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach } from "vitest";
+import { guardedImports, killTree, runTmpEnv, trackChild } from "./hygiene.js";
 
 /**
  * The built command line for the design-stage, measurement and context
@@ -55,6 +56,7 @@ export function g2Env(home: string, extra: Record<string, string> = {}): Record<
     SEKHEMET_KEYCHAIN: "off",
     SEKHEMET_MODEL_LOADS: "off",
     BROWSER: "false",
+    ...runTmpEnv(),
     ...extra,
   };
 }
@@ -93,13 +95,17 @@ export function cli(
     timeoutMs?: number;
   },
 ): Promise<CliResult> {
-  const pre = opts.preload ? ["--import", opts.preload] : [];
+  // F31: the model-port guard first, always; the child in its own process group.
+  const pre = guardedImports(opts.preload);
   return new Promise((done, fail) => {
-    const child = spawn(process.execPath, [...pre, BIN, ...args], {
-      cwd: opts.cwd,
-      env: opts.env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const child = trackChild(
+      spawn(process.execPath, [...pre, BIN, ...args], {
+        cwd: opts.cwd,
+        env: opts.env,
+        stdio: ["pipe", "pipe", "pipe"],
+        detached: true,
+      }),
+    );
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (b) => {
@@ -109,7 +115,7 @@ export function cli(
       stderr += String(b);
     });
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
+      killTree(child);
       fail(new Error(`sekhemet ${args.join(" ")} timed out\n${stdout}\n${stderr}`));
     }, opts.timeoutMs ?? 60_000);
     child.on("error", fail);
@@ -129,12 +135,15 @@ export function cliStart(
   args: string[],
   opts: { cwd: string; env: Record<string, string>; preload?: string },
 ): { output: () => string; stop: () => Promise<void> } {
-  const pre = opts.preload ? ["--import", opts.preload] : [];
-  const child = spawn(process.execPath, [...pre, BIN, ...args], {
-    cwd: opts.cwd,
-    env: opts.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const pre = guardedImports(opts.preload);
+  const child = trackChild(
+    spawn(process.execPath, [...pre, BIN, ...args], {
+      cwd: opts.cwd,
+      env: opts.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+    }),
+  );
   let out = "";
   child.stdout.on("data", (b) => {
     out += String(b);
@@ -146,7 +155,7 @@ export function cliStart(
   return {
     output: () => out,
     stop: async () => {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      killTree(child);
       await exited;
     },
   };

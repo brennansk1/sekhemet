@@ -212,7 +212,7 @@ describe("NEW-models-14: Smart Swap — the record, the prediction and the slow-
     const clock = fakeClock();
     const log = ledger();
     const worker = scripted(clock, {
-      path: "/Volumes/My Passport/AI-Models/llm/cyber.gguf",
+      path: "/Volumes/External/AI-Models/llm/cyber.gguf",
       bytes: 13 * GB,
       loads: [300_000, 20_000],
       unloadMs: 4000,

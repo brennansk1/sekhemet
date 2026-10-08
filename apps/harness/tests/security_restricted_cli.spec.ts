@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { cli } from "./support/g2_cli.js";
@@ -51,3 +52,44 @@ describe("--restricted starts nothing a package declares (SEC-19)", () => {
     },
   );
 });
+
+describe.runIf(process.platform === "darwin")(
+  "a package gate runs confined in the card's verification (SEC-17)",
+  () => {
+    it(
+      "SEC-17: `gate <card>` runs the changed package's own `test` script in its folder, and the marker it writes outside the worktree stays absent",
+      { timeout: 180_000 },
+      async () => {
+        const outside = realpathSync(mkdtempSync(join(tmpdir(), "sek-pkg-out-")));
+        const marker = join(outside, "marker");
+        try {
+          const script = `const fs = require("fs"); fs.writeFileSync("ran", "x"); fs.writeFileSync(${JSON.stringify(marker)}, "escaped")`;
+          const p = await gateProject({
+            files: {
+              ...MONOREPO,
+              "packages/a/package.json": JSON.stringify({
+                name: "@x/a",
+                version: "1.0.0",
+                scripts: { test: `node -e ${JSON.stringify(script)}` },
+              }),
+            },
+            card: { "packages/a/src/index.ts": "export const x = 2;\n" },
+            cardInput: { scopeFiles: ["packages/**"] },
+          });
+          const r = await cli(["gate", "c1"], { cwd: p.repo, env: p.env, timeoutMs: 120_000 });
+          // It started, in its package folder inside the card's worktree ...
+          expect(existsSync(join(p.worktree, "packages", "a", "ran")), r.stdout + r.stderr).toBe(
+            true,
+          );
+          expect(r.stdout).toContain("@x/a:test");
+          // ... and its write outside the worktree was refused, so the gate failed.
+          expect(existsSync(marker)).toBe(false);
+          expect(r.stdout).not.toMatch(/✓ @x\/a:test/);
+          expect(r.status).not.toBe(0);
+        } finally {
+          rmSync(outside, { recursive: true, force: true });
+        }
+      },
+    );
+  },
+);

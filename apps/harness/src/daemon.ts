@@ -16,6 +16,7 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { liveModelLease, modelLeaseHolderWords, modelLeasePath } from "@sekhemet/models";
 import { processStartTime, sameProcess } from "@sekhemet/sandbox";
+import { atLoginPath, portsRegisteredElsewhere, readAtLogin } from "./login_service.js";
 import { userPaths } from "./user_dir.js";
 import { readWorkspaces } from "./workspaces.js";
 
@@ -162,7 +163,8 @@ export async function daemonStart(
   rotateLog(log);
   // MD-N17-3: the port asked for, else the next free one, chosen before the
   // launch so this record and the health check name the port it serves on.
-  const port = await freePortFrom(asked);
+  // RUN-75: never a port another workspace is registered at login on.
+  const port = await freePortFrom(asked, portsRegisteredElsewhere(repoPath));
   const pid = (deps.launch ?? defaultLaunch)(
     ["serve", "--repo", repoPath, "--port", String(port)],
     log,
@@ -220,7 +222,7 @@ export async function daemonStatus(repoPath: string, deps: DaemonDeps = {}): Pro
 export const SERVE_PORT_TRIES = 10;
 
 /** Whether nothing listens on this loopback port: it can be bound now. */
-function portFree(port: number): Promise<boolean> {
+export function portFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const probe = createServer();
     probe.once("error", () => resolve(false));
@@ -233,9 +235,13 @@ function portFree(port: number): Promise<boolean> {
  * (MD-N17-3); the port asked for when none is free, so the server's own
  * refusal names the range.
  */
-export async function freePortFrom(port: number): Promise<number> {
+export async function freePortFrom(
+  port: number,
+  skip: ReadonlySet<number> = new Set(),
+): Promise<number> {
   if (port === 0) return 0;
-  for (let p = port; p < port + SERVE_PORT_TRIES; p++) if (await portFree(p)) return p;
+  for (let p = port; p < port + SERVE_PORT_TRIES; p++)
+    if (!skip.has(p) && (await portFree(p))) return p;
   return port;
 }
 
@@ -257,9 +263,17 @@ async function answers(address: string, fetchFn: typeof fetch = fetch): Promise<
  * it starts, stops and writes nothing.
  */
 export async function daemonStatusAll(
-  opts: { workspacesPath?: string; modelLeasePath?: string; fetch?: typeof fetch } = {},
+  opts: {
+    workspacesPath?: string;
+    modelLeasePath?: string;
+    fetch?: typeof fetch;
+    /** The start-at-login registrations (RUN-77); `<user dir>/at-login.json` by default. */
+    atLoginPath?: string;
+  } = {},
 ): Promise<string> {
   const list = readWorkspaces(opts.workspacesPath ?? userPaths().workspaces);
+  const registered = readAtLogin(opts.atLoginPath ?? atLoginPath());
+  const atLogin = (folder?: string) => registered.find((r) => folder && r.folder === folder);
   const lines: string[] = [];
   if (list.length === 0) lines.push("No workspace has been served on this machine yet.");
   else {
@@ -269,11 +283,16 @@ export async function daemonStatusAll(
         const up = await answers(w.address, opts.fetch);
         const projects =
           (w.projectRoots?.length ?? 0) > 1 ? ` (${w.projectRoots?.length} projects)` : "";
-        return `  ${w.name.padEnd(width)}  ${w.address}  ${up ? "answering" : "not answering"}${w.folder ? `  ${w.folder}${projects}` : ""}`;
+        const login = atLogin(w.folder);
+        return `  ${w.name.padEnd(width)}  ${w.address}  ${up ? "answering" : "not answering"}${w.folder ? `  ${w.folder}${projects}` : ""}  ${login ? `starts at login on port ${login.port}` : "not at login"}`;
       }),
     );
     lines.push("Workspaces on this machine:", ...rows);
   }
+  // RUN-77: a registration whose workspace has not been served yet is listed too.
+  const listed = new Set(list.map((w) => w.folder));
+  for (const r of registered.filter((x) => !listed.has(x.folder)))
+    lines.push(`  ${r.folder}  http://127.0.0.1:${r.port}  starts at login (not served yet)`);
   const holder = liveModelLease(opts.modelLeasePath ?? modelLeasePath());
   lines.push(`Model lease: ${holder ? `${modelLeaseHolderWords(holder)}.` : "free."}`);
   return lines.join("\n");

@@ -27,6 +27,7 @@ const CLI_FILES = [
   "index.ts",
   // The commands moved into the registry (surface T4).
   "commands/registry.ts",
+  "commands/queue.ts",
   "commands/accept.ts",
   "commands/review.ts",
   "commands/run.ts",
@@ -126,15 +127,15 @@ const CLI_FILES = [
  * config file's keys.
  */
 const NOT_COPY: Record<string, RegExp[]> = {
-  "index.ts": [
-    // Seshat's prompt when the Agent asks it a question mid-issue, and the
-    // question as it is filed in Seshat's thread for the model.
-    /^You are Seshat, the project manager\./,
-    /^Card:\s+\$\{\}\s+nSpec:/,
+  // The queue (moved from index.ts in C5): the question as it is filed in
+  // Seshat's thread for the model, and the paragraph the Worker reads about
+  // its team (`teamNote`). Model-facing, frozen by PROMPT_STANDARD.
+  "commands/queue.ts": [
     /^\[The Worker asks about/,
-    // The paragraph the Worker reads about its team (`teamNote`).
     /^Seshat \(project manager,/,
     /^loaded between cards$/,
+  ],
+  "index.ts": [
     // A command in `sekhemet dev --help`'s usage column.
     /^gates init$/,
     // The Coding model comparison `bake-off` and the Research one: renamed
@@ -184,6 +185,10 @@ const NOT_COPY: Record<string, RegExp[]> = {
   // Seshat's tool descriptions and card one's spec, which the Agent reads:
   // model-facing, under the same rule.
   "pm/pm_copy.ts": [
+    // Seshat's prompt when the Agent asks it a question mid-issue
+    // (`WORKER_QUESTION_COPY`, moved here from index.ts in C5).
+    /^You are Seshat, the project manager\./,
+    /^Card:\s+\$\{\}\s+nSpec:/,
     /^Delegate a question that needs evidence/,
     /^Propose moving an issue to ready, backlog or parked\.$/,
     /^Write one test, /,

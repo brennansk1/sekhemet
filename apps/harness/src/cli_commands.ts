@@ -1,4 +1,5 @@
-import { COMMAND_REGISTRY, findCommand, helpRow } from "./commands/registry.js";
+import { helpFor } from "./commands/help_table.js";
+import { COMMAND_REGISTRY, helpRow } from "./commands/registry.js";
 import { DEV_COMMANDS } from "./wave2.js";
 
 /**
@@ -10,7 +11,10 @@ import { DEV_COMMANDS } from "./wave2.js";
  */
 export const PRIMARY_COMMANDS: readonly { usage: string; what: string }[] = [
   { usage: "sekhemet", what: "Set up on first run, then open the board" },
-  { usage: 'sekhemet "<spec>"', what: "Plan the work and run it" },
+  // Every planned issue waits in Planning for a person's approval of its
+  // criteria (PM-N7-5): the spec route plans and starts the queue, which
+  // builds an issue only once it is approved.
+  { usage: 'sekhemet "<spec>"', what: "Plan the work; each issue is built once you approve it" },
   // T4: the moved commands' rows come from the command registry.
   helpRow("run"),
   helpRow("review"),
@@ -82,6 +86,8 @@ export const COMMANDS = [
   "editors",
   // `sekhemet engine [status | get [--yes]]`: the inference engine (models rule 6b, NEW-models-19).
   "engine",
+  // `sekhemet uninstall --dry-run | --yes [--include-ledgers]` (surface item 33, NEW-surface-7).
+  "uninstall",
   ...DEV_COMMANDS,
 ] as const;
 
@@ -150,6 +156,8 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   // `sekhemet daemon status --all` (MD-N17-3).
   "--all",
   "--answer",
+  // `daemon start|stop --at-login` (runtime item 5a, NEW-runtime-15).
+  "--at-login",
   "--apply",
   "--approve",
   "--arm",
@@ -173,6 +181,8 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--cards",
   "--changelog",
   "--check",
+  // `doctor --check-updates` (surface item 34, NEW-surface-9).
+  "--check-updates",
   "--combination",
   "--confirm",
   "--cron",
@@ -206,6 +216,8 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--id",
   "--identity",
   "--idle-min",
+  // `uninstall --yes --include-ledgers` (surface item 33, SUR-59).
+  "--include-ledgers",
   "--independent",
   "--job",
   "--json",
@@ -435,8 +447,9 @@ export function routeFrontDoor(argv: readonly string[]): FrontDoorRoute {
   const { positional, flags } = split(argv);
   const [first, ...rest] = positional;
   if (argv.includes("--help") || argv.includes("-h")) {
+    // Surface item 19a (CLI-03): every command has its own help, from one table.
     const named = first === "dev" ? rest[0] : first;
-    if (findCommand(named)) return { kind: "command-help", name: named as string };
+    if (helpFor(named)) return { kind: "command-help", name: named as string };
     if (first !== "dev") return { kind: "help" };
   }
   if (first === undefined) return { kind: "home", flags };

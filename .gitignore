@@ -40,3 +40,10 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# This machine's own files, never published (DEC-54 c2, INS-06): a person's
+# dev-server list, the agents' worktrees, and this machine's operations
+# (CLAUDE.md imports CLAUDE.local.md; the procedure is docs/reference/DEVELOPING.md).
+.claude/launch.json
+.claude/worktrees/
+CLAUDE.local.md

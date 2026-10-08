@@ -36,7 +36,13 @@ ENV SEKHEMET_CONFIG_DIR=/home/node/.sekhemet
 WORKDIR /work
 VOLUME ["/work", "/home/node/.sekhemet"]
 EXPOSE 4040
+# RUN-72, RUN-73 (runtime item 23b; FINDINGS INS-12): healthy while the
+# server answers GET /healthz with 200, which it does only when the ledger
+# opens and its head verifies. The image has no curl: node asks.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:4040/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
 ENTRYPOINT ["sekhemet"]
 # Team setup (runtime item 26): bound beyond loopback only behind the proxy
-# named in [identity] trusted_proxies.
-CMD ["dev", "serve", "--repo", "/work", "--host", "0.0.0.0"]
+# named in [identity] trusted_proxies. `serve` as a person runs it, not the
+# developer's `dev` form (FINDINGS INS-01).
+CMD ["serve", "--repo", "/work", "--host", "0.0.0.0"]

@@ -175,7 +175,7 @@ export const COMMAND_REGISTRY: readonly CommandSpec[] = [
     usage: "sekhemet doctor",
     what: "Check the install, including the model weights",
     synopsis:
-      "sekhemet doctor [--json] [--verify-weights] [--report]   |   sekhemet doctor --airgap [--models-dir <dir>] [--query <question>] [--run-gates]",
+      "sekhemet doctor [--json] [--verify-weights] [--report]   |   sekhemet doctor --airgap [--models-dir <dir>] [--query <question>] [--run-gates]   |   sekhemet doctor --check-updates [--yes]",
     example: "sekhemet doctor --json",
     options: {
       airgap: { type: "boolean" },
@@ -186,6 +186,9 @@ export const COMMAND_REGISTRY: readonly CommandSpec[] = [
       "models-dir": { type: "string" },
       query: { type: "string" },
       "run-gates": { type: "boolean" },
+      // SUR-66, SUR-67: ask the npm registry for the latest version, after a yes.
+      "check-updates": { type: "boolean" },
+      yes: { type: "boolean" },
       ...JSON_OPTION,
     },
     positionals: { min: 0, max: 0 },
@@ -277,6 +280,86 @@ export const COMMAND_REGISTRY: readonly CommandSpec[] = [
     needsProject: false,
     load: async () => (await import("../ledger_cmds.js")).restoreCommand,
   },
+  {
+    // Surface item 19a (C5): moved from `main`, the queue's body unchanged.
+    // `sekhemet run` with no issue runs it, and `overnight` runs it per round.
+    name: "queue",
+    visibility: "dev",
+    usage: "queue [--worker <model>] [--manager <model>]",
+    what: "Run every Ready issue in board order; `sekhemet run` with no issue does the same",
+    synopsis:
+      "sekhemet queue [--worker <model>] [--manager <model>] [--reviewer <model>] [--researcher <model>] [--max-turns <n>] [--settings <file>] [--review] [--explore] [--escalate-retries] [--calibration-night --permit-loads]",
+    example: "sekhemet queue --worker nail-mtp",
+    options: {
+      ...RUN_OPTIONS,
+      // Measurement rule 16d: a calibration night, only with the owner's --permit-loads.
+      "calibration-night": { type: "boolean" },
+      "permit-loads": { type: "boolean" },
+    },
+    positionals: { min: 0, max: 0 },
+    json: false,
+    needsProject: false,
+    load: async () => (await import("./queue.js")).queueCommand,
+  },
+  {
+    // Surface items 5–7 and 20 (C5): moved from `main`; the bare `sekhemet` opens it.
+    name: "board",
+    visibility: "dev",
+    usage: "board [--terminal]",
+    what: "The board in the browser (the bare `sekhemet` opens it), or the text board with --terminal",
+    synopsis: "sekhemet board [--terminal] [--port <n>] [--yes]",
+    example: "sekhemet board --terminal",
+    options: {
+      terminal: { type: "boolean" },
+      port: { type: "string" },
+      yes: { type: "boolean" },
+      // The bare `sekhemet`'s own flags, which it passes on when it opens the board.
+      "models-dir": { type: "string" },
+      "new-workspace": { type: "boolean" },
+    },
+    positionals: { min: 0, max: 0 },
+    json: false,
+    needsProject: false,
+    load: async () => (await import("./board.js")).boardCommand,
+  },
+  {
+    // Runtime items 5 and 5a (H1, MD-N17-3, NEW-runtime-15): moved from `main` in C5.
+    name: "daemon",
+    visibility: "dev",
+    usage: "daemon start|stop|status [--at-login] [--all]",
+    what: "The dashboard in the background; --at-login starts it at every login; status --all lists every workspace's server",
+    synopsis:
+      "sekhemet daemon start [--port <n>] [--at-login]   |   sekhemet daemon stop [--at-login]   |   sekhemet daemon status [--all]",
+    example: "sekhemet daemon start --at-login",
+    options: {
+      port: { type: "string" },
+      all: { type: "boolean" },
+      "at-login": { type: "boolean" },
+    },
+    positionals: { min: 0, max: 1 },
+    positionalWord: "start, stop or status",
+    json: false,
+    needsProject: false,
+    load: async () => (await import("./daemon.js")).daemonCommand,
+  },
+  {
+    // Surface item 33 (NEW-surface-7, SUR-58, SUR-59): listed under `dev --help`.
+    name: "uninstall",
+    visibility: "dev",
+    usage: "uninstall --dry-run | --yes [--include-ledgers]",
+    what: "List, or remove, everything this install wrote outside its package; ledgers and backups are kept unless --include-ledgers",
+    synopsis: "sekhemet uninstall --dry-run   |   sekhemet uninstall --yes [--include-ledgers]",
+    example: "sekhemet uninstall --dry-run",
+    options: {
+      "dry-run": { type: "boolean" },
+      yes: { type: "boolean" },
+      "include-ledgers": { type: "boolean" },
+    },
+    positionals: { min: 0, max: 0 },
+    json: false,
+    needsProject: false,
+    load: async () => (await import("./uninstall.js")).uninstallCommand,
+  },
 ];
 
 export function findCommand(name: string | undefined): CommandSpec | undefined {
@@ -300,6 +383,29 @@ export function commandHelpLines(spec: CommandSpec): string[] {
     "",
     "Also: --repo <folder> runs it on another folder's project.",
   ];
+}
+
+/**
+ * The flags of `argv` the entry takes, with their values; any other flag is
+ * left out with its value (`argv` holds flags and their values only, as the
+ * front door splits a spec's command line). The spec route hands the queue
+ * only its own flags this way.
+ */
+export function flagsTakenBy(spec: CommandSpec, argv: readonly string[]): string[] {
+  const options: Record<string, OptionSpec> = { ...GLOBAL_OPTIONS, ...spec.options };
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i] as string;
+    if (!a.startsWith("--")) continue;
+    const name = a.slice(2).split("=")[0] as string;
+    const option = Object.hasOwn(options, name) ? options[name] : undefined;
+    const valued = !a.includes("=") && !(argv[i + 1] ?? "-").startsWith("-");
+    if (option) {
+      out.push(a);
+      if (option.type === "string" && valued) out.push(argv[++i] as string);
+    } else if (valued) i++;
+  }
+  return out;
 }
 
 /**

@@ -188,6 +188,47 @@ export async function inferDependenciesByImpact(
  * the source and test roots. `sekhemet plan` passes this so slices claim
  * real files and symbols instead of invented ones.
  */
+const LANGUAGE_EXT = /\.(ts|tsx|mts|js|jsx|mjs|py|rs|go)$/;
+
+/**
+ * The repository's most common source extension among TypeScript,
+ * JavaScript, Python, Rust and Go (DS-N1-5): what an invented file is named
+ * with. Undefined in a folder with none.
+ */
+export function dominantSourceExt(root: string, max = 2000): string | undefined {
+  const counts = new Map<string, number>();
+  const stack = [root];
+  let seen = 0;
+  while (stack.length && seen < max) {
+    const dir = stack.pop() as string;
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const n of names) {
+      if (SKIP.has(n) || n.startsWith(".")) continue;
+      const p = join(dir, n);
+      let st: ReturnType<typeof statSync>;
+      try {
+        st = statSync(p);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) stack.push(p);
+      else {
+        const m = LANGUAGE_EXT.exec(n);
+        if (!m || n.endsWith(".d.ts") || /\.(spec|test)\.[^.]+$/.test(n)) continue;
+        seen += 1;
+        const ext = `.${m[1]}`;
+        counts.set(ext, (counts.get(ext) ?? 0) + 1);
+      }
+    }
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
+}
+
 export function codebaseMapFromRepo(root: string): import("./types.js").CodebaseMap {
   const abs = resolve(root);
   const files = sources(abs);
@@ -214,11 +255,13 @@ export function codebaseMapFromRepo(root: string): import("./types.js").Codebase
   };
   const sourceDir = top((f) => !isTest(f));
   const testDir = top(isTest);
+  const sourceExt = dominantSourceExt(abs);
   return {
     files,
     symbols,
     fileTokens,
     ...(sourceDir ? { sourceDir } : {}),
     ...(testDir ? { testDir } : {}),
+    ...(sourceExt ? { sourceExt } : {}),
   };
 }

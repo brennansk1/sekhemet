@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { devNull } from "node:os";
 import { join } from "node:path";
 import { sekhemetConfigDir } from "@sekhemet/kernel";
 
@@ -160,8 +161,43 @@ export function isHardened(env: NodeJS.ProcessEnv): boolean {
   );
 }
 
-/** Harden this process's environment so every child git inherits it. */
-export function hardenGitForProcess(): void {
-  if (isHardened(process.env)) return;
+/** The global config the process saw before an identity-deferred hardening, while it lasts. */
+let deferredIdentity: { original: string | undefined } | undefined;
+
+/**
+ * Harden this process's environment so every child git inherits it.
+ *
+ * `identity: "later"` (the first run before the person confirms it, and a
+ * first run Node.js is too old for: surface SUR-2, SUR-46): every pin and
+ * config pair, but the global config git sees is the null device, so
+ * nothing is written; the identity-only global config (`identityConfig`) is
+ * written by the next call that does not defer it — after the confirmation.
+ */
+export function hardenGitForProcess(options: { identity?: "later" } = {}): void {
+  const later = options.identity === "later";
+  if (isHardened(process.env)) {
+    if (later || !deferredIdentity) return;
+    // The deferral ends: the identity-only global config, read from the user's own.
+    const identityDir = join(sekhemetConfigDir(process.env), "git");
+    const { original } = deferredIdentity;
+    deferredIdentity = undefined;
+    const { GIT_CONFIG_GLOBAL: _deferred, ...rest } = process.env;
+    const from: NodeJS.ProcessEnv =
+      original === undefined ? rest : { ...rest, GIT_CONFIG_GLOBAL: original };
+    process.env.GIT_CONFIG_GLOBAL = identityConfig(from, identityDir);
+    return;
+  }
+  if (later) {
+    deferredIdentity = { original: process.env.GIT_CONFIG_GLOBAL };
+    Object.assign(
+      process.env,
+      withGitConfig(
+        { ...process.env, ...HARDENED_GIT_PINS, GIT_CONFIG_GLOBAL: devNull },
+        HARDENED_GIT_CONFIG,
+      ),
+      { SEKHEMET_GIT_HARDENED: "1" },
+    );
+    return;
+  }
   Object.assign(process.env, hardenedGitEnv(process.env), { SEKHEMET_GIT_HARDENED: "1" });
 }

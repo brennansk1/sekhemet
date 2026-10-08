@@ -13,7 +13,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { githubAppFromEnv } from "../src/github_routes.js";
 import { advancePullRequests, openPullRequestViaApp } from "../src/github_sync.js";
 import { syncGithub } from "../src/integrations.js";
-import { runPackageGates } from "../src/wave2.js";
 
 const closers: (() => Promise<void>)[] = [];
 const dirs: string[] = [];
@@ -229,30 +228,5 @@ describe("Y10/Y11, INT-11a: syncGithub goes through the tracker adapter when con
       1,
     );
     Reflect.deleteProperty(process.env, "SEKHEMET_CONFIG_DIR");
-  });
-});
-
-describe("Y19: per-package gates for a monorepo change", () => {
-  it("runs the gates of each touched package", async () => {
-    const root = tmp();
-    write(root, "pnpm-workspace.yaml", "packages:\n  - 'packages/*'\n");
-    write(root, "packages/a/package.json", JSON.stringify({ name: "@x/a" }));
-    write(
-      root,
-      "packages/a/.sekhemet/gates.toml",
-      '[[gates]]\nrung = "unit"\ncommand = "node"\nargs = ["-e", "process.exit(0)"]\n',
-    );
-    write(root, "packages/b/package.json", JSON.stringify({ name: "@x/b" }));
-    write(
-      root,
-      "packages/b/.sekhemet/gates.toml",
-      '[[gates]]\nrung = "unit"\ncommand = "node"\nargs = ["-e", "process.exit(1)"]\n',
-    );
-    const lines: string[] = [];
-    const r = await runPackageGates(root, root, ["packages/a/x.ts", "packages/b/y.ts"], (l) =>
-      lines.push(l),
-    );
-    expect(r.map((x) => `${x.package}:${x.passed}`)).toEqual(["@x/a:true", "@x/b:false"]);
-    expect(lines.join("\n")).toContain("FAIL @x/b:unit");
   });
 });

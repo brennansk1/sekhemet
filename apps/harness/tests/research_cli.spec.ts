@@ -114,6 +114,39 @@ describe("sekhemet research: fetch_deny and the citations it checks", () => {
   }, 180_000);
 });
 
+describe("sekhemet research: finalize_answer is the clean exit it is offered as", () => {
+  it("C2d finding (researcher.ts): the answer given through finalize_answer is the answer, with its citations checked, not an 'Unknown tool' turn", async () => {
+    const run = await setup();
+    const r = await research(
+      run,
+      ["How does zod validate an email?", "--web", "--json"],
+      [
+        [fetch(`https://${GUIDE}`)],
+        [
+          {
+            name: "finalize_answer",
+            arguments: { content: "Use z.string().email() [1]; it adds an invalid_string issue." },
+          },
+        ],
+        "A later turn that must never be asked for.",
+      ],
+    );
+    expect(r.status === 0 || r.status === 2, r.stderr).toBe(true);
+    const answer = JSON.parse(r.stdout.slice(r.stdout.indexOf("{"))) as {
+      answer: string;
+      sources: string[];
+      badCitations: number[];
+      grounded: boolean;
+    };
+    expect(answer.answer).toContain("Use z.string().email() [1]");
+    expect(answer.answer).not.toContain("must never be asked");
+    expect(answer.sources).toEqual([`https://${GUIDE}`]);
+    expect(answer.badCitations).toEqual([]);
+    expect(answer.grounded).toBe(true);
+    expect(toolResults(recorded(run.p.record))).not.toMatch(/Unknown tool finalize_answer/);
+  }, 180_000);
+});
+
 describe("sekhemet research --effort (DS-N4-1)", () => {
   it("DS-N4-1: records the effort with the answer and holds quick to its page reads per sub-question", async () => {
     const pages = Array.from({ length: 6 }, (_, i) => `p${i}.example.test/doc`);

@@ -244,6 +244,11 @@ function qualityOf(part: string): QualityConstraint | undefined {
   return q ? { quality: text, default: q.default } : undefined;
 }
 
+/** The stack a request names, if it names one (DS-N1-5). */
+export function statedStack(spec: string): StackLanguage | undefined {
+  return STACKS.find((s) => s.match.test(spec))?.language;
+}
+
 function stackOf(spec: string): DesignStack {
   const named = STACKS.find((s) => s.match.test(spec));
   const language = named?.language ?? "typescript";

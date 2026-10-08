@@ -168,9 +168,22 @@ export const gateCopy = {
     `Install "${dependency}" so its licence can be read. If that is not possible, call note with gate "licenses" and why, so a person can list it in the licence register.`,
   sourceNotParsed: (gate: string, file: string, reason: string) =>
     `The ${gate} gate cannot judge ${file} until it parses cleanly. Fix the syntax error at ${reason}, then the gate reads it again.`,
+  /** Rules 9 and 28b: the reason the source index gives a file it could not read. */
+  unreadableReason: (code: string) => `could not be read (${code})`,
+  /** Rules 9 and 28b: a changed file the source index could not read at all. */
+  sourceUnreadable: (gate: string, file: string, reason: string) =>
+    `The ${gate} gate cannot judge ${file}: it ${reason}. Make it readable (its permissions, or a file in its place), then the gate reads it again.`,
   /** Review M2: a partial verdict on a file the card did not change goes to a person. */
   sourceNotParsedForPerson: (gate: string, file: string, reason: string) =>
     `${file} is not this card's file and does not parse cleanly (${reason}), so the ${gate} gate's verdict is partial. Nothing for you to change here: a person decides, or re-baselines the project.`,
   unusedExport: (name: string) =>
     `Nothing uses ${name}. Either wire it into the code that needs it, or remove the export (keep it unexported if it is a local helper). If a later card genuinely needs it, say so with note rather than leaving it dangling.`,
 } as const;
+
+/**
+ * Whether a partial file's reason is the unreadable one `gateCopy.unreadableReason`
+ * writes (not a parse's). A predicate, so it lives beside the copy, not in it:
+ * every entry of `gateCopy` is text a person or the model reads.
+ */
+export const isUnreadableReason = (reason: string): boolean =>
+  reason.startsWith("could not be read");

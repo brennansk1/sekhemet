@@ -93,7 +93,12 @@ export interface AcceptResult extends ResultBase<"accept"> {
 }
 
 export interface DoctorResult extends ResultBase<"doctor"> {
-  checks?: { name: string; status: "pass" | "warn" | "fail"; detail: string }[];
+  /** No check failed (SUR-61). */
+  ready?: boolean;
+  /** *Ready to run an issue*, or *Not ready* naming the first missing step (SUR-61). */
+  verdict?: string;
+  /** Each check; one that is not a pass carries its next step (SUR-62). */
+  checks?: { name: string; status: "pass" | "warn" | "fail"; detail: string; do?: string }[];
 }
 
 /** `sekhemet egress --json` (security item 33a): what left the machine, newest first. */

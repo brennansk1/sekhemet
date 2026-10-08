@@ -113,6 +113,12 @@ export interface PersistPlanOptions {
   /** Who asked for the plan: requirements derived from the spec are theirs (PM-P13-2). */
   principal?: string;
   /**
+   * The person who filed the work, recorded as each created card's owner in
+   * its `card/created` (kernel K-N6-1): an issue filed from New issue. Unset,
+   * a planned card is created with no owner.
+   */
+  owner?: string;
+  /**
    * Derive requirements from the spec for capabilities no requirement
    * covers (default). `false` when a brief's accepted requirements are the
    * only ones: a card covering none of them is refused (`traces.ts`).
@@ -798,6 +804,7 @@ export async function persistPlan(
       ...(story.card.gateChecks ? { gateChecks: story.card.gateChecks } : {}),
       ...(blockedReason ? { blockedReason } : {}),
       ...(projectId ? { projectId } : {}),
+      ...(options.owner ? { owner: options.owner } : {}),
     };
     await store.createCard(input, actor);
     createdIds.add(id);
@@ -1055,6 +1062,9 @@ export async function persistPlan(
         routing: s.routing,
         dependsOn: s.dependsOn,
       })),
+      // Every card this plan version created, its stories' characterize cards
+      // among them (PM-N6-2): planned, so never scope drift (PM-N5-1).
+      cards: [...createdIds],
       rejected: result.rejected.map((r) => r.id),
       held: result.held.map((h) => h.id),
       proposedChanges: result.proposedChanges.map((c) => c.id),

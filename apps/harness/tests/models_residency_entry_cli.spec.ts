@@ -199,3 +199,53 @@ describe("every model fits the host (MD-N9-5)", () => {
     expect(out).toMatch(/research\/r1\.md/);
   }, 300_000);
 });
+
+describe("a Research model that does not fit is refused, and the queue still reports (MD-N9-3)", () => {
+  /** The research card's stop, as the ledger records it. */
+  function researchStop(p: G2Project): string | undefined {
+    const db = new DatabaseSync(join(p.repo, ".sekhemet", "events.db"), { readOnly: true });
+    try {
+      return (
+        (
+          db.prepare("SELECT stop_reason AS s FROM cards WHERE id = 'r1'").get() as
+            | { s: string | null }
+            | undefined
+        )?.s ?? undefined
+      );
+    } finally {
+      db.close();
+    }
+  }
+
+  it("MD-N9-3 (C5): with the Research model larger than usable memory the load is refused naming both footprints, the research card is left Ready with its stop recorded, the Coding card still runs, and the queue prints its report", async () => {
+    const p = await g2Project(g2Dirs(), { cards: [coding, research] });
+    const host = { G5_TOTALMEM_GB: "32" };
+    setUp(
+      p,
+      [
+        { profile: "unrelated-model", prefill: 500, decode: 50, usableGb: 24, tier: "M" },
+        { qualify: SCRIPTED_MODEL },
+        { qualify: RESEARCH, role: "researcher", as: "researcher", family: "llama" },
+      ],
+      host,
+    );
+    const out = await queue(p, ["--researcher", RESEARCH], {
+      ...scriptEnv(p.record, { worker: writeAndFinish }),
+      ...host,
+      // 200 GB of weights: above the 24 GB usable, whatever else is resident.
+      G5_TAGS: JSON.stringify({ [SCRIPTED_MODEL]: 1e9, [RESEARCH]: 200e9 }),
+    });
+    // The refusal names the footprints (as before), and the pass goes on to its report.
+    expect(out).toMatch(/other-research:latest/);
+    expect(out).toMatch(/GB/);
+    expect(out).toMatch(/Report: \S+queue_report\.json/);
+    expect(out).toMatch(/research stopped|research failed/);
+    // The research card is left in a stated state: Ready, its stop recorded.
+    expect(statuses(p).r1).toBe("ready");
+    expect(researchStop(p)).toBe("model_unavailable");
+    // No Research model request was ever sent.
+    expect(requests(p).filter((r) => r.body.model === RESEARCH)).toHaveLength(0);
+    // The Coding card ran to Review.
+    expect(statuses(p).c1).toBe("review");
+  }, 300_000);
+});

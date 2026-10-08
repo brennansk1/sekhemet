@@ -341,7 +341,8 @@ describe("doctor (SUR-83, SUR-86, SUR-88, SUR-89)", () => {
       const p = place();
       await repoWithCard(p);
       const none = await runCli(["doctor"], p, { timeoutMs: 120_000 });
-      expect(none.out).toMatch(/! Backup: [^\n]*no backup[^\n]*Do: run `sekhemet backup`/i);
+      // SUR-62: the next step on its own line, after the row.
+      expect(none.out).toMatch(/! Backup: [^\n]*no backup[^\n]*\n\s+Do: run `sekhemet backup`/i);
       const made = await runCli(["backup"], p, { timeoutMs: 60_000 });
       expect(made.code).toBe(0);
       const set = (made.out.match(/(\/\S+\/backups\/ws_\w+\/\S+?)(?:\s|\.?$)/m) ?? [])[1];
@@ -368,7 +369,7 @@ globalThis.Date = Later;
         env: { NODE_OPTIONS: `--import=${later}` },
       });
       expect(stale.out).toMatch(
-        /! Backup: [^\n]*49 hours old[^\n]*recorded since[^\n]*Do: run `sekhemet backup`/,
+        /! Backup: [^\n]*49 hours old[^\n]*recorded since[^\n]*\n\s+Do: run `sekhemet backup`/,
       );
     },
   );
@@ -388,6 +389,11 @@ globalThis.Date = Later;
       expect(before).toMatch(/^\s+! Credential store:/);
       expect(before).toContain(join(root, ws));
       expect(before).toContain(join(root, "credentials.json"));
+      // The step on the next line is the one taken below (C5, SUR-62).
+      const lines = left.out.split("\n");
+      expect(lines[lines.indexOf(before) + 1]).toMatch(
+        /^\s+Do: set \[team\] mode = "team" in \S+ and run `sekhemet serve` in the folder of the workspace it belongs to/,
+      );
       // Starting the workspace's Team server claims the store: it is moved, once, on the ledger.
       // (A Solo server refuses to start beside a credential store; see the digest.)
       const team = join(p.root, "team.toml");
@@ -534,7 +540,11 @@ describe("run and queue resolve the Coding model one way (SUR-11)", () => {
 
 describe("ask and the front door's help (SUR-51, SUR-52)", () => {
   /** Seshat's model, a stand-in answering at the HTTP boundary of the spawned process. */
-  function standInSeshat(p: Place, reply: string): Record<string, string> {
+  function standInSeshat(
+    p: Place,
+    reply: string,
+    listed = "dirk-27b:latest",
+  ): Record<string, string> {
     const file = join(p.root, "seshat-stand-in.mjs");
     writeFileSync(
       file,
@@ -545,7 +555,7 @@ globalThis.fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   if (!/^http:\\/\\/(127\\.0\\.0\\.1|localhost):11434\\//.test(url)) return real(input, init);
   const path = new URL(url).pathname;
-  const listed = { name: "dirk-27b:latest", model: "dirk-27b:latest", size: 1 };
+  const listed = { name: ${JSON.stringify(listed)}, model: ${JSON.stringify(listed)}, size: 1 };
   if (path === "/api/tags" || path === "/api/ps") return json({ models: [listed] });
   if (path === "/api/show") return json({ model_info: { "general.architecture": "qwen3" }, parameters: "num_ctx 32768" });
   const body = JSON.parse(String(init?.body ?? "{}"));
@@ -597,6 +607,29 @@ globalThis.fetch = async (input, init) => {
       expect(r.out).toMatch(
         /No model is answering for Seshat on this machine right now\. Your message is kept/,
       );
+      const { db, log } = openLocalLedger(repo);
+      const thread = await new PmStore(log).thread();
+      db.close();
+      expect(thread[0]).toMatchObject({ role: "user", text: "What is left?" });
+    },
+  );
+
+  it(
+    "SUR-51 (C5): when the model server answers but does not have Seshat's model, ask says so and exits 1, the question kept",
+    { timeout: 120_000 },
+    async () => {
+      const p = place();
+      const repo = await repoWithCard(p);
+      const r = await runCli(["ask", "What is left?"], p, {
+        env: standInSeshat(p, "unused", "some-other-model:latest"),
+        timeoutMs: 100_000,
+      });
+      expect(r.code, r.out).toBe(1);
+      // Not the words for a server that is down: this one answered.
+      expect(r.out).toMatch(
+        /Seshat couldn't reply: the model server answers, but model dirk-27b:latest is not available on the server\. Your question is kept/,
+      );
+      expect(r.out).not.toMatch(/No model is answering/);
       const { db, log } = openLocalLedger(repo);
       const thread = await new PmStore(log).thread();
       db.close();

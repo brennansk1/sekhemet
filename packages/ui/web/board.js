@@ -504,6 +504,12 @@ function render() {
   renderTopbar();
   const s = store.state;
   const activeId = document.activeElement?.closest?.(".tile")?.dataset.id;
+  // DB-P4-8: a column header's control with focus (its `?`, its menu, its
+  // `+`) keeps it when a frame rewrites the header or rebuilds the layout.
+  const focusedHead = document.activeElement?.closest?.("[data-head]");
+  const headFocus = focusedHead
+    ? { id: focusedHead.dataset.head, mark: focusMark(focusedHead) }
+    : null;
   const before = ui.colOf;
 
   // ERR-03: a failed read is never an empty board; it says so, with Retry.
@@ -569,6 +575,10 @@ function render() {
     }
   }
 
+  if (headFocus) {
+    const head = $(`[data-head="${headFocus.id}"]`, ui.root);
+    if (head && !head.contains(document.activeElement)) refocus(head, headFocus.mark);
+  }
   syncFocusAttrs();
   // DB-P3-15: the focused card keeps focus when a frame replaced its node, and
   // is scrolled into view only when it changed column; no other card scrolls.
@@ -593,8 +603,35 @@ function paintChips(chips) {
   const t = document.createElement("template");
   t.innerHTML = html;
   const fresh = t.content.firstElementChild;
-  if (host) host.replaceWith(fresh);
-  else ui.root.prepend(fresh);
+  if (!host) {
+    ui.root.prepend(fresh);
+    return;
+  }
+  const had = focusMark(host);
+  host.replaceWith(fresh);
+  refocus(fresh, had);
+}
+
+const FOCUSABLE = "button, [href], input, select, textarea, [tabindex]";
+
+/** Which of `host`'s controls has focus: its label and its place among them; null when none. */
+function focusMark(host) {
+  const a = document.activeElement;
+  if (!a || !host.contains(a)) return null;
+  return {
+    label: a.getAttribute("aria-label") ?? a.textContent ?? "",
+    index: [...host.querySelectorAll(FOCUSABLE)].indexOf(a),
+  };
+}
+
+/** Focus the control in `host` that matches the mark: the same label, else the same place. */
+function refocus(host, mark) {
+  if (!mark) return;
+  const all = [...host.querySelectorAll(FOCUSABLE)];
+  const next =
+    all.find((e) => (e.getAttribute("aria-label") ?? e.textContent ?? "") === mark.label) ??
+    all[Math.min(mark.index, all.length - 1)];
+  if (next) next.focus({ preventScroll: true });
 }
 
 /**

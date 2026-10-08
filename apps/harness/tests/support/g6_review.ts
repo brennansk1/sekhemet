@@ -19,6 +19,7 @@ import { afterEach } from "vitest";
 import { recordReviewOpened } from "../../src/accept.js";
 import { openLocalLedger } from "../../src/ledger_cmds.js";
 import { recordLedgerRun } from "../../src/ledger_evidence.js";
+import { guardedImports, killTree, runTmpEnv, trackChild } from "./hygiene.js";
 
 /**
  * Review and git through the built command (C2d, FINDINGS_C1 TST-01; review-git
@@ -96,6 +97,7 @@ export function g6Repo(prefix = "sek-g6-"): G6Repo {
     SEKHEMET_MODEL_LOADS: "off",
     SEKHEMET_KEYCHAIN: "off",
     BROWSER: "false",
+    ...runTmpEnv(),
     ...opts.env,
   });
   const ledger = async <T>(
@@ -133,7 +135,8 @@ export function g6Repo(prefix = "sek-g6-"): G6Repo {
 
 /** The built command, run to its end in the repository: what a person types. */
 export function cliIn(r: G6Repo, args: string[], opts: CliOpts = {}): SpawnSyncReturns<string> {
-  return spawnSync(process.execPath, [BIN, ...args], {
+  // F31: the model-port guard first, always.
+  return spawnSync(process.execPath, [...guardedImports(), BIN, ...args], {
     cwd: opts.cwd ?? r.repo,
     encoding: "utf8",
     timeout: opts.timeout ?? 60_000,
@@ -150,11 +153,14 @@ export function cliAsync(
   args: string[],
   opts: CliOpts = {},
 ): Promise<{ status: number | null; stdout: string; stderr: string }> {
-  const child = spawn(process.execPath, [BIN, ...args], {
-    cwd: opts.cwd ?? r.repo,
-    env: r.env(opts),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const child = trackChild(
+    spawn(process.execPath, [...guardedImports(), BIN, ...args], {
+      cwd: opts.cwd ?? r.repo,
+      env: r.env(opts),
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+    }),
+  );
   let stdout = "";
   let stderr = "";
   child.stdout?.on("data", (d) => {
@@ -163,7 +169,7 @@ export function cliAsync(
   child.stderr?.on("data", (d) => {
     stderr += String(d);
   });
-  const timer = setTimeout(() => child.kill("SIGKILL"), opts.timeout ?? 60_000);
+  const timer = setTimeout(() => killTree(child), opts.timeout ?? 60_000);
   return new Promise((ok) =>
     child.once("close", (status) => {
       clearTimeout(timer);

@@ -33,9 +33,6 @@
   "T10": {
     "na": {
       "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Executable documentation checks run the documents' commands in the docs test; they are a check of the repository, not a product path."
-    },
-    "gap": {
-      "error": "SUR-20, SUR-21, SUR-22, SUR-23, SUR-24: no entry test."
     }
   },
   "NEW-surface-1": {
@@ -74,28 +71,16 @@
   "NEW-surface-7": {
     "na": {
       "empty,loading,slow,model_down,offline,permission,large_data,concurrent,retry,restart": "Upgrade and uninstall are the release's commands (upgrade_release.spec.ts); their paths are the criteria's own (error, undo)."
-    },
-    "gap": {
-      "error": "SUR-60: no entry test.",
-      "undo": "SUR-60: no entry test."
     }
   },
   "NEW-surface-8": {
     "na": {
       "empty,loading,slow,model_down,offline,permission,large_data,undo,retry,restart": "doctor's checks each state their own condition (SUR-83, -86, -88, -89 spawned in surface_commands_cli.spec.ts); doctor reads and changes nothing, so undo, retry and restart do not apply."
-    },
-    "gap": {
-      "error": "SUR-64, SUR-65: orphans; no entry test.",
-      "concurrent": "SUR-63: an orphan; no entry test."
     }
   },
   "NEW-surface-9": {
     "na": {
-      "empty,loading,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "Learning that a release exists is one check of a feed (next_release.spec.ts); its offline and error paths are the criteria's own."
-    },
-    "gap": {
-      "error": "SUR-69: an orphan; no entry test.",
-      "offline": "SUR-68: an orphan; no entry test."
+      "empty,loading,slow,model_down,permission,large_data,concurrent,undo,retry,restart": "Learning that a release exists is one command asked on a yes and one note after an upgrade (update_check_cli.spec.ts, whats_new_cli.spec.ts, spawned); its offline and error paths are the criteria's own."
     }
   },
   "NEW-surface-10": {
@@ -113,6 +98,11 @@
       "empty,loading,slow,model_down,offline,permission,large_data,undo,retry": "Observability and the reliability rows of doctor report state; they change nothing, so undo and retry do not apply."
     }
   },
+  "NEW-surface-13": {
+    "na": {
+      "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,restart": "Help, usage errors and the plan's printed words are what one command prints once (cli_help.spec.ts, cli_errors.spec.ts, spawned); they read no data that can be empty or slow, need no model, network or access level, and change nothing to undo or restart."
+    }
+  },
   "§6 v1 acceptance": {
     "na": {
       "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,retry,restart": "§6 is the acceptance list; each of its six criteria names its own state, and the columns none names are covered by the feature that owns them."
@@ -122,6 +112,6 @@
     }
   },
   "_ceiling": {
-    "gaps": 14
+    "gaps": 7
   }
 }

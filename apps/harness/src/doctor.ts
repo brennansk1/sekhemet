@@ -10,9 +10,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { freemem, homedir, platform, tmpdir, totalmem } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { EventLog } from "@sekhemet/kernel";
+import { loadGatesConfig } from "@sekhemet/gates";
+import { EventLog, SCHEMA_VERSION } from "@sekhemet/kernel";
 import {
   type EngineStatus,
   HttpInferenceAdapter,
@@ -43,7 +44,7 @@ import {
   sha256File,
   supportedTierFor,
 } from "@sekhemet/models";
-import { ProcessSandbox } from "@sekhemet/sandbox";
+import { ProcessSandbox, allowlistWarnings, sameProcess, socatAvailable } from "@sekhemet/sandbox";
 import { plural } from "@sekhemet/ui";
 import { newestVerifiedBackup } from "./backup_sets.js";
 import { resolveConfig, userConfigPath } from "./config.js";
@@ -55,7 +56,7 @@ import {
 } from "./config_apply.js";
 import { configUpgradeCheck } from "./config_upgrade.js";
 import { checkFreeSpace, formatBytes } from "./disk_space.js";
-import { toolProbeOptions } from "./init.js";
+import { packageManagerOf, toolProbeOptions } from "./init.js";
 import { countLostRecords, lostRecordsPath } from "./lost_records.js";
 import { pendingM0InRepo } from "./m0_path.js";
 import { describeModel, roleModelName } from "./model_access.js";
@@ -65,6 +66,7 @@ import { type CombinationDeps, qualificationCombination } from "./qualify.js";
 import { checkRegisters } from "./registers.js";
 import { researchDoctorLines } from "./research_bakeoff.js";
 import { awaitingResearchHosts } from "./research_consent.js";
+import { isLive, leasePath, readLeaseFile, runnerLease } from "./runner_lease.js";
 import { secretStoreStatus } from "./secret_store.js";
 import { findOnPath, sleepAssertionCommand, sleepAssertionProbe } from "./sleep_assertion.js";
 import {
@@ -92,19 +94,283 @@ export interface DiagnosticCheck {
   name: string;
   status: CheckStatus;
   detail: string;
+  /**
+   * SUR-62: the next step, printed on its own line as `Do: …` when the check
+   * is not a pass — the check's own where it has one, else the catalogue's
+   * (`DOCTOR_CHECKS`, filled in by `runDoctor`).
+   */
+  do?: string;
 }
 
 export interface DoctorReport {
+  /** No check failed: *Ready to run an issue* (SUR-61). */
   ok: boolean;
   checks: DiagnosticCheck[];
+  /** The closing line: *Ready to run an issue*, or *Not ready* naming the first missing step. */
+  verdict: string;
 }
 
-function check(name: string, status: CheckStatus, detail: string): DiagnosticCheck {
-  return { name, status, detail };
+/** A sentence ends with its stop. */
+const sentence = (t: string): string => (/[.!?]$/.test(t.trim()) ? t.trim() : `${t.trim()}.`);
+
+function check(name: string, status: CheckStatus, detail: string, step?: string): DiagnosticCheck {
+  return { name, status, detail, ...(step ? { do: sentence(step) } : {}) };
+}
+
+/**
+ * One entry of `doctor`'s catalogue (surface item 20b, NEW-surface-8): the
+ * check's id, its title as `doctor` prints it, and its generic next step,
+ * which the user guide's troubleshooting page is generated from (SUR-65).
+ */
+export interface DoctorCheckSpec {
+  id: string;
+  title: string;
+  do: string;
+}
+
+/**
+ * The catalogue, in the order `doctor` runs and prints the checks: what a
+ * run needs first (the engine, the weights, the roles' models), then the
+ * repository, the sandbox and the toolchain, then the rest. The verdict
+ * names the first check here that fails (SUR-61).
+ */
+export const DOCTOR_CHECKS: readonly DoctorCheckSpec[] = [
+  {
+    id: "memory",
+    title: "Unified memory",
+    do: "close programs you are not using, or wait until the system's memory pressure is normal",
+  },
+  {
+    id: "memory-floor",
+    title: "Memory floor",
+    do: "use a machine with 24 GB of memory or more; you may continue here at your own risk",
+  },
+  {
+    id: "engine",
+    title: "Inference engine",
+    do: "get the inference engine on Configuration › Models, or run `sekhemet engine get`",
+  },
+  {
+    id: "weights",
+    title: "Model weights",
+    do: "point SEKHEMET_MODELS_DIR (or `--models-dir`) at the folder holding your weights, or download them on Configuration › Models",
+  },
+  {
+    id: "weights-hashes",
+    title: "Weights' hashes",
+    do: "run `sekhemet doctor --verify-weights`; download a file whose hash differs again on Configuration › Models",
+  },
+  {
+    id: "role-verification",
+    title: "Role verification",
+    do: "verify each role's model on Configuration › Models, or run `sekhemet qualify --models <model>`",
+  },
+  {
+    id: "ollama-roles",
+    title: "Ollama's roles",
+    do: "assign a GGUF model to each role on Configuration › Models, or run `sekhemet models assign <role> <model>`",
+  },
+  {
+    id: "team-engines",
+    title: "Team engines",
+    do: "start each engine service with its profile's arguments: `docker compose -f packaging/server/compose.yaml up` (docs/reference/INSTALL.md, For a team)",
+  },
+  {
+    id: "model-server",
+    title: "Model server",
+    do: "start Ollama for the roles it serves; a role on llama.cpp needs nothing running, since each run starts its own llama-server",
+  },
+  {
+    id: "git-repository",
+    title: "Git repository",
+    do: "run `git init` in the project's folder, or run `sekhemet doctor` in a folder that is a git repository",
+  },
+  {
+    id: "sandbox",
+    title: "Sandbox confinement",
+    do: "on Linux install bubblewrap (`sudo apt install bubblewrap`); on macOS the sandbox is built in (docs/reference/INSTALL.md)",
+  },
+  {
+    id: "port-relays",
+    title: "Port relays",
+    do: "install socat (`sudo apt install socat`, or your distribution's package)",
+  },
+  { id: "node", title: "Node runtime", do: "install Node.js 22.13 or newer (https://nodejs.org)" },
+  { id: "git", title: "Git", do: "install git (https://git-scm.com/downloads)" },
+  {
+    id: "package-manager",
+    title: "Package manager",
+    do: "install the package manager the project uses (the `packageManager` field in package.json, or its lockfile)",
+  },
+  {
+    id: "skills",
+    title: "Skills",
+    do: "add skills under .sekhemet/skills/, or leave it: a project runs without skills",
+  },
+  {
+    id: "playbook",
+    title: "Playbook and skills",
+    do: "prune the rules and skills it names on Configuration › Project, or run `sekhemet skills`",
+  },
+  {
+    id: "project-records",
+    title: "Project records",
+    do: "fix the entries it names in docs/reference/PROVENANCE.md or the research register",
+  },
+  {
+    id: "plugins",
+    title: "Plugins",
+    do: "move what the plugins did to hooks (.sekhemet/hooks.toml) or MCP servers (.sekhemet/mcp.json), then remove .sekhemet/plugins/",
+  },
+  {
+    id: "first-run-benchmark",
+    title: "First-run benchmark",
+    do: "run `sekhemet m0 --worker <name>`, or let `sekhemet overnight` run it first",
+  },
+  {
+    id: "model-verification",
+    title: "Model verification",
+    do: "verify each model it names again: `sekhemet qualify --models <model>`",
+  },
+  {
+    id: "local-models-only",
+    title: "Local models only",
+    do: "assign a local model to each role it names on Configuration › Models",
+  },
+  {
+    id: "user-directory",
+    title: "User directory",
+    do: "merge or delete by hand the files it names as left behind",
+  },
+  {
+    id: "configuration",
+    title: "Configuration",
+    do: "fix the config.toml line it names, then run `sekhemet doctor` again",
+  },
+  {
+    id: "config-upgrades",
+    title: "Config upgrades",
+    do: "read the renamed keys it lists; each file's backup sits beside it",
+  },
+  { id: "hooks", title: "Hooks", do: "fix .sekhemet/hooks.toml where it says" },
+  {
+    id: "research",
+    title: "Research",
+    do: "set `[network] research` in your own config.toml (only you can allow research)",
+  },
+  {
+    id: "network-allowlist",
+    title: "Network allowlist",
+    do: "remove the wildcard or upload-capable entry from `[project] network_allow` in .sekhemet/gates.toml unless the project's checks truly need it; every issue that runs under it records the warning",
+  },
+  {
+    id: "research-pipelines",
+    title: "Research pipelines",
+    do: "run `sekhemet research-bakeoff` to compare the pipelines again",
+  },
+  {
+    id: "secret-store",
+    title: "Secret store",
+    do: "install the system's secret store (macOS Keychain, or the Secret Service on Linux), or choose a private file in Integrations",
+  },
+  {
+    id: "activity-log",
+    title: "Activity log",
+    do: "run `sekhemet log` to see the entry named; restore the newest backup that verifies with `sekhemet restore --latest`",
+  },
+  {
+    id: "locks",
+    title: "Locks",
+    do: "nothing is needed: the next run takes over a lock whose holder is gone; or remove the file it names",
+  },
+  {
+    id: "crashed-attempts",
+    title: "Crashed attempts",
+    do: "run `sekhemet run`: its start-up pass returns each to Ready from its last checkpoint",
+  },
+  {
+    id: "git-clean",
+    title: "Workspace in a git repository",
+    do: "run `sekhemet backup` before any `git clean -xdf` there",
+  },
+  {
+    id: "project-locators",
+    title: "Project locators",
+    do: "move the project back, or record its new folder with `sekhemet project move <id> <path>`",
+  },
+  {
+    id: "team-address",
+    title: "Team address",
+    do: 'serve the Team server behind TLS — your reverse proxy (the `builtin` profile) or the identity proxy with your certificate (the `proxy` profile), docs/reference/INSTALL.md › For a team — and set `[identity] public_url = "https://…"`',
+  },
+  { id: "backup", title: "Backup", do: "run `sekhemet backup`" },
+  {
+    id: "staying-awake",
+    title: "Staying awake",
+    do: "install the tool that keeps the machine awake (`caffeinate` on macOS, `systemd-inhibit` on Linux), or keep the machine from sleeping while a run works",
+  },
+  { id: "power", title: "Power", do: "plug the machine in for the night" },
+  { id: "free-space", title: "Free space", do: "free space on the volume it names" },
+  {
+    id: "credential-store",
+    title: "Credential store",
+    do: 'set `[team] mode = "team"` in your config.toml and run `sekhemet serve` in the workspace\'s folder: a Team server moves the store into its workspace',
+  },
+  {
+    id: "model-lease",
+    title: "Model lease",
+    do: "wait for the run that holds it to finish, or stop that process",
+  },
+  {
+    id: "lost-records",
+    title: "Lost records",
+    do: "read the file it names; each line is a record that could not be written",
+  },
+];
+
+/** The catalogue's entry for a check's title. */
+export function doctorCheckSpec(title: string): DoctorCheckSpec | undefined {
+  return DOCTOR_CHECKS.find((c) => c.title === title);
+}
+
+/**
+ * SUR-61: the verdict — *Ready to run an issue* while no check fails, else
+ * *Not ready* naming the first failing check in the catalogue's order and
+ * its next step.
+ */
+export function doctorVerdict(checks: readonly DiagnosticCheck[]): string {
+  const order = (c: DiagnosticCheck) => {
+    const i = DOCTOR_CHECKS.findIndex((s) => s.title === c.name);
+    return i === -1 ? DOCTOR_CHECKS.length : i;
+  };
+  const first = checks.filter((c) => c.status === "fail").sort((a, b) => order(a) - order(b))[0];
+  if (!first) return "Ready to run an issue.";
+  const step = first.do ?? doctorCheckSpec(first.name)?.do;
+  return `Not ready: ${first.name}.${step ? ` Do: ${sentence(step)}` : ""}`;
+}
+
+/** Every check that is not a pass carries a next step: its own, else the catalogue's (SUR-62). */
+function withNextSteps(checks: readonly DiagnosticCheck[]): DiagnosticCheck[] {
+  return checks.map((c) => {
+    if (c.status === "pass") {
+      const { do: _unused, ...rest } = c;
+      return rest;
+    }
+    const step = c.do ?? doctorCheckSpec(c.name)?.do;
+    return step ? { ...c, do: sentence(step) } : c;
+  });
 }
 
 /** Probe a local inference server's model list over HTTP. */
-export async function probeInference(endpoints: string[]): Promise<DiagnosticCheck> {
+export async function probeInference(
+  endpoints: string[],
+  /**
+   * A role is served by a server that must already run (Ollama). Otherwise
+   * no server answering is a warning, not a failure: each run starts its own
+   * llama-server (surface item 20b).
+   */
+  needed = true,
+): Promise<DiagnosticCheck> {
   for (const base of endpoints) {
     try {
       const controller = new AbortController();
@@ -141,11 +407,18 @@ export async function probeInference(endpoints: string[]): Promise<DiagnosticChe
     }
   }
 
-  return check(
-    "Model server",
-    "fail",
-    `no inference server reachable at ${endpoints.join(" or ")} — start Ollama or llama-server`,
-  );
+  return needed
+    ? check(
+        "Model server",
+        "fail",
+        `no inference server reachable at ${endpoints.join(" or ")}, and a role's model is served by Ollama`,
+        "start Ollama (`ollama serve`), or assign a GGUF model to that role on Configuration › Models",
+      )
+    : check(
+        "Model server",
+        "warn",
+        `no inference server reachable at ${endpoints.join(" or ")}; a role on llama.cpp needs none, since each run starts its own llama-server`,
+      );
 }
 
 /** Verify a tool is on PATH and report the version it actually returns. */
@@ -162,24 +435,115 @@ function probeBinary(name: string, args: string[], label = name): DiagnosticChec
     return check(label, "pass", `${out.split("\n")[0]}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return check(label, "fail", `not runnable: ${message.split("\n")[0] ?? message}`);
+    return check(
+      label,
+      "fail",
+      (err as NodeJS.ErrnoException).code === "ENOENT"
+        ? `not installed (${name} is not on the PATH)`
+        : `not runnable: ${message.split("\n")[0] ?? message}`,
+    );
   }
 }
 
-/** Confirm git worktree support by listing the repo's actual worktrees. */
-function probeWorktrees(repoPath: string): DiagnosticCheck {
-  try {
-    const out = execFileSync("git", ["worktree", "list", "--porcelain"], {
+/**
+ * The folder is a git repository, where each issue runs in a worktree of its
+ * own (SUR-64): outside one it says so in words and names `git init`, never
+ * a raw git error.
+ */
+export function probeWorktrees(repoPath: string): DiagnosticCheck {
+  const git = (args: string[]) =>
+    execFileSync("git", args, {
       cwd: repoPath,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15_000,
     });
-    const count = out.split("\n").filter((l) => l.startsWith("worktree ")).length;
-    return check("Git worktree isolation", "pass", `${plural(count, "worktree")} registered`);
+  try {
+    if (git(["rev-parse", "--is-inside-work-tree"]).trim() !== "true") throw new Error("bare");
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return check("Git worktree isolation", "fail", message.split("\n")[0] ?? message);
+    if ((err as NodeJS.ErrnoException).code === "ENOENT")
+      return check("Git repository", "fail", "git is not installed, so no issue can run");
+    return check(
+      "Git repository",
+      "fail",
+      `${repoPath} is not inside a git repository; each issue runs in a git worktree of the project's repository`,
+      `run \`git init\` in ${repoPath}, or run \`sekhemet doctor\` in your project's folder`,
+    );
   }
+  try {
+    const count = git(["worktree", "list", "--porcelain"])
+      .split("\n")
+      .filter((l) => l.startsWith("worktree ")).length;
+    return check(
+      "Git repository",
+      "pass",
+      `a git repository; ${plural(count, "worktree")} registered`,
+    );
+  } catch (err) {
+    const said = (err as { stderr?: string }).stderr?.toString().trim().split("\n")[0];
+    return check(
+      "Git repository",
+      "fail",
+      `git could not list this repository's worktrees${said ? ` (${said})` : ""}`,
+      "update git to 2.20 or newer, then run `sekhemet doctor` again",
+    );
+  }
+}
+
+/**
+ * The project's package manager (SUR-64, item 5.3): the one its
+ * `packageManager` field or lockfile names, never pnpm by default; a folder
+ * with no `package.json` needs none.
+ */
+export function packageManagerCheck(repoPath: string): DiagnosticCheck {
+  const manifest = join(repoPath, "package.json");
+  if (!existsSync(manifest))
+    return check(
+      "Package manager",
+      "pass",
+      "no package.json here, so no JavaScript package manager is needed",
+    );
+  let pkg: { packageManager?: string } = {};
+  try {
+    pkg = JSON.parse(readFileSync(manifest, "utf8")) as typeof pkg;
+  } catch {
+    // An unreadable package.json names no manager: its lockfile, else npm.
+  }
+  const pm = packageManagerOf(repoPath, pkg);
+  const probed = probeBinary(pm, ["--version"], "Package manager");
+  return probed.status === "pass"
+    ? check("Package manager", "pass", `${pm} ${probed.detail}, the project's package manager`)
+    : check(
+        "Package manager",
+        "fail",
+        `${pm}, the project's package manager, is ${probed.detail}`,
+        `install ${pm}${pm === "pnpm" || pm === "yarn" ? ` (\`npm install -g ${pm}\`)` : pm === "npm" ? " with Node.js (https://nodejs.org)" : " (https://bun.sh)"}`,
+      );
+}
+
+/**
+ * Port relays (SUR-93, security item 14b): on Linux a card's command runs in
+ * an empty network namespace, and its named ports and egress proxy cross it
+ * through socat. Without socat on the PATH they have no route. Elsewhere
+ * there is no row: macOS needs no relay.
+ */
+export function portRelaysCheck(
+  os: NodeJS.Platform = process.platform,
+  available: () => boolean = socatAvailable,
+): DiagnosticCheck | undefined {
+  if (os !== "linux") return undefined;
+  return available()
+    ? check(
+        "Port relays",
+        "pass",
+        "socat found: an issue's named ports and its egress proxy cross the sandbox's network namespace",
+      )
+    : check(
+        "Port relays",
+        "fail",
+        "socat is not on the PATH, so an issue's named ports (a dev server, the browser's) and its egress proxy get no route out of the sandbox's empty network namespace",
+        "install socat (`sudo apt install socat`, or your distribution's package)",
+      );
 }
 
 /**
@@ -270,6 +634,9 @@ export function judgeConfinement(
 
 /** Report on the skills directory the context engine loads from. */
 function probeSkills(repoPath: string): DiagnosticCheck {
+  // SUR-64: a folder not set up yet is not warned about skills.
+  if (!existsSync(join(repoPath, ".sekhemet")))
+    return check("Skills", "pass", "not set up here yet: skills load once the project is");
   const dir = join(repoPath, ".sekhemet", "skills");
   if (!existsSync(dir)) {
     return check("Skills", "warn", `${dir} not present — no skills will load`);
@@ -375,8 +742,10 @@ export async function runDoctor(
   const free = freemem();
   const pressure = classifyMemoryPressure(total - free, total);
   const gb = (n: number): string => (n / 1024 ** 3).toFixed(1);
+  const workspaceFolder = workspaceFolderOf(repoPath);
+  const roles = roleEngines(repoPath);
 
-  const checks: DiagnosticCheck[] = [
+  const checks: (DiagnosticCheck | undefined)[] = [
     memoryCheck(pressure, free, total, gb),
     // Rule 6c, MD-N16-3: the memory floor v1 supports.
     memoryFloorCheck(total),
@@ -389,20 +758,23 @@ export async function runDoctor(
     // MD-N8-1: each assigned role verified for its combination on this machine.
     roleQualificationCheck(hostRegistry(), { repoPath }),
     // Rule 6d, MD-N16-4: which roles Ollama serves, in the README's words.
-    ollamaRolesCheck(roleEngines(repoPath)),
+    ollamaRolesCheck(roles),
     // MD-N15-3: on the Team server, each filled role's engine answers and matches.
     ...(setupFor(repoPath) === "team" ? [teamEnginesCheck(await checkTeamEngines())] : []),
-    // Ollama, the managed Worker server (cyber-tiel, 8098) and the legacy 8099.
-    await probeInference([
-      "http://127.0.0.1:11434",
-      "http://127.0.0.1:8098",
-      "http://127.0.0.1:8099",
-    ]),
+    // Ollama, the managed Worker server (cyber-tiel, 8098) and the legacy 8099:
+    // needed only where a role's model is served by Ollama (item 20b).
+    await probeInference(
+      ["http://127.0.0.1:11434", "http://127.0.0.1:8098", "http://127.0.0.1:8099"],
+      roles.some((r) => r.engine === "ollama"),
+    ),
     probeWorktrees(repoPath),
     await probeConfinement(repoPath),
+    // SUR-93: socat on Linux, for a card's port relays.
+    portRelaysCheck(),
     probeBinary("node", ["--version"], "Node runtime"),
     probeBinary("git", ["--version"], "Git"),
-    probeBinary("pnpm", ["--version"], "pnpm"),
+    // SUR-64: the project's own package manager, or none.
+    packageManagerCheck(repoPath),
     probeSkills(repoPath),
     // E19, C12: rule net gain, context bloat, pruning recommendations.
     playbookDoctorCheck(repoPath),
@@ -418,16 +790,280 @@ export async function runDoctor(
     configUpgradeCheck([join(repoPath, ".sekhemet", "config.toml"), userConfigPath()]),
     hooksCheck(repoPath),
     researchConsentCheck(repoPath),
+    // SEC-15b: a wildcard or upload-capable allowlist entry, warned where a person meets it.
+    networkAllowlistCheck(repoPath),
     await researchPipelineCheck(repoPath),
     secretStoreCheck(),
+    // SUR-63: the ledger's chain and schema, locks, crashed attempts (item 20b).
+    activityLogCheck(workspaceFolder),
+    locksCheck(repoPath),
+    crashedAttemptsCheck(workspaceFolder, repoPath),
+    // SUR-82: a workspace inside a git repository, and `git clean -xdf`.
+    gitCleanCheck(workspaceFolder),
     // SUR-78: every project's locator, rewritten from the ledger.
     projectLocatorsCheck(repoPath),
+    // TEAM-47: the Team server's public address is https.
+    teamAddressCheck(repoPath),
     // Surface item 20e (C4): backups, staying awake, power, free space, the
     // credential store, the model lease and lost records (SUR-83 to SUR-88).
     ...reliabilityChecks(repoPath),
   ];
+  // In the catalogue's order, each not-pass with its next step (SUR-61, SUR-62).
+  const at = (c: DiagnosticCheck) => {
+    const i = DOCTOR_CHECKS.findIndex((s) => s.title === c.name);
+    return i === -1 ? DOCTOR_CHECKS.length : i;
+  };
+  const ordered = withNextSteps(
+    checks.filter((c): c is DiagnosticCheck => c !== undefined).sort((a, b) => at(a) - at(b)),
+  );
+  return {
+    ok: ordered.every((c) => c.status !== "fail"),
+    checks: ordered,
+    verdict: doctorVerdict(ordered),
+  };
+}
 
-  return { ok: checks.every((c) => c.status !== "fail"), checks };
+// ── the catalogue's ledger, lock, sweep, git and Team rows (SUR-63, SUR-82, TEAM-47) ──
+
+/**
+ * Activity log (SUR-63): the ledger's schema version is one this build
+ * reads, and its whole hash chain verifies — read-only; an erased entry is a
+ * named gap, never a failure.
+ */
+export function activityLogCheck(workspaceFolder: string): DiagnosticCheck {
+  if (!holdsLedger(workspaceFolder))
+    return check("Activity log", "pass", "no Activity log here yet");
+  const path = ledgerPathOf(workspaceFolder);
+  let db: DatabaseSync;
+  try {
+    db = new DatabaseSync(path, { readOnly: true });
+  } catch (err) {
+    return check(
+      "Activity log",
+      "fail",
+      `${path} could not be opened: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  try {
+    const stored = (db.prepare("PRAGMA user_version").get() as { user_version: number })
+      .user_version;
+    if (stored > SCHEMA_VERSION)
+      return check(
+        "Activity log",
+        "fail",
+        `${path} is at schema version ${stored}, newer than this build's ${SCHEMA_VERSION}, so this build cannot open it`,
+        "upgrade Sekhemet to the version that wrote it, or restore the backup taken before the migration (`sekhemet restore --latest`)",
+      );
+    const v = new EventLog(db).verifyHashChainSync({ full: true });
+    if (!v.valid)
+      return check(
+        "Activity log",
+        "fail",
+        `the hash chain of ${path} does not verify${v.corruptedSeq !== undefined ? ` at entry ${v.corruptedSeq}` : ""}${v.reason ? ` (${v.reason})` : ""}: an entry was changed outside Sekhemet`,
+        "run `sekhemet log` to see the entry; with the server stopped, restore the newest backup that verifies (`sekhemet restore --latest`)",
+      );
+    const gaps = v.erased?.length ?? 0;
+    return check(
+      "Activity log",
+      "pass",
+      `${plural(v.totalEvents, "entry", "entries")}, the hash chain verifies${gaps ? ` (${plural(gaps, "erased entry", "erased entries")} named as gaps)` : ""}; schema version ${stored}${stored < SCHEMA_VERSION ? `, migrated to ${SCHEMA_VERSION} after a backup the next time a command opens it` : ""}`,
+    );
+  } finally {
+    db.close();
+  }
+}
+
+/** A lock file's holder: its pid and start time, or nothing readable. */
+function lockFileHolder(path: string): { pid: number; processStart?: string } | undefined {
+  try {
+    const { pid, processStart } = JSON.parse(readFileSync(path, "utf8")) as {
+      pid?: unknown;
+      processStart?: unknown;
+    };
+    if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return undefined;
+    return { pid, ...(typeof processStart === "string" ? { processStart } : {}) };
+  } catch {
+    return undefined;
+  }
+}
+
+/** The repository's accept lock (review-git RG-S5-5), in its shared git directory. */
+function acceptLockPath(repoPath: string): string | undefined {
+  try {
+    const dir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd: repoPath,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 15_000,
+    }).trim();
+    return join(isAbsolute(dir) ? dir : join(repoPath, dir), "sekhemet-accept.lock");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Locks (SUR-63): the runner lease (runtime item 3) and the accept lock
+ * (review-git RG-S5-5) — free, held by a live process, or left by one that
+ * is gone, which the next run takes over (a warning naming the file).
+ */
+export function locksCheck(repoPath: string): DiagnosticCheck {
+  const held: string[] = [];
+  const stale: string[] = [];
+  const runnerPath = leasePath(repoPath);
+  if (existsSync(runnerPath)) {
+    const lease = readLeaseFile(runnerPath);
+    if (lease && isLive(lease))
+      held.push(
+        `the runner lease is held by pid ${lease.pid}${lease.kind ? ` (${lease.kind})` : ""}`,
+      );
+    else
+      stale.push(
+        `a runner lease ${lease ? `from pid ${lease.pid}, whose process is gone` : "that cannot be read"} (${runnerPath})`,
+      );
+  }
+  const acceptPath = acceptLockPath(repoPath);
+  if (acceptPath && existsSync(acceptPath)) {
+    const holder = lockFileHolder(acceptPath);
+    if (holder && sameProcess(holder.pid, holder.processStart))
+      held.push(`an accept is in progress (pid ${holder.pid})`);
+    else
+      stale.push(
+        `an accept lock ${holder ? `from pid ${holder.pid}, whose process is gone` : "that cannot be read"} (${acceptPath})`,
+      );
+  }
+  if (stale.length)
+    return check(
+      "Locks",
+      "warn",
+      [...held, `${stale.join(" and ")} was left behind`].join("; "),
+      `nothing is needed: the next run takes ${stale.length === 1 ? "it" : "them"} over; or remove ${stale.length === 1 ? "that file" : "those files"} while no Sekhemet command runs`,
+    );
+  return check("Locks", "pass", held.length ? held.join("; ") : "no runner or accept lock is held");
+}
+
+/**
+ * Crashed attempts (SUR-63, runtime RUN-9): issues In progress whose latest
+ * attempt is still marked running while no runner holds the lease — stopped
+ * by a crash or a kill, waiting for the next start-up sweep to return them
+ * to Ready. Read-only: the sweep is the runner's.
+ */
+export function crashedAttemptsCheck(workspaceFolder: string, repoPath: string): DiagnosticCheck {
+  if (!holdsLedger(workspaceFolder))
+    return check("Crashed attempts", "pass", "no Activity log here yet");
+  const runner = runnerLease(repoPath);
+  if (runner)
+    return check(
+      "Crashed attempts",
+      "pass",
+      `a runner is working (pid ${runner.pid}), so the attempts in progress are live`,
+    );
+  let ids: string[];
+  try {
+    const db = new DatabaseSync(ledgerPathOf(workspaceFolder), { readOnly: true });
+    try {
+      ids = (
+        db
+          .prepare(
+            `SELECT c.id AS id FROM cards c JOIN attempts a ON a.card_id = c.id
+             WHERE c.status = 'in_progress' AND a.status = 'running'
+               AND a.attempt_number = (SELECT MAX(attempt_number) FROM attempts WHERE card_id = c.id)
+             ORDER BY c.id`,
+          )
+          .all() as { id: string }[]
+      ).map((r) => r.id);
+    } finally {
+      db.close();
+    }
+  } catch (err) {
+    // An unreadable ledger is the Activity log row's to report.
+    return check(
+      "Crashed attempts",
+      "pass",
+      `not read: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (ids.length === 0)
+    return check("Crashed attempts", "pass", "no attempt was left running by a stopped run");
+  return check(
+    "Crashed attempts",
+    "warn",
+    `${plural(ids.length, "issue")} stopped mid-attempt with no end recorded (a crash or a kill): ${ids.join(", ")}; the next start-up sweep returns ${ids.length === 1 ? "it" : "each"} to Ready from ${ids.length === 1 ? "its" : "their"} last checkpoint`,
+  );
+}
+
+/**
+ * SUR-82 (DEC-57, runtime item 35a): a workspace whose folder lies inside a
+ * git repository — every install from before DEC-57 — loses its ledger to
+ * one `git clean -xdf` there, and every project's history since the newest
+ * backup with it.
+ */
+export function gitCleanCheck(workspaceFolder: string, now: Date = new Date()): DiagnosticCheck {
+  const name = "Workspace in a git repository";
+  if (!holdsLedger(workspaceFolder)) return check(name, "pass", "no Activity log here yet");
+  let top: string;
+  try {
+    top = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: workspaceFolder,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 15_000,
+    }).trim();
+  } catch {
+    return check(
+      name,
+      "pass",
+      "the workspace folder is not inside a git repository, so `git clean` cannot reach its Activity log",
+    );
+  }
+  let since = "there is no backup of it yet";
+  try {
+    const id = ledgerFacts(workspaceFolder).workspaceId;
+    const set = id ? newestVerifiedBackup(id, now) : undefined;
+    if (set) since = `the newest backup is ${hoursWords(set.ageHours)}`;
+  } catch {
+    // An unreadable ledger is the Activity log row's to report.
+  }
+  return check(
+    name,
+    "warn",
+    `the workspace folder ${workspaceFolder} lies inside the git repository ${top}: \`git clean -xdf\` there deletes the Activity log, which git does not track, and loses every project's history since the newest backup (up to a day at the defaults); ${since}`,
+    "run `sekhemet backup` before any `git clean -xdf` there",
+  );
+}
+
+/**
+ * TEAM-47: the Team server's public address (`[identity] public_url`) is
+ * https; one that is not, or none, fails naming the documented TLS front.
+ * Solo has no row.
+ */
+export function teamAddressCheck(
+  repoPath: string,
+  userPath: string = userConfigPath(),
+): DiagnosticCheck | undefined {
+  let config: ReturnType<typeof resolveConfig>["config"];
+  try {
+    config = resolveConfig({ repoPath, userConfigPath: userPath }).config;
+  } catch {
+    return undefined; // the configuration check reports it
+  }
+  if (config.team.mode !== "team") return undefined;
+  const url = config.identity.publicUrl.trim();
+  let https = false;
+  try {
+    https = new URL(url).protocol === "https:";
+  } catch {
+    // Not a URL: not https.
+  }
+  return https
+    ? check("Team address", "pass", `people open ${url}, over TLS`)
+    : check(
+        "Team address",
+        "fail",
+        url
+          ? `[identity] public_url is ${url}, which is not https: passwords and session cookies would cross the network in the clear`
+          : "[identity] public_url is not set, so the Team server has no https address for people to open",
+      );
 }
 
 /**
@@ -445,10 +1081,8 @@ export function configurationCheck(
     return check(
       "Configuration",
       "fail",
-      withDo(
-        `${resolved.parseErrors.map((e) => e.text).join("; ")}; this file is skipped, and run, queue and overnight refuse to start until it parses`,
-        `fix ${resolved.parseErrors.length === 1 ? "that line" : "those lines"}, then run \`sekhemet doctor\` again`,
-      ),
+      `${resolved.parseErrors.map((e) => e.text).join("; ")}; this file is skipped, and run, queue and overnight refuse to start until it parses`,
+      `fix ${resolved.parseErrors.length === 1 ? "that line" : "those lines"}, then run \`sekhemet doctor\` again`,
     );
   if (resolved.problems.length > 0)
     return check("Configuration", "warn", resolved.problems.join("; "));
@@ -542,6 +1176,35 @@ export function pluginsCheck(repoPath: string): DiagnosticCheck {
     "Plugins",
     "warn",
     `plugins are not supported and are not loaded${found.length ? ` (${found.join(", ")})` : ""}; use hooks (.sekhemet/hooks.toml) or MCP servers (.sekhemet/mcp.json) instead`,
+  );
+}
+
+/**
+ * SEC-15b (security item 31a): an entry of the project's `[project]
+ * network_allow` that is a wildcard or an upload-capable host is warned
+ * about here, where a person checks what they configured, as well as on
+ * every card that runs under it (`card/egress_warning`).
+ */
+export function networkAllowlistCheck(repoPath: string): DiagnosticCheck {
+  let hosts: readonly string[] = [];
+  try {
+    hosts = loadGatesConfig(repoPath).project.networkAllow ?? [];
+  } catch {
+    // A gates.toml that does not load is the configuration check's to name.
+  }
+  const warned = allowlistWarnings(hosts);
+  if (warned.length === 0)
+    return check(
+      "Network allowlist",
+      "pass",
+      hosts.length
+        ? `${hosts.length} host${hosts.length === 1 ? "" : "s"}; no wildcard or upload-capable entry`
+        : "no hosts allowed to the project's checks",
+    );
+  return check(
+    "Network allowlist",
+    "warn",
+    warned.map((w) => `${w.host} (${w.reason})`).join("; "),
   );
 }
 
@@ -731,12 +1394,6 @@ function registersCheck(repoPath: string): DiagnosticCheck {
 
 // ── the first hour's rows (models rules 5, 6a–6d; MD-N7-2, MD-N8-1, MD-N15-3) ──
 
-/** A detail that is not a pass, ending with its next step (SUR-62, NEW-surface-8). */
-function withDo(detail: string, step: string): string {
-  const end = (t: string) => (/[.!?]$/.test(t) ? t : `${t}.`);
-  return `${end(detail)} Do: ${end(step)}`;
-}
-
 /**
  * The inference engine (rules 6a, 6b; MD-N16-1, MD-N16-2, MD-N19-5): which
  * llama-server is used, where it came from and its build against the floor;
@@ -747,7 +1404,8 @@ export function engineDoctorCheck(s: EngineStatus = engineStatus()): DiagnosticC
   return check(
     "Inference engine",
     "fail",
-    withDo(s.line, s.fixes[0] ?? "install llama.cpp's llama-server"),
+    s.line,
+    s.fixes[0] ?? "install llama.cpp's llama-server",
   );
 }
 
@@ -763,10 +1421,8 @@ export function memoryFloorCheck(totalBytes: number = totalmem()): DiagnosticChe
     return check(
       "Memory floor",
       "warn",
-      withDo(
-        `${gb} GB installed; v1 supports 24 GB of memory and above, and the shipped models do not fit in this much`,
-        "use a machine with 24 GB or more; you may continue here at your own risk",
-      ),
+      `${gb} GB installed; v1 supports 24 GB of memory and above, and the shipped models do not fit in this much`,
+      "use a machine with 24 GB or more; you may continue here at your own risk",
     );
   return check(
     "Memory floor",
@@ -836,10 +1492,8 @@ export function ollamaRolesCheck(roles: readonly RoleEngine[]): DiagnosticCheck 
   return check(
     "Ollama's roles",
     "warn",
-    withDo(
-      `${README_ENGINE}; Ollama serves ${which}, outside that statement`,
-      "assign a GGUF model to each on Configuration › Models, or run `sekhemet models assign <role> <model>`",
-    ),
+    `${README_ENGINE}; Ollama serves ${which}, outside that statement`,
+    "assign a GGUF model to each on Configuration › Models, or run `sekhemet models assign <role> <model>`",
   );
 }
 
@@ -870,6 +1524,7 @@ export function roleQualificationCheck(
       // The configuration check reports an unreadable file.
     }
   const lines: string[] = [];
+  const unverified: string[] = [];
   let status: CheckStatus = "pass";
   for (const role of MODEL_ROLES) {
     const name =
@@ -902,16 +1557,19 @@ export function roleQualificationCheck(
       lines.push(`${ROLE_WORDS[role]} ${name}: runs under an override (${look.reason})`);
     else {
       const state = look.status === "missing" ? "missing" : `${look.status}: ${look.reason}`;
-      lines.push(
-        withDo(
-          `${ROLE_WORDS[role]} ${name}: not verified (${state})`,
-          `Verify it on Configuration › Models, or run \`sekhemet qualify --models ${name}${role === "worker" ? "" : ` --role ${role}`}\``,
-        ),
+      lines.push(`${ROLE_WORDS[role]} ${name}: not verified (${state})`);
+      unverified.push(
+        `sekhemet qualify --models ${name}${role === "worker" ? "" : ` --role ${role}`}`,
       );
       status = role === "worker" ? "fail" : status === "fail" ? "fail" : "warn";
     }
   }
-  return check("Role verification", status, lines.join("; "));
+  // SUR-62: one next step for every model not verified.
+  const step =
+    unverified.length === 0
+      ? undefined
+      : `Verify ${unverified.length === 1 ? "it" : "them"} on Configuration › Models, or run ${unverified.map((c) => `\`${c}\``).join(" and ")}`;
+  return check("Role verification", status, lines.join("; "), step);
 }
 
 /**
@@ -926,10 +1584,8 @@ export function teamEnginesCheck(report: TeamEnginesReport): DiagnosticCheck {
     ? check(
         "Team engines",
         "fail",
-        withDo(
-          detail,
-          "start each engine service with its profile's arguments: `docker compose -f packaging/server/compose.yaml up` (docs/reference/INSTALL.md, For a team)",
-        ),
+        detail,
+        "start each engine service with its profile's arguments: `docker compose -f packaging/server/compose.yaml up` (docs/reference/INSTALL.md, For a team)",
       )
     : check("Team engines", "pass", detail);
 }
@@ -992,6 +1648,8 @@ export async function weightsHashCheck(
   }
   let wrote = false;
   const bad: string[] = [];
+  /** The models whose file differs, each downloaded again (SUR-62's one step). */
+  const refetch = new Set<string>();
   const unread: { path: string; bytes: number }[] = [];
   /** Verified here before, at this size, and written since: not read again without the flag. */
   const changed: string[] = [];
@@ -1027,11 +1685,9 @@ export async function weightsHashCheck(
               : undefined;
         if (was) {
           bad.push(
-            withDo(
-              `${modelId}: the file is ${formatBytes(bytes)}, not ${was}, so its hash differs from the registered one (${path})`,
-              `download it again on Configuration › Models, or run \`sekhemet models fetch ${modelId}\``,
-            ),
+            `${modelId}: the file is ${formatBytes(bytes)}, not ${was}, so its hash differs from the registered one (${path})`,
           );
+          refetch.add(modelId);
         } else if (verified.length > 0) changed.push(path);
         else unread.push({ path, bytes });
         continue;
@@ -1048,13 +1704,10 @@ export async function weightsHashCheck(
       wrote = true;
     }
     compared++;
-    if (sha !== expected)
-      bad.push(
-        withDo(
-          `${modelId}: the file's hash differs from the registered one (${path})`,
-          `download it again on Configuration › Models, or run \`sekhemet models fetch ${modelId}\``,
-        ),
-      );
+    if (sha !== expected) {
+      bad.push(`${modelId}: the file's hash differs from the registered one (${path})`);
+      refetch.add(modelId);
+    }
   }
   if (wrote)
     try {
@@ -1070,7 +1723,15 @@ export async function weightsHashCheck(
       : "",
     unreadWords(unread),
   ].filter(Boolean);
-  if (bad.length) return check("Weights' hashes", "fail", [...bad, ...unverified].join("; "));
+  if (bad.length)
+    return check(
+      "Weights' hashes",
+      "fail",
+      [...bad, ...unverified].join("; "),
+      refetch.size
+        ? `download ${refetch.size === 1 ? "it" : "them"} again on Configuration › Models, or run ${[...refetch].map((m) => `\`sekhemet models fetch ${m}\``).join(" and ")}`
+        : "check that the models folder is readable, then run `sekhemet doctor --verify-weights` again",
+    );
   const matched = compared
     ? `${plural(compared, "model file")} ${compared === 1 ? "matches its" : "match their"} registered SHA-256${opts.verify ? ` (read in ${durationWords(tookMs)})` : ""}`
     : "";
@@ -1143,10 +1804,8 @@ export function backupCheck(workspaceFolder: string, now: Date = new Date()): Di
     return check(
       "Backup",
       "warn",
-      withDo(
-        `no backup of this workspace yet, and ${plural(head, "event")} recorded only in ${ledgerPathOf(workspaceFolder)}`,
-        "run `sekhemet backup`",
-      ),
+      `no backup of this workspace yet, and ${plural(head, "event")} recorded only in ${ledgerPathOf(workspaceFolder)}`,
+      "run `sekhemet backup`",
     );
   const since = eventsAfter(workspaceFolder, set.manifest.seq);
   const age = `the newest backup, ${set.path}, is ${hoursWords(set.ageHours)}`;
@@ -1154,7 +1813,8 @@ export function backupCheck(workspaceFolder: string, now: Date = new Date()): Di
     return check(
       "Backup",
       "warn",
-      withDo(`${age} and ${plural(since, "event")} were recorded since`, "run `sekhemet backup`"),
+      `${age} and ${plural(since, "event")} were recorded since`,
+      "run `sekhemet backup`",
     );
   return check(
     "Backup",
@@ -1275,10 +1935,8 @@ export function powerCheck(
   return check(
     "Power",
     "warn",
-    withDo(
-      "on battery power with an overnight window set: Sekhemet keeps the machine from idle sleep only, so a closed lid or a sleep the battery forces stops the night",
-      "plug the machine in for the night",
-    ),
+    "on battery power with an overnight window set: Sekhemet keeps the machine from idle sleep only, so a closed lid or a sleep the battery forces stops the night",
+    "plug the machine in for the night",
   );
 }
 
@@ -1317,17 +1975,16 @@ export function freeSpaceCheck(
     return check(
       "Free space",
       "fail",
-      withDo(
-        `${lines.join("; ")}; below the floor no issue starts${consumers.length ? `; the largest under .sekhemet/: ${consumers.join(", ")}` : ""}`,
-        `free space on ${work.short.mount}`,
-      ),
+      `${lines.join("; ")}; below the floor no issue starts${consumers.length ? `; the largest under .sekhemet/: ${consumers.join(", ")}` : ""}`,
+      `free space on ${work.short.mount}`,
     );
   }
   if (modelsShort)
     return check(
       "Free space",
       "warn",
-      withDo(`${lines.join("; ")}; the models' volume is below it`, "free space for the models"),
+      `${lines.join("; ")}; the models' volume is below it`,
+      "free space for the models",
     );
   return check("Free space", "pass", lines.join("; "));
 }
@@ -1374,10 +2031,8 @@ export function credentialStoreCheck(
     return check(
       "Credential store",
       "warn",
-      withDo(
-        `${[...parts, `a store is still at the old place, ${left.join(" and ")}, and no workspace has claimed it`].join("; ")}`,
-        "start the workspace it belongs to (`sekhemet serve` in its folder), which moves it",
-      ),
+      `${[...parts, `a store is still at the old place, ${left.join(" and ")}, and no workspace has claimed it`].join("; ")}`,
+      `set [team] mode = "team" in ${userConfigPath()} and run \`sekhemet serve\` in the folder of the workspace it belongs to: a Team server moves the store into its workspace (a Solo server refuses to start beside a store)`,
     );
   return check(
     "Credential store",
@@ -1402,10 +2057,8 @@ export function modelLeaseCheck(path: string = modelLeasePath()): DiagnosticChec
   return check(
     "Model lease",
     "warn",
-    withDo(
-      `another process holds this machine's model lease: ${modelLeaseHolderWords(lease)}; a load here waits for it`,
-      `wait for that run to finish, or stop it (pid ${lease.pid})`,
-    ),
+    `another process holds this machine's model lease: ${modelLeaseHolderWords(lease)}; a load here waits for it`,
+    `wait for that run to finish, or stop it (pid ${lease.pid})`,
   );
 }
 

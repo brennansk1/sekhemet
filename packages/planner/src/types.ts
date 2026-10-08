@@ -36,6 +36,12 @@ export interface CodebaseMap {
   /** Test root used when a slice has to invent an acceptance test. */
   testDir?: string;
   /**
+   * Extension of a source file a slice has to invent (`.py` in a Python
+   * project, DS-N1-5): the repository's own most common source extension;
+   * `.ts` when unknown.
+   */
+  sourceExt?: string;
+  /**
    * The repositories a multi-repository project spans, upstream first, each
    * with the files it holds: a story whose scope spans two becomes two cards
    * with a dependency edge (review-git rule 5, RG-N3-2).

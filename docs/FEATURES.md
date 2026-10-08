@@ -104,6 +104,13 @@ The AI is a teammate that proposes, and people decide ([DEC-36](design/DECISIONS
 - Export and import for Jira and Linear boards (no live two-way sync in v1).
 - *Limit in v1:* Sekhemet's commits are unsigned, so a branch that requires signed commits refuses them ([DEC-53](design/DECISIONS.md#dec-53--design_gaps-c-decided) c13).
 
+## Documentation and help
+
+- A [user guide](guide/index.md): install on macOS and Ubuntu, first run, models, Solo and Team, a Team administrator's guide, concepts mapped to Jira and Linear, an FAQ, and what Sekhemet does not do.
+- Pages generated from the product and checked by the build: the [CLI reference](guide/cli-reference.md) from the command registry, [troubleshooting](guide/troubleshooting.md) from `doctor`'s checks, [privacy and network](guide/privacy-and-network.md) from the network policy's host catalogue (a test fails when the code names a host the page does not list), and the [editor snippets](guide/editors.md).
+- `sekhemet <command> --help` for every command, with its synopsis and an example; `sekhemet --help` names where to get help.
+- [SECURITY](../.github/SECURITY.md) with the supported versions and private reporting, [CONTRIBUTING](../.github/CONTRIBUTING.md), a Code of Conduct, [SUPPORT](../.github/SUPPORT.md), and issue forms.
+
 ## Measurement
 
 - The frozen suite: 30 issues across four fixture projects, run through the product's own queue.

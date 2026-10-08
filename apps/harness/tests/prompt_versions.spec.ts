@@ -53,7 +53,7 @@ describe("CX-N6-4: each role's prompt version is its own", () => {
 
   it("F24: a Seshat or Research model literal changes that role's version, never the Coding model's", () => {
     const worker = rolePromptVersion("worker", { inventory: inventoryText });
-    const seshat = edit("apps/harness/src/index.ts");
+    const seshat = edit("apps/harness/src/pm/agent.ts");
     const research = edit("apps/harness/src/research/apodex_loop.ts");
     expect(rolePromptVersion("worker", { inventory: seshat })).toBe(worker);
     expect(rolePromptVersion("worker", { inventory: research })).toBe(worker);
@@ -80,7 +80,7 @@ describe("CX-N6-4: each role's prompt version is its own", () => {
     const full = fullContextVersion({ inventory: inventoryText });
     expect(full).toMatch(/^[0-9a-f]{16}$/);
     expect(fullContextVersion({ inventory: inventoryText })).toBe(full);
-    expect(fullContextVersion({ inventory: edit("apps/harness/src/index.ts") })).not.toBe(full);
+    expect(fullContextVersion({ inventory: edit("apps/harness/src/pm/agent.ts") })).not.toBe(full);
     expect(fullContextVersion({ inventory: edit("packages/loop/src/tools.ts") })).not.toBe(full);
     // Even a literal no role reads keeps the full version as strict as before.
     expect(fullContextVersion({ inventory: edit("apps/harness/src/acp.ts") })).not.toBe(full);

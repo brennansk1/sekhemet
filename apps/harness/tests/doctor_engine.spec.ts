@@ -24,8 +24,8 @@ import { BIN } from "./cli_fixture.js";
 
 // NEW-models-16 (rules 6a, 6c, 6d), NEW-models-19 (MD-N19-1, -5), MD-N8-1 and
 // MD-N15-3: doctor's rows for the engine, the memory floor, Ollama's roles,
-// each role's verification and the Team engines — each detail that is not a
-// pass ending with its next step, "Do: …" (SUR-62).
+// each role's verification and the Team engines — each check that is not a
+// pass carrying its next step, printed on its own line as "Do: …" (SUR-62).
 
 const dirs: string[] = [];
 const tmp = (p: string) => {
@@ -56,8 +56,9 @@ describe("doctor: the engine (MD-N16-1, MD-N16-2, MD-N19-5)", () => {
   it("fails with no engine, naming this platform's first fix as its next step", () => {
     const c = engineDoctorCheck(status({}));
     expect(c).toMatchObject({ name: "Inference engine", status: "fail" });
-    expect(c.detail).toMatch(
-      /^llama-server not found\. Do: Get the inference engine on Configuration › Models, or run `sekhemet engine get`\.$/,
+    expect(c.detail).toBe("llama-server not found.");
+    expect(c.do).toBe(
+      "Get the inference engine on Configuration › Models, or run `sekhemet engine get`.",
     );
   });
 
@@ -70,7 +71,7 @@ describe("doctor: the engine (MD-N16-1, MD-N16-2, MD-N19-5)", () => {
     );
     expect(c.status).toBe("fail");
     expect(c.detail).toMatch(/llama-server b8000 found; b10809 or later needed/);
-    expect(c.detail).toMatch(/Do: /);
+    expect(c.do).toMatch(/\S/);
   });
 
   it("passes naming which engine, where it came from and its build", () => {
@@ -87,7 +88,7 @@ describe("doctor: the engine (MD-N16-1, MD-N16-2, MD-N19-5)", () => {
     );
     expect(c.status).toBe("pass");
     expect(c.detail).toContain("downloaded by Sekhemet");
-    expect(c.detail).not.toMatch(/Do: /);
+    expect(c.do).toBeUndefined();
   });
 });
 
@@ -96,7 +97,7 @@ describe("doctor: the memory floor (rule 6c, MD-N16-3)", () => {
     const low = memoryFloorCheck(16 * GB);
     expect(low.status).toBe("warn");
     expect(low.detail).toMatch(/16 GB installed; v1 supports 24 GB of memory and above/);
-    expect(low.detail).toMatch(/Do: /);
+    expect(low.do).toMatch(/24 GB or more/);
     const ok = memoryFloorCheck(24 * GB);
     expect(ok).toMatchObject({ status: "pass" });
     expect(ok.detail).toMatch(/24 GB installed/);
@@ -114,8 +115,9 @@ describe("doctor: Ollama's roles (rule 6d, MD-N16-4)", () => {
     ]);
     expect(c.status).toBe("warn");
     expect(c.detail).toMatch(
-      /^Local models only in v1, served by llama\.cpp's `llama-server` \(README\); Ollama serves the Coding model \(qwen3:8b\), outside that statement\. Do: /,
+      /^Local models only in v1, served by llama\.cpp's `llama-server` \(README\); Ollama serves the Coding model \(qwen3:8b\), outside that statement$/,
     );
+    expect(c.do).toMatch(/assign a GGUF model/);
   });
 
   it("passes when no role runs on Ollama", () => {
@@ -153,8 +155,9 @@ describe("doctor: each assigned role's verification (MD-N8-1)", () => {
     const c = roleQualificationCheck(reg, { describe: mock, deps, host: "host-a" });
     expect(c.status).toBe("warn");
     expect(c.detail).toMatch(/Coding model w: verified/);
-    expect(c.detail).toMatch(
-      /Review model critic: not verified \(missing\)\. Do: Verify it on Configuration › Models, or run `sekhemet qualify --models critic --role reviewer`\./,
+    expect(c.detail).toMatch(/Review model critic: not verified \(missing\)/);
+    expect(c.do).toBe(
+      "Verify it on Configuration › Models, or run `sekhemet qualify --models critic --role reviewer`.",
     );
   });
 
@@ -208,7 +211,8 @@ describe("doctor: the Team engines (MD-N15-3)", () => {
       ],
     });
     expect(bad.status).toBe("fail");
-    expect(bad.detail).toMatch(/no engine answers on port 8099\. Do: /);
+    expect(bad.detail).toMatch(/no engine answers on port 8099/);
+    expect(bad.do).toMatch(/docker compose/);
   });
 });
 
@@ -272,7 +276,7 @@ net.Socket.prototype.connect = function (...args) {
     });
     db.close();
     const doctor = run(["doctor"]);
-    expect(doctor.stdout).toMatch(/Inference engine: llama-server not found\. Do: /);
+    expect(doctor.stdout).toMatch(/Inference engine: llama-server not found\.\n\s+Do: /);
     run(["run", "c1"]);
     run(["run"]);
     const hosts = existsSync(seen) ? readFileSync(seen, "utf8").split("\n").filter(Boolean) : [];

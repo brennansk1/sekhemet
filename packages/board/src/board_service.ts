@@ -564,11 +564,26 @@ export class BoardServiceImpl implements BoardService {
     if ((t.actor === "human" || t.actor === "mcp") && t.reason?.trim()) return "person";
     const latest = this.cardStore.runs.listAttempts(card.id).at(-1);
     if (latest?.stopReason && STOP_REASONS[latest.stopReason]?.parks !== "no") return "stop";
+    // A runner's park before any attempt is recorded names its stop reason
+    // (vacuous tests, a refused red-first check; worker-loop rule 31).
+    const named = t.stopReason as keyof typeof STOP_REASONS | undefined;
+    if (
+      (t.actor === "executor" || t.actor === "harness") &&
+      named &&
+      STOP_REASONS[named]?.parks === "yes"
+    )
+      return "stop";
     // Only a `default_deny` request parks its card from the request; under
-    // `safe_default` work proceeds on the default (planner-pm §2.10.3).
+    // `safe_default` work proceeds on the default (planner-pm §2.10.3). A
+    // rebase conflict's request waits for a person by nature: the harness
+    // never picks a side (review-git RG-N1-2, RG-N1-3).
     const open = this.cardStore.runs
       .listDecisions("pending")
-      .some((d) => d.cardId === card.id && decisionPolicy(d.context) === "default_deny");
+      .some(
+        (d) =>
+          d.cardId === card.id &&
+          (d.kind === "rebase_conflict" || decisionPolicy(d.context) === "default_deny"),
+      );
     return open ? "decision" : undefined;
   }
 

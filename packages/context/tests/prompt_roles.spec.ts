@@ -53,7 +53,7 @@ describe("CX-N6-4: every model-facing text belongs to a role", () => {
     expect(literalFileRoles("apps/harness/src/research/apodex_loop.ts").roles).toEqual([
       "researcher",
     ]);
-    expect(literalFileRoles("apps/harness/src/index.ts").roles).toEqual(["planner"]);
+    expect(literalFileRoles("apps/harness/src/pm/agent.ts").roles).toEqual(["planner"]);
   });
 });
 
@@ -68,11 +68,11 @@ describe("CX-N6-4: a role's literal inventory is its own", () => {
 
   it("an edit to Seshat's or the Researcher's literal leaves the Coding model's inventory unchanged", () => {
     const worker = literalInventoryForRole(inventoryText, "worker");
-    expect(literalInventoryForRole(edit("apps/harness/src/index.ts"), "worker")).toBe(worker);
+    expect(literalInventoryForRole(edit("apps/harness/src/pm/agent.ts"), "worker")).toBe(worker);
     expect(
       literalInventoryForRole(edit("apps/harness/src/research/apodex_loop.ts"), "worker"),
     ).toBe(worker);
-    expect(literalInventoryForRole(edit("apps/harness/src/index.ts"), "planner")).not.toBe(
+    expect(literalInventoryForRole(edit("apps/harness/src/pm/agent.ts"), "planner")).not.toBe(
       literalInventoryForRole(inventoryText, "planner"),
     );
     // A Coding model literal changes the Coding model's inventory.

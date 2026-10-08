@@ -80,10 +80,8 @@ node scripts/run_suite.mjs --worker cyber-tiel --out <file>   # the frozen suite
 
 Packages in dependency order: `kernel` → `sandbox` → `sync` → `models` → `gates` → `context` → `loop` → `board` → `planner` → `eval` → `ui` → `apps/harness`. Node 26 (22.13+ supported: the built-in `node:sqlite` without a flag), `node:sqlite` in WAL mode, Biome, Vitest. Tests for `kernel`, `board`, `sandbox` and `sync` use real SQLite files, real subprocesses and real git worktrees (DEFINITION_OF_DONE §2A). Workspace packages resolve each other through `dist/`, so a change in one package is seen by another only after `tsc -b`.
 
-## Operations — this machine
+## Operations
 
-- **24 GB host; the Worker is 13 GB.** Check `ollama ps` and `memory_pressure -Q` before loading a model; unload after. The harness's own memory guard stops a card when swap passes 6 GB.
-- **The Worker is Cyber-Tiel-Coder-35B-A3B MTP (IQ3_XXS)** on `/Volumes/My Passport/AI-Models/llm/`. Start its server once — the arguments come from `createCyberTielWorker().launchArgs()`, port 8098 — and every card attaches to it. MTP (`--spec-type draft-mtp --spec-draft-n-max 1 --spec-draft-p-min 0.0`, the model card's values) is in those arguments only once `sekhemet calibrate --mtp-ab` has recorded a per-step gain for this host and thinking policy (models rule 13) and `sekhemet qualify --speculative on` has passed with it (MD-N8-2); a server whose model, context or MTP state differs from the profile is refused (MD-M4-1). Loading from the USB drive takes about five minutes. Set `SEKHEMET_MODELS_DIR` to that directory.
-- **Never run `tsc -b` or `pnpm gate` during a suite run**: each card is a fresh process and would load a different build.
-- **Experiment switches**, recorded in every evidence bundle: `SEKHEMET_THINKING=off|surgical|all`, `SEKHEMET_WORKER_METHOD=baseline|strict`, and (once built, worker-loop rule 29a) `SEKHEMET_EVIDENCE_GATE`.
-- The shell's `grep` wrapper can hide matches: when a search comes back empty, retry with `/usr/bin/grep -a`. On macOS `/tmp` is `/private/tmp`.
+The procedure for model runs, memory checks, the frozen suite, experiment switches and the Linux VM is in `docs/reference/DEVELOPING.md`, parameterised by `$SEKHEMET_MODELS_DIR` and `$LIMA_HOME`. This machine's own values — its memory, the Worker's folder, its Lima home, its shell — are in `CLAUDE.local.md`, which git ignores (DEC-54 c2) and which is imported here when it exists:
+
+@CLAUDE.local.md

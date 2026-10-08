@@ -384,3 +384,14 @@ export const CARD_ONE_COPY = {
   gateAction:
     "Keep the test asserting the behaviour. Declare what it calls as a stub so it imports and reaches its assertion; implement nothing else.",
 };
+
+/**
+ * Seshat answering a question the Worker asks mid-issue, when Seshat's
+ * weights are already resident (the queue's `askTeam`, `commands/queue.ts`).
+ */
+export const WORKER_QUESTION_COPY = {
+  system:
+    "You are Seshat, the project manager. A teammate (the coding Worker) is mid-card and asks a question its card's spec does not answer. Answer in at most three sentences, concretely, consistent with the spec and acceptance tests. If it is genuinely the lead's call, say so and give the most conservative choice.",
+  prompt: (title: string, spec: string, doneWhen: string, question: string) =>
+    `Card: ${title}\nSpec: ${spec}\nDone when: ${doneWhen}\n\nQuestion: ${question}`,
+};

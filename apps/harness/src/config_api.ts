@@ -58,6 +58,7 @@ import {
   applyFits,
   assignRole,
   cPair,
+  capReport,
   checkRoleSettings,
   copyToInternal,
   currentAssignment,
@@ -1081,6 +1082,53 @@ export function createConfigApi(deps: ConfigApiDeps) {
         state.aliases.get(id) === m.path,
     );
 
+  /** A model's load cost from the book on its volume, cold: what C_pair is made of. */
+  const loadCost = (book: SwapCostBook, found: FoundModel) => {
+    const p = book.predict({
+      model: modelKey(found),
+      volume: volume(found.path),
+      cache: "cold",
+      bytes: found.sizeBytes,
+    });
+    return { median: p.medianMs, p90: p.p90Ms };
+  };
+  const minutes = (ms: number) => `${Math.max(1, Math.round(ms / 60_000))} min`;
+  /**
+   * The aging caps this model cannot meet (MD-N14-20): for the role asked and
+   * Seshat's interactive answers, a cap below the round trip to this model
+   * from the assigned Coding model (C_pair, p90), with the predicted wait
+   * (the round trip at its median) instead.
+   */
+  const infeasibleCaps = (
+    found: FoundModel,
+    key: string,
+    role: string,
+    book: SwapCostBook,
+  ): string[] => {
+    const homeKey = assignedModel("worker");
+    const home =
+      homeKey && homeKey !== key ? state.models.find((x) => modelKey(x) === homeKey) : undefined;
+    const sides = [
+      home ? { load: loadCost(book, home) } : undefined,
+      { load: loadCost(book, found) },
+    ] as const;
+    const p90 = cPair(sides[0], sides[1]);
+    const median = cPair(sides[0], sides[1], { basis: "median" });
+    if (p90 === undefined) return [];
+    const classes = ["interactive", ...(MODEL_ROLES.includes(role as ModelRole) ? [role] : [])];
+    const report = capReport(
+      DEFAULT_SWAP_POLICY,
+      0,
+      Object.fromEntries(classes.map((c) => [c, p90])),
+    );
+    return report.caps
+      .filter((c) => classes.includes(c.cls) && !c.feasible)
+      .map(
+        (c) =>
+          `Its aging cap for ${c.cls === "interactive" ? "Seshat's quick answers" : `the ${roleWords(c.cls as ModelRole)}`} (${minutes(c.capMs)}) is below its round trip: the predicted wait is about ${minutes(median ?? c.predictedWaitMs ?? p90)} instead.`,
+      );
+  };
+
   const detailsBody = async (m: FoundModel, query: URLSearchParams) => {
     const role = (query.get("role") as ConfigRole | null) ?? "worker";
     const settings = ROLE_SETTINGS[CONFIG_ROLES.includes(role) ? role : "worker"];
@@ -1111,7 +1159,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
         ...(engine === "llama.cpp" && recorded ? speedShown(recorded) : {}),
       };
     });
-    const { book } = await swapBook();
+    const { book, events } = await swapBook();
     const key = modelKey(m);
     const loads = (["internal", "external"] as Volume[]).map((v) => {
       const cold = book.predict({ model: key, volume: v, cache: "cold", bytes: m.sizeBytes });
@@ -1140,6 +1188,24 @@ export function createConfigApi(deps: ConfigApiDeps) {
     }
     const licence = modelLicenceWarning(m.metadata.license);
     if (licence) warnings.push(licence);
+    // DB-NM14-4: an Ollama requantisation (models rule 20h), in words.
+    const requantised = events
+      .filter((e) => e.type === "model/requantised")
+      .map((e) => e.payload as { model?: string; servedQuant?: string; fileQuant?: string })
+      .filter((p) => p.model === key || p.model === m.name)
+      .at(-1);
+    if (requantised) {
+      const what =
+        requantised.servedQuant && requantised.fileQuant
+          ? ` (${requantised.servedQuant} where the file is ${requantised.fileQuant})`
+          : "";
+      warnings.push(
+        `Ollama serves it requantised${what}: its answers may not match the file's. Run it on llama-server instead.`,
+      );
+    }
+    // DB-NM14-4, MD-N14-20: an aging cap below the model's round trip is
+    // infeasible; the person sees the predicted wait instead.
+    for (const line of infeasibleCaps(m, key, role, book)) warnings.push(line);
     const entry = registryEntryFor(m);
     return {
       model: {

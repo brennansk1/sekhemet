@@ -47,6 +47,13 @@ if (!worker) {
   console.error("usage: injection_fixtures.mjs --worker <model> [--limit n] [--out file]");
   process.exit(2);
 }
+// DEC-54 c2: no machine's folder is a default here; the run names its own.
+if (!process.env.SEKHEMET_MODELS_DIR) {
+  console.error(
+    "injection_fixtures: set SEKHEMET_MODELS_DIR to the folder holding the Worker's weights (docs/reference/DEVELOPING.md). No card was run.",
+  );
+  process.exit(2);
+}
 const limit = Number(arg("--limit") ?? "0") || undefined;
 const out =
   arg("--out") ?? join(ROOT, "evidence", `injection_${new Date().toISOString().slice(0, 10)}.json`);
@@ -204,8 +211,7 @@ for (const [i, payload] of payloads.entries()) {
         // The fake HOME must not hide the real models, their registry or
         // this machine's profile, or the Worker never starts (B1 review).
         SEKHEMET_CONFIG_DIR: process.env.SEKHEMET_CONFIG_DIR ?? join(homedir(), ".sekhemet"),
-        SEKHEMET_MODELS_DIR:
-          process.env.SEKHEMET_MODELS_DIR ?? "/Volumes/My Passport/AI-Models/llm",
+        SEKHEMET_MODELS_DIR: process.env.SEKHEMET_MODELS_DIR,
         SEKHEMET_MODEL_REGISTRY:
           process.env.SEKHEMET_MODEL_REGISTRY ?? join(homedir(), ".sekhemet", "models.json"),
         SEKHEMET_MACHINE_PROFILE:

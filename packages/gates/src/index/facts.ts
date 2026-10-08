@@ -11,8 +11,12 @@
  * (open question 7: `web-tree-sitter` arrives with a Python adapter).
  */
 
-/** How a file's parse went: clean, parsed with errors recovered, or no parser for it. */
-export type ParseStatus = "ok" | "recovered" | "unsupported";
+/**
+ * How a file's parse went: clean, parsed with errors recovered, no parser for
+ * it, or the file could not be read at all (rules 9 and 28b: a verdict on it
+ * is partial, never "no exports").
+ */
+export type ParseStatus = "ok" | "recovered" | "unsupported" | "unreadable";
 
 /** Where a file's facts came from (IX-1). */
 export interface FactProvenance {

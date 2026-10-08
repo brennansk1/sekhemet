@@ -80,8 +80,9 @@ import net from "node:net";
 const DENY = new Set([11434, 8098, 8099, 8080]);
 const connect = net.Socket.prototype.connect;
 net.Socket.prototype.connect = function (...args) {
-  const a = args[0];
-  const o = typeof a === "object" && a !== null && !Array.isArray(a) ? a : { port: a, host: args[1] };
+  // net.connect and http pass their options normalized, as an array.
+  const a = Array.isArray(args[0]) ? args[0][0] : args[0];
+  const o = typeof a === "object" && a !== null ? a : { port: a, host: args[1] };
   const host = String(o.host ?? "localhost");
   if (!o.path && DENY.has(Number(o.port)) && /^(127\\.0\\.0\\.1|localhost|::1|\\[::1\\])$/.test(host)) {
     const err = Object.assign(new Error("connect ECONNREFUSED " + host + ":" + o.port + " (test guard)"), { code: "ECONNREFUSED" });

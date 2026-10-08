@@ -92,12 +92,14 @@ export function scanDiffIntegrity(
 /**
  * The card's diff against its base, including files not yet committed;
  * undefined when git cannot produce it, so the gates that judge the diff say
- * they did not run rather than pass an empty one.
+ * they did not run rather than pass an empty one. A card worktree whose git
+ * metadata fails the preflight throws `GitMetadataError` before any git
+ * command runs (SEC-2): the card stops `git_metadata_tampered`.
  */
 export function worktreeDiff(root: string, base = "main"): string | undefined {
+  // A card worktree is preflighted and pinned (security items 18–21).
+  const env = gitEnvFor(root);
   try {
-    // A card worktree is preflighted and pinned (security items 18–21).
-    const env = gitEnvFor(root);
     execFileSync("git", ["add", "-A"], { cwd: root, env, stdio: "ignore", timeout: 15_000 });
     return execFileSync(
       "git",
@@ -117,16 +119,20 @@ export function worktreeDiff(root: string, base = "main"): string | undefined {
 
 /**
  * Per-file line deltas of the worktree against `base` (staging everything
- * first, as `worktreeDiff` does), or undefined when git cannot say.
+ * first, as `worktreeDiff` does), or undefined when git cannot say. Pinned
+ * and preflighted like `worktreeDiff` (SEC-2: a rewritten `.git` pointer
+ * throws before `git add` can write another repository's index).
  */
 export function worktreeNumstat(
   root: string,
   base = "main",
 ): { file: string; added: number; removed: number }[] | undefined {
+  const env = gitEnvFor(root);
   try {
-    execFileSync("git", ["add", "-A"], { cwd: root, stdio: "ignore", timeout: 15_000 });
+    execFileSync("git", ["add", "-A"], { cwd: root, env, stdio: "ignore", timeout: 15_000 });
     const text = execFileSync("git", ["diff", "--cached", "--numstat", base], {
       cwd: root,
+      env,
       encoding: "utf8",
       timeout: 15_000,
       maxBuffer: 16 * 1024 * 1024,

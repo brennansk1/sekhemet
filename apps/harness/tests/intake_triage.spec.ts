@@ -189,8 +189,9 @@ describe("intake and triage on a Team server (NEW-dashboard-10)", () => {
     const mine = await file(mo, { title: "Paginate the loans list", type: "story" });
     expect(mine.status).toBe(201);
     expect(await intakeOf(mine.body.card.id)).toBeUndefined();
-    // A Member's filing keeps the assignee the Member chose: none here.
-    expect((await store.getCard(mine.body.card.id))?.owner ?? null).toBeNull();
+    // A Member's filing is the Member's own (kernel K-N6-1: a card records an
+    // owner; the filer outside triage, C5).
+    expect((await store.getCard(mine.body.card.id))?.owner).toBe(mo.principal);
   });
 
   it("an integration's issue and an imported one wait in Triage too", async () => {

@@ -386,6 +386,51 @@ describe("sekhemet queue: the signals propose, never mutate", () => {
   );
 });
 
+describe("scope drift counts what the planner did not plan (PM-N5-1, C2d finding)", () => {
+  it(
+    "PM-N5-1: the planner's own characterize cards are part of the plan, so a plan that made them raises no scope_drift and holds nothing",
+    { timeout: 240_000 },
+    async () => {
+      // Existing source no base test reaches: each story that changes it is
+      // preceded by a characterize card the planner makes (PM-N6-2).
+      const p = await project(async () => undefined, {
+        "src/csv_export.ts":
+          "export function csvExport(rows: string[]): string {\n  return rows.join(',');\n}\n",
+        "src/audit_log.ts": "export function auditLog(line: string): string {\n  return line;\n}\n",
+        "src/settings_page.ts":
+          "export function settingsPage(): string {\n  return 'settings';\n}\n",
+      });
+      const planned = await run(p, [
+        "plan",
+        "Add a CSV export, an audit log and a settings page.",
+        "--planner",
+        "none",
+        "--offline",
+      ]);
+      expect(planned.status, planned.out).toBe(0);
+      const plan = planned.rows.find((x) => x.type === "plan/created")?.payload as {
+        stories: { id: string }[];
+      };
+      const chars = planned.rows.filter(
+        (x) => x.type === "card/created" && String(x.payload.id).endsWith("_char"),
+      );
+      // Enough of them to pass 20% of the plan if they were counted as added.
+      expect(chars.length).toBeGreaterThan(plan.stories.length * 0.2);
+      await readyIssue(p, "other");
+      const r = await queue(p, FINISH);
+      expect(r.status, r.out).toBe(0);
+      expect(r.out).not.toMatch(/Signal scope_drift/);
+      expect(
+        r.rows.some(
+          (x) =>
+            x.type === "decision/requested" &&
+            /^Has the goal grown\?/.test(String(x.payload.question)),
+        ),
+      ).toBe(false);
+    },
+  );
+});
+
 describe("sekhemet goal and the queue: the goal loop", () => {
   const GOAL = "Users can sign in, the test suite passes, and coverage is at least 80%.";
 

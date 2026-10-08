@@ -89,8 +89,16 @@ export interface CardLifecycle {
   /**
    * Move the card. May throw when the board refuses the move (back-pressure,
    * a WIP limit): the runner catches that and holds the card instead.
+   * `stopReason`: the stored reason a move to Parked rests on, for a park
+   * that comes before any attempt is recorded (vacuous tests, a refused
+   * red-first check), so the board's entry condition can read it.
    */
-  transition(cardId: string, to: CardStatus, reason?: string): Promise<void>;
+  transition(
+    cardId: string,
+    to: CardStatus,
+    reason?: string,
+    stopReason?: ExecutionStopReason,
+  ): Promise<void>;
   recordSteps?(cardId: string, stepsUsed: number): Promise<void>;
   /**
    * Hold the card where it stands with a reason, awaiting `awaiting` (the
@@ -274,6 +282,12 @@ export function verificationSessionOptions(
 export interface CardRunOptions extends Omit<SessionOptions, "cardId"> {
   card: CardRecord;
   /**
+   * The memory watchdog's masking request (models MD-N2-4,
+   * `PressureControls.takeMaskingRequest`): asked before each turn; true
+   * masks every earlier observation in that turn's prompt, once.
+   */
+  takeMaskingRequest?: (() => boolean) | undefined;
+  /**
    * A build-repair card's declared build command (gates rule 6b, DEC-43): its
    * red check is this command failing on the base, run confined with no
    * network, instead of tests that cannot run on a base that does not build.
@@ -290,6 +304,12 @@ export interface CardRunOptions extends Omit<SessionOptions, "cardId"> {
    * fail on the base.
    */
   acceptanceTestsOrigin?: "card" | "external" | undefined;
+  /**
+   * The rules in force the rotation withheld from this attempt (CX-N4-6,
+   * MS-T8-14): written to its `attempt/finished`, so every reader of the
+   * attempt record — `measure rule-credit` among them — sees the pair.
+   */
+  withheldRuleIds?: string[] | undefined;
   /** Hooks files that failed to load, each with its error, for the evidence (EXT-10). */
   hookErrors?: string[] | undefined;
   /** The card's configuration layer as `section.key = value` lines, for the evidence (SUR-40). */
@@ -808,7 +828,10 @@ export class CardRunner {
    * RG-N1-3: the Worker's budget ended with the conflict unresolved — one
    * decision request naming both cards (never a side picked by the harness).
    */
-  private async requestRebaseDecision(conflict: RebaseConflict): Promise<string | undefined> {
+  private async requestRebaseDecision(
+    conflict: RebaseConflict,
+    route: "parked" | "unresolved" = "unresolved",
+  ): Promise<string | undefined> {
     const { card, store } = this.options;
     const runs = store?.runs;
     if (!runs) return undefined;
@@ -824,7 +847,10 @@ export class CardRunner {
       const d = await runs.requestDecision({
         cardId: card.id,
         kind: "rebase_conflict",
-        question: `${card.id} and ${against} conflict in ${conflict.files.join(", ")}, and the Worker could not resolve it within its budget. Which change should give way?`,
+        question:
+          route === "parked"
+            ? `${card.id} and ${against} conflict in ${conflict.outOfScope.join(", ")}, outside ${card.id}'s scope, so the Worker may not resolve it. Which change should give way?`
+            : `${card.id} and ${against} conflict in ${conflict.files.join(", ")}, and the Worker could not resolve it within its budget. Which change should give way?`,
         context: `${conflict.message}\n\n${conflict.excerpt}`.slice(0, 4000),
         options: [
           `Re-plan ${card.id} on top of ${conflict.onto}`,
@@ -1455,11 +1481,12 @@ export class CardRunner {
   private async move(
     to: CardStatus,
     why?: string,
+    stopReason?: ExecutionStopReason,
   ): Promise<{ ok: true } | { ok: false; reason: string }> {
     const { card, lifecycle, store } = this.options;
     if (!lifecycle) return { ok: true };
     try {
-      await lifecycle.transition(card.id, to, why);
+      await lifecycle.transition(card.id, to, why, stopReason);
       return { ok: true };
     } catch (err) {
       const reason = `${to} refused (${refusalReason(err)})`;
@@ -1910,6 +1937,15 @@ export class CardRunner {
         }
 
         let turn: TurnResult;
+        // MD-N2-4: at the watchdog's high stage the next step masks older observations.
+        if (this.options.takeMaskingRequest?.()) {
+          session.maskObservationsNextTurn();
+          this.emit({
+            type: "status",
+            cardId: card.id,
+            message: "memory watchdog: older observations masked at this step",
+          });
+        }
         const turnStarted = this.now();
         try {
           turn = await session.executeTurn();
@@ -2102,7 +2138,9 @@ export class CardRunner {
             stopReason = "done_pending_gates";
           }
         } catch (err) {
-          stopReason = "done_pending_gates";
+          // SEC-2: a worktree whose git metadata fails the preflight ran no git.
+          if (isTampered(err)) this.tampered = refusalReason(err);
+          stopReason = isTampered(err) ? "git_metadata_tampered" : "done_pending_gates";
           this.emit({
             type: "status",
             cardId: card.id,
@@ -2337,6 +2375,9 @@ export class CardRunner {
         // WL-N5-1: the one attempt record every reader of outcomes uses.
         ...(p.rung ? { rung: p.rung } : {}),
         ...(p.ruleIds ? { ruleIds: p.ruleIds } : {}),
+        ...(this.options.withheldRuleIds?.length
+          ? { withheldRuleIds: this.options.withheldRuleIds }
+          : {}),
         ...(p.exemplarIds ? { exemplarIds: p.exemplarIds } : {}),
         steps: p.stepsUsed,
         cardClass: cardClassOf(card),
@@ -2616,7 +2657,9 @@ export class CardRunner {
       const rawStats = await syncAdapter.getDiffStats(card.id, this.options.baseBranch ?? "main");
       // Acceptance tests are staged by the harness, not written by the agent, so
       // they do not count against the card's size bounds. They stay in the diff.
-      const staged = new Set((card.acceptanceTests ?? []).map((t) => `tests/${t}`));
+      const staged = new Set(
+        (card.acceptanceTests ?? []).map((t) => (t.startsWith("tests/") ? t : `tests/${t}`)),
+      );
       const own = (rawStats.perFile ?? []).filter((f) => !staged.has(f.file));
       stats = rawStats.perFile
         ? {
@@ -2802,8 +2845,9 @@ export class CardRunner {
     if (params.heldBeforeStart) {
       held = { reason: params.heldBeforeStart, wanted: "in_progress" };
     } else if (parked) {
-      // Vacuous tests: parked before any work.
-      const moved = await this.move("parked");
+      // Vacuous tests, a refused red-first check: parked before any work,
+      // before any attempt is recorded, so the move names its stop reason.
+      const moved = await this.move("parked", undefined, parked.stopReason);
       finalStatus = moved.ok ? "parked" : card.status;
       if (!moved.ok) held = { reason: moved.reason, wanted: "parked" };
     } else {
@@ -2843,8 +2887,9 @@ export class CardRunner {
       } else if (stopReason === "rebase_conflict" && this.rebaseConflict && session) {
         // RG-N1-2 (outside the scope) and RG-N1-3 (unresolved): parked for a person.
         const { conflict, route } = this.rebaseConflict;
-        const decision =
-          route === "unresolved" ? await this.requestRebaseDecision(conflict) : undefined;
+        // One decision request for a person either way: the harness never
+        // picks a side, and it is what the board parks the card on.
+        const decision = await this.requestRebaseDecision(conflict, route);
         parked = session.getParkDiagnosis(
           stopReason,
           route === "parked"

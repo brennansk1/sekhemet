@@ -113,6 +113,64 @@ const researcherAsked = (run: Run) => recorded(run.p.record).some((x) => x.role 
 /** What the stub was asked for, robots.txt aside. */
 const asked = (stub: WebStub) => stub.requests.filter((r) => !r.endsWith("robots.txt"));
 
+/** `sekhemet research "<question>"`: the Researcher plays `researcher`. */
+function researchCommand(run: Run, researcher: Turn[], args: string[] = []) {
+  return cli(
+    ["research", "Which zod API validates an email?", "--model", SCRIPTED_MODEL, ...args],
+    {
+      cwd: run.p.repo,
+      preload: run.p.preload,
+      env: {
+        ...run.p.env,
+        G2_STUB_PORT: String(run.stub.port),
+        SEKHEMET_SEARXNG_URL: "http://search.example.test",
+        ...scriptEnv(run.p.record, { researcher }),
+      },
+      timeoutMs: 180_000,
+    },
+  );
+}
+
+describe("SEC-52a, SEC-52b and DS-S8-7 through `sekhemet research` (C5)", () => {
+  it('SEC-52b, DS-S8-7: `sekhemet research --web` with research = "yes" and a fetch_allow fetches only inside it, refuses the rest and records both on the ledger', async () => {
+    const run = await setup({
+      user: '[network]\nmode = "offline"\nresearch = "yes"\nfetch_allow = ["docs.lib.example.test"]\n',
+    });
+    const r = await researchCommand(
+      run,
+      [
+        [fetchCall(`https://${GUIDE}`), fetchCall(`https://${ELSEWHERE}`)],
+        "Use z.string().email() [1].",
+      ],
+      ["--web"],
+    );
+    expect(r.stdout + r.stderr).toMatch(/Sources: web on/);
+    // Never asked: the stub saw only the allowlisted page.
+    expect(asked(run.stub)).toEqual([GUIDE]);
+    expect(egress(run.p.repo)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ host: "docs.lib.example.test", allowed: true }),
+        expect.objectContaining({
+          host: "blog.elsewhere.example.test",
+          allowed: false,
+          reason: expect.stringMatching(/fetch_allow/),
+        }),
+      ]),
+    );
+  }, 180_000);
+
+  it('SEC-52a: `sekhemet research` with research = "yes" and mode unset fetches a public host through the policy, logged on the ledger', async () => {
+    const run = await setup({ user: '[network]\nresearch = "yes"\n' });
+    await researchCommand(run, [[fetchCall(`https://${GUIDE}`)], "Use z.string().email() [1]."]);
+    expect(asked(run.stub)).toEqual([GUIDE]);
+    expect(egress(run.p.repo)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ host: "docs.lib.example.test", allowed: true }),
+      ]),
+    );
+  }, 180_000);
+});
+
 describe("SEC-52b: research is the one exception to mode, and only inside the allowlist", () => {
   it('SEC-52b: with research = "yes" and a fetch_allow, a fetch to a public host outside it is refused and recorded, whatever mode says', async () => {
     const run = await setup({
@@ -205,6 +263,39 @@ describe("DS-N4-4: a project's config.toml may only narrow the person's research
       /^Network: \S*config\.toml: fetch_allow "blog\.elsewhere\.example\.test" ignored \(a project's file may only narrow\)$/m,
     );
     expect(sources.stdout).not.toMatch(/fetch_allow "docs\.lib\.example\.test" ignored/);
+  }, 180_000);
+});
+
+describe('DS-N4-4 without research = "yes": web reads keep the person\'s mode and allowlist', () => {
+  it('DS-N4-4: `research --web` with the person\'s mode = "allowlist" reports a project\'s mode = "open" and extra fetch_allow host ignored, and fetches nothing from that host', async () => {
+    const run = await setup({
+      user: '[network]\nmode = "allowlist"\nfetch_allow = ["docs.lib.example.test"]\n',
+      project:
+        '[network]\nmode = "open"\nfetch_allow = ["docs.lib.example.test", "blog.elsewhere.example.test"]\n',
+    });
+    const r = await cli(
+      ["research", "Which zod API validates an email?", "--model", SCRIPTED_MODEL, "--web"],
+      {
+        cwd: run.p.repo,
+        preload: run.p.preload,
+        env: {
+          ...run.p.env,
+          G2_STUB_PORT: String(run.stub.port),
+          SEKHEMET_SEARXNG_URL: "http://search.example.test",
+          ...scriptEnv(run.p.record, {
+            researcher: [
+              [fetchCall(`https://${GUIDE}`), fetchCall(`https://${ELSEWHERE}`)],
+              "Use z.string().email() [1].",
+            ],
+          }),
+        },
+        timeoutMs: 120_000,
+      },
+    );
+    expect(r.stdout).toMatch(/mode = "open" ignored \(a project's file may only narrow\)/);
+    expect(r.stdout).toMatch(/fetch_allow "blog\.elsewhere\.example\.test" ignored/);
+    // The person's host is read; the host only the project added never is.
+    expect(asked(run.stub), r.stdout + r.stderr).toEqual([GUIDE]);
   }, 180_000);
 });
 

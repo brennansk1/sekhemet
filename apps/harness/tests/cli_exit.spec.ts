@@ -33,17 +33,20 @@ describe("S10: a command line scripts can trust", () => {
 
   it("SUR-14: an uncaught error is printed and exits 1", () => {
     const where = sandboxDirs();
-    // A file where the repository should be: the ledger cannot be opened.
-    const notADir = join(where.cwd, "file");
-    writeFileSync(notADir, "not a repository\n");
-    const r = sekhemet(["dev", "log", "--repo", notADir], where);
+    // A project whose ledger is no database: it cannot be opened. (A folder
+    // that is no project is refused with exit 2 before anything opens,
+    // FINDINGS_C1 CLI-05, so the error must come from a project.)
+    const project = join(where.cwd, "project");
+    mkdirSync(join(project, ".sekhemet"), { recursive: true });
+    writeFileSync(join(project, ".sekhemet", "events.db"), "not a database\n");
+    const r = sekhemet(["dev", "log", "--repo", project], where);
     expect(r.status).toBe(1);
-    expect(r.stderr).toMatch(/Error|ENOTDIR|not a directory/i);
+    expect(r.stderr).toMatch(/^sekhemet stopped: file is not a database/);
     // SUR-57: one plain line naming the report; the stack only in the report.
     const report = expectOneLineWithReport(r.stderr, where.home);
     expect(readFileSync(report, "utf8")).toMatch(/\n\s+at /);
     // `--debug` is not an unknown flag: it prints the details here too.
-    const debug = sekhemet(["dev", "log", "--repo", notADir, "--debug"], where);
+    const debug = sekhemet(["dev", "log", "--repo", project, "--debug"], where);
     expect(debug.status, debug.stderr).toBe(1);
     expect(debug.stderr).toMatch(/^sekhemet stopped: /);
     expect(debug.stderr).toMatch(/\n\s+at /);

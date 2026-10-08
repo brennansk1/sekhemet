@@ -292,6 +292,16 @@ describe("one attempt's steps: the cache prefix, the repair rung and the rules' 
     expect(last.evidence.at(-1)?.note).toMatch(
       /^retired automatically at the look after 20 pairs: 0 helpful, 20 harmful, P = [0-9.e-]+ \(one-sided exact test, alpha 0\.05\/3\)$/,
     );
+    // MS-T8-14 (C2d finding): the attempt record names the rule withheld from
+    // this card, so `measure rule-credit` counts the 20th pair the queue did.
+    const attempt = ledgerRows(p.repo).find(
+      (x) => x.type === "attempt/finished" && x.payload.cardId === "c_new",
+    )?.payload as { withheldRuleIds?: string[] } | undefined;
+    expect(attempt?.withheldRuleIds).toEqual([RULE]);
+    const after = await cli(["measure", "rule-credit", RULE], { cwd: p.repo, env: p.env });
+    expect(after.stdout, after.stderr).toMatch(
+      /r_harm: credit -20 over 20 pairs \(0 helpful, 20 harmful\)/,
+    );
   }, 180_000);
 });
 

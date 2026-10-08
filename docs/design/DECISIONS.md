@@ -600,13 +600,14 @@ Not a chat assistant (the conversation plans and reports; code is written on car
   - gitleaks over the whole history;
   - untrack `.claude/launch.json`;
   - move this machine's operations out of CLAUDE.md into a local file;
-  - parameterise the `/Volumes/My Passport` paths.
+  - parameterise the external model drive's paths.
 - **What stays public:** DEV_LOG and the internal reviews stay public, as evidence that the product was built in the open; the pre-publication pass removes machine paths. The author email is not rewritten (the owner, 2026-10-01).
 - **Contributions:**
   - Issues and Discussions are open from the public pre-release 0.9.0. No outside beta users are recruited; DEC-47's deferral stands.
   - Code contributions open only with a contributor licence agreement that lets the licensor keep FSL's commercial rights. The owner takes legal advice on its text before the first outside pull request.
   - CONTRIBUTING, CODE_OF_CONDUCT (Contributor Covenant), SUPPORT, and the issue and PR templates ship with 0.9.0, after the pre-publication pass (both in C5).
 - **Launch:** follows the zero-spend report's gates (docs, not code). No public launch before the capstone results and a clean install; Show HN at 1.0.0; the words *source-available* and *Fair Source*, never *open source*. The tagline is "Checks decide. People accept." The pronunciation is *SEK-eh-met*.
+- **The pre-publication pass, as built (C5, 2026-10-08):** it reports and never rewrites history (the owner accepted the public author addresses). A machine path is this host's own: its home, mounted volumes, agent scratch folders and configured model folders. `scripts/prepublication.mjs --check` fails on one, on a tracked `.claude/launch.json` or `CLAUDE.local.md`; the report is `docs/reference/PREPUBLICATION.md`. Not taken: widening the browser's Seatbelt profile to Chrome's per-user temp folder for full Google Chrome, since the headless shell is found first and works.
 - **Reopen if:** the owner, or legal advice.
 
 ### DEC-55 — working alongside other tools (the ecosystem report)

@@ -447,14 +447,21 @@ export async function recurringCommand(
     return 0;
   }
   if (sub === "list") {
+    let listed = 0;
     for (const c of await deps.store.listCards()) {
       const s = scheduleOf(c);
       if (!s) continue;
+      listed++;
       const next = s.cron ? nextRun(s.cron, new Date())?.toISOString() : undefined;
       deps.print(
         `${c.id}  ${s.cron ? `cron "${s.cron}"${next ? ` next ${next}` : ""}` : `on ${s.trigger}`}${s.urgent ? "  urgent" : ""}  ${c.title}`,
       );
     }
+    // CLI-04 (surface item 19b, SUR-96): an empty list says so, never a blank line.
+    if (listed === 0)
+      deps.print(
+        "No recurring issues. Add one with `sekhemet recurring add <issue> --cron '<expr>'`.",
+      );
     return 0;
   }
   if (sub === "tick") {

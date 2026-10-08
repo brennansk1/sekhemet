@@ -12,9 +12,11 @@ import {
   announceGateStart,
   createSourceIndex,
   gateCopy,
+  isUnreadableReason,
+  unavailableGate,
 } from "@sekhemet/gates";
 import { blockLines, isHeading, markdownBlocks } from "./markdown.js";
-import { changedSources } from "./reachability_gate.js";
+import { changedSources, notJudgedBecause } from "./reachability_gate.js";
 
 /**
  * The architecture gate: a card may not break an invariant the project's
@@ -197,13 +199,16 @@ export function architectureGate(root: string, options: ArchitectureOptions = {}
         gate: "architecture",
         layer: "hygiene",
         exitCode: 1,
-        errorExcerpt: `${file}: does not parse cleanly (${reason}), so the brief's invariants cannot be judged on it`,
+        errorExcerpt: `${file}: ${notJudgedBecause(reason)}, so the brief's invariants cannot be judged on it`,
         suggestedFixFiles: [file],
         location: { file, line: 0, column: 0 },
         expected: `${file} parses without errors`,
         actual: reason,
         minimalRepro: RERUN_GATES,
-        suggestedAction: gateCopy.sourceNotParsed("architecture", file, reason),
+        suggestedAction:
+          facts.parseStatus === "unreadable"
+            ? gateCopy.sourceUnreadable("architecture", file, reason)
+            : gateCopy.sourceNotParsed("architecture", file, reason),
       });
     }
     for (const rule of rules) {
@@ -248,12 +253,35 @@ export function withArchitectureGate(
       // DB-N2-10: the page names this check while it runs.
       announceGateStart(runOptions, { gate: "architecture", rung: "hygiene" });
       const started = Date.now();
-      const failures = architectureGate(cwd, options);
-      const note = unenforcedNote(
-        unenforcedInvariants(options.briefPath ?? join(cwd, ".sekhemet", "brief.md")),
-      );
+      let failures: GateFailure[];
+      let note: string | undefined;
+      try {
+        failures = architectureGate(cwd, options);
+        note = unenforcedNote(
+          unenforcedInvariants(options.briefPath ?? join(cwd, ".sekhemet", "brief.md")),
+        );
+      } catch (err) {
+        // GT-T1-2: an unreadable brief (or any throw) makes this gate
+        // unavailable with the error; every other gate's outcome is kept.
+        const down = unavailableGate(
+          "architecture",
+          "hygiene",
+          "hygiene",
+          `the brief could not be read: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return {
+          ...res,
+          passed: false,
+          failures: [...res.failures, down.failure],
+          rungResults: [...(res.rungResults ?? []), down.outcome],
+        };
+      }
       const partial = failures
-        .filter((f) => f.gate === "architecture" && /does not parse cleanly/.test(f.errorExcerpt))
+        .filter(
+          (f) =>
+            f.gate === "architecture" &&
+            (/does not parse cleanly/.test(f.errorExcerpt) || isUnreadableReason(f.actual)),
+        )
         .map((f) => ({ file: f.location?.file ?? "", reason: f.actual }));
       const outcome: RungOutcome = {
         gate: "architecture",

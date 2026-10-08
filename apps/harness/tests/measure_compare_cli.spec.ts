@@ -115,3 +115,43 @@ describe("sekhemet measure compare", () => {
     expect(hundred.event).toMatchObject({ improved: false, verdict: "not established" });
   });
 });
+
+describe("sekhemet measure compare: each run's pass rate and, over repeated runs, pass@k (MS-M12-1, MS-M12-5)", () => {
+  it("MS-M12-1, MS-M12-5: prints and records each side's passed over measured with its exact interval, blocked and not-run apart, and pass@k and pass^k when a side names repeated runs", async () => {
+    const where = g2Dirs();
+    const { db } = openLocalLedger(where.cwd);
+    db.close();
+    const dir = join(where.root, "runs");
+    mkdirSync(dir);
+    const files = {
+      a1: run(10, (i) => i < 6),
+      a2: run(10, (i) => i < 4),
+      b1: run(10, () => true),
+    };
+    const blocked = run(10, () => true);
+    (blocked.outcomes[9] as { blocked?: boolean }).blocked = true;
+    for (const [name, r] of Object.entries({ ...files, b2: blocked }))
+      writeFileSync(join(dir, `${name}.json`), JSON.stringify(r));
+    const path = (n: string) => join(dir, `${n}.json`);
+    const r = await cli(
+      ["measure", "compare", `${path("a1")},${path("a2")}`, `${path("b1")},${path("b2")}`],
+      { cwd: where.cwd, env: g2Env(where.home) },
+    );
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/^Baseline: 6\/10 passed \(95% CI \d+%-\d+%; 6 first try\)/m);
+    expect(r.stdout).toMatch(/^Candidate: 10\/10 passed \(95% CI \d+%-100%; 10 first try\)/m);
+    // Over two runs each: cards 0-3 passed both, 4-5 once, 6-9 never.
+    expect(r.stdout).toMatch(/^Baseline over 2 runs: pass@2 60%, pass\^2 40% \(10 issues\)$/m);
+    // The candidate's blocked card is measured once only, so it is not in pass@2.
+    expect(r.stdout).toMatch(/^Candidate over 2 runs: pass@2 100%, pass\^2 100% \(9 issues\)$/m);
+    const event = ledgerRows(where.cwd).find((x) => x.type === "measure/compared")?.payload;
+    expect(event).toMatchObject({
+      baselineScore: { passed: 6, measured: 10, blocked: 0, notRun: 0 },
+      candidateScore: { passed: 10, measured: 10 },
+      passK: {
+        baseline: { k: 2, cards: 10, passAtK: 0.6, passHatK: 0.4 },
+        candidate: { k: 2, cards: 9, passAtK: 1, passHatK: 1 },
+      },
+    });
+  }, 60_000);
+});

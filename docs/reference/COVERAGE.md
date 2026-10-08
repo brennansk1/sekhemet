@@ -371,7 +371,7 @@ The changes D1 wrote into the specs from [DESIGN_GAPS_C1](DESIGN_GAPS_C1.md) and
 | NEW-security-11 | what leaves the machine, listed and shown | [security](../design/specs/security.md) | C2, C5 | partial (C2c): `sekhemet egress` and the view built; the guide page and its host-list test C5 |
 | NEW-security-12 | other coding agents' configuration flagged as running later ([DEC-55](../design/DECISIONS.md#dec-55--working-alongside-other-tools-the-ecosystem-report)) | [security](../design/specs/security.md) | C2 | built (C2c): `executes_later.spec.ts` |
 | NEW-surface-7 | upgrade and uninstall | [surface](../design/specs/surface.md) | C5 | not started (D1, DEC-56) |
-| NEW-surface-8 | `doctor`'s checks, each with its next step | [surface](../design/specs/surface.md) | C5 | not started (D1, DEC-56) |
+| NEW-surface-8 | `doctor`'s checks, each with its next step | [surface](../design/specs/surface.md) | C5 | built (C5): SUR-61..64, SUR-82, SUR-93; SUR-65 (the generated page) the docs builder's |
 | NEW-surface-9 | learning that a release or a security fix exists | [surface](../design/specs/surface.md) | C5, C7 | not started (D1, DEC-56) |
 | NEW-surface-10 | `--json` for scripts | [surface](../design/specs/surface.md) | C2c | built (C2c): `run`, `status`, `accept`, `doctor`, `egress`; schemas in `apps/harness/data/schemas/cli/` |
 | NEW-teams-12 | A Team install with no identity provider | [teams](../design/specs/teams.md) | C5 | not started (D1, DEC-56) |
@@ -398,4 +398,5 @@ A server is a workspace with many projects. Each change is *not started*.
 | NEW-security-14 | the credential store per workspace (DEC-57) | [security](../design/specs/security.md) | C4 | not started (D2, DEC-57) |
 | NEW-surface-11 | the command line in a workspace of many projects | [surface](../design/specs/surface.md) | C2b | partial (C2b): SUR-73, -75..-81; SUR-74 not built |
 | NEW-surface-12 | observability and the reliability rows of `doctor` | [surface](../design/specs/surface.md) | C4 | built (C4 builder D): SUR-83..92 |
+| NEW-surface-13 | help, usage errors and the plan's words (W3) | [surface](../design/specs/surface.md) | C5 | built (C5): SUR-94..97 |
 | NEW-teams-14 | A server is one workspace holding any number of projects, and other workspaces one switch away | [teams](../design/specs/teams.md) | C2b (TEAM-59: C2a) | partial (C2b): TEAM-54..58, -60; the acceptance run not yet |

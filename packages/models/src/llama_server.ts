@@ -34,7 +34,13 @@ import {
   type ThinkingPolicy,
   thinkingPolicyFromEnv,
 } from "./registry.js";
-import { type ErasureView, type SlotKey, SlotStore, defaultSlotCacheDir } from "./slot_state.js";
+import {
+  type ErasureView,
+  type SlotKey,
+  SlotStore,
+  defaultSlotCacheDir,
+  slotCacheMaxBytes,
+} from "./slot_state.js";
 import { DEFAULT_READ_BYTES_PER_SECOND } from "./swap_cost.js";
 import type {
   AdapterHealth,
@@ -1109,6 +1115,8 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
         owner: s.owner,
         key,
         ...(s.sources ? { sources: s.sources } : {}),
+        // Held from the cap while this process lives: restored on return (MD-N14-37a).
+        hold: true,
       };
       try {
         const saved =
@@ -1208,6 +1216,8 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       serverUrl: this.url,
       // The slot directory's read rate is not probed yet: the internal default (MD-N14-4).
       readBytesPerSecond: DEFAULT_READ_BYTES_PER_SECOND.internal,
+      // F31, MD-N14-37a: every save prunes the directory to its cap.
+      maxBytes: slotCacheMaxBytes(),
     });
     return this.slots;
   }
@@ -1259,7 +1269,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     try {
       const key = await this.slotKey();
       const slot = { slot: 0, kind: "prefix" as const, owner: this.profile.modelId, key };
-      if (action === "save") return (await store.save(slot)) !== undefined;
+      if (action === "save") return (await store.save({ ...slot, hold: true })) !== undefined;
       if (!this.sweepErased()) return false;
       const back = await store.restore({ ...slot, reprefillMs: Number.POSITIVE_INFINITY });
       return back.action === "restored";

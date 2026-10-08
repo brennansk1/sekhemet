@@ -782,7 +782,7 @@ export function deriveGates(repo: string): DerivedGates {
 /** The marked `.gitignore` block (surface item 5.6, SUR-34): `.sekhemet/` ignored by default. */
 export const GITIGNORE_BEGIN = "# >>> sekhemet: personal and secret state stays out of git";
 export const GITIGNORE_END = "# <<< sekhemet";
-const GITIGNORE_BLOCK = [
+export const GITIGNORE_BLOCK = [
   GITIGNORE_BEGIN,
   ".sekhemet/*",
   "!.sekhemet/config.toml",

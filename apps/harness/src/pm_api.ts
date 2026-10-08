@@ -514,6 +514,8 @@ export function createPmApi(ctx: PmApiContext) {
                 ...(labels ? { labels } : {}),
                 ...(cycleId ? { cycleId } : {}),
                 ...(assignee ? { assignee } : {}),
+                // K-N6-1: the person who filed it owns it once applied.
+                owner: personOf(req),
               },
             ],
             summary: `Create ${title}`,

@@ -126,6 +126,11 @@ export interface WorkerPromptInput {
   /** Pin skill disclosure for the card (keeps the system prompt stable). */
   skillDisclosure?: SkillDisclosure;
   turns?: TurnHistoryItem[];
+  /**
+   * Mask every earlier observation, the recent window included, in this
+   * prompt only: the memory watchdog's `high` stage (models MD-N2-4).
+   */
+  maskAllObservations?: boolean;
   gateFailures?: GateFailure[];
   /** Source lines at the failure locations. */
   failureCode?: string;
@@ -915,7 +920,10 @@ export function buildWorkerPrompt(given: WorkerPromptInput): WorkerPromptResult 
   const recallOffered = offersRecall(input);
   const maskOptions = { ...store, ...cardId, recallOffered };
   const compacted = raw.length > 8 ? compactHistory(raw, 6, maskOptions).turns : raw;
-  const nominalTurns = maskOlderObservations(compacted, 2, maskOptions);
+  const nominalTurns = maskOlderObservations(compacted, 2, {
+    ...maskOptions,
+    ...(input.maskAllObservations ? { maskAll: true } : {}),
+  });
   const repoMapIn = input.repoMap ?? "";
   // With a pin, the disclosure in force when the card started stays (C4).
   const pinnedDisclosure = pin?.disclosure ?? input.skillDisclosure;

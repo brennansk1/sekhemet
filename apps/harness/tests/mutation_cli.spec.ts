@@ -24,14 +24,15 @@ async function accepted(
   cwd: string,
   testGate: string[],
   files: Record<string, string>,
+  // The block `sekhemet init` writes: the checks are tracked, state is not.
+  gitignore = ".sekhemet/*\n!.sekhemet/gates.toml\n",
 ): Promise<string> {
   const git = (...a: string[]) => execFileSync("git", a, { cwd, encoding: "utf8" }).trim();
   git("init", "-q", "-b", "main");
   git("config", "user.name", "Jane Doe");
   git("config", "user.email", "jane@example.com");
   writeTree(cwd, {
-    // The block `sekhemet init` writes: the checks are tracked, state is not.
-    ".gitignore": ".sekhemet/*\n!.sekhemet/gates.toml\n",
+    ".gitignore": gitignore,
     ".sekhemet/gates.toml": gatesToml(testGate),
     "README.md": "# app\n",
   });
@@ -105,6 +106,20 @@ describe("sekhemet improve --mutants (MS-M10-1 to MS-M10-3)", () => {
     expect(r.status, r.stdout + r.stderr).toBe(0);
     expect(r.stdout).toMatch(/; not measured \(language\): native\/lib\.rs, tools\/check\.py/);
     expect(r.stdout).not.toMatch(/not measured[^\n]*(notes\.md|max\.js)/);
+  }, 120_000);
+});
+
+describe("sekhemet improve --mutants where gates.toml is not tracked (C2d finding)", () => {
+  it("scores the change with the repository's gates.toml when `.sekhemet/` is wholly ignored, rather than failing its integrity check in the checkout", async () => {
+    const where = g2Dirs();
+    const sha = await accepted(where.cwd, PASS, MAX, ".sekhemet/\n");
+    const r = await cli(["improve", "--mutants", "--max-mutants", "2"], {
+      cwd: where.cwd,
+      env: g2Env(where.home),
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout).toMatch(new RegExp(`mutation c1 ${sha.slice(0, 10)}: \\d+/\\d+ killed`));
+    expect(r.stdout + r.stderr).not.toMatch(/not scored|integrity|changed during the run/i);
   }, 120_000);
 });
 

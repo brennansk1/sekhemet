@@ -40,6 +40,10 @@ export class Tracer {
   constructor(path: string) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
+    // The busy timeout first, as the ledger's pragmas do (RUN-2): every
+    // statement before it, `journal_mode = WAL` included, runs with no busy
+    // handler and fails at once while another process holds the file.
+    this.db.exec("PRAGMA busy_timeout = 5000");
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec(`CREATE TABLE IF NOT EXISTS spans (
       trace_id TEXT NOT NULL, span_id TEXT PRIMARY KEY, parent_span_id TEXT,

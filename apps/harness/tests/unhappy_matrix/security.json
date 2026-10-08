@@ -95,9 +95,6 @@
   "NEW-security-11": {
     "na": {
       "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "What leaves the machine is listed from the ledger's egress records; no criterion names one of these paths."
-    },
-    "gap": {
-      "error": "SEC-N11-1: the Privacy and network page generated from the policy's host list, with a test failing on an unlisted host; a documentation property with no door (n/a candidate)."
     }
   },
   "NEW-security-12": {
@@ -129,6 +126,6 @@
     }
   },
   "_ceiling": {
-    "gaps": 6
+    "gaps": 5
   }
 }

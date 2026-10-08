@@ -537,6 +537,10 @@ const MODEL_DOWN_CODES = new Set([
   // (`ModelLeaseHeld`, models): the queue must not start the next card into
   // another wait.
   "MODEL_LEASE_HELD",
+  // MD-N9-3 (C5): the residency scheduler refused the model's load for
+  // memory (its footprint above usable memory, or unknown), so the work it
+  // was asked for cannot run in this pass (`LoadRefusedError`, the queue).
+  "MODEL_LOAD_REFUSED",
 ]);
 
 /**

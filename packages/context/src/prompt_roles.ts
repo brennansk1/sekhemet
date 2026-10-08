@@ -64,8 +64,6 @@ export const LITERAL_FILE_ROLES: readonly (readonly [
   ["packages/models/src/llama_server.ts", ["researcher"]],
   ["apps/harness/src/research/", ["researcher"]],
   ["apps/harness/src/pm/", ["planner"]],
-  // Seshat's answer to the Worker's mid-card question.
-  ["apps/harness/src/index.ts", ["planner"]],
   // Seshat's lessons and the lead's profile.
   ["apps/harness/src/learning/reflect.ts", ["planner"]],
   ["apps/harness/src/learning/review", ["reviewer"]],

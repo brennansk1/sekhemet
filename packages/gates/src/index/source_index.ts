@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { gitEnvFor } from "@sekhemet/sync";
+import { gateCopy } from "../copy.js";
 import { readWorkspace } from "../workspace.js";
 import type {
   EntryPointFact,
@@ -83,6 +84,16 @@ const LANGUAGE_BY_EXT: Record<string, string> = {
   ".rb": "ruby",
 };
 
+/** The facts of a file that exists and could not be read: empty, and saying why. */
+function unreadableFacts(file: string, reason: string): SourceFacts {
+  return {
+    ...unsupported(file, ""),
+    contentHash: "",
+    parseStatus: "unreadable",
+    parseReason: reason,
+  };
+}
+
 /** The facts of a file no adapter reads: empty, and saying so. */
 function unsupported(file: string, text: string): SourceFacts {
   const ext = extname(file).toLowerCase();
@@ -137,12 +148,21 @@ export function createSourceIndex(root: string): SourceIndex {
     const r = rel(file);
     if (byFile.has(r)) return byFile.get(r);
     let text: string | undefined;
+    let unreadable: string | undefined;
     try {
       text = readFileSync(join(absRoot, r), "utf8");
-    } catch {
-      text = undefined;
+    } catch (err) {
+      // A missing file has no facts; one that exists and cannot be read is
+      // partial with the reason, never "no exports" (rules 9 and 28b).
+      const code = (err as NodeJS.ErrnoException).code ?? "unknown error";
+      if (code !== "ENOENT" && code !== "ENOTDIR") unreadable = gateCopy.unreadableReason(code);
     }
-    const result = text === undefined ? undefined : factsOfText(r, text);
+    const result =
+      text !== undefined
+        ? factsOfText(r, text)
+        : unreadable
+          ? unreadableFacts(r, unreadable)
+          : undefined;
     byFile.set(r, result);
     return result;
   };
@@ -212,7 +232,7 @@ export function createSourceIndex(root: string): SourceIndex {
       if (seen.has(f)) return;
       seen.add(f);
       const fx = facts(f);
-      if (!fx || fx.parseStatus === "unsupported") {
+      if (!fx || fx.parseStatus === "unsupported" || fx.parseStatus === "unreadable") {
         complete = false;
         return;
       }

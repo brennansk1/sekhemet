@@ -11,7 +11,7 @@ import {
   type RetentionReport,
   pruneRetention,
 } from "@sekhemet/kernel";
-import { defaultSlotCacheDir, sweepErasedSlots } from "@sekhemet/models";
+import { defaultSlotCacheDir, pruneSlotCache, sweepErasedSlots } from "@sekhemet/models";
 import { reapOrphanedGroups, runTrusted } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter, gitEnvFor } from "@sekhemet/sync";
 import { plural } from "@sekhemet/ui";
@@ -66,6 +66,8 @@ export interface SupervisorStart {
   spansDeleted: number;
   /** Saved KV slot files an erasure covers, deleted (models rule 20i, MD-N14-37). */
   slotsErased: string[];
+  /** Slot files over the slot directory's cap, deleted oldest first (MD-N14-37a). */
+  slotsPruned: string[];
   /** The automatic backup's line, when one was written or failed (RUN-59). */
   backup?: string;
 }
@@ -303,9 +305,19 @@ export async function supervisorStart(
   // (models rule 20i, MD-N14-37). A slot of unknown sources goes on any
   // erasure newer than the last sweep.
   const index = ctx.log.erasureIndex();
-  const slotsErased = (options.slotDirs ?? [defaultSlotCacheDir()]).flatMap((dir) => {
+  const slotDirs = options.slotDirs ?? [defaultSlotCacheDir()];
+  const slotsErased = slotDirs.flatMap((dir) => {
     try {
       return sweepErasedSlots(dir, index);
+    } catch {
+      return [];
+    }
+  });
+  // F31, MD-N14-37a: then the directory is pruned to its cap, oldest first,
+  // never a slot a running engine holds.
+  const slotsPruned = slotDirs.flatMap((dir) => {
+    try {
+      return pruneSlotCache(dir);
     } catch {
       return [];
     }
@@ -325,6 +337,7 @@ export async function supervisorStart(
     ...(retention ? { retention } : {}),
     spansDeleted,
     slotsErased,
+    slotsPruned,
     ...(backup ? { backup } : {}),
   };
 }
@@ -364,6 +377,11 @@ export function describeSupervisorStart(start: SupervisorStart): string[] {
   if (start.slotsErased.length > 0) {
     lines.push(
       `Erasure: ${plural(start.slotsErased.length, "saved model slot")} holding erased text deleted.`,
+    );
+  }
+  if (start.slotsPruned.length > 0) {
+    lines.push(
+      `Slots: ${plural(start.slotsPruned.length, "saved model slot")} over the cache cap deleted.`,
     );
   }
   if (start.spansDeleted > 0) {

@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 84 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 85 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,102 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 85 — 2026-10-08 (C5: install, docs and journeys. The core product findings fixed, install/upgrade/uninstall and the Team image, doctor's verdict and next steps, the user guide and community files, the pre-publication pass, the audience journeys; unit-only built criteria 36 → 18)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver.
+
+**The run:**
+- The owner restarted the Mac to clear about 6 GB of swap, then launched C5 at under 30% of the 5-hour limit.
+- One workflow: 13 agents, 4.24M tokens, none failed. A read-only scoper; five builders one at a time; three reviews in parallel; a fixer; a blocker re-check; a sweep; a gate.
+- **Claude Haiku 5.5 on the cheap stages:** at the owner's prompt, the sweep, the gate runner and the re-check ran on `claude-haiku-5-5`. The routing rule comes from its benchmarks: it is strong at command-running and computer use (OSWorld 72.4%) but weaker at agentic coding (Terminal-Bench 4.0 39% at max effort, against Sonnet 5.5's 70.6%).
+- **The Haiku gate runner's slip:** it reported biome's one formatting error but lost track of the vitest run and gave no exit code. The lead fixed the formatting and ran the gate himself on a fresh snapshot, as planned.
+
+- **Core product findings (builder 1), from C2d, each seen failing through its entry point first:**
+  - **SEC-2:** the integrity check's git ran outside the hardened environment, so a rewritten `.git` pointer could write into another repository's index. It now uses `gitEnvFor`, and the card stops with `git_metadata_tampered`.
+  - **INT-37/38:** Accept refuses when a declared blocking check failed at the branch head.
+  - **DS-N4-4:** the project's network mode and allow list now bind research.
+  - **Reachability and architecture fail closed** on an unreadable file. GT-T1-2: one gate's throw no longer hides the others.
+  - **Ledger:**
+    - `tracing.ts` sets `busy_timeout` first, as `schema.ts` does;
+    - tamper detection now catches an earlier entry edited while the server runs;
+    - `/api/integrity` no longer answers 500 on a payload that does not fit the schema;
+    - **GET /healthz** (RUN-72): no auth and no data; 200 when the ledger head verifies, else 503.
+  - **F31:**
+    - slot saves have a size cap, with oldest-first cleanup that never touches a slot a running engine holds;
+    - test helpers now register and remove what they create, and kill the process tree;
+    - SEC-52b's doctor test can no longer reach the host's Ollama.
+  - **Behaviour:**
+    - MD-N2-4: high pressure now masks older observations;
+    - RG-N1-2: a rebase conflict parks the card;
+    - K-N6-1: the filer owns an issue they file;
+    - the split route answers a refused split with the refusal (4xx);
+    - `queue` exits after its report when a language server started;
+    - overnight rounds that start nothing inside reserved hours no longer count toward the cap.
+  - **Left:**
+    - full Google Chrome under the macOS sandbox (see DEC-54's note: the headless shell is found first and works);
+    - `runPackageGates` is dead code;
+    - the licence, trailer and regression wrappers are not guarded against a throw (gates row).
+- **Install and packaging (builder 2):**
+  - **INS-01:** the Team image starts `serve`, not `dev serve`. `checkTeamEngines` runs at start and reaches Configuration › Models. There is a `HEALTHCHECK` on /healthz (RUN-73). The image is checked statically, plus in the Lima VM.
+  - **TEAM-46/48:** a `builtin` compose profile (built-in accounts, no bundled proxy), with INSTALL.md walking both profiles to a first sign-in.
+  - **SUR-58/59:** `sekhemet uninstall --dry-run` and `--yes`. After the review's blocker, the team's shared `.sekhemet/` files and anything git tracks there are never removed, even with `--include-ledgers`.
+  - **RUN-74..77:** `daemon start --at-login` (LaunchAgent or `systemd --user`).
+  - **The update check and What's new:** off unless the person allows it.
+  - **Release prep:** CHANGELOG.md (Keep a Changelog); the packages marked private and licensed.
+- **Doctor and the CLI (builder 3):**
+  - **SUR-61..64:** one verdict, "Ready to run an issue" or "Not ready" naming the first missing step (exit 1 while not ready), and every non-pass gets a "Do: …" line.
+  - **New checks:** socat on Linux, and TEAM-47.
+  - **The relay on `::1`:** `port_relays` passes 19 of 19 under both engines in the Lima VM.
+  - **CLI:** CLI-02/03/04/07; `queue` and `board` join the command registry.
+- **Docs (builder 4):**
+  - 14 user-guide pages in `docs/guide/` (install on both platforms, first run, models, Solo and Team, troubleshooting, what Sekhemet does not do).
+  - `scripts/gen_docs.mjs` writes the CLI reference, troubleshooting (from `DOCTOR_CHECKS`), privacy and network, editor snippets and the README's command table from the product's own tables; `--check` fails a hand-edited block.
+  - The community files: SECURITY, CONTRIBUTING, Code of Conduct, SUPPORT, issue and PR templates. FSL is "source-available", never "open source".
+  - SPINE's stale claims table is updated.
+- **Pre-publication pass and journeys (builder 5):**
+  - **`scripts/prepublication.mjs`:** it reports and never rewrites history.
+    - **History:** gitleaks is not installed, so the bundled rules scanned 341 commits. All 15 hits are test keys, hashes or licence ids; the author addresses are masked, with the owner's acceptance cited.
+    - **Machine paths:** none in tracked files after the lead redacted two lines (an old DEV_LOG scratch path and DECISIONS' drive name). `--check` passes on 2,368 tracked files.
+  - **Cleanup:** `.claude/launch.json` is untracked. CLAUDE.md's machine operations moved to `docs/reference/DEVELOPING.md` (parameterised by `$SEKHEMET_MODELS_DIR` and `$LIMA_HOME`) and the untracked `CLAUDE.local.md`, which CLAUDE.md imports.
+  - **The clean-machine walk:** `scripts/clean_machine_walk.mjs` times each step, for the walks on a fresh macOS account and a fresh Ubuntu VM that a person runs (§G 8).
+  - **W10's audience journeys in Chromium:** the developer at 1440 and 1100 px, the junior on keyboard, the non-developer at 400 px, the take-over, plus the clean-clone first issue through the CLI.
+- **Review:** 3 blockers and 16 majors, all fixed and confirmed by the re-check.
+  - **Blockers:**
+    - uninstall deleted committed `.sekhemet` files;
+    - a weakened confinement test in `security_validate_tools_cli.spec.ts`, restored in full;
+    - the third, in install and publish.
+- **Entry points (§G 14):** unit-only built criteria 36 → **18**, no-test 1 → **0** (the ceiling is lowered to 18). Entry-strict 702 of 775 built. SPEC-01: 137 conflicts and 377 orphans, still open.
+- **Routed to C6** (`lead-work/c6_findings.md`):
+  - **Builder 5's journey findings:**
+    - DS-TO-15's take-over cannot finish without a terminal;
+    - the peek of a blocked issue does not say what blocks it;
+    - `models fetch` inside a project creates a ledger, so a later bare `sekhemet` skips the first run;
+    - two planner messages (a title with "lines" and a number rejected; a negative size cap shown at an 8k window);
+    - more in the file.
+  - The reviews' minors and the scoper's design calls.
+- **Not in C5 (they need a person, the network or a model):**
+  - the timed clean-machine walks (§G 8);
+  - building and running the Team image for real;
+  - the 0.9.0 publish;
+  - a real gitleaks run.
+- **The gate's fix round (the lead and one helper):** the first full gate failed 13 tests in 6 files, and the second failed 5 in 4. The causes:
+  - C5's CLI-05 widening had broken older fixtures that ran `log` on a bare repository. They now make the folder a project with `openLocalLedger`; SUR-14's stderr check is stricter.
+  - `PLANNED_WITHOUT_MODEL` had drifted from SUR-97's wording. Product fix; the test is unchanged.
+  - Seshat's mid-issue answer prompt had been left in `commands/queue.ts`. It moved byte for byte into `pm_copy.ts` (`WORKER_QUESTION_COPY`); the literal record went from 417 to 415.
+  - The retired-word scan now covers `commands/queue.ts`, and its frozen-prompt exemptions moved with the text.
+  - The stale `index.ts` row is gone from `LITERAL_FILE_ROLES`, so an unmapped file counts for every role. Two inventory tests now edit `pm/agent.ts`.
+  - The `child_process` allowlist: `uninstall.ts` and `install_inventory.ts` use the existing runner; `commands/board.ts` and `login_service.ts` are added with reasons; `index.ts` is removed.
+  - A criterion id cited in a partial planner-pm row had added one SPEC-01 conflict. The citation was removed (conflicts 137).
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` 0, `biome check .` 0, vitest 942 files passed, 2 skipped; 7,281 tests passed, 74 skipped (maxForks=2, 45 min).
+- **Where the cards stop:**
+  - C5 is done. 0.9.0 can follow once the owner makes the repository public and the release workflow (C7's provenance part) is in place.
+  - **Next:**
+    - re-qualify Planning, Research and Coding on this build (their context versions changed);
+    - N0 (the night's journey blockers), then overnight run N1 from 01:00 on 2026-10-09 (`lead-work/overnight_plan.md`): Haiku's visual sweeps, a smoke build and the capstone's Sekhemet arm as a shakedown;
+    - the Reviewer bake-off: North-Mini-Code first, then Mistral Small's full run, Devstral, Ministral and Qwen 3.8;
+    - the B4.4 and B4.11 live runs;
+    - C6 and C7.
 
 ### Entry 84 — 2026-10-07 (The README redesigned per the marketing report's §6; the detail moved to FEATURES.md, MODELS.md and STATUS.md)
 
@@ -2616,7 +2712,7 @@ The rest of the owner's decisions are DEC-47.
   - the dashboard path no longer sends Apodex to Ollama.
 - **Proof:** `research_service.spec.ts`, `apodex_research.spec.ts`, `researcher.spec.ts`, `web_research.spec.ts` (42+ tests).
 - **Live, with Apodex IQ3_M on this Mac:** a node:sqlite transaction question came back correct and grounded (type declarations and Node docs), in 11 min, about 5 of it loading from the external drive. Decode runs at about 28 tok/s. Reasoning leaked into the answer; that is fixed (`stripThinking`).
-- **In progress when this entry was written:** five manager-style live tests (a library choice, a technology comparison, a papers question, a security advisory, a deep feature plan), with outputs in /private/tmp/claude-501/mgr. Next: measure a 32k or 64k context (`SEKHEMET_RESEARCHER_CTX`).
+- **In progress when this entry was written:** five manager-style live tests (a library choice, a technology comparison, a papers question, a security advisory, a deep feature plan), with outputs in the lead's scratch folder. Next: measure a 32k or 64k context (`SEKHEMET_RESEARCHER_CTX`).
 
 **Naming:** the project-manager persona is renamed from Merit to **Seshat** at the user's request (`d9ae90a`). Seshat is the goddess of writing, measurement and records. Earlier entries keep the old name as history.
 

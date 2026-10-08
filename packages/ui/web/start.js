@@ -365,6 +365,19 @@ export function mount(view) {
       startConversation(root);
     }
   });
+  // W10 (DB-P5-7 at 400 px): the conversation's own Review plan sits in the
+  // proposals list, which opens its review too; on this page every Review plan
+  // is this page's, with the draft's choices and folder, and opens one dialog.
+  root.addEventListener(
+    "click",
+    (e) => {
+      const t = e.target instanceof Element ? e.target : null;
+      if (!t?.closest("[data-review-plan]")) return;
+      e.stopPropagation();
+      review();
+    },
+    true,
+  );
   root.addEventListener("click", (e) => {
     const t = e.target instanceof Element ? e.target : null;
     if (!t) return;
@@ -415,8 +428,7 @@ export function mount(view) {
     } else if (tab) {
       ui.tab = tab.dataset.draftTab;
       render();
-    } else if (t.closest("[data-review-plan]")) review();
-    else if (group && ui.state && (accept || remove)) {
+    } else if (group && ui.state && (accept || remove)) {
       ui.state = moveLine(
         group,
         toggleCandidate(ui.state, accept || remove, accept ? "accept" : "remove"),

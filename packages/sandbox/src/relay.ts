@@ -26,9 +26,12 @@ import { fileURLToPath } from "node:url";
  *   listens on the socket and connects to the port on the host.
  * - outward (`r`): the port is free, so it is the command's own (a dev
  *   server). The relay inside listens on the socket and connects to the port
- *   inside; the harness listens on the port on the host's loopback and
- *   connects to the socket. The host port must be free, and the harness
- *   holds it for the command's life.
+ *   inside; the harness listens on the port on the host's loopback (both
+ *   `127.0.0.1` and `::1`) and connects to the socket. The host port must be
+ *   free, and the harness holds it for the command's life.
+ *
+ * Each connection to a port tries `127.0.0.1` and then `::1`, inside and on
+ * the host, so a server listening on `::1` alone is reached (C5).
  *
  * Nothing else crosses: a port no one named has no listener inside, so a
  * connection to it is refused. The host half never follows a path the
@@ -154,6 +157,27 @@ export function commandRelayPlan(options: {
   return relayPlan(ports, options.scratchDir, (p) => listening.has(p));
 }
 
+/**
+ * A connection to a host loopback port, on `127.0.0.1` and then `::1`
+ * (security item 14b, C5): a server listening on `::1` alone is reached as
+ * one on `127.0.0.1` is. Undefined when neither answers.
+ */
+function connectLoopback(port: number): Promise<Socket | undefined> {
+  const attempt = (host: string) =>
+    new Promise<Socket | undefined>((resolve) => {
+      const sock = connect(port, host);
+      sock.once("connect", () => {
+        sock.removeAllListeners("error");
+        resolve(sock);
+      });
+      sock.once("error", () => {
+        sock.destroy();
+        resolve(undefined);
+      });
+    });
+  return attempt("127.0.0.1").then((s) => s ?? attempt("::1"));
+}
+
 /** Join two sockets both ways; an error on either ends both. */
 function splice(a: Socket, b: Socket): void {
   const end = () => {
@@ -236,29 +260,51 @@ export interface HostRelays {
 export function startHostRelays(plan: readonly RelaySpec[]): HostRelays {
   const servers: Server[] = [];
   const bound: Promise<void>[] = [];
-  for (const spec of plan) {
-    // An inward relay's socket is the harness's own; an outward one's is made inside.
-    if (spec.kind === "f") rmSync(spec.socket, { force: true });
-    const server =
-      spec.kind === "f"
-        ? createServer((c) => splice(c, connect(spec.port, "127.0.0.1")))
-        : createServer((c) => {
-            // 14b: never by a path the command can rewrite.
-            const inside = connectPinned(spec.socket);
-            if (inside) splice(c, inside);
-            else c.destroy();
-          });
+  const serve = (handler: (c: Socket) => void, listen: (s: Server) => void): void => {
+    const server = createServer(handler);
     server.unref();
     bound.push(
       new Promise<void>((resolve) => {
         server.once("listening", () => resolve());
-        // A host port taken since the plan, say: that port has no route.
+        // A host port taken since the plan, or no IPv6 loopback: no route there.
         server.once("error", () => resolve());
       }),
     );
-    if (spec.kind === "f") server.listen(spec.socket);
-    else server.listen(spec.port, "127.0.0.1");
+    listen(server);
     servers.push(server);
+  };
+  for (const spec of plan) {
+    if (spec.kind === "f") {
+      // An inward relay's socket is the harness's own: to the host's port on
+      // either loopback (C5), whichever the server there listens on.
+      rmSync(spec.socket, { force: true });
+      serve(
+        (c) => {
+          c.pause();
+          c.on("error", () => c.destroy());
+          void connectLoopback(spec.port).then((host) => {
+            if (host && !c.destroyed) {
+              splice(c, host);
+              c.resume();
+            } else {
+              host?.destroy();
+              c.destroy();
+            }
+          });
+        },
+        (s) => s.listen(spec.socket),
+      );
+      continue;
+    }
+    // An outward relay's socket is made inside: the host's port, on both
+    // loopbacks (C5), reaches it — 14b: never by a path the command can rewrite.
+    const outward = (c: Socket) => {
+      const inside = connectPinned(spec.socket);
+      if (inside) splice(c, inside);
+      else c.destroy();
+    };
+    serve(outward, (s) => s.listen(spec.port, "127.0.0.1"));
+    serve(outward, (s) => s.listen({ port: spec.port, host: "::1", ipv6Only: true }));
   }
   return {
     ready: Promise.all(bound).then(() => undefined),

@@ -1,6 +1,6 @@
 # Domain 13: Dashboard and design system (Phase A review)
 
-*Read-only review, 2026-09-22. Worktree `harness-definition-done-4d9161` @ 7944e9f. I checked the code and also looked at it running: `serve` against `/tmp/claude-501/suite/chronicle` (6 cards, one in progress) at 1440×900 and 800×600, reading `/api/board` directly. Paths are relative to the repo root.*
+*Read-only review, 2026-09-22. Worktree `harness-definition-done-4d9161` @ 7944e9f. I checked the code and also looked at it running: `serve` against `<scratch>/suite/chronicle` (6 cards, one in progress) at 1440×900 and 800×600, reading `/api/board` directly. Paths are relative to the repo root.*
 
 **Summary.** The dashboard is a capable **review instrument**, and it already has most of a Linear-style data layer (priority, points, labels, epic, cycle, assignee, saved views, swimlanes, list, bulk edit). It doesn't **look** like a professional board because the tile and the column model show the machine's state first and the team's fields second. Nothing here needs a rebuild. What it needs is a presentation-layer mapping, a better tile, and a Learn layer.
 

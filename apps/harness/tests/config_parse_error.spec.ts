@@ -61,7 +61,7 @@ describe("a config.toml that does not parse (SUR-92)", () => {
     const c = configurationCheck(repo, "/nonexistent/user.toml");
     expect(c.status).toBe("fail");
     expect(c.detail).toContain(`${path}:3:21: newline in basic string`);
-    expect(c.detail).toMatch(/Do: /);
+    expect(c.do).toMatch(/fix that line/);
   });
 
   it("passes the check for files that parse, and names a refused value as a warning", () => {

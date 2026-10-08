@@ -1,6 +1,9 @@
 # A team server (surface item 31, NEW-surface-4, SUR-42; models rule 26a,
 # NEW-models-15). See docs/reference/INSTALL.md. Replace every <...> before
-# starting.
+# starting. This is the `proxy` profile: people sign in through your OIDC
+# provider behind the identity-aware proxy below. For a team with no identity
+# provider, compose.builtin.yaml signs people in with built-in accounts
+# (teams item 13a, TEAM-46).
 #
 # One inference engine per filled role of the shipped set (models rule 3):
 # Coding, Planning (Seshat shares it) and Research. The Review role is
@@ -34,6 +37,13 @@ services:
       - sekhemet-user:/home/node/.sekhemet
       - <models folder>:/models:ro
       - sekhemet-slots:/slots
+    # RUN-73: the ledger opens and its head verifies (GET /healthz, RUN-72).
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4040/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
 
   # Coding: nail-mtp (models rule 3). About 16.9 GB of GPU memory.
   engine-coding:

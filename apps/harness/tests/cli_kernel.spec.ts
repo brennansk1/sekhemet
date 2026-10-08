@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { main } from "../src/index.js";
+import { openLocalLedger } from "../src/ledger_cmds.js";
 
 describe("sekhemet log: projections derive from the ledger (K8), the repo is a project (K14)", () => {
   const dirs: string[] = [];
@@ -19,6 +20,9 @@ describe("sekhemet log: projections derive from the ledger (K8), the repo is a p
     const dir = mkdtempSync(join(tmpdir(), "cli-log-"));
     dirs.push(dir);
     execFileSync("git", ["init", "-q"], { cwd: dir });
+    // A Sekhemet project: its ledger opened as the ledger commands open it.
+    // `log` refuses a folder that is no project yet (FINDINGS_C1 CLI-05).
+    openLocalLedger(dir).db.close();
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => {
       lines.push(a.join(" "));

@@ -102,10 +102,13 @@ export async function runResearchCommand(
     );
     return 1;
   }
-  const { web, status } = await researchSources(
-    repoPath,
-    forceWeb === undefined ? {} : { forceWeb },
-  );
+  // SEC-52a, SEC-52b, DS-S8-7 (C5): the ledger goes with it, so a yes to
+  // research fetches through the one network policy — `fetch_allow` honoured,
+  // `--web` included — and every request and refusal is recorded.
+  const { web, status } = await researchSources(repoPath, {
+    ...(forceWeb === undefined ? {} : { forceWeb }),
+    ...(log ? { log } : {}),
+  });
   console.log(
     `Sources: web ${status.web ? "on" : "off"}; search ${status.search}; pages ${status.pages}${
       !crawl4aiInstalled() ? " (install Crawl4AI for rendered pages)" : ""

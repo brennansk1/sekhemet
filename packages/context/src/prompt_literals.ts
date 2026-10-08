@@ -170,6 +170,10 @@ const PERSON_FACING_REFUSALS: ReadonlySet<string> = new Set([
   // /api/pm/proposals/:id/send-for-approval` to the person who pressed Send for approval;
   // no model's tool reaches it.
   "refuseUnlessNewProject",
+  // apps/harness/src/login_service.ts: "launchctl cannot reach this user's login session…" /
+  // "this session has no systemd --user manager…", the "Nothing was changed: …" line of
+  // `sekhemet daemon start --at-login` to the person who ran it (RUN-74); no model reaches it.
+  "serviceManagerRefusal",
 ]);
 
 function nameOf(node: ts.Node | undefined): string | undefined {

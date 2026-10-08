@@ -59,6 +59,7 @@ import {
   DESIGN_COPY,
   DecisionStore,
   GoalStore,
+  PLANNED_WITHOUT_MODEL,
   type PlannerLedger,
   type PlannerTools,
   SpidrFeaturePlanner,
@@ -70,7 +71,7 @@ import {
   defaultRequirementProject,
   deriveCapabilities,
   designStage,
-  formatPlanReport,
+  type formatPlanReport,
   intakeGoal,
   loadCalibrationLog,
   loadPrioritizationConfig,
@@ -325,6 +326,8 @@ export async function planCommand(
     actor?: string;
     /** The person the planned work is for (PM-P13-2). */
     principal?: string;
+    /** `--verbose`: each issue's points, routing and estimate, and the plan's checks (CLI-07). */
+    verbose?: boolean;
   } = {},
 ): Promise<{ epicId: string; created: number; decisionId?: string }> {
   const print = options.print ?? ((l: string) => console.log(l));
@@ -461,14 +464,18 @@ export async function planCommand(
     ...(options.sketcher ? { sketcher: options.sketcher } : {}),
     ...(options.plannerTools ? { plannerTools: options.plannerTools } : {}),
   });
-  print(formatPlanReport(result));
+  // CLI-07 (surface item 19c): issues by their ID and title, in the board's words.
+  for (const line of planReportLines(result, { verbose: options.verbose === true })) print(line);
   if (result.created.length > 0) {
     print(`Approve the criteria before any issue leaves Planning: sekhemet approve ${epicId}`);
   }
   // DS-N1-4: the first question was asked in what the design stage said; a
-  // second waits as its own open decision, planning on its default.
+  // second waits as its own open decision, planning on its default — unless
+  // the planner's pass already posted two (PM-P2-3: at most two a pass; its
+  // default stands, recorded with the design stage's assumptions).
   const second = designQs.ask[1];
-  if (second) {
+  const posted = result.decisions?.length ?? (result.decisionId ? 1 : 0);
+  if (second && posted < 2) {
     const id = await postDesignQuestion(ledgerOf(k), { cardId: epicId, question: second, spec });
     print(DESIGN_COPY.question.posted(id, second.question, second.default));
   }
@@ -526,6 +533,78 @@ export async function planCommand(
     created: result.created.length,
     ...(result.decisionId ? { decisionId: result.decisionId } : {}),
   };
+}
+
+/**
+ * The plan as `sekhemet plan` prints it (surface item 19c, NEW-surface-13;
+ * FINDINGS_C1 CLI-07): each new issue by the ID the commands take and its
+ * title, the ones held in Planning, rejected or waiting, and the decisions
+ * waiting — no *cards*, no *Zone 3 tokens*, no *INVEST pre-flight*. Points,
+ * routing, estimates, each held issue's reasons and the plan's checks are
+ * printed with `--verbose`. A title another new issue already has is said
+ * to be the same, so two issues never read as one.
+ */
+export function planReportLines(
+  result: Parameters<typeof formatPlanReport>[0],
+  opts: { verbose?: boolean } = {},
+): string[] {
+  const verbose = opts.verbose === true;
+  const lines: string[] = [];
+  if (result.source === "heuristic") lines.push(PLANNED_WITHOUT_MODEL);
+  const held = new Map(result.held.map((h) => [h.id, h.reasons]));
+  lines.push(
+    `Plan v${result.version}: ${plural(result.created.length, "issue")} planned${result.held.length ? `, ${result.held.length} held in Planning` : ""}${result.rejected.length ? `, ${result.rejected.length} rejected` : ""}.`,
+  );
+  const width = Math.max(0, ...result.created.map((c) => c.id.length));
+  const firstWithTitle = new Map<string, string>();
+  for (const c of result.created) {
+    const same = firstWithTitle.get(c.title.toLowerCase());
+    if (!same) firstWithTitle.set(c.title.toLowerCase(), c.id);
+    lines.push(
+      `  ${c.id.padEnd(width)}  ${c.title}${same ? ` (the same title as ${same})` : ""}${held.has(c.id) ? "  · held in Planning" : ""}`,
+    );
+    if (verbose) {
+      lines.push(
+        `  ${" ".repeat(width)}    ${plural(c.points, "point")}, difficulty ${c.difficulty}, ${c.routing === "direct" ? "built directly" : c.routing === "split" ? "to be split" : "built from a sketch"}, about ${c.estimate.tokens} tokens (${c.estimate.basis.kind}), ${c.zone3Tokens} tokens of context`,
+      );
+      for (const r of held.get(c.id) ?? []) lines.push(`  ${" ".repeat(width)}    held: ${r}`);
+    }
+  }
+  if (result.held.length && !verbose)
+    lines.push(
+      "Held issues wait for a concrete example in a criterion or for your approval of their criteria; --verbose prints each one's reasons.",
+    );
+  for (const r of result.rejected) lines.push(`Rejected: ${r.title} — ${r.reason}`);
+  for (const s of result.serialized)
+    lines.push(
+      `${s.id} waits for ${s.after}, which changes the same files (${s.files.join(", ")}).`,
+    );
+  for (const e of result.epics)
+    lines.push(
+      `Re-split as an epic: ${e.title} — a ${e.mechanism} is many issues, not one; plan it on its own.`,
+    );
+  for (const c of result.proposedChanges)
+    lines.push(`Proposed change (not an issue): ${c.title} — ${c.reason}.`);
+  for (const s of result.proposedSplits)
+    lines.push(
+      `Proposed split: ${s.id} "${s.title}" is ${plural(s.points, "point")}; split it before it runs.`,
+    );
+  for (const r of result.modelRefusals) lines.push(`The Planning model's reply was refused: ${r}.`);
+  if (verbose) {
+    lines.push("The plan's checks (INVEST):");
+    for (const check of result.invest.checks)
+      lines.push(`  ${check.passed ? "pass" : "FAIL"} ${check.check}: ${check.detail}`);
+  } else if (!result.invest.passed)
+    lines.push("A check of the plan failed; --verbose prints which.");
+  const decisions =
+    result.decisions ?? (result.decisionId ? [{ id: result.decisionId, holds: true }] : []);
+  for (const d of decisions)
+    lines.push(
+      d.holds
+        ? `Decision ${d.id} is waiting on you; the new issues stay in Planning until it is answered.`
+        : `Decision ${d.id} is open; planning proceeds on its default until you answer it.`,
+    );
+  return lines;
 }
 
 const LANGUAGE: Record<ReuseStack, string> = {
@@ -1744,6 +1823,17 @@ async function improveCommand(k: RepoContext, args: string[], io: CommandIO): Pr
     print(
       `tool candidate ${p.name}: ${p.template} (used on ${p.cards.length} issues) [${validated.status}]`,
     );
+    if (validated !== p) {
+      // SEC-17a (C5): what the confined run refused — a write, a key, a
+      // connection — is said and recorded on the ledger, not only its status.
+      for (const f of validated.failures ?? []) print(`  refused: ${f}`);
+      await k.log.append({
+        type: TOOL_VALIDATED_EVENT,
+        actor: "harness",
+        payload: { name: p.name, template: p.template, status: validated.status },
+        ...(validated.failures?.length ? { private: { failures: validated.failures } } : {}),
+      });
+    }
     if (validated.status === "validated")
       writeToolCandidate(join(dot, "tool-candidates"), validated);
   }
@@ -2233,6 +2323,9 @@ export function overnightPlanLine(
 
 // ---------------------------------------------- --validate-tools (item 4a)
 
+/** A mined command's confined validation and what it refused (SEC-17a). */
+export const TOOL_VALIDATED_EVENT = "learning/tool_validated";
+
 /**
  * Run one mined command (Worker-written code, R6) for `--validate-tools`
  * (security item 4a, SEC-17a): in a scratch worktree created from the base
@@ -2275,41 +2368,4 @@ export async function validateInScratch(
     rmSync(scratch, { recursive: true, force: true });
     await git(["worktree", "prune"]);
   }
-}
-
-// ---------------------------------------------- per-package gates (Y19)
-
-/**
- * The gates of every workspace package a card's diff touches (Y19): a card
- * touching two packages runs both gate sets. Returns the failures, empty
- * when the repository is not a monorepo or every package gate passes.
- */
-export async function runPackageGates(
-  root: string,
-  cwd: string,
-  changedFiles: string[],
-  print: (line: string) => void = (l) => console.log(l),
-  options: { restricted?: boolean; sandbox?: ProcessSandbox } = {},
-): Promise<{ package: string; rung: string; passed: boolean; output: string }[]> {
-  // SEC-19: an audit starts no package gate; they execute the project's code.
-  if (options.restricted) return [];
-  const { gatesForChange } = await import("@sekhemet/sync");
-  const { relative } = await import("node:path");
-  const results: { package: string; rung: string; passed: boolean; output: string }[] = [];
-  for (const g of gatesForChange(cwd, changedFiles)) {
-    const dir = g.cwd;
-    // The package's gate is the project's code: confined to the card's
-    // worktree, allowlisted environment, no network (S3a, SEC-17).
-    const r = await runConfined(g.command, g.args, {
-      root: cwd,
-      cwd: dir,
-      timeoutMs: 600_000,
-      ...(options.sandbox ? { sandbox: options.sandbox } : {}),
-    });
-    const passed = r.exitCode === 0 && !r.timedOut;
-    const output = passed ? r.stdout : [r.stdout, r.stderr].filter(Boolean).join("\n");
-    print(`  ${passed ? "pass" : "FAIL"} ${g.package}:${g.rung} (${relative(root, dir) || "."})`);
-    results.push({ package: g.package, rung: g.rung, passed, output: output.slice(-2000) });
-  }
-  return results;
 }

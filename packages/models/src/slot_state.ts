@@ -75,6 +75,11 @@ export interface SlotManifest {
   saveMs: number;
   /** The last measured restore (K). */
   restoreMs?: number;
+  /**
+   * The process that saved this slot for its engine's return (MD-N14-37a):
+   * while it is alive the cap never deletes the slot; released on restore.
+   */
+  heldBy?: number;
 }
 
 export type RestoreOutcome =
@@ -97,12 +102,43 @@ export interface SlotStoreOptions {
   now?: () => number;
   /** The slot directory's volume read rate, for K before a slot's first restore. */
   readBytesPerSecond: number;
+  /** The directory's cap; every save prunes to it (MD-N14-37a). Unset: no cap. */
+  maxBytes?: number;
 }
 
 /** The managed servers' `--slot-save-path`: `SEKHEMET_SLOT_CACHE`, else a directory in the temp dir. */
 export function defaultSlotCacheDir(): string {
   return process.env.SEKHEMET_SLOT_CACHE ?? join(tmpdir(), "sekhemet-slots");
 }
+
+/** The slot directory's cap (MD-N14-37a): `SEKHEMET_SLOT_CACHE_MAX_GB`, else 8 GiB. */
+export function slotCacheMaxBytes(): number {
+  const gb = Number(process.env.SEKHEMET_SLOT_CACHE_MAX_GB);
+  return Number.isFinite(gb) && gb > 0 ? Math.round(gb * 1024 ** 3) : 8 * 1024 ** 3;
+}
+
+/**
+ * Prune a slot directory to its cap without a server (the supervisor's
+ * start-up pass, MD-N14-37a): the files deleted.
+ */
+export function pruneSlotCache(dir: string, maxBytes = slotCacheMaxBytes()): string[] {
+  if (!existsSync(dir)) return [];
+  return new SlotStore({ dir, serverUrl: "", readBytesPerSecond: 1 }).prune(maxBytes);
+}
+
+/** A slot file with no manifest younger than this may be a save still being written. */
+const WRITING_MS = 10 * 60_000;
+
+const alive = (pid: number): boolean => {
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM: it exists, owned by someone else.
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
 
 /**
  * Sweep a slot directory by the ledger's erasures without a server (the
@@ -182,13 +218,18 @@ export class SlotStore {
     return (await res.json()) as { n_written?: number; n_read?: number };
   }
 
-  /** Save a slot on the server under its keyed name, with its manifest. */
+  /**
+   * Save a slot on the server under its keyed name, with its manifest; `hold`
+   * keeps it from the cap while this process lives (its engine restores it on
+   * return, MD-N14-37a). Then prune the directory to its cap, this file kept.
+   */
   public async save(s: {
     slot: number;
     kind: SlotKind;
     owner: string;
     key: SlotKey;
     sources?: string[];
+    hold?: boolean;
   }): Promise<SlotManifest | undefined> {
     mkdirSync(this.options.dir, { recursive: true });
     const keyId = slotKeyId(s.key);
@@ -214,9 +255,70 @@ export class SlotStore {
       savedAt: this.now(),
       bytes,
       saveMs,
+      ...(s.hold ? { heldBy: process.pid } : {}),
     };
     this.writeManifest(manifest);
+    if (this.options.maxBytes !== undefined) this.prune(this.options.maxBytes, file);
     return manifest;
+  }
+
+  /**
+   * Delete slot files oldest-saved first until the directory's slot files
+   * fit `maxBytes` (MD-N14-37a). Never a manifest-less file younger than ten
+   * minutes (a save still being written) or `keep`. A slot whose `heldBy`
+   * process is alive is passed over while the others can make room; when
+   * they cannot — one long-lived process (`serve`, `queue`, an overnight
+   * run) saved more cards' slots for their return than the cap holds — the
+   * held ones go too, oldest first, so the cap holds for as long as a
+   * process lives (F31): a card whose slot went re-prefills on return.
+   * Returns the files deleted.
+   */
+  public prune(maxBytes: number, keep?: string): string[] {
+    const dir = this.options.dir;
+    if (!existsSync(dir)) return [];
+    const size = (f: string) => {
+      try {
+        return statSync(join(dir, f)).size;
+      } catch {
+        return 0;
+      }
+    };
+    const manifests = this.manifests();
+    const named = new Set(manifests.map((m) => m.file));
+    type Entry = { file: string; at: number; bytes: number; manifest?: SlotManifest };
+    const entries: Entry[] = [
+      ...manifests.map((m) => ({ file: m.file, at: m.savedAt, bytes: size(m.file), manifest: m })),
+      ...readdirSync(dir)
+        .filter((f) => f.endsWith(".bin") && !named.has(f))
+        .map((f) => {
+          let at = 0;
+          try {
+            at = statSync(join(dir, f)).mtimeMs;
+          } catch {
+            // Gone meanwhile.
+          }
+          return { file: f, at, bytes: size(f) };
+        }),
+    ];
+    let total = entries.reduce((n, e) => n + e.bytes, 0);
+    const deleted: string[] = [];
+    // A file's age is read against the wall clock: its mtime is the file system's.
+    const wall = Date.now();
+    const oldestFirst = entries.sort((a, b) => a.at - b.at);
+    const held = (e: Entry) => e.manifest?.heldBy !== undefined && alive(e.manifest.heldBy);
+    for (const pass of ["unheld", "held"] as const) {
+      for (const e of oldestFirst) {
+        if (total <= maxBytes) break;
+        if (e.file === keep || deleted.includes(e.file)) continue;
+        if (pass === "unheld" && held(e)) continue;
+        if (!e.manifest && wall - e.at < WRITING_MS) continue;
+        rmSync(join(dir, e.file), { force: true });
+        rmSync(join(dir, `${e.file}.json`), { force: true });
+        total -= e.bytes;
+        deleted.push(e.file);
+      }
+    }
+    return deleted;
   }
 
   /** Save only when restoring would beat re-prefilling: K < R (MD-N14-36). */
@@ -273,7 +375,9 @@ export class SlotStore {
       return { action: "reprefill", reason: "failed" };
     }
     const ms = this.now() - start;
-    const manifest = { ...plan.manifest, restoreMs: ms };
+    // Restored: the engine holds it in memory now, so the file is released.
+    const { heldBy: _released, ...rest } = plan.manifest;
+    const manifest = { ...rest, restoreMs: ms };
     this.writeManifest(manifest);
     return { action: "restored", ms, manifest };
   }

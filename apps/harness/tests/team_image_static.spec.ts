@@ -14,6 +14,8 @@ import { LLAMA_CPP_TEAM_IMAGES, TEAM_MODELS_DIR, teamEngines } from "../src/team
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const DOCKERFILE = readFileSync(join(ROOT, "packaging/server/Dockerfile"), "utf8");
 const COMPOSE = readFileSync(join(ROOT, "packaging/server/compose.yaml"), "utf8");
+// The `builtin` profile (teams item 13a, TEAM-46): the same harness and engines.
+const COMPOSE_BUILTIN = readFileSync(join(ROOT, "packaging/server/compose.builtin.yaml"), "utf8");
 const INSTALL = readFileSync(join(ROOT, "docs/reference/INSTALL.md"), "utf8");
 
 // --------------------------------------------------------------- the checks
@@ -77,7 +79,74 @@ function engineMismatches(compose: string): string[] {
   return out;
 }
 
+/** What is wrong with the image's command (FINDINGS INS-01): `serve` as a person runs it. */
+function cmdProblems(dockerfile: string): string[] {
+  const cmd = [...dockerfile.matchAll(/^CMD\s+(\[.*\])\s*$/gm)].at(-1)?.[1];
+  if (!cmd) return ["no CMD"];
+  const args = JSON.parse(cmd) as string[];
+  const out: string[] = [];
+  if (args[0] === "dev") out.push("the CMD runs the developer's `dev` form");
+  if (!args.includes("serve")) out.push("the CMD does not serve");
+  return out;
+}
+
+/** RUN-73: the Dockerfile's and the compose file's health checks ask GET /healthz (RUN-72). */
+function healthcheckProblems(dockerfile: string, compose: string): string[] {
+  const out: string[] = [];
+  const joined = dockerfile.replace(/\\\n/g, " ");
+  const hc = /^HEALTHCHECK\b(.*)$/m.exec(joined)?.[1] ?? "";
+  if (!/CMD .*127\.0\.0\.1:4040\/healthz/.test(hc))
+    out.push("Dockerfile: no HEALTHCHECK on /healthz");
+  const services = (parse(compose) as { services: Record<string, Service> }).services;
+  const test = services.sekhemet?.healthcheck?.test?.join(" ") ?? "";
+  if (!test.includes("127.0.0.1:4040/healthz"))
+    out.push("compose: the harness has no health check on /healthz");
+  return out;
+}
+
 // --------------------------------------------------------------- the tests
+
+describe("NEW-models-15 (INS-01): the image starts `serve`, not the developer's `dev serve`", () => {
+  it("runs `sekhemet serve --repo /work --host 0.0.0.0`", () => {
+    expect(cmdProblems(DOCKERFILE)).toEqual([]);
+    expect(DOCKERFILE).toMatch(/^CMD \["serve", "--repo", "\/work", "--host", "0\.0\.0\.0"\]$/m);
+  });
+
+  it("negative: a `dev` CMD fails", () => {
+    const dev = DOCKERFILE.replace('CMD ["serve"', 'CMD ["dev", "serve"');
+    expect(dev).not.toBe(DOCKERFILE);
+    expect(cmdProblems(dev)).toEqual(["the CMD runs the developer's `dev` form"]);
+  });
+});
+
+describe("RUN-73: the Dockerfile and both compose files carry a health check on GET /healthz", () => {
+  it("RUN-73: the image's HEALTHCHECK and each profile's harness service ask /healthz", () => {
+    expect(healthcheckProblems(DOCKERFILE, COMPOSE)).toEqual([]);
+    expect(healthcheckProblems(DOCKERFILE, COMPOSE_BUILTIN)).toEqual([]);
+  });
+
+  it("negative: a Dockerfile with no HEALTHCHECK fails", () => {
+    const none = DOCKERFILE.replace(/^HEALTHCHECK[^\n]*\\\n[^\n]*\n/m, "");
+    expect(none).not.toBe(DOCKERFILE);
+    expect(healthcheckProblems(none, COMPOSE)).toEqual(["Dockerfile: no HEALTHCHECK on /healthz"]);
+  });
+
+  it("negative: a compose file whose harness has no health check fails", () => {
+    const doc = parse(COMPOSE) as { services: Record<string, Record<string, unknown>> };
+    const { healthcheck: _gone, ...sekhemet } = doc.services.sekhemet ?? {};
+    const without = stringify({ ...doc, services: { ...doc.services, sekhemet } });
+    expect(healthcheckProblems(DOCKERFILE, without)).toEqual([
+      "compose: the harness has no health check on /healthz",
+    ]);
+  });
+});
+
+describe("MD-N15-2, MD-N15-4 (TEAM-46): the builtin profile runs the same engines, pinned", () => {
+  it("has each filled role's engine with its launchArgs(), every image pinned by digest", () => {
+    expect(engineMismatches(COMPOSE_BUILTIN)).toEqual([]);
+    expect(unpinnedImages(COMPOSE_BUILTIN, DOCKERFILE)).toEqual([]);
+  });
+});
 
 describe("MD-N15-1: the image contains every program the harness spawns on Linux", () => {
   it("installs git, bubblewrap and socat in the runtime stage", () => {

@@ -65,8 +65,10 @@ writeFileSync(
       bin: { sekhemet: "./dist/index.js" },
       // Surface item 5a: node:sqlite without a flag.
       engines: { node: ">=22.13.0" },
-      license: "MIT",
-      files: ["dist", "data", "README.md", "LICENSE", "NOTICE"],
+      // DEC-54: source-available under the Functional Source License.
+      license: "FSL-1.1-ALv2",
+      // CHANGELOG.md: What's new reads it after an upgrade (surface SUR-68).
+      files: ["dist", "data", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md"],
       dependencies,
       bundleDependencies: Object.keys(dependencies),
     },
@@ -74,7 +76,7 @@ writeFileSync(
     2,
   )}\n`,
 );
-for (const f of ["README.md", "LICENSE", "NOTICE"]) {
+for (const f of ["README.md", "LICENSE", "NOTICE", "CHANGELOG.md"]) {
   if (existsSync(join(root, f))) cpSync(join(root, f), join(stage, f));
 }
 const tarball = execFileSync("npm", ["pack", "--silent", "--pack-destination", out], {

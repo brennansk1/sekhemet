@@ -33,7 +33,7 @@ describe("@sekhemet/harness CLI", () => {
     const names = report.checks.map((c) => c.name);
     expect(names).toContain("Unified memory");
     expect(names).toContain("Model server");
-    expect(names).toContain("Git worktree isolation");
+    expect(names).toContain("Git repository");
     expect(names).toContain("Sandbox confinement");
     expect(names).toContain("Node runtime");
 
@@ -52,12 +52,15 @@ describe("@sekhemet/harness CLI", () => {
   });
 
   it("runDoctor reports a real git failure outside a repository", async () => {
-    // tempRepo is not a git repo, so worktree isolation must FAIL rather than
-    // report a hardcoded pass.
+    // tempRepo is not a git repo, so the repository check must FAIL rather
+    // than report a hardcoded pass — in words, naming `git init` (SUR-64).
     const report = await runDoctor(tempRepo);
-    const worktree = report.checks.find((c) => c.name === "Git worktree isolation");
+    const worktree = report.checks.find((c) => c.name === "Git repository");
     expect(worktree?.status).toBe("fail");
+    expect(worktree?.detail).toMatch(/is not inside a git repository/);
+    expect(worktree?.do).toMatch(/git init/);
     expect(report.ok).toBe(false);
+    expect(report.verdict).toMatch(/^Not ready: /);
   });
 
   it("parseCliArgs parses all subcommands correctly", () => {

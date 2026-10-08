@@ -15,7 +15,7 @@ import { ProcessSandbox } from "@sekhemet/sandbox";
 import { DESCRIPTION_MAX, type Reproduction, issueSpec } from "@sekhemet/ui";
 import { cardWorktree, contextForCard, isolateCheckout } from "./card_root.js";
 import { pruneLogDir } from "./daemon.js";
-import { applyProposal } from "./pm/apply.js";
+import { ProposalError, applyProposal } from "./pm/apply.js";
 import { PmStore } from "./pm/store.js";
 import { leaseRefusal, runnerLease } from "./runner_lease.js";
 
@@ -207,8 +207,15 @@ export async function handleRunRoutes(
         ...(spec ? { spec } : {}),
         ...(typed?.change ? { change: typed.change } : {}),
         ...(typed?.kind ? { kind: typed.kind } : {}),
-        // DB-N10-1: filed for triage, the project lead is its assignee.
-        ...(how.forTriage && how.lead ? { owner: how.lead } : {}),
+        // DB-N10-1: filed for triage, the project lead is its assignee;
+        // otherwise the person who filed it owns it (K-N6-1).
+        ...(how.forTriage
+          ? how.lead
+            ? { owner: how.lead }
+            : {}
+          : ctx.principalOf
+            ? { owner: ctx.principalOf(req) }
+            : {}),
         title,
         tier,
         status: "backlog",
@@ -250,6 +257,7 @@ export async function handleRunRoutes(
         return true;
       }
       const pmStore = new PmStore(ctx.log);
+      // A refused split answers with its reason (PM-P1-7, PM-P1-13), never a 500.
       const r = await applyProposal(
         {
           id: `rest_split_${Date.now().toString(36)}`,
@@ -268,7 +276,14 @@ export async function handleRunRoutes(
           actor: "human",
           ...(ctx.principalOf ? { principal: ctx.principalOf(req) } : {}),
         },
-      );
+      ).catch((err: unknown) => {
+        if (err instanceof ProposalError) return err;
+        throw err;
+      });
+      if (r instanceof ProposalError) {
+        json(res, r.status, { error: r.message });
+        return true;
+      }
       json(res, 200, { subtasks: r.cards.filter((c) => c.id !== cardId) });
       return true;
     }

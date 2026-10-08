@@ -128,3 +128,25 @@ describe("MD-N10-3: run and queue take the person's assigned Worker", () => {
     expect(queue.status).toBe(1);
   }, 120_000);
 });
+
+describe("MD-N10-3 (C5): the person's assignment, then config.toml's executor", () => {
+  it("MD-N10-3: with both an assignment and a config.toml executor, run and queue use the assignment; with only the executor, run uses it", async () => {
+    const { repo, sekhemet } = await project();
+    mkdirSync(join(repo, ".sekhemet"), { recursive: true });
+    writeFileSync(
+      join(repo, ".sekhemet", "config.toml"),
+      '[models]\nexecutor = "config-worker:latest"\n',
+    );
+    // Only the executor: `run <issue>` takes it (it ignored config.toml before C5).
+    const configured = sekhemet(["run", "c1", "--repo", repo]);
+    expect(configured.stdout).toMatch(/Coding model: config-worker:latest/);
+    // Both: the person's assignment wins, in run and in the queue.
+    const assigned = sekhemet(["models", "assign", "worker", ASSIGNED, "--repo", repo]);
+    expect(assigned.status).toBe(0);
+    const run = sekhemet(["run", "c1", "--repo", repo]);
+    expect(run.stdout).toMatch(/Coding model: assigned-worker:latest/);
+    const queue = sekhemet(["queue", "--repo", repo]);
+    expect(queue.stderr).toMatch(/Refusing to run cards on assigned-worker:latest/);
+    expect(queue.stdout + queue.stderr).not.toMatch(/config-worker/);
+  }, 120_000);
+});

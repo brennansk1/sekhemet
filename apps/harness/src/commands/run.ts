@@ -3,8 +3,14 @@ import { gateStartProblems, loadGatesConfig, summarizeEvidence } from "@sekhemet
 import { describeOverride } from "@sekhemet/models";
 import { projectRootOf } from "../card_root.js";
 import { runExitCode } from "../cli_commands.js";
-import { cardStepCap, configOverrideLines, defaultWorkerName } from "../config_apply.js";
-import { executeCard, runLspPool } from "../execute.js";
+import {
+  cardStepCap,
+  configOverrideLines,
+  defaultWorkerName,
+  effectiveConfig,
+  queueDefaults,
+} from "../config_apply.js";
+import { closeRunLspPool, executeCard, runLspPool } from "../execute.js";
 import { LearningStore } from "../learning/store.js";
 import { applyProfileSwitches, profileForRun } from "../measure_cmd.js";
 import { ModelAccess, describeModel, roleModelName } from "../model_access.js";
@@ -124,14 +130,18 @@ export const runCommand: CommandHandler = async (args, env) => {
   // Through the roster, as `qualify` and the queue build it, so the three
   // agree on the combination (B2.2 confirmation): one registry, read once.
   const registry = modelRegistry();
-  // MD-N10-3: no --worker runs the person's assigned Worker, else the default;
-  // MD-N9-4: its model comes from the scheduler (nothing loads here).
+  // MD-N10-3: no --worker runs the person's assigned Worker, else
+  // config.toml's executor (C5: `run` read no config before), else the
+  // default; MD-N9-4: its model comes from the scheduler (nothing loads here).
   const access = ModelAccess.forQueues(
     [
       {
         queue: "worker",
         role: "worker",
-        name: roleModelName("worker", workerName, { registry }) ?? defaultWorkerName(),
+        name:
+          roleModelName("worker", workerName, { registry }) ??
+          queueDefaults(effectiveConfig(cardRoot).config, []).worker ??
+          defaultWorkerName(),
       },
     ],
     { registry, ledger: log },
@@ -213,6 +223,8 @@ export const runCommand: CommandHandler = async (args, env) => {
     boardService,
     runProfile,
     watchdog: cardWatchdog.watchdog,
+    // MD-N2-4: the high stage's masking request reaches the runner.
+    pressure,
     ...(runAccess ? { agentRefusal: agentRefusalFor(runAccess, cardStore) } : {}),
   };
   let result: Awaited<ReturnType<typeof executeCard>>;
@@ -243,6 +255,8 @@ export const runCommand: CommandHandler = async (args, env) => {
     // a resident 13GB checkpoint left behind by a failed run is how the host
     // ran out of memory overnight.
     await access.releaseAll();
+    // WL-N7-4: the run's language servers stop with it.
+    await closeRunLspPool();
     releaseRunLease();
   }
 

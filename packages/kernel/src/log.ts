@@ -186,6 +186,8 @@ export class EventLog {
   private subscriptions = new Set<Subscription>();
   /** The last seq and hash a pass verified: incremental verification starts after it (K-N1-3). */
   private verified: { seq: number; hash: string } | undefined;
+  /** `PRAGMA data_version` when this log last re-hashed the whole chain (K-N1-8). */
+  private fullCheckDataVersion: number | undefined;
   private erasures: { atSeq: number; index: ErasureIndex } | undefined;
   private localPrincipalCache: string | undefined;
   /** The id `localPrincipal()` hands out before the local person is recorded. */
@@ -789,11 +791,55 @@ export class EventLog {
    * after the last seq this log verified, provided that row still carries the
    * hash it had, and re-hashes only newer rows (K-N1-3); `full` re-hashes
    * every row and re-checks every private part. `sekhemet log` runs full.
+   * `"if-written-elsewhere"` re-hashes every row when another connection
+   * committed since this log's last full check (`PRAGMA data_version`), so an
+   * earlier row edited by hand is found (K-N1-8); otherwise incremental.
    */
   public async verifyHashChain(
-    options: { full?: boolean } = {},
+    options: { full?: boolean | "if-written-elsewhere" } = {},
   ): Promise<HashChainVerificationResult> {
     return this.verifyHashChainSync(options);
+  }
+
+  /** SQLite's count of other connections' commits, as this connection sees it. */
+  private dataVersion(): number {
+    return (this.db.prepare("PRAGMA data_version").get() as { data_version: number }).data_version;
+  }
+
+  /**
+   * The head check (runtime RUN-72): the ledger opens and its last row
+   * re-hashes against its predecessor's hash. Cheap: one row, whatever the
+   * ledger's length.
+   */
+  public verifyHeadSync(): HashChainVerificationResult {
+    try {
+      const last = (
+        this.db.prepare("SELECT MAX(seq) AS s FROM events").get() as { s: number | null }
+      ).s;
+      if (!last) return { valid: true, totalEvents: 0, hashedEvents: 0 };
+      const prev =
+        last > 1
+          ? (
+              this.db.prepare("SELECT hash FROM events WHERE seq = ?").get(last - 1) as
+                | { hash: string }
+                | undefined
+            )?.hash
+          : GENESIS_PREV_HASH;
+      if (prev === undefined)
+        return { valid: false, totalEvents: last, corruptedSeq: last - 1, reason: "missing row" };
+      return verifyChainRows(readChainRows(this.db, last), {
+        fromSeq: last,
+        prevHash: prev,
+        erasures: this.erasureIndex(),
+        totalEvents: last,
+      });
+    } catch (err) {
+      return {
+        valid: false,
+        totalEvents: 0,
+        reason: `the ledger could not be read: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
 
   /**
@@ -801,10 +847,33 @@ export class EventLog {
    * being opened, and the harness serves nothing until the check passes
    * (kernel rule 38, K-N4-5).
    */
-  public verifyHashChainSync(options: { full?: boolean } = {}): HashChainVerificationResult {
+  public verifyHashChainSync(
+    options: { full?: boolean | "if-written-elsewhere" } = {},
+  ): HashChainVerificationResult {
+    try {
+      return this.verifyHashChainInner(options);
+    } catch (err) {
+      // K-N1-9: a row the check cannot even read is a failure, never a throw.
+      this.verified = undefined;
+      return {
+        valid: false,
+        totalEvents: 0,
+        reason: `the ledger could not be verified: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  private verifyHashChainInner(options: {
+    full?: boolean | "if-written-elsewhere";
+  }): HashChainVerificationResult {
     let fromSeq = 1;
     let prevHash = GENESIS_PREV_HASH;
-    if (!options.full && this.verified) {
+    // K-N1-8: another connection's commit since the last full check means a
+    // row before the anchor may have been edited: re-hash them all.
+    const version = options.full === "if-written-elsewhere" ? this.dataVersion() : undefined;
+    const full =
+      options.full === true || (version !== undefined && version !== this.fullCheckDataVersion);
+    if (!full && this.verified) {
       const row = this.db.prepare("SELECT hash FROM events WHERE seq = ?").get(this.verified.seq) as
         | { hash: string }
         | undefined;
@@ -827,8 +896,10 @@ export class EventLog {
     if (result.valid) {
       const last = rows[rows.length - 1];
       if (last) this.verified = { seq: last.seq, hash: last.hash };
+      if (fromSeq === 1) this.fullCheckDataVersion = version ?? this.dataVersion();
     } else {
       this.verified = undefined;
+      this.fullCheckDataVersion = undefined;
     }
     return result;
   }
@@ -1221,9 +1292,14 @@ export function verifyChainRows(
     // payload_hash column, so editing the payload breaks the chain even if
     // the column is left alone.
     const isLegacyRow = row.payload_hash === "";
-    const recomputedPayloadHash = isLegacyRow
-      ? ""
-      : canonicalPayloadHash(JSON.parse(row.payload) as unknown);
+    let parsed: unknown;
+    try {
+      parsed = isLegacyRow ? undefined : (JSON.parse(row.payload) as unknown);
+    } catch {
+      // K-N1-9: a payload that is not JSON is a named failure at its seq.
+      return corrupt(row.seq, `The payload at seq ${row.seq} is not JSON`);
+    }
+    const recomputedPayloadHash = isLegacyRow ? "" : canonicalPayloadHash(parsed);
     const version = row.hash_version ?? null;
     if (version !== null && version !== HASH_VERSION) {
       return corrupt(row.seq, `Unknown chain formula version ${version} at seq ${row.seq}`);

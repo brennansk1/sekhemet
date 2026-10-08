@@ -7,9 +7,6 @@
   "S6": {
     "na": {
       "empty,loading,slow,model_down,offline,permission,concurrent,undo,retry,restart": "ReviewWIP is a number derived on the board from the recorded human decisions and the review budget; no S6 criterion names an empty, loading, slow, outage, offline, access, concurrency, undo, retry or restart path for it."
-    },
-    "gap": {
-      "error": "RG-S6-7: the review rate (decisions faster than 500 changed lines an hour) is computed by BoardServiceImpl.reviewRate but no route, page or command reports it (C2d finding)."
     }
   },
   "P8": {
@@ -70,6 +67,6 @@
     }
   },
   "_ceiling": {
-    "gaps": 4
+    "gaps": 3
   }
 }

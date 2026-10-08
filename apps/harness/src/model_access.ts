@@ -535,6 +535,15 @@ export class ModelAccess {
     return hold.adapter;
   }
 
+  /**
+   * Why the queue's load is refused for memory now (MD-N9-3), or undefined:
+   * its work stays queued, so a caller with nothing else to wait for stops
+   * waiting and says so (the queue's research card, C5).
+   */
+  public refusal(queue: string): string | undefined {
+    return this.scheduler.refusals()[queue]?.message;
+  }
+
   /** The queue's adapter without loading it (for a gate or a label). */
   public adapterFor(queue: string): UnloadableAdapter {
     return this.scheduler.adapterFor(queue);

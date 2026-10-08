@@ -84,7 +84,10 @@ describe("doctor checks the weights' hashes (MD-N7-2)", () => {
     expect(reads).toBe(2);
     expect(changed.status).toBe("fail");
     expect(changed.detail).toMatch(
-      /nail-mtp: the file's hash differs from the registered one \(.*w\.gguf\)\. Do: download it again on Configuration › Models, or run `sekhemet models fetch nail-mtp`\./,
+      /nail-mtp: the file's hash differs from the registered one \(.*w\.gguf\)/,
+    );
+    expect(changed.do).toBe(
+      "download it again on Configuration › Models, or run `sekhemet models fetch nail-mtp`.",
     );
   });
 
@@ -162,8 +165,9 @@ describe("doctor checks the weights' hashes (MD-N7-2)", () => {
     expect(reads).toBe(1);
     expect(truncated.status).toBe("fail");
     expect(truncated.detail).toMatch(
-      /nail-mtp: the file is 4 bytes, not the 7 bytes verified before, so its hash differs from the registered one \(.*w\.gguf\)\. Do: download it again/,
+      /nail-mtp: the file is 4 bytes, not the 7 bytes verified before, so its hash differs from the registered one \(.*w\.gguf\)/,
     );
+    expect(truncated.do).toMatch(/^download it again/);
     // The registered size, with no verification ever made.
     const other = setup();
     other.reg.recordWeights("nail-mtp", {

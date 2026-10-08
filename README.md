@@ -27,7 +27,7 @@ Nothing is done until its checks pass and a person accepts it.
 > the measurements that decide v1 are still running.
 > [Project status](#project-status) says exactly where things stand.
 
-**[Quickstart](#quickstart) · [How it works](#how-it-works) · [What it does not do yet](#what-sekhemet-does-not-do-yet) · [Features](docs/FEATURES.md) · [Docs](docs/README.md)**
+**[Quickstart](#quickstart) · [How it works](#how-it-works) · [What it does not do yet](#what-sekhemet-does-not-do-yet) · [User guide](docs/guide/index.md) · [Features](docs/FEATURES.md) · [Security](.github/SECURITY.md) · [Contributing](.github/CONTRIBUTING.md)**
 
 ## How it works
 
@@ -74,22 +74,23 @@ Node.js 22.13+ · pnpm 10 · git · llama.cpp's `llama-server` (b10809 or later;
 `sekhemet doctor` says how to get it). Linux also needs `bubblewrap` and `socat`.
 
 The npm package comes with the public pre-release 0.9.0. Until then, install
-from source:
+from source, in five commands:
 
 ```bash
 git clone https://github.com/brennansk1/sekhemet.git && cd sekhemet
-pnpm install && pnpm build                   # tsc -b over every package
-pnpm sekhemet doctor                         # memory, llama-server, the sandbox; flags missing models
-mkdir -p ~/.sekhemet/models
-pnpm sekhemet models fetch --recommended --folder ~/.sekhemet/models   # shows sizes and licences, asks first
-alias sekhemet="node $PWD/apps/harness/dist/index.js"; cd <your-project> && sekhemet
+pnpm install && pnpm build && alias sekhemet="node $PWD/apps/harness/dist/index.js"
+sekhemet doctor                              # memory, the engine, the sandbox; each failure says what to do
+mkdir -p ~/.sekhemet/models && sekhemet models fetch --recommended --folder ~/.sekhemet/models   # sizes and licences, then asks
+cd <your-project> && sekhemet                # checks the machine, derives the checks, asks once, opens the board
 ```
 
-The first run in your project checks the machine, says which models it found,
-derives the checks from the project, asks once, and opens the board. Then
-describe the work: `sekhemet "add CSV export to the reports page"`. `doctor`
+Then describe the work: `sekhemet "add CSV export to the reports page"`. It plans
+the work as issues and holds each one in Planning until you approve its acceptance
+criteria: open it on the board, or run the `sekhemet approve <epic>` line it prints,
+then `sekhemet run` builds the approved issues. `doctor`
 names anything still owed, such as verifying a model on this machine, with the
-command to run.
+command to run. No `llama-server` yet? `sekhemet engine get` downloads the pinned
+llama.cpp release on your yes ([Models](docs/guide/models.md)).
 
 **How long it takes.** The recommended set is about 42 GB to download; download
 and first-load times are not measured yet. On our own 30-issue frozen suite, a
@@ -110,8 +111,28 @@ sudo apparmor_parser -r /etc/apparmor.d/bwrap
 
 </details>
 
-The full walk-through, every command, the Team server image and the npm tarball
-are in [INSTALL.md](docs/reference/INSTALL.md).
+The [user guide](docs/guide/index.md) walks through [installing](docs/guide/install.md)
+on macOS and Ubuntu, the [first run](docs/guide/first-run.md), [Solo and
+Team](docs/guide/solo-and-team.md) and [running a Team server](docs/guide/team-admin.md);
+the operator's detail is in [INSTALL.md](docs/reference/INSTALL.md).
+
+### The commands
+
+`sekhemet --help` lists the eight a person meets; `sekhemet dev --help` and the
+[CLI reference](docs/guide/cli-reference.md) list every other one.
+
+<!-- generated:readme-commands:start -->
+| Command | What it does |
+| --- | --- |
+| `sekhemet` | Set up on first run, then open the board |
+| `sekhemet "<spec>"` | Plan the work; each issue is built once you approve it |
+| `sekhemet run [issue]` | Run an issue, resume a stopped one, or run the queue |
+| `sekhemet review` | Show the next issue waiting on you |
+| `sekhemet accept <issue>` | Accept and merge. Also: request-changes &lt;issue&gt; "&lt;reason&gt;", park / unpark &lt;issue&gt;, reject &lt;issue&gt; "&lt;reason&gt;", reopen &lt;issue&gt;, revert &lt;issue&gt;; sekhemet card message\|pause\|hand-back\|take-over &lt;issue&gt; for a running one |
+| `sekhemet ask "<question>"` | Ask Seshat from the terminal; the reply prints here |
+| `sekhemet doctor` | Check the install, including the model weights |
+| `sekhemet dev <command>` | Everything for developing Sekhemet itself |
+<!-- generated:readme-commands:end -->
 
 ## The models
 
@@ -150,9 +171,10 @@ they show.
   caught 4 of 22. A change reaches you without an AI review, and its issue says
   so.
 - **24 GB of memory or more.** 16 GB is not supported in v1.
-- **macOS and Linux only.** Windows is not supported. Linux containment passed
-  the B1 milestone in an Ubuntu 24.04 VM (a later change to the sandbox means it
-  is re-run on the release candidate); macOS is the reference machine.
+- **macOS and Linux only.** Both are supported; Windows is not. The B1
+  containment milestone passed on macOS and in an Ubuntu 24.04 VM, and is run
+  again on the release candidate because the sandbox changed since. macOS is the
+  reference machine.
 - **Local models are slower and weaker than frontier models.** Expect hours, not
   minutes, for a batch of issues, and more requests for changes on ambiguous
   work. The capstone comparison that measures this has not run yet.
@@ -187,9 +209,10 @@ guardrail.
   Content Security Policy and Origin checks.
 
 The model and its named residuals are in
-[security.md](docs/design/specs/security.md). A `SECURITY.md` with a private
-reporting route comes before the public pre-release; until then, please do not
-open public issues for vulnerabilities.
+[security.md](docs/design/specs/security.md); every host Sekhemet can contact,
+and how to turn each off, is in [Privacy and network](docs/guide/privacy-and-network.md).
+Report a vulnerability privately, as [SECURITY.md](.github/SECURITY.md) says,
+never in a public issue.
 
 ## Project status
 
@@ -222,22 +245,24 @@ Why this licence: [DEC-48](docs/design/DECISIONS.md#dec-48--the-licence-is-fsl-1
 
 ## Contributing
 
-Sekhemet is built in the open, one workstream at a time. Issues and Discussions
-open with the public pre-release 0.9.0. Code from outside the project can be
+Sekhemet is built in the open, one workstream at a time. Questions go to GitHub
+Discussions and bugs to GitHub Issues, both open from the public pre-release
+0.9.0 ([SUPPORT.md](.github/SUPPORT.md)). Code from outside the project can be
 accepted only once a contributor licence agreement exists
-([DEC-54](docs/design/DECISIONS.md#dec-54--publication-and-contribution)); a
-`CONTRIBUTING.md` ships with 0.9.0. The working rules today: tests first, the
-specification updated in the same commit, `pnpm gate` green on the exact tree
-committed, and no check ever loosened. They are in [AGENTS.md](AGENTS.md) and
-[CLAUDE.md](CLAUDE.md).
+([DEC-54](docs/design/DECISIONS.md#dec-54--publication-and-contribution));
+[CONTRIBUTING.md](.github/CONTRIBUTING.md) says why, what is welcome now and the
+working rules: tests first, the specification updated in the same commit,
+`pnpm gate` green on the exact tree committed, and no check ever loosened.
+Everyone taking part follows the [Code of Conduct](.github/CODE_OF_CONDUCT.md).
 
 ## Documentation
 
 | Document | What it is |
 | --- | --- |
+| [User guide](docs/guide/index.md) | Install, first run, models, Solo and Team, the Team administrator's guide, concepts, troubleshooting, privacy, the CLI reference, the FAQ |
 | [docs/README.md](docs/README.md) | The index of every document |
 | [FEATURES.md](docs/FEATURES.md) | Every feature, with what is partial |
-| [INSTALL.md](docs/reference/INSTALL.md) | From source today; the npm package and the Team server image |
+| [INSTALL.md](docs/reference/INSTALL.md) | The operator's detail: from source today, the npm package and the Team server image |
 | [MODELS.md](docs/reference/MODELS.md) | The engine, supported hardware and the shipped models |
 | [STATUS.md](docs/reference/STATUS.md) | Where the project stands, the measurements and the roadmap |
 | [SPINE.md](docs/design/SPINE.md) | The design: the spine, how the parts fit, the claims table |

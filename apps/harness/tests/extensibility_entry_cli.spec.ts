@@ -569,3 +569,27 @@ describe("plugins are not a route (EXT-28)", () => {
     },
   );
 });
+
+describe("board-lifecycle hooks through the board's verbs (EXT-9, C5)", () => {
+  it(
+    "EXT-9 (C5): `sekhemet park` keeps the move, and the hook's objection is recorded on the issue before the command exits",
+    { timeout: 180_000 },
+    async () => {
+      const where = sandboxDirs();
+      await cardInReview(where, "c1");
+      hooksToml(
+        where,
+        `[[hook]]\nevent = "card/status_changed"\nname = "tracker sync"\ncommand = "sleep 0.3; echo 'tracker rejected the move' >&2; exit 2"\n`,
+      );
+      expect(sekhemet(["trust", "--yes"], where).status).toBe(0);
+      const r = sekhemet(["park", "c1", "waiting on payroll"], where);
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stderr).not.toMatch(/not recorded/);
+      const { card, dossier } = await cardOf(where.cwd, "c1");
+      expect(card?.status).toBe("parked");
+      expect(
+        dossier.entries.find((e) => e.text.includes("tracker rejected the move"))?.text,
+      ).toMatch(/tracker sync.*card\/status_changed.*the move stands/);
+    },
+  );
+});

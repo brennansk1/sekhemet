@@ -1,5 +1,6 @@
 import type { CardStore, EventLog, EventRecord, LifecycleHookEvent } from "@sekhemet/kernel";
 import { PR_EVENT } from "./github_sync.js";
+import { reportLostRecord } from "./lost_records.js";
 import {
   BOARD_EVENTS,
   type UserHook,
@@ -55,7 +56,14 @@ export function watchBoardHooks(
           actor: "harness",
           text: `Hook "${hookName(hook)}" on ${event} objected (the move stands): ${objection}`,
         })
-        .catch(() => undefined);
+        // EXT-9 (C5): a write that fails is never silent — it goes to the
+        // lost-record log, which `doctor` counts (runtime RUN-89).
+        .catch((err: unknown) =>
+          reportLostRecord(`hook "${hookName(hook)}" objection`, err, {
+            workspaceId: log.workspaceId(),
+            cardId,
+          }),
+        );
     }
   };
 

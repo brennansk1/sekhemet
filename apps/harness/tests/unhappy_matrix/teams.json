@@ -61,9 +61,6 @@
   "NEW-teams-12": {
     "na": {
       "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "The Team compose profiles and `doctor`'s https check are read from the server's own configuration. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
-    },
-    "gap": {
-      "error": "TEAM-47: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
     }
   },
   "NEW-teams-13": {
@@ -77,6 +74,6 @@
     }
   },
   "_ceiling": {
-    "gaps": 3
+    "gaps": 2
   }
 }

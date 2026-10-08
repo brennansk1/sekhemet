@@ -192,6 +192,11 @@ export interface ExecutionContext {
    * with `memory_pressure` if it does not.
    */
   watchdog?: Pick<MemoryWatchdog, "shouldPauseTurns" | "waitUntilBelow">;
+  /**
+   * The watchdog's actions (MD-N2-4): at `high`, the runner's next step masks
+   * older observations (`takeMaskingRequest`, asked before every turn).
+   */
+  pressure?: { takeMaskingRequest(): boolean };
   /** How long a paused card waits for the watchdog before it stops. Default 120 s. */
   watchdogWaitMs?: number;
   /**
@@ -542,6 +547,7 @@ async function executeCardIn(
   // rule rides in the prompt only while its error and gate stand (context
   // rule 24b). Rules in force are rotated across comparable cards, and the
   // decision is on the ledger for their paired credit (CX-N4-6).
+  let withheldRuleIds: string[] = [];
   if (ctx.learning) {
     const errorCode = standingErrorCode(ctx.cardStore.runs, card.id);
     const inForce = await ctx.learning.activeFor("worker", card, {
@@ -564,6 +570,7 @@ async function executeCardIn(
     for (const rule of rotated.inPrompt) {
       playbook.addTransientRule(playbookRuleOf(rule, card.title));
     }
+    withheldRuleIds = rotated.withheld;
   }
 
   const worktreePath = join(ctx.repoPath, ".sekhemet", "worktrees", card.id);
@@ -704,6 +711,10 @@ async function executeCardIn(
     ...(start?.forkedFrom ? { forkedFrom: start.forkedFrom } : {}),
     // Stop before the host does: a paused card resumes, an OOM takes the
     // machine. The watchdog's pause is checked before every turn.
+    // MD-N2-4: the watchdog's high stage masks older observations at the next step.
+    ...(ctx.pressure
+      ? { takeMaskingRequest: () => ctx.pressure?.takeMaskingRequest() ?? false }
+      : {}),
     memoryProbe: () => {
       // WL-N7-2: the language servers are a tenant the guard counts: over
       // their cap they are trimmed before the turn (they restart on demand).
@@ -779,6 +790,7 @@ async function executeCardIn(
     // result is compared only with cards run at the same prompts.
     contextVersion: fullContextVersion(),
     promptVersion: rolePromptVersion("worker"),
+    ...(withheldRuleIds.length > 0 ? { withheldRuleIds } : {}),
     // Gates rule 6a (lead ruling): the frozen suite names its staged tests
     // external, so its measurement never changes with a record; unnamed,
     // each staged file's origin is its own.
@@ -798,7 +810,7 @@ async function executeCardIn(
       recordSteps: async (id, stepsUsed) => {
         await ctx.cardStore.updateCard(id, { stepsUsed });
       },
-      transition: async (id, to, reason) => {
+      transition: async (id, to, reason, stopReason) => {
         const current = await ctx.cardStore.getCard(id);
         if (!current || current.status === to) return;
         await ctx.boardService.transitionCard({
@@ -807,6 +819,7 @@ async function executeCardIn(
           toStatus: to,
           actor: "executor",
           reason: reason ?? `the Agent's run moved the issue to ${to}`,
+          ...(stopReason ? { stopReason } : {}),
         });
       },
       // A move the board refuses (back-pressure, WIP) holds the card with its
@@ -822,33 +835,43 @@ async function executeCardIn(
       // to fail it.
       const staged = card.acceptanceTests ?? [];
       if (staged.length === 0) return;
-      const testsDir = join(path, "tests");
-      if (!existsSync(testsDir)) mkdirSync(testsDir, { recursive: true });
+      // The planner's staged records (gates rule 6a), by path: a file whose
+      // content is the one the planner recorded is already the card's own.
+      const planned = new Map(
+        (ctx.cardStore.stagedTests?.staged(card.id) ?? []).map((t) => [t.path, t.sha256]),
+      );
       for (const name of staged) {
-        const from = join(ctx.repoPath, "acceptance", name);
-        if (existsSync(from)) {
-          copyFileSync(from, join(testsDir, name));
-          log(`   staged acceptance test: tests/${name}`);
-          // Gates rule 6a (lead ruling): the staged file by path and SHA-256.
-          // Taken from the repository's acceptance/ directory, its author is
-          // the repository's: only a Planner, test-author or PM carry-over
-          // record for the same content makes it the card's own.
-          await ctx.cardStore
-            .recordEvent({
-              type: "test/staged",
-              cardId: card.id,
-              actor: "executor",
-              payload: {
-                cardId: card.id,
-                path: `tests/${name}`,
-                sha256: createHash("sha256")
-                  .update(readFileSync(join(testsDir, name)))
-                  .digest("hex"),
-                author: "repository",
-              },
-            })
-            .catch(() => undefined);
-        }
+        // A bare name lives in the repository's acceptance/ directory and is
+        // staged as tests/<name>; a planned card names the path the planner
+        // wrote in the working copy (tests/<x>.spec.ts), staged at that path.
+        const rel = name.startsWith("tests/") ? name : `tests/${name}`;
+        const fromAcceptance = join(ctx.repoPath, "acceptance", name);
+        const fromCopy = join(ctx.repoPath, rel);
+        const from = existsSync(fromAcceptance)
+          ? fromAcceptance
+          : name.startsWith("tests/") && existsSync(fromCopy)
+            ? fromCopy
+            : undefined;
+        if (!from) continue;
+        const to = join(path, rel);
+        mkdirSync(dirname(to), { recursive: true });
+        copyFileSync(from, to);
+        log(`   staged acceptance test: ${rel}`);
+        const sha256 = createHash("sha256").update(readFileSync(to)).digest("hex");
+        if (planned.get(rel) === sha256) continue;
+        // Gates rule 6a (lead ruling): the staged file by path and SHA-256.
+        // Taken from the repository (its acceptance/ directory, or a working
+        // copy file the planner's record does not match), its author is the
+        // repository's: only a Planner, test-author or PM carry-over record
+        // for the same content makes it the card's own.
+        await ctx.cardStore
+          .recordEvent({
+            type: "test/staged",
+            cardId: card.id,
+            actor: "executor",
+            payload: { cardId: card.id, path: rel, sha256, author: "repository" },
+          })
+          .catch(() => undefined);
       }
     },
     // One ledger event per turn, so the board and the Steps tab follow a
@@ -1034,6 +1057,17 @@ let sharedLspPool: LspPool | undefined;
 export function runLspPool(): LspPool {
   sharedLspPool ??= new LspPool();
   return sharedLspPool;
+}
+
+/**
+ * Stop every language server the run started (WL-N7-4): `queue` and `run`
+ * call it as they end, so the process exits after its report instead of
+ * waiting out the pool's idle sweep. A later card starts a fresh pool.
+ */
+export async function closeRunLspPool(): Promise<void> {
+  const pool = sharedLspPool;
+  sharedLspPool = undefined;
+  await pool?.closeAll().catch(() => undefined);
 }
 
 /** Where a running card's decoded tokens are written for the dashboard (M2). */

@@ -23,9 +23,6 @@
   "NEW-models-2": {
     "na": {
       "empty,loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Throughput floors and the memory watchdog act on this host while a card runs. No criterion of this feature names a empty, loading, slow, model-down, offline, access, large-data, concurrency, undo, retry or restart path, so the path is not one this feature has."
-    },
-    "gap": {
-      "error": "MD-N2-5: no test cites it in or above a test that reaches a door (the entry-point report's strong link)."
     }
   },
   "NEW-models-3": {
@@ -104,9 +101,7 @@
     "gap": {
       "empty": "MD-N14-15, MD-N14-21: no test cites them in or above a test that reaches a door (the entry-point report's strong link).",
       "error": "MD-N14-6: no test cites it in or above a test that reaches a door (the entry-point report's strong link).",
-      "slow": "MD-N14-8, MD-N14-8a, MD-N14-17, MD-N14-19, MD-N14-20, MD-N14-27, MD-N14-29, MD-N14-32, MD-N14-33, MD-N14-33a, MD-N14-38: no test cites them in or above a test that reaches a door (the entry-point report's strong link).",
       "model_down": "MD-N14-27: no test cites it in or above a test that reaches a door (the entry-point report's strong link).",
-      "large_data": "MD-N14-8a, MD-N14-15, MD-N14-16, MD-N14-17, MD-N14-19, MD-N14-20, MD-N14-23, MD-N14-29, MD-N14-33: no test cites them in or above a test that reaches a door (the entry-point report's strong link).",
       "undo": "MD-N14-7, MD-N14-29, MD-N14-36: no test cites them in or above a test that reaches a door (the entry-point report's strong link)."
     }
   },
@@ -177,6 +172,6 @@
     }
   },
   "_ceiling": {
-    "gaps": 24
+    "gaps": 21
   }
 }

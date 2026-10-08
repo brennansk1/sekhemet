@@ -374,6 +374,20 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
       state.consecutiveFailures++;
       continue;
     }
+    if (report.entries.length === 0) {
+      // RUN-11a: the round's queue started nothing though issues are Ready
+      // (its own refusal: reserved hours, a hold). Not a pass nor a failure:
+      // wait, as for a busy machine, never back to back toward the round cap.
+      if (++idleWaits > 144) {
+        summary.stoppedBecause = "the queue started no issue";
+        break;
+      }
+      say(
+        `Round ${summary.rounds} started no issue (the queue refused each Ready issue; its lines above say why); waiting 10 min.`,
+      );
+      await sleep(10 * 60_000);
+      continue;
+    }
     for (const e of report.entries) {
       summary.cardsRun++;
       if (e.passed) {

@@ -279,11 +279,16 @@ export function showFirstRun(onAnswer, { noModel = false, setsUpModels = true } 
     const b = e.target instanceof Element ? e.target.closest("[data-fr]") : null;
     if (!b) return;
     const role = b.dataset.fr;
+    // DoD §6.4 (W10): answered by keyboard, the focused button goes with the bar;
+    // focus moves to the page's content, as Skip to content does, never to nothing.
+    const hadFocus = bar.contains(document.activeElement);
     answerFirstRun(storage(), role);
     thisPage = null;
     apply();
     bar.remove();
     onAnswer?.(role);
+    const now = document.activeElement;
+    if (hadFocus && (!now || now === document.body)) document.getElementById("view")?.focus();
   });
   document.getElementById("view")?.before(bar);
 }

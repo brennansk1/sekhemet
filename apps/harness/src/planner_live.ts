@@ -495,12 +495,15 @@ const keyOf = (ids: readonly string[]) => sha([...ids].sort().join(",")).slice(0
 export async function plannedEpics(k: RepoContext): Promise<PlannedEpic[]> {
   const byEpic = new Map<string, { original: string[]; planned: string[] }>();
   for (const e of await k.log.getEventsByTypes(["plan/created", "plan/replanned"])) {
-    const p = e.payload as { epicId?: string; stories?: { id: string }[] };
+    const p = e.payload as { epicId?: string; stories?: { id: string }[]; cards?: string[] };
     if (!p.epicId) continue;
     const ids = (p.stories ?? []).map((s) => s.id);
+    // The other cards the plan created (its characterize cards) are planned
+    // too, never added scope; the first plan's size is its stories'.
+    const made = (p.cards ?? []).filter((id) => !ids.includes(id));
     const entry = byEpic.get(p.epicId);
-    if (!entry) byEpic.set(p.epicId, { original: ids, planned: [] });
-    else entry.planned.push(...ids);
+    if (!entry) byEpic.set(p.epicId, { original: ids, planned: made });
+    else entry.planned.push(...ids, ...made);
   }
   return [...byEpic].map(([epicId, v]) => ({
     epicId,

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question
+    url: https://github.com/brennansk1/sekhemet/discussions/categories/q-a
+    about: Questions about using Sekhemet go to Discussions.
+  - name: Suggest an idea
+    url: https://github.com/brennansk1/sekhemet/discussions/categories/ideas
+    about: Ideas and feature requests start as a discussion.
+  - name: Report a vulnerability
+    url: https://github.com/brennansk1/sekhemet/security/advisories/new
+    about: Report security problems privately, never in a public issue.

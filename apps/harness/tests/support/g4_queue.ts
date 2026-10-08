@@ -3,6 +3,7 @@ import type { CardStore, CreateCardInput, EventLog } from "@sekhemet/kernel";
 import { BIN, type CliResult, g2Dirs, until } from "./g2_cli.js";
 import { SCRIPTED_MODEL, type ToolCall, type Turn, scriptEnv } from "./g2_model.js";
 import { type G2Project, g2Project } from "./g2_project.js";
+import { guardedImports, killTree, trackChild } from "./hygiene.js";
 
 /**
  * `sekhemet <args>` as a subprocess: the built binary, `preload` loaded with
@@ -12,13 +13,17 @@ function bin(
   args: string[],
   opts: { cwd: string; env: Record<string, string>; preload?: string; timeoutMs?: number },
 ): Promise<CliResult> {
-  const pre = opts.preload ? ["--import", opts.preload] : [];
+  // F31: the model-port guard first, always; the child in its own process group.
+  const pre = guardedImports(opts.preload);
   return new Promise((done, fail) => {
-    const child = spawn(process.execPath, [...pre, BIN, ...args], {
-      cwd: opts.cwd,
-      env: opts.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const child = trackChild(
+      spawn(process.execPath, [...pre, BIN, ...args], {
+        cwd: opts.cwd,
+        env: opts.env,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
+      }),
+    );
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (b) => {
@@ -28,7 +33,7 @@ function bin(
       stderr += String(b);
     });
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
+      killTree(child);
       fail(new Error(`sekhemet ${args.join(" ")} timed out\n${stdout}\n${stderr}`));
     }, opts.timeoutMs ?? 180_000);
     child.on("error", fail);
@@ -44,12 +49,15 @@ function binStart(
   args: string[],
   opts: { cwd: string; env: Record<string, string>; preload?: string },
 ): { output: () => string; stop: () => Promise<void> } {
-  const pre = opts.preload ? ["--import", opts.preload] : [];
-  const child = spawn(process.execPath, [...pre, BIN, ...args], {
-    cwd: opts.cwd,
-    env: opts.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const pre = guardedImports(opts.preload);
+  const child = trackChild(
+    spawn(process.execPath, [...pre, BIN, ...args], {
+      cwd: opts.cwd,
+      env: opts.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+    }),
+  );
   let out = "";
   child.stdout.on("data", (b) => {
     out += String(b);
@@ -61,7 +69,7 @@ function binStart(
   return {
     output: () => out,
     stop: async () => {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      killTree(child);
       await exited;
     },
   };
@@ -129,9 +137,10 @@ export function runQueueOn(
 }
 
 /**
- * `sekhemet queue` on an engine, read until its report line, then stopped:
- * for runs whose process stays up after the report (a language server the
- * run started keeps it alive; reported as a finding of C2d, not judged here).
+ * `sekhemet queue` on an engine, read until its report line, then stopped.
+ * A language server the run started once kept the process up after its
+ * report (C2d finding); C5 stops the servers with the run (WL-N7-4,
+ * `c5_lsp_exit_cli.spec.ts`), and this helper still stops whatever remains.
  */
 export async function runQueueToReport(
   p: G2Project,

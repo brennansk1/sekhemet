@@ -14,7 +14,7 @@ import { platform, tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { validateToolProposal } from "@sekhemet/eval";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { runPackageGates, validateInScratch } from "../src/wave2.js";
+import { validateInScratch } from "../src/wave2.js";
 
 /** S3a: package gates and --validate-tools run worktree code through runConfined(). */
 const darwin = platform() === "darwin";
@@ -54,43 +54,6 @@ const tmp = (prefix: string) => {
   dirs.push(d);
   return d;
 };
-
-describe("SEC-17 / SEC-19: per-package gates", () => {
-  function monorepo(gateScript: string): string {
-    const root = tmp("pkg-gates-");
-    write(root, "package.json", JSON.stringify({ name: "mono", workspaces: ["packages/*"] }));
-    write(root, "packages/a/package.json", JSON.stringify({ name: "a" }));
-    write(root, "packages/a/src/x.ts", "export const x = 1;\n");
-    write(
-      root,
-      "packages/a/.sekhemet/gates.toml",
-      `[[gates]]\nrung = "test"\ncommand = ${JSON.stringify(process.execPath)}\nargs = ["-e", ${JSON.stringify(gateScript)}]\n`,
-    );
-    return root;
-  }
-
-  it.runIf(darwin)("a package gate that writes outside the worktree leaves no marker", async () => {
-    const marker = join(tmp("pkg-out-"), "marker");
-    const root = monorepo(
-      `require("fs").writeFileSync("ran", "x"); require("fs").writeFileSync(${JSON.stringify(marker)}, "escaped")`,
-    );
-    const r = await runPackageGates(root, root, ["packages/a/src/x.ts"], () => undefined);
-    expect(r).toHaveLength(1);
-    // It ran in its package directory, inside the worktree, and failed to escape.
-    expect(existsSync(join(root, "packages", "a", "ran"))).toBe(true);
-    expect(r[0]?.passed).toBe(false);
-    expect(existsSync(marker)).toBe(false);
-  });
-
-  it("SEC-19: under --restricted no package gate starts", async () => {
-    const root = monorepo(`require("fs").writeFileSync("ran", "x")`);
-    const r = await runPackageGates(root, root, ["packages/a/src/x.ts"], () => undefined, {
-      restricted: true,
-    });
-    expect(r).toEqual([]);
-    expect(existsSync(join(root, "packages", "a", "ran"))).toBe(false);
-  });
-});
 
 describe.runIf(darwin)("SEC-17a: --validate-tools runs a mined command confined", () => {
   let server: Server;

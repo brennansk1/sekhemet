@@ -58,7 +58,7 @@ describe("sekhemet plan persists the whole contract (P1, P2, P4-P7, defect 6)", 
     const r = await planCommand(
       k,
       "Implement user authentication with JWT session cookies, password hashing, and rate limiting.",
-      { print: (l) => out.push(l) },
+      { print: (l) => out.push(l), verbose: true },
     );
     expect(r.created).toBeGreaterThan(0);
     const stories = (await k.cardStore.listCards()).filter((c) => c.parentId === r.epicId);
@@ -69,7 +69,8 @@ describe("sekhemet plan persists the whole contract (P1, P2, P4-P7, defect 6)", 
       expect(s.modelRoute?.executor).toBeDefined();
       expect(s.tokenBudget).toBeGreaterThan(0);
     }
-    expect(out.join("\n")).toContain("INVEST pre-flight:");
+    // CLI-07: the plan's checks, in the board's words, with --verbose.
+    expect(out.join("\n")).toContain("The plan's checks (INVEST):");
   });
 });
 
@@ -471,7 +472,7 @@ describe("the CLI reaches the wave-2 wiring (production path)", () => {
       expect(stories.every((s) => (s.acceptanceCriteria?.length ?? 0) > 0 && s.difficulty)).toBe(
         true,
       );
-      expect(lines.join("\n")).toContain("INVEST pre-flight:");
+      expect(lines.join("\n")).toMatch(/^Plan v\d+: \d+ issues? planned/m);
       await main([
         "goal",
         "The test suite passes and coverage is at least 80%.",

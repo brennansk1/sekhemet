@@ -1,0 +1,107 @@
+# A team server with built-in accounts (teams item 13a, NEW-teams-12,
+# TEAM-46; DESIGN_GAPS_C1 b9, FINDINGS_C1 INS-07): the `builtin` profile, for
+# a team with no identity provider. People sign in with Sekhemet's own
+# accounts — passwords, passkeys and invites (DEC-38) — with
+#
+#   [identity]
+#   sources = ["accounts", "passkeys"]
+#
+# in the server's user configuration, and no OIDC and no identity proxy.
+# The harness is published on the host's loopback only: put the reverse proxy
+# you already run (nginx, Caddy, Traefik, a cloud load balancer) in front of
+# it to terminate TLS — none is bundled here. docs/reference/INSTALL.md walks
+# both profiles to a first sign-in. Replace every <...> before starting.
+#
+# The engines are the same as compose.yaml's (models rule 26a, NEW-models-15):
+# one per filled role, each started with exactly its shipped profile's
+# launchArgs() (a static test holds both files equal to teamEngines()).
+services:
+  # The harness. It owns the network namespace the engines join.
+  sekhemet:
+    build:
+      context: ../..
+      dockerfile: packaging/server/Dockerfile
+    environment:
+      # The engines' saved slots, shared so erased ones are swept (MD-N14-37).
+      SEKHEMET_SLOT_CACHE: /slots
+      SEKHEMET_MODELS_DIR: /models
+    # bubblewrap needs unprivileged user namespaces inside the container.
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+    volumes:
+      - <repository>:/work
+      - sekhemet-user:/home/node/.sekhemet
+      - <models folder>:/models:ro
+      - sekhemet-slots:/slots
+    # Your reverse proxy forwards to this address; nothing else reaches it.
+    ports:
+      - "127.0.0.1:4040:4040"
+    # RUN-73: the ledger opens and its head verifies (GET /healthz, RUN-72).
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4040/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+  # Coding: nail-mtp (models rule 3). About 16.9 GB of GPU memory.
+  engine-coding:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b10818@sha256:e61f29b37c471f956a772f91f4e9952d29f237e5d1a1a748e14421aae090305f
+    network_mode: "service:sekhemet"
+    depends_on: [sekhemet]
+    command: ["-m", "/models/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS.gguf", "--host", "127.0.0.1", "--port", "8098", "-ngl", "99", "-fa", "on", "--jinja", "-c", "16384", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "--cache-ram", "4096", "--ctx-checkpoints", "8", "--slot-save-path", "/slots"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8098/health"]
+    volumes:
+      - <models folder>:/models:ro
+      - sekhemet-slots:/slots
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Planning, and Seshat: Qwen3.8-27B GSQ-RCO. About 14.3 GB of GPU memory.
+  engine-planning:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b10818@sha256:e61f29b37c471f956a772f91f4e9952d29f237e5d1a1a748e14421aae090305f
+    network_mode: "service:sekhemet"
+    depends_on: [sekhemet]
+    command: ["-m", "/models/Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf", "--host", "127.0.0.1", "--port", "8099", "-ngl", "99", "-fa", "on", "--jinja", "-c", "8192", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "--cache-ram", "4096", "--ctx-checkpoints", "8", "--slot-save-path", "/slots"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8099/health"]
+    volumes:
+      - <models folder>:/models:ro
+      - sekhemet-slots:/slots
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Research: Apodex-1.1-mini, two slots. About 22.1 GB of GPU memory.
+  engine-research:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b10818@sha256:e61f29b37c471f956a772f91f4e9952d29f237e5d1a1a748e14421aae090305f
+    network_mode: "service:sekhemet"
+    depends_on: [sekhemet]
+    command: ["-m", "/models/Apodex-1.1-mini-IQ3_M.gguf", "--host", "127.0.0.1", "--port", "8101", "-ngl", "99", "-fa", "on", "--jinja", "-c", "65536", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "2", "--cache-ram", "4096", "--ctx-checkpoints", "8", "-sps", "0.5", "--slot-save-path", "/slots"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8101/health"]
+    volumes:
+      - <models folder>:/models:ro
+      - sekhemet-slots:/slots
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  sekhemet-user:
+  sekhemet-slots:

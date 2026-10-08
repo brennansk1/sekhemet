@@ -1,0 +1,63 @@
+name: Bug report
+description: Something Sekhemet does wrong. For a vulnerability, report it privately instead (SECURITY.md).
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug. Please do not include secrets, private code or anything you would not post publicly.
+        A vulnerability goes to the private report instead: https://github.com/brennansk1/sekhemet/security/advisories/new
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. In a fresh npm project, run `sekhemet`
+        2. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `sekhemet --version`, or the commit for a source install.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS (Apple silicon)
+        - Linux x64 (Ubuntu)
+        - Linux x64 (another distribution)
+        - The Team server image
+    validations:
+      required: true
+  - type: dropdown
+    id: setup
+    attributes:
+      label: Setup
+      options:
+        - Solo
+        - Team
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: sekhemet doctor
+      description: The output of `sekhemet doctor`.
+      render: text
+  - type: textarea
+    id: report
+    attributes:
+      label: Report folder
+      description: Run `sekhemet doctor --report`, read the folder it writes (it is redacted, and nothing is sent), then attach it here as a zip, or say why you cannot.

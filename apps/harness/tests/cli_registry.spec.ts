@@ -17,6 +17,11 @@ describe("SUR-17: every registry entry", () => {
         "accept",
         // NEW-runtime-11 (C4): backup and restore, run without `dev`.
         "backup",
+        // C5: daemon moved from `main` (runtime items 5, 5a); uninstall is new (surface item 33).
+        "daemon",
+        // C5: queue and board moved from `main` (surface item 19a).
+        "board",
+        "queue",
         "doctor",
         "editors",
         "egress",
@@ -26,6 +31,7 @@ describe("SUR-17: every registry entry", () => {
         "review",
         "run",
         "status",
+        "uninstall",
       ].sort(),
     );
   });

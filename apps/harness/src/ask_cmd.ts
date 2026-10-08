@@ -29,6 +29,12 @@ export interface AskDeps {
   /** The harness's board: `/ready` and the other moves go through it (kernel K-S4-3). */
   board: Parameters<typeof answerQueued>[0]["board"];
   say?: (line: string) => void;
+  /**
+   * Why Seshat's model cannot be served, when its server answers but cannot
+   * serve it (it does not have the model), else undefined: a server that
+   * does not answer is said as that (SUR-51, C5).
+   */
+  whyNotServed?: () => Promise<string | undefined>;
   /** How long to wait for a running queue's answer; default 30 minutes. */
   waitMs?: number;
   pollMs?: number;
@@ -86,6 +92,23 @@ export async function runAsk(question: string, deps: AskDeps): Promise<0 | 1 | 2
     return 1;
   }
 
+  // SUR-51: a model hold that can never settle (no model server answers, so
+  // nothing is left to schedule) drains the event loop, and the process would
+  // exit 0 having said nothing. Before it exits, say why and exit 1; the
+  // question stays in the thread.
+  const stalled = async () => {
+    // C5: a server that answers but cannot serve Seshat's model is said as
+    // that, not as a server that is down (the probe keeps the process alive
+    // until it is said).
+    const why = await deps.whyNotServed?.().catch(() => undefined);
+    say(
+      why
+        ? `Seshat couldn't reply: the model server answers, but ${why}. Your question is kept in Seshat's thread; it is answered once Seshat's model ${deps.pmModel} is served (Configuration › Models).`
+        : `Seshat couldn't reply. ${seshatFailure(new Error("no model is answering (ECONNREFUSED)")).text}`,
+    );
+    process.exitCode = 1;
+  };
+  process.once("beforeExit", stalled);
   try {
     await answerQueued({
       repoPath: deps.repoPath,
@@ -101,6 +124,8 @@ export async function runAsk(question: string, deps: AskDeps): Promise<0 | 1 | 2
     console.error(failureDetail(err));
     say(`Seshat couldn't reply. ${seshatFailure(err).text}`);
     return 1;
+  } finally {
+    process.off("beforeExit", stalled);
   }
   const replies = await repliesSince();
   if (replies.length === 0) {

@@ -6,7 +6,9 @@
 #   f:PORT:SOCKET  the host listens on PORT: listen on 127.0.0.1:PORT (and
 #                  [::1]:PORT) here and pass each connection to SOCKET;
 #   r:PORT:SOCKET  the command will listen on PORT (a dev server): listen on
-#                  SOCKET and pass each connection to 127.0.0.1:PORT here.
+#                  SOCKET and pass each connection to 127.0.0.1:PORT here, or
+#                  to [::1]:PORT when nothing answers on 127.0.0.1 (a server
+#                  listening on ::1 alone).
 # Modes:
 #   sekhemet-relay -- COMMAND ARGS...  the native engine: start the relays,
 #                  wait until each listens, then exec the command;
@@ -29,7 +31,12 @@ start() {
         (socat "TCP6-LISTEN:$port,bind=[::1],fork,reuseaddr" "UNIX-CONNECT:$sock" </dev/null >/dev/null 2>&1 &)
         ;;
       r)
-        (socat "UNIX-LISTEN:$sock,fork,unlink-early" "TCP:127.0.0.1:$port" </dev/null >/dev/null 2>&1 &)
+        # Per connection, 127.0.0.1 first, then [::1] when it is refused (the
+        # first socat exits before reading anything when its connect fails).
+        # The connector is a file beside the socket, so socat's address
+        # syntax never parses its colons, whatever socat's version.
+        printf 'socat - TCP4:127.0.0.1:%s 2>/dev/null || exec socat - TCP6:[::1]:%s\n' "$port" "$port" >"$sock.connect"
+        (socat "UNIX-LISTEN:$sock,fork,unlink-early" "EXEC:/bin/sh $sock.connect,pipes" </dev/null >/dev/null 2>&1 &)
         ;;
     esac
   done

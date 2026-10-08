@@ -30,20 +30,84 @@ When several are installed, Sekhemet uses `SEKHEMET_LLAMA_SERVER` when it is set
 
 ## For a team: the server image
 
-`packaging/server/Dockerfile` builds one image holding the harness, installed from the same npm tarball; `packaging/server/compose.yaml` runs it with the containers it needs beside it (SUR-42):
+`packaging/server/Dockerfile` builds one image holding the harness, installed from the same npm tarball; it starts `sekhemet serve` over the repository mounted at `/work`, and its `HEALTHCHECK` asks `GET /healthz`, which answers 200 only while the ledger opens and its head verifies ([runtime](../design/specs/runtime.md) item 23b, RUN-72 and RUN-73). Two compose files run it with the containers it needs beside it (SUR-42), one per way your team signs in ([teams](../design/specs/teams.md) item 13a):
+
+| | The `builtin` profile: `compose.builtin.yaml` | The `proxy` profile: `compose.yaml` |
+| --- | --- | --- |
+| **For** | A team with no identity provider | A team that signs in with its OIDC provider (company sign-in) |
+| **Sign-in** | Sekhemet's own accounts: passwords, passkeys and invites (`[identity] sources = ["accounts", "passkeys"]`) | The **identity-aware proxy** (`identity-proxy`, oauth2-proxy in the example) signs people in and passes each person's email in `X-Forwarded-Email` (`[identity] sources = ["proxy"]`) |
+| **TLS** | The reverse proxy you already run (nginx, Caddy, Traefik, a cloud load balancer) terminates TLS and forwards to `127.0.0.1:4040` on the host; none is bundled | The identity proxy terminates TLS with the certificate and key you mount at `/tls` (`tls.crt`, the full chain, and `tls.key`); only its HTTPS listener, on 443, is published |
+| **Containers** | `sekhemet` and the engines | `sekhemet`, the engines and `identity-proxy` |
+
+Both run the same harness and the same engines:
 
 | Container | What it is |
 | --- | --- |
-| `identity-proxy` | The **identity-aware proxy** (oauth2-proxy in the example): it terminates TLS with the certificate and key you mount at `/tls` (`tls.crt`, the full chain, and `tls.key`; only its HTTPS listener, on 443, is published), signs people in with your OIDC provider and passes each person's email in `X-Forwarded-Email`. Sekhemet trusts that header only from the addresses listed in `[identity] trusted_proxies` of the server's user configuration ([integrations](../design/specs/integrations.md) item 24, [teams](../design/specs/teams.md) item 13). |
-| `engine-coding`, `engine-planning`, `engine-research` | The **inference engines, one container per filled role** of the shipped set ([models](../design/specs/models.md) rules 3 and 26a): llama.cpp's server with that role's weights, started with exactly its profile's arguments. They join the harness's network namespace and are reached on loopback, as on a laptop; one whose model, context or MTP state differs from its profile is refused. The Review role is unfilled until a model is admitted for it, so it has no engine. |
-| `sekhemet` | The harness: `sekhemet dev serve --host 0.0.0.0` over the repository mounted at `/work`, with its user directory in a volume. |
+| `engine-coding`, `engine-planning`, `engine-research` | The **inference engines, one container per filled role** of the shipped set ([models](../design/specs/models.md) rules 3 and 26a): llama.cpp's server with that role's weights, started with exactly its profile's arguments. They join the harness's network namespace and are reached on loopback, as on a laptop; one whose model, context or MTP state differs from its profile is refused. The server checks them as it starts and shows each role's engine on Configuration › Models. The Review role is unfilled until a model is admitted for it, so it has no engine. |
+| `sekhemet` | The harness: `sekhemet serve --repo /work --host 0.0.0.0` over the repository mounted at `/work`, with its user directory in a volume. |
 
-```bash
-docker build -f packaging/server/Dockerfile -t sekhemet-server .
-docker compose -f packaging/server/compose.yaml up
-```
+### The `builtin` profile, to a first sign-in
 
-**GPU and memory** (MD-N15-4). The engines use llama.cpp build b10818, pinned by digest: `ghcr.io/ggml-org/llama.cpp:server-cuda-b10818` for NVIDIA GPUs (the compose file's default; it needs the NVIDIA Container Toolkit), `ghcr.io/ggml-org/llama.cpp:server-vulkan-b10818` for AMD or Intel GPUs through Vulkan, and `ghcr.io/ggml-org/llama.cpp:server-b10818` to run on the CPU (slow). To use another variant, replace each engine's `image` with the matching line from [PROVENANCE](PROVENANCE.md) and, for Vulkan, pass `/dev/dri` instead of the NVIDIA reservation. Every engine keeps its role resident, so their memory adds up:
+1. Replace each `<...>` in `packaging/server/compose.builtin.yaml` (the repository and the models folder).
+2. Write the server's user configuration into its volume, with the address people open and the address your reverse proxy reaches the container from:
+
+   ```toml
+   [team]
+   mode = "team"
+   workspace = "<your team's name>"
+
+   [identity]
+   sources = ["accounts", "passkeys"]
+   public_url = "https://<the address people open>"
+   # The server binds beyond loopback only behind the proxy that terminates
+   # TLS (runtime item 26): your reverse proxy, as the container sees it.
+   trusted_proxies = ["<your Docker network's gateway, such as 172.17.0.1>"]
+   ```
+
+   ```bash
+   docker compose -f packaging/server/compose.builtin.yaml run -T --rm --no-deps --entrypoint sh sekhemet -c 'cat > /home/node/.sekhemet/config.toml' < config.toml
+   ```
+
+3. Build and start it:
+
+   ```bash
+   docker build -f packaging/server/Dockerfile -t sekhemet-server .
+   docker compose -f packaging/server/compose.builtin.yaml up -d
+   ```
+
+4. Point your reverse proxy at `http://127.0.0.1:4040`, keeping the `Host` header (nginx: `proxy_set_header Host $host;`), so the server answers to `public_url`'s name.
+5. The first start writes a one-time setup token and prints only its file's path ([teams](../design/specs/teams.md) TEAM-2). Read it:
+
+   ```bash
+   docker compose -f packaging/server/compose.builtin.yaml logs sekhemet | grep "Setup token written"
+   docker compose -f packaging/server/compose.builtin.yaml exec sekhemet cat <the path it printed>
+   ```
+
+6. Open `public_url`, present the token with your name, email and a password of 15 characters or more: you are the first Admin, signed in. Invite the rest of the team from the Members page.
+
+### The `proxy` profile, to a first sign-in
+
+1. Replace each `<...>` in `packaging/server/compose.yaml`: the repository, the models folder, your OIDC issuer, client id and secret, a cookie secret, your email domain and the folder holding `tls.crt` and `tls.key`.
+2. Write the server's user configuration into its volume, as in the `builtin` profile's step 2, with:
+
+   ```toml
+   [identity]
+   sources = ["proxy"]
+   user_header = "x-forwarded-email"
+   trusted_proxies = ["<the proxy container's address>"]
+   ```
+
+   Sekhemet trusts `X-Forwarded-Email` only from the addresses in `trusted_proxies` ([integrations](../design/specs/integrations.md) item 24, [teams](../design/specs/teams.md) item 13).
+3. Build and start it:
+
+   ```bash
+   docker build -f packaging/server/Dockerfile -t sekhemet-server .
+   docker compose -f packaging/server/compose.yaml up -d
+   ```
+
+4. Read the setup token as in the `builtin` profile's step 5 (with `compose.yaml`), open the server's address and sign in through your provider; present the token to become the first Admin. The first Admin is always made by the setup token, never by the first company sign-in.
+
+**GPU and memory** (MD-N15-4). The engines use llama.cpp build b10818, pinned by digest: `ghcr.io/ggml-org/llama.cpp:server-cuda-b10818` for NVIDIA GPUs (the compose files' default; it needs the NVIDIA Container Toolkit), `ghcr.io/ggml-org/llama.cpp:server-vulkan-b10818` for AMD or Intel GPUs through Vulkan, and `ghcr.io/ggml-org/llama.cpp:server-b10818` to run on the CPU (slow). To use another variant, replace each engine's `image` with the matching line from [PROVENANCE](PROVENANCE.md) and, for Vulkan, pass `/dev/dri` instead of the NVIDIA reservation. Every engine keeps its role resident, so their memory adds up:
 
 | Engine service | Model | Memory it needs |
 | --- | --- | --- |
@@ -53,15 +117,6 @@ docker compose -f packaging/server/compose.yaml up
 | Together | | 53.2 GB of GPU memory (system memory on the CPU image), plus up to 4 GB of system memory per engine for its prompt cache |
 
 These are the harness's own footprint estimates (weights, KV cache and runtime overhead): keep their sum within the GPU memory free on the host.
-
-In the server's user configuration (`/home/node/.sekhemet/config.toml` in the volume):
-
-```toml
-[identity]
-sources = ["proxy"]
-user_header = "x-forwarded-email"
-trusted_proxies = ["<the proxy container's address>"]
-```
 
 Repository processes run confined by bubblewrap, which needs unprivileged user namespaces inside the container; the compose file relaxes seccomp and AppArmor for that one service. The image has not yet been built and run on a Linux host by this project: that check is owed before a release.
 

@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "sekhemet doctor --json",
-  "description": "Every check of the install with its status (surface item 20c).",
+  "description": "Every check of the install with its status and, when not a pass, its next step, and the verdict (surface items 20b, 20c).",
   "type": "object",
   "additionalProperties": false,
   "required": ["command", "ok", "exitCode", "message"],
@@ -21,6 +21,14 @@
       "type": "string",
       "description": "The outcome in one sentence."
     },
+    "ready": {
+      "type": "boolean",
+      "description": "No check failed: Ready to run an issue (SUR-61)."
+    },
+    "verdict": {
+      "type": "string",
+      "description": "Ready to run an issue, or Not ready naming the first missing step (SUR-61)."
+    },
     "checks": {
       "type": "array",
       "items": {
@@ -36,6 +44,10 @@
           },
           "detail": {
             "type": "string"
+          },
+          "do": {
+            "type": "string",
+            "description": "The next step, for a check that is not a pass (SUR-62)."
           }
         }
       }

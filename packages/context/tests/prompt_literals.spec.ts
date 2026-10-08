@@ -33,9 +33,11 @@ import { unregisteredCopyModules } from "../src/prompt_tags.js";
  * its copy module; 437 when find_references' fallback moved into the Worker
  * copy module with the source index (gates T2); 428 when B4.3 moved Seshat's
  * prompt and tool descriptions into the new PM copy module and the planner's
- * slice prompt and oracle into the planner copy module.
+ * slice prompt and oracle into the planner copy module; 415 when C5 moved
+ * Seshat's answer to the Worker's mid-issue question (the queue's
+ * `askTeam`) into the PM copy module.
  */
-const RECORDED_LITERAL_TOTAL = 417;
+const RECORDED_LITERAL_TOTAL = 415;
 
 const texts = (file: string, source: string) =>
   extractModelFacingLiterals(file, source).map((l) => l.text);

@@ -17,16 +17,6 @@
       "text": "You describe images attached to a software task for a teammate who cannot see them. Be literal and s"
     },
     {
-      "file": "apps/harness/src/index.ts",
-      "hash": "3e7b3e785d7c85d8",
-      "text": "Card: ${}\nSpec: ${}\nDone when: ${}\n\nQuestion: ${}"
-    },
-    {
-      "file": "apps/harness/src/index.ts",
-      "hash": "e9833c39320eb9bd",
-      "text": "You are Seshat, the project manager. A teammate (the coding Worker) is mid-card and asks a question "
-    },
-    {
       "file": "apps/harness/src/learning/reflect.ts",
       "hash": "66a01536c7f4462a",
       "text": "${}\n\nFor each case whose lesson would help on future cards, write one rule: imperative, one or two s"

@@ -225,3 +225,49 @@ export async function checkTeamEngines(
     lines,
   };
 }
+
+/**
+ * The Team server's engine check at its start and on Configuration › Models
+ * (rule 26a, MD-N15-3; FINDINGS INS-01): `start()` runs `checkTeamEngines`
+ * once as the server starts and prints its lines; `current()` is the report
+ * Configuration › Models shows, re-read when older than `maxAgeMs`, since an
+ * engine's container may come up after the harness's. Only `/health` and
+ * `/props` are read.
+ */
+export function teamEnginesMonitor(
+  opts: {
+    check?: () => Promise<TeamEnginesReport>;
+    print?: (line: string) => void;
+    maxAgeMs?: number;
+  } = {},
+): { start: () => Promise<void>; current: () => Promise<TeamEnginesReport> } {
+  const check = opts.check ?? (() => checkTeamEngines());
+  const maxAge = opts.maxAgeMs ?? 15_000;
+  let last: { at: number; report: Promise<TeamEnginesReport> } | undefined;
+  const current = () => {
+    if (!last || Date.now() - last.at > maxAge) {
+      const report = check();
+      last = { at: Date.now(), report };
+      // A failed check is not kept: the next read tries again.
+      report.catch(() => {
+        if (last?.report === report) last = undefined;
+      });
+    }
+    return last.report;
+  };
+  const print = opts.print ?? ((l: string) => console.log(l));
+  return {
+    current,
+    start: () =>
+      current().then(
+        (r) => {
+          print("Team engines (Configuration › Models shows them too):");
+          for (const l of r.lines) print(`  ${l}`);
+        },
+        (err: unknown) =>
+          print(
+            `Team engines: not checked (${err instanceof Error ? err.message : String(err)}); Configuration › Models tries again.`,
+          ),
+      ),
+  };
+}

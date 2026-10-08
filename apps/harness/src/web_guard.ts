@@ -114,6 +114,13 @@ export function sameOrigin(origin: string | undefined, host: string | undefined)
   }
 }
 
+/**
+ * The health route (runtime item 23b, RUN-72): public in either setup, read
+ * before the identity gate, answering with no session and no data — a
+ * container's `HEALTHCHECK` or an uptime monitor reads only its status.
+ */
+export const HEALTH_ROUTE = "/healthz";
+
 /** A fresh per-start mutation token: 256 random bits, base64url (43 characters). */
 export function mintMutationToken(): string {
   return randomBytes(32).toString("base64url");

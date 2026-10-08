@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SMALL, writeGguf } from "../../../packages/models/tests/support/gguf_fixture.js";
@@ -212,6 +212,74 @@ describe("the first run, spawned (surface P10)", () => {
       expect(gates).toMatch(/vitest/);
       expect(gates).toMatch(/--project/);
       expect(gates).toMatch(/integration/);
+    },
+  );
+});
+
+/** Every file under `dir`, so a write anywhere under the home shows. */
+function filesUnder(dir: string): string[] {
+  try {
+    return readdirSync(dir, { recursive: true, encoding: "utf8" }).sort();
+  } catch {
+    return [];
+  }
+}
+
+describe("the first run writes nothing before the person confirms (SUR-2, SUR-46; C2d finding, C5)", () => {
+  it(
+    "SUR-2: with no terminal and no --yes it writes nothing — not even git's identity file under the home — and exits 2",
+    { timeout: 90_000 },
+    async () => {
+      const p = place();
+      const repo = npmRepo(p);
+      const r = await runCli([], p, { timeoutMs: 60_000 });
+      expect(r.code, r.out).toBe(2);
+      expect(filesUnder(p.home)).toEqual([]);
+      expect(existsSync(join(repo, ".sekhemet"))).toBe(false);
+    },
+  );
+
+  it(
+    "SUR-46: on Node.js older than 22.13 it names both versions, writes nothing under the home or the repository, and exits 1",
+    { timeout: 90_000 },
+    async () => {
+      const p = place();
+      const repo = npmRepo(p);
+      const old = join(p.root, "old-node.mjs");
+      writeFileSync(
+        old,
+        'Object.defineProperty(process.versions, "node", { value: "22.12.0" });\n',
+      );
+      const r = await runCli(["--yes"], p, {
+        env: { NODE_OPTIONS: `--import=${old}` },
+        timeoutMs: 60_000,
+      });
+      expect(r.code, r.out).toBe(1);
+      expect(r.out).toMatch(
+        /This is Node\.js 22\.12\.0; Sekhemet needs Node\.js 22\.13\.0 or newer/,
+      );
+      expect(filesUnder(p.home)).toEqual([]);
+      expect(existsSync(join(repo, ".sekhemet"))).toBe(false);
+    },
+  );
+
+  it(
+    "SUR-2: once confirmed, git's identity-only global config is written, with the person's name and email",
+    { timeout: 90_000 },
+    async () => {
+      const p = place();
+      npmRepo(p);
+      writeFileSync(
+        join(p.home, ".gitconfig"),
+        "[user]\n\tname = Jane Doe\n\temail = jane@example.com\n",
+      );
+      const s = spawnCli(["--yes", "--port", String(await freePort())], p);
+      await s.until(/Sekhemet (Configuration|board): http:\/\/127\.0\.0\.1:\d+/);
+      await s.stop();
+      const identity = join(p.home, ".sekhemet", "git", "global.gitconfig");
+      expect(readFileSync(identity, "utf8")).toMatch(
+        /name = "Jane Doe"[\s\S]*email = "jane@example\.com"/,
+      );
     },
   );
 });

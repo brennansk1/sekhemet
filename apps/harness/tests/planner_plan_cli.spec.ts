@@ -56,7 +56,8 @@ async function sekhemet(
 
 /** `sekhemet plan "<spec>" --planner none --offline`. */
 async function plan(where: { cwd: string; home: string }, spec: string): Promise<Planned> {
-  const r = await sekhemet(where, ["plan", spec, "--planner", "none", "--offline"]);
+  // --verbose: these tests read each issue's size and the plan's checks (CLI-07 keeps them behind it).
+  const r = await sekhemet(where, ["plan", spec, "--planner", "none", "--offline", "--verbose"]);
   return { ...r, repo: where.cwd, home: where.home, rows: ledgerRows(where.cwd) };
 }
 
@@ -121,6 +122,30 @@ describe("sekhemet plan: at most two questions a pass (PM-P2-3)", () => {
       // What was asked is not also assumed: the two asked are other open points.
       for (const d of asked)
         expect(notAsked.some((a) => a.statement.includes(d.question))).toBe(false);
+    },
+  );
+});
+
+describe("sekhemet plan in the stack the request or the repository is in (DS-N1-5)", () => {
+  it(
+    "DS-N1-5: a Python request plans Python source files, never a `.ts` one; a Python repository's own extension wins when the request names none",
+    { timeout: 180_000 },
+    async () => {
+      const scopes = (rows: LedgerRow[]) =>
+        rows
+          .filter((r) => r.type === "card/created" && r.payload.tier !== "epic")
+          .flatMap((r) => (r.payload.scopeFiles as string[] | undefined) ?? []);
+      const asked = await plan(repoWith({}), "a Python script that renames photos by date");
+      expect(asked.status, asked.out).toBe(0);
+      const named = scopes(asked.rows);
+      expect(named.length).toBeGreaterThan(0);
+      for (const f of named) expect(f, f).toMatch(/\.py$/);
+      const pythonRepo = await plan(
+        repoWith({ "photos/rename.py": "def rename(path):\n    return path\n" }),
+        "Add a dry run that lists the new names without moving any file",
+      );
+      expect(pythonRepo.status, pythonRepo.out).toBe(0);
+      for (const f of scopes(pythonRepo.rows)) expect(f, f).not.toMatch(/\.ts$/);
     },
   );
 });
@@ -313,13 +338,17 @@ describe("sekhemet plan with open questions", () => {
       // PM-P2-5: planned, not refused as under-specified.
       const cards = stories(first.rows);
       expect(cards.length).toBeGreaterThan(0);
-      expect(first.out).toMatch(/Plan v1: \d+ cards created, 0 rejected/);
+      expect(first.out).toMatch(/Plan v1: \d+ issues planned/);
+      expect(first.out).not.toMatch(/ rejected/);
       expect(first.out).not.toMatch(/under-specified/i);
       const asked = ofType(first.rows, "decision/requested") as {
         id: string;
         question: string;
         context: string;
       }[];
+      // PM-P2-3 (C5): at most two questions a pass — the design stage's second
+      // is not posted on top of the planner's two; its default stands as an assumption.
+      expect(asked.length, asked.map((d) => d.question).join(" | ")).toBeLessThanOrEqual(2);
       const policyOf = (d: { context: string }) =>
         (JSON.parse(d.context) as { planner?: { policy?: string } }).planner?.policy;
       const deny = asked.filter((d) => policyOf(d) === "default_deny");
@@ -454,7 +483,7 @@ describe("sekhemet plan with a Planning model, then approve and the queue", () =
       gateArgs: ["-e", "require('node:fs').statSync('src/pay.ts')"],
       qualifyAs: [{}, { role: "planner" }],
     });
-    const r = await cli(["plan", PAY, "--planner", SCRIPTED_MODEL, "--offline"], {
+    const r = await cli(["plan", PAY, "--planner", SCRIPTED_MODEL, "--offline", "--verbose"], {
       cwd: p.repo,
       preload: p.preload,
       env: { ...p.env, ...scriptEnv(p.record, { other: reply(diffSketch) }) },
@@ -492,8 +521,10 @@ describe("sekhemet plan with a Planning model, then approve and the queue", () =
       expect(sketch).toMatch(/Blast radius: .*src\/pay\.ts/);
       expect(sketch).not.toMatch(/^[+-]{3} |^@@|```diff/m);
       // PM-P13-2: the riskiest-assumption slice traces to no accepted requirement: no card, a proposed change.
-      expect(r.out).toMatch(/\[rejected\] .*traces to no accepted requirement/);
-      expect(r.out).toMatch(/Proposed change \(not a card\): .*traces to no accepted requirement/);
+      expect(r.out).toMatch(/^Rejected: .*traces to no accepted requirement/m);
+      expect(r.out).toMatch(
+        /Proposed change \(not an issue\): .*traces to no accepted requirement/,
+      );
       // PM-P1-15: the symbol, its file and its signature on the card.
       expect(card?.interface).toEqual([
         {
@@ -599,7 +630,7 @@ describe("a Planning model's reply that cannot be used (PM-P1-4)", () => {
         cards: [],
         qualifyAs: [{}, { role: "planner" }],
       });
-      const r = await cli(["plan", LOGIN, "--planner", SCRIPTED_MODEL, "--offline"], {
+      const r = await cli(["plan", LOGIN, "--planner", SCRIPTED_MODEL, "--offline", "--verbose"], {
         cwd: p.repo,
         preload: p.preload,
         env: {
@@ -610,8 +641,8 @@ describe("a Planning model's reply that cannot be used (PM-P1-4)", () => {
       });
       const out = r.stdout + r.stderr;
       expect(r.status, out).toBe(0);
-      expect(out).toContain("The planning model's reply was refused: malformed JSON");
-      expect(out).toContain("The planning model's reply was refused: an empty slice list");
+      expect(out).toContain("The Planning model's reply was refused: malformed JSON");
+      expect(out).toContain("The Planning model's reply was refused: an empty slice list");
       const rows = ledgerRows(p.repo);
       const created = rows.find((x) => x.type === "plan/created")?.payload as { source: string };
       expect(created.source).toBe("heuristic");

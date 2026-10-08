@@ -1,0 +1,38 @@
+name: Feature request
+description: A change to what Sekhemet does. Ideas usually start in Discussions › Ideas.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas are discussed first in Discussions › Ideas: https://github.com/brennansk1/sekhemet/discussions/categories/ideas
+        Use this form for a request that is already clear. Please check "What Sekhemet does not do" in the user guide first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: The outcome you want
+      description: How you would know it worked.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
+  - type: dropdown
+    id: who
+    attributes:
+      label: Who it is for
+      multiple: true
+      options:
+        - A developer on their own machine
+        - A team on a Team server
+        - Someone new to professional practice
+        - A non-developer working with Seshat
+        - A Team administrator

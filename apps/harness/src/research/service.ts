@@ -4,7 +4,7 @@ import type { AppendEventParams, CardStore, EventLog } from "@sekhemet/kernel";
 import { type Ecosystem, dependenciesNamedIn, resolveDependency } from "@sekhemet/loop";
 import type { LocalInferenceAdapter, ModelHold } from "@sekhemet/models";
 import { type EffectiveNetworkPolicy, policyAllowsEveryHost } from "@sekhemet/sandbox";
-import { effectiveConfig, explicitNetworkMode } from "../config_apply.js";
+import { effectiveConfig, explicitNetworkAllow, explicitNetworkMode } from "../config_apply.js";
 import { readSettings } from "../integrations.js";
 import { similarity } from "../learning/store.js";
 import {
@@ -310,8 +310,8 @@ export async function researchSources(
       status: { web: false, search: "off (project setting)", pages: "off", ignored },
     };
   }
-  const allowOnly =
-    mode === "allowlist" ? effectiveConfig(repoPath).config.network.allow : undefined;
+  // DS-N4-4: the user's hosts, narrowed by the project's, never widened by it.
+  const allowOnly = mode === "allowlist" ? explicitNetworkAllow(repoPath) : undefined;
   if (
     !process.env.SEKHEMET_SEARXNG_URL &&
     !process.env.BRAVE_SEARCH_API_KEY &&

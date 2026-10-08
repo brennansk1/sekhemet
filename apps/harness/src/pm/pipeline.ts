@@ -196,6 +196,8 @@ async function planSlices(
     riskiest?: string;
     /** A person's chosen type, as the card's `change` (NEW-dashboard-15: a Bug is a `fix`). */
     change?: CardChange;
+    /** Who filed it: each created card's owner (kernel K-N6-1). */
+    owner?: string;
   },
 ): Promise<PipelineOutcome> {
   const planner = await repoPlanner(
@@ -228,6 +230,7 @@ async function planSlices(
       ...(deps.actor ? { actor: deps.actor } : {}),
       ...(deps.principal ? { principal: deps.principal } : {}),
       ...(input.change ? { change: input.change } : {}),
+      ...(input.owner ? { owner: input.owner } : {}),
     },
   );
   const cards: CardRecord[] = [];
@@ -268,11 +271,15 @@ export async function createThroughPipeline(
     // NEW-dashboard-15 (DEC-31's types): a Bug is planned as a `fix` card, a
     // Task as a `refactor`, a Spike as a spike slice; a Story as the planner judges.
     const change = CHANGE_OF_TYPE[String(draft.type)];
+    // K-N6-1: the person who filed it from New issue owns it; a draft that
+    // names no filer is owned by the person who applies it.
+    const owner = typeof draft.owner === "string" && draft.owner ? draft.owner : deps.principal;
     const outcome = await planSlices(deps, {
       epicId,
       spec,
       slices: [sliceOf(draft, draft.type === "spike" ? "spike" : "path")],
       ...(change ? { change } : {}),
+      ...(owner ? { owner } : {}),
     });
     // The properties a person chose on New issue, set as that person's edit.
     const props = draftProperties(draft);

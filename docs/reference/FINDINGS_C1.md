@@ -997,7 +997,7 @@ C1's three spec-truth agents edited the specs in place (uncommitted): **specs-co
 
 #### INS-06 · severity 3 · K3 · owner decision
 
-**No workflow owns making the repository public: DEV_LOG, CLAUDE.md machine details, a tracked .claude/launch.json with /private/tmp paths, '/Volumes/My Passport' defaults in a script and a test, a personal email on 11 commits, and no gitleaks run.**
+**No workflow owns making the repository public: DEV_LOG, CLAUDE.md machine details, a tracked .claude/launch.json with /private/tmp paths, '/Volumes/<drive>' defaults in a script and a test, a personal email on 11 commits, and no gitleaks run.**
 
 - **Evidence:** git ls-files .claude; scripts/injection_fixtures.mjs:183; packages/models/tests/swap_cost.spec.ts:215; README.md:611 'developed in the open' vs DEC-48.
 - **Breaks:** §F release engineering

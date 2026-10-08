@@ -17,6 +17,7 @@ import {
   statedCriterion,
 } from "./criteria.js";
 import { splitStoriesAcrossRepos } from "./cross_repo.js";
+import { type StackLanguage, statedStack } from "./design_stage.js";
 import { routeByDifficulty, scoreDifficulty, stepBudgetForDifficulty } from "./difficulty.js";
 import { validateInvest } from "./invest.js";
 import { mechanismIn } from "./mechanisms.js";
@@ -858,6 +859,14 @@ function withoutMechanisms(proposals: SliceProposal[]): {
   return { kept, epics };
 }
 
+/** The extension of a source file in each stack a request can name (DS-N1-5). */
+const STACK_EXT: Record<StackLanguage, string> = {
+  typescript: ".ts",
+  python: ".py",
+  rust: ".rs",
+  go: ".go",
+};
+
 /**
  * Slice, then split until every leaf fits.
  *
@@ -881,12 +890,19 @@ export async function decomposeSpidr(
     ...(params.goalCriteriaIds ?? []).map((ref): StoryValueLink => ({ kind: "criterion", ref })),
   ];
 
+  // DS-N1-5: an invented source file is in the stack the request names,
+  // else the repository's own (its map's `sourceExt`), else TypeScript.
+  const stated = statedStack(params.spec);
+  const codebaseMap: CodebaseMap | undefined = stated
+    ? { ...(params.codebaseMap ?? { files: [] }), sourceExt: STACK_EXT[stated] }
+    : params.codebaseMap;
+
   // Model first (§2.1.2, PM-P1-4): a refused reply is retried once, then
   // the heuristic plans in the spec's own words.
   const asked =
     params.adapter === undefined
       ? { refusals: [] as string[] }
-      : await requestSlicesWithModel(params.adapter, params.spec, params.codebaseMap);
+      : await requestSlicesWithModel(params.adapter, params.spec, codebaseMap);
   const modelProposals = asked.proposals;
   const { kept: proposals, epics } = withoutMechanisms(
     modelProposals
@@ -910,7 +926,7 @@ export async function decomposeSpidr(
       parentId: params.parentId,
       tier,
       index,
-      map: params.codebaseMap,
+      map: codebaseMap,
       budget,
       taken,
       dependsOn,
@@ -959,7 +975,7 @@ export async function decomposeSpidr(
       const children =
         story.splitDepth >= maxDepth
           ? undefined
-          : splitStory(story, params.codebaseMap, budget, taken, advances, now);
+          : splitStory(story, codebaseMap, budget, taken, advances, now);
       if (children === undefined) {
         ceilinged.add(story.card.id);
         capabilityCeilings.push({
@@ -981,7 +997,7 @@ export async function decomposeSpidr(
   }
 
   // RG-N3-2: a story spanning repositories is one card per repository.
-  const repos = params.codebaseMap?.repos;
+  const repos = codebaseMap?.repos;
   if (repos && repos.length > 1) stories = splitStoriesAcrossRepos(stories, repos);
 
   return { stories, capabilityCeilings, source, epics, modelRefusals: asked.refusals };

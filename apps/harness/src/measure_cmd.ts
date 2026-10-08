@@ -17,11 +17,14 @@ import {
   compareRuns,
   evaluateHarnessChange,
   measurementHolder,
+  passKByCard,
   profileSwitchCount,
   readMeasurementMarker,
   resolveRunProfile,
   ruleCredit,
   runProfileHash,
+  runScore,
+  summarise,
   watchAdmittedChange,
   watchPooled,
   writeMeasurementMarker,
@@ -574,14 +577,58 @@ export async function runMeasureCommand(
       const [, a, b] = args;
       if (!a || !b)
         throw new Error("Usage: sekhemet measure compare <baseline.json> <candidate.json>");
-      const [baseline] = readRuns(a);
-      const [candidate] = readRuns(b);
+      // Either side may name repeated runs of the same suite, comma-separated:
+      // the first of each is paired; all of them give pass@k (MS-M12-5).
+      const baselines = readRuns(a);
+      const candidates = readRuns(b);
+      const [baseline] = baselines;
+      const [candidate] = candidates;
       const v = compareRuns(baseline as SuiteRunResult, candidate as SuiteRunResult);
+      // MS-M12-1: each run's pass rate with its exact interval, blocked and not-run apart.
+      const passK = (runs: SuiteRunResult[]) => {
+        if (runs.length < 2) return undefined;
+        const rows = passKByCard(runs, runs.length);
+        if (rows.length === 0) return undefined;
+        const mean = (f: (r: (typeof rows)[number]) => number) =>
+          rows.reduce((n, r) => n + f(r), 0) / rows.length;
+        return {
+          k: runs.length,
+          cards: rows.length,
+          passAtK: mean((r) => r.passAtK),
+          passHatK: mean((r) => r.passHatK),
+        };
+      };
+      const repeated = { baseline: passK(baselines), candidate: passK(candidates) };
       await k.log.append({
         actor: "harness",
         type: "measure/compared",
-        payload: { ...v, baseline: a, candidate: b },
+        payload: {
+          ...v,
+          baseline: a,
+          candidate: b,
+          baselineScore: runScore(baseline as SuiteRunResult),
+          candidateScore: runScore(candidate as SuiteRunResult),
+          ...(repeated.baseline || repeated.candidate
+            ? {
+                passK: {
+                  ...(repeated.baseline ? { baseline: repeated.baseline } : {}),
+                  ...(repeated.candidate ? { candidate: repeated.candidate } : {}),
+                },
+              }
+            : {}),
+        },
       });
+      print(`Baseline: ${summarise(baseline as SuiteRunResult)}`);
+      print(`Candidate: ${summarise(candidate as SuiteRunResult)}`);
+      const pct = (x: number) => `${Math.round(x * 100)}%`;
+      for (const [side, p] of [
+        ["Baseline", repeated.baseline],
+        ["Candidate", repeated.candidate],
+      ] as const)
+        if (p)
+          print(
+            `${side} over ${p.k} runs: pass@${p.k} ${pct(p.passAtK)}, pass^${p.k} ${pct(p.passHatK)} (${p.cards} issues)`,
+          );
       print(v.reason);
       return v.comparable ? 0 : 1;
     }

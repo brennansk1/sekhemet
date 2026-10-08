@@ -26,7 +26,6 @@
       "loading,slow,model_down,offline,permission,concurrent,undo,restart": "Phases, the verification controller and the stop-reason table are computed per step in the run; no criterion names a loading, slow, outage, offline, access, concurrency, undo or restart path beyond the gaps named."
     },
     "gap": {
-      "empty": "WL-T3-2: no entry test yet.",
       "error": "WL-T3-9: no entry test yet.",
       "large_data": "WL-T3-12: no entry test yet.",
       "retry": "WL-T3-6: no entry test yet."
@@ -84,7 +83,7 @@
   },
   "NEW-worker-loop-7": {
     "na": {
-      "empty,loading,slow,model_down,offline,permission,concurrent,undo,retry,restart": "Language servers start lazily, capped, and fall back when absent (worker_loop_entry_cli.spec.ts); no criterion names a loading, slow, outage, offline, access, concurrency, undo, retry or restart path for them."
+      "empty,loading,model_down,offline,permission,concurrent,undo,retry,restart": "Language servers start lazily, capped, and fall back when absent (worker_loop_entry_cli.spec.ts); no criterion names a loading, slow, outage, offline, access, concurrency, undo, retry or restart path for them."
     }
   },
   "NEW-worker-loop-10": {
@@ -119,6 +118,6 @@
     }
   },
   "_ceiling": {
-    "gaps": 18
+    "gaps": 17
   }
 }

@@ -175,10 +175,17 @@ export async function readGgufHeader(
     });
   } catch (err) {
     if (err instanceof HeaderError) throw err;
-    throw new HeaderError(
-      "unreadable",
-      `not a readable GGUF header: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    const message = err instanceof Error ? err.message : String(err);
+    // SEC-N10-2: a header the parser refuses for its declared size (one huge
+    // string, an array of over a million entries, too many keys or tensors)
+    // is oversized, whatever byte it stopped at; the file is not read further.
+    if (/exceeds maximum allowed/.test(message)) {
+      throw new HeaderError(
+        "header_too_large",
+        `the header is too large to read under the ${mb(limit)} limit (${message}); the file was not read further`,
+      );
+    }
+    throw new HeaderError("unreadable", `not a readable GGUF header: ${message}`);
   }
   const headerBytes = Number(parsed.tensorDataOffset);
   // The parser pads a short read with zeros: a header that runs past the

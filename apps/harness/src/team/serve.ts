@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { EventLog } from "@sekhemet/kernel";
 import { type SekhemetConfig, resolveConfig, userConfigError, userConfigPath } from "../config.js";
+import { type TeamEnginesReport, teamEnginesMonitor } from "../team_engines.js";
 import {
   CREDENTIALS_FILE,
   identityDir,
@@ -30,6 +31,13 @@ export interface ServerIdentityOptions {
   dir?: string;
   now?: () => number;
   passwordList?: string;
+  /**
+   * The Team server's engine check (models rule 26a, MD-N15-3). A server
+   * whose settings come from the user config — the one `sekhemet serve`
+   * starts — checks the shipped engines at start and on Configuration ›
+   * Models; one composed with its own settings checks only what it names here.
+   */
+  teamEngines?: () => Promise<TeamEnginesReport>;
 }
 
 export function settingsFromConfig(config: SekhemetConfig): IdentitySettings {
@@ -108,6 +116,8 @@ export interface ServerIdentity {
   identity: Identity;
   passkeys?: Passkeys;
   sso?: Sso;
+  /** The engines' report for Configuration › Models, in the Team setup (rule 26a). */
+  teamEngines?: () => Promise<TeamEnginesReport>;
   /** Start the refusal-summary and session-sweep timers; returns their stop. */
   startTimers(): () => void;
 }
@@ -146,12 +156,22 @@ export function createServerIdentity(
     team && settings.sources.includes("oidc") && settings.oidc && redirect
       ? new Sso(identity, settings.oidc, redirect, now)
       : undefined;
+  // MD-N15-3 (FINDINGS INS-01): the engines checked as the Team server starts.
+  const engines = !team
+    ? undefined
+    : options.teamEngines
+      ? { current: options.teamEngines, start: async () => undefined }
+      : options.settings
+        ? undefined
+        : teamEnginesMonitor();
   return {
     identity,
     ...(passkeys ? { passkeys } : {}),
     ...(sso ? { sso } : {}),
+    ...(engines ? { teamEngines: engines.current } : {}),
     startTimers() {
       if (!team) return () => undefined;
+      void engines?.start();
       const flush = setInterval(() => identity.flushRefusals(), 30_000);
       const sweep = setInterval(() => identity.sweep(), 60_000);
       flush.unref?.();

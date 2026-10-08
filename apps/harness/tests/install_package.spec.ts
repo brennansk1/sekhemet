@@ -1,5 +1,15 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -39,6 +49,13 @@ describe("SUR-41: the npm package reaches the first run with no other step", () 
       engines: { node: ">=22.13.0" },
     });
     expect(manifest.bundleDependencies).toEqual(Object.keys(manifest.dependencies));
+    // DEC-54: the FSL, never another licence's name; SUR-68: the changelog
+    // What's new reads after an upgrade, in the package beside dist/.
+    expect(manifest.license).toBe("FSL-1.1-ALv2");
+    expect(manifest.files).toContain("CHANGELOG.md");
+    const packed = execFileSync("tar", ["-tzf", tarball], { encoding: "utf8" }).split("\n");
+    expect(packed).toContain("package/CHANGELOG.md");
+    expect(packed).toContain("package/LICENSE");
     const prefix = join(work, "prefix");
     // --offline: the tarball carries everything; no registry is reached.
     execFileSync(
@@ -72,6 +89,8 @@ describe("SUR-41: the npm package reaches the first run with no other step", () 
     expect(`${first.stdout}${first.stderr}`).toMatch(/--yes/);
     expect(first.status).toBe(2);
     expect(readdirSync(repo)).toEqual([".git"]);
+    // The installed package finds its bundled changelog (SUR-68).
+    expect(existsSync(join(prefix, "lib", "node_modules", "sekhemet", "CHANGELOG.md"))).toBe(true);
   }, 480_000);
 });
 
@@ -109,5 +128,42 @@ describe("SUR-42: one server image, documented with its identity proxy and infer
     expect(proxy).not.toMatch(/"443:4180"/);
     const doc = readFileSync(join(ROOT, "docs", "reference", "INSTALL.md"), "utf8");
     expect(doc).toMatch(/terminates TLS with the certificate and key/);
+  });
+});
+
+describe("surface item 5a (W3 G4): scripts/install.sh needs Node.js 22.13, as the package's engines say", () => {
+  /** install.sh with a stand-in `node` of this version, and nothing else on PATH but `dirname`. */
+  function installWithNode(version: string): { status: number | null; out: string } {
+    const bin = mkdtempSync(join(tmpdir(), "sek-install-node-"));
+    dirs.push(bin);
+    writeFileSync(join(bin, "node"), `#!/bin/sh\necho ${version}\n`);
+    chmodSync(join(bin, "node"), 0o755);
+    symlinkSync(
+      execFileSync("/bin/sh", ["-c", "command -v dirname"], { encoding: "utf8" }).trim(),
+      join(bin, "dirname"),
+    );
+    const r = spawnSync("/bin/bash", [join(ROOT, "scripts", "install.sh")], {
+      encoding: "utf8",
+      env: { PATH: bin, HOME: bin },
+      timeout: 30_000,
+    });
+    return { status: r.status, out: `${r.stdout}${r.stderr}` };
+  }
+
+  it("refuses 22.12 and 21, naming the version found", () => {
+    for (const v of ["22.12.0", "21.7.3"]) {
+      const r = installWithNode(v);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain(`Node ${v} found; Sekhemet needs 22.13 or newer.`);
+    }
+  });
+
+  it("accepts 22.13 and 26: it goes on to the next check (git, absent here), installing nothing", () => {
+    for (const v of ["22.13.0", "26.0.0"]) {
+      const r = installWithNode(v);
+      expect(r.out).not.toMatch(/Sekhemet needs 22\.13/);
+      expect(r.out).toMatch(/Missing: git/);
+      expect(r.status).toBe(1);
+    }
   });
 });

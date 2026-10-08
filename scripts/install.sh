@@ -9,9 +9,17 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1. $2" >&2; exit 1; }; }
-need node "Install Node.js 22 or newer."
-major="$(node -p 'process.versions.node.split(".")[0]')"
-[ "$major" -ge 22 ] || { echo "Node $major found; Sekhemet needs 22 or newer." >&2; exit 1; }
+need node "Install Node.js 22.13 or newer."
+# The built-in node:sqlite without a flag needs 22.13 (surface item 5a), as
+# the npm package's `engines` says.
+version="$(node -p 'process.versions.node')"
+major="${version%%.*}"
+minor="${version#*.}"
+minor="${minor%%.*}"
+if [ "$major" -lt 22 ] || { [ "$major" -eq 22 ] && [ "$minor" -lt 13 ]; }; then
+  echo "Node $version found; Sekhemet needs 22.13 or newer." >&2
+  exit 1
+fi
 need git "Install git."
 command -v pnpm >/dev/null 2>&1 || corepack enable pnpm
 

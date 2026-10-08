@@ -13,6 +13,7 @@ import { store } from "./store.js";
 import { typeTag } from "./tile.js";
 import {
   accept,
+  blockedToast,
   composerHtml,
   openPark,
   quickNotes,
@@ -147,6 +148,8 @@ function act(key) {
     return true;
   }
   if (key === "r" && ev) {
+    // DB-4: offline or read-only, the key opens no form the server cannot take.
+    if (blockedToast()) return true;
     const foot = current.node.querySelector("footer");
     if (current.node.querySelector("[data-composer]")) return true;
     foot.insertAdjacentHTML("beforebegin", composerHtml(quickNotes(card, ev, store.state.gates)));
