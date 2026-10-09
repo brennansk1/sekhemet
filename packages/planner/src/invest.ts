@@ -1,5 +1,5 @@
 import { DEFAULT_TIER_BUDGET, DIFFICULTY_SPLIT_THRESHOLD, INVEST_MAX_STEPS } from "./constants.js";
-import { workerPromptBudget, zone3Cap } from "./small.js";
+import { windowTooSmall, workerPromptBudget, zone3Cap } from "./small.js";
 import { tokenize } from "./text.js";
 import type {
   InvestCheckResult,
@@ -13,14 +13,18 @@ import type {
  *
  * A card that says "on line 42 change `const x` to `let x`" is not negotiable:
  * it has already made every decision the executor exists to make, and it goes
- * stale the moment the file moves.
+ * stale the moment the file moves. A line counted in an outcome ("under 500
+ * lines", "count the lines of 3 reports") locates nothing, so only a line
+ * number or range is dictation (N0, c6 #7).
  */
-const DICTATION_MARKERS = ["line", "lines", "linenumber", "verbatim", "exactly as written"];
+const DICTATION_MARKERS = ["linenumber", "verbatim"];
 
 const DICTATION_PATTERNS: RegExp[] = [
   /```/,
-  /\bline\s+\d+\b/i,
+  /\blines?\s+\d+\b/i,
+  /\bline\s+(?:no\.?|number)\s*\d+/i,
   /\bat line\b/i,
+  /\bexactly as written\b/i,
   /\breplace\s+`[^`]+`\s+with\s+`[^`]+`/i,
   /=>\s*\{/,
 ];
@@ -311,6 +315,8 @@ function smallCheck(
     details.push(`${story.card.id}: ${reasons.join(" and ")}`);
   }
 
+  // N0 (c6 #7): a window with no room for any issue is said as that, not as a cap of 0.
+  const tooSmall = offenders.length > 0 ? windowTooSmall(budget.workerWindowTokens) : undefined;
   return {
     check: "small",
     passed: offenders.length === 0,
@@ -318,7 +324,9 @@ function smallCheck(
     detail:
       offenders.length === 0
         ? `Every story fits both conditions: Zone 3 content ≤ ${packCap} tokens and steps ≤ ${stepCap}.`
-        : `${details.join("; ")}. Both conditions must hold; SPIDR split required.`,
+        : tooSmall
+          ? `${tooSmall} No split can fit: ${offenders.join(", ")}.`
+          : `${details.join("; ")}. Both conditions must hold; SPIDR split required.`,
     action: offenders.length === 0 ? "none" : "resplit",
   };
 }

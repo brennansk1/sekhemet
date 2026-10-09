@@ -20,14 +20,14 @@ import { type Seed, type Served, serveWorkspace } from "./support/audience.js";
  *    work under way: the first-run answer *I manage the work* opens Status,
  *    which says how it is going in sentences, and *Start a new project* opens
  *    the start page naming its folder, where the sentence is taken. Its
- *    Seshat is the shipped Planning default, which this host has not got;
- *    the page then says *The model is still loading* indefinitely instead of
- *    naming the set-up (a gap, reported, not asserted).
- * 2. Seshat answering: `serve` takes no other Seshat than the shipped default
- *    (`index.ts` passes `DEFAULT_PM_MODEL`; a person's Planning assignment is
- *    not read), so a scripted Seshat is reachable only through the server
- *    module the command runs, `startDashboardServer`, over a real ledger in a
- *    real git repository: the same pages, start to *Create project* to Status.
+ *    Seshat is the shipped Planning default, which this host has not got:
+ *    the conversation names the missing model and Configuration › Models at
+ *    once, never *The model is still loading* for ever (N0, c6 #3).
+ * 2. Seshat answering: `serve`'s Seshat is the person's Planning model
+ *    (N0, c6 #2), but a scripted one is an HTTP model the load guard
+ *    refuses, so it is reached through the server module the command runs,
+ *    `startDashboardServer`, over a real ledger in a real git repository:
+ *    the same pages, start to *Create project* to Status.
  */
 
 const W = 400;
@@ -120,8 +120,15 @@ describe("a non-developer at 400 px, through `sekhemet serve` (DB-P5-7, DoD §6.
       await plainWords(page);
       // The folder the approval would create is named above the conversation (DS-N8-1).
       expect(await page.locator("#view").innerText()).toMatch(/Will be created in \S+/);
-      // GAP (reported, not asserted): this host has no Seshat model (the shipped Planning default),
-      // and the page goes on saying "The model is still loading" instead of naming the set-up.
+      // N0 (c6 #3): this host has no Seshat model (the shipped Planning default), and the
+      // conversation says so with where to set it up, instead of "The model is still loading".
+      await expect
+        .poll(async () => (await page.locator(".start-convo").innerText()).replace(/\s+/g, " "), {
+          timeout: 20_000,
+        })
+        .toMatch(/is not in Sekhemet's model list.*Configuration › Models/);
+      expect(await page.locator(".start-convo").innerText()).not.toMatch(/still loading/);
+      await plainWords(page);
       await ctx.close();
     },
   );

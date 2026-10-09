@@ -79,6 +79,21 @@ export interface QueueSpec {
   name: string;
   /** The window this queue needs; the weights' adapter gets the largest. */
   window?: ResolveOptions;
+  /**
+   * Refuse at once, with `UnknownFootprint`, when the weights' footprint is
+   * still unknown after measuring, instead of waiting in the queue until it
+   * is known (MD-N9-3): the dashboard's chat, where a person would otherwise
+   * read *The model is still loading* for ever (N0, c6 #3).
+   */
+  refuseUnknownFootprint?: boolean;
+}
+
+/** A queue's weights whose footprint cannot be measured, refused at once. */
+export class UnknownFootprint extends Error {
+  constructor(public readonly model: string) {
+    super(`the memory ${model} needs cannot be measured, so it cannot be loaded`);
+    this.name = "UnknownFootprint";
+  }
 }
 
 export interface ModelAccessOptions {
@@ -845,7 +860,9 @@ export function sharedQueue(
   // Rule 20e: through `decide()`'s queue (a person's chat is interactive by its
   // queue's class; research waits its turn), then held until released.
   return async () => {
-    await access.measure();
+    const measured = await access.measure();
+    if (spec.refuseUnknownFootprint && measured.unknown.includes(weightsKey(spec.name)))
+      throw new UnknownFootprint(spec.name.replace(/^ollama\//, ""));
     return access.submitHold(spec.queue);
   };
 }

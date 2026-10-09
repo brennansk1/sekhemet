@@ -41,7 +41,8 @@ export const PLANNED_WITHOUT_MODEL =
 
 /**
  * The Planner role's model (§2.1.2, PM-P1-2): the one named on the command
- * line, else an explicit `[models] planner`, else the model Seshat runs on —
+ * line, else the person's Planning assignment on this host, else an explicit
+ * `[models] planner`, else the model Seshat runs on —
  * never none just because nothing was configured. Seshat's model is taken
  * by default only when the model registry lists it (models rule 11): an
  * unregistered one cannot be loaded under the harness's rules, so the plan
@@ -50,6 +51,8 @@ export const PLANNED_WITHOUT_MODEL =
  */
 export function resolvePlannerModel(input: {
   flag?: string | undefined;
+  /** The person's Planning model assignment on this host (models rule 30a, MD-N10-3). */
+  assigned?: string | undefined;
   configured?: string | undefined;
   seshatModel: string;
   /** Whether the model registry lists a model; omitted, every model counts. */
@@ -58,6 +61,8 @@ export function resolvePlannerModel(input: {
   // "none" plans heuristically on purpose, loading nothing (PM-P1-3).
   if (input.flag === "none") return undefined;
   if (input.flag) return input.flag;
+  // N0 (c6 #2): the person's assignment outranks config.toml, as the Coding model's does.
+  if (input.assigned) return input.assigned;
   if (input.configured === "none") return undefined;
   if (input.configured && input.configured !== "auto") return input.configured;
   if (input.isRegistered && !input.isRegistered(input.seshatModel)) return undefined;

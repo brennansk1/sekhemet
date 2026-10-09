@@ -45,7 +45,7 @@ import { localiseFix } from "./localise.js";
 import { type OracleDispute, crossCheckRows, recordExamples } from "./oracle.js";
 import { PLANNED_WITHOUT_MODEL } from "./planner.js";
 import { SPLIT_POINTS, estimatePoints } from "./points.js";
-import { workerPromptBudget, zone3Cap, zone3Fit } from "./small.js";
+import { windowTooSmall, workerPromptBudget, zone3Cap, zone3Fit } from "./small.js";
 import { safeRepoRelativeFile } from "./spidr.js";
 import {
   type StagedCriterion,
@@ -731,8 +731,12 @@ export async function persistPlan(
       holds.push(`At split depth ${story.splitDepth} it is not split again.`);
     }
     if (zone3Tokens > cap) {
+      // N0 (c6 #7): no split fits a window with no room for any issue; say why.
+      const tooSmall = windowTooSmall(budget.workerWindowTokens);
       holds.push(
-        `INVEST Small: its Zone 3 content is ${zone3Tokens} tokens, over Zone 3's cap of ${cap}; split it.`,
+        tooSmall
+          ? `INVEST Small: ${tooSmall}`
+          : `INVEST Small: its Zone 3 content is ${zone3Tokens} tokens, over Zone 3's cap of ${cap}; split it.`,
       );
     }
     if (story.card.stepBudget > INVEST_MAX_STEPS) {

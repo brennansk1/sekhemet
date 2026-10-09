@@ -14,6 +14,7 @@ import {
   SpidrFeaturePlanner,
   approvePlan,
   codebaseMapFromRepo,
+  containsLineByLineDictation,
   persistPlan,
   validateInvest,
   workerPromptBudget,
@@ -272,5 +273,44 @@ describe("PM-14: the planner's Small and the ready entry check are one computati
     // already on disk: it must agree with what persist measured and stored.
     const fresh = zone3Fit(card as never, { repoRoot: root, promptBudgetTokens: W });
     expect(fresh.tokens).toBe(result.created[0]?.zone3Tokens);
+  });
+});
+
+describe("N0 (c6 #7): Small at a window too small for any issue says so, never a negative cap", () => {
+  it("clamps Zone 3's cap at zero when the prompt budget is under Zone 1", () => {
+    // 8,192: W = 1,792, under Zone 1's 2,400, so 0.50 × (W − 2,400) would be −304.
+    expect(workerPromptBudget(8_192)).toBe(1_792);
+    expect(zone3Cap(workerPromptBudget(8_192))).toBe(0);
+  });
+
+  it("names the Coding model's window as too small instead of a negative cap", () => {
+    const check = small([story("tiny", 200)], 8_192);
+    expect(check?.passed).toBe(false);
+    expect(check?.detail).not.toMatch(/-\d/);
+    expect(check?.detail).toMatch(/window of 8,192 tokens is too small/);
+  });
+});
+
+describe("N0 (c6 #7): Negotiable flags dictated lines, not a title that counts lines", () => {
+  it("passes an outcome that mentions lines and a number", () => {
+    for (const text of [
+      "Count the lines of each of the 3 reports",
+      "Keep each export under 500 lines",
+      "Show the number of lines changed in 2 columns",
+    ])
+      expect(containsLineByLineDictation(text), text).toBe(false);
+  });
+
+  it("still flags a line number, a line range, verbatim text or a code fence", () => {
+    for (const text of [
+      "On line 42 change the constant",
+      "Edit lines 10-20 of report.ts",
+      "Replace lines 10 to 20",
+      "Copy it verbatim into the 2 files",
+      "Use exactly as written: 3 steps",
+      "at line of the loop, add 1",
+      "```ts\nconst a = 1;\n```",
+    ])
+      expect(containsLineByLineDictation(text), text).toBe(true);
   });
 });

@@ -41,8 +41,20 @@ function codeOf(err: unknown): string {
   return typeof inner === "string" ? inner : "";
 }
 
+/**
+ * Seshat's model is not set up on this machine (N0, c6 #3): what is missing
+ * and where to set it up, said before anything loads (`pm/seshat_model.ts`).
+ */
+export class SeshatNotSetUp extends Error {
+  public constructor(public readonly text: string) {
+    super(text);
+    this.name = "SeshatNotSetUp";
+  }
+}
+
 /** The worded failure for an error a model call threw. */
 export function seshatFailure(err: unknown): SeshatFailure {
+  if (err instanceof SeshatNotSetUp) return { cause: "no_model", text: err.text };
   const raw = `${err instanceof Error ? err.message : String(err)} ${codeOf(err)}`;
   const cause: SeshatFailureCause = TIMEOUT.some((r) => r.test(raw))
     ? "timeout"

@@ -481,6 +481,10 @@ export class BoardServiceImpl implements BoardService {
       this.options.zone3Fit
     ) {
       const fit = await this.options.zone3Fit(card);
+      // N0 (c6 #7): a cap of 0 is the Coding model's window, not this card's size.
+      if (fit.tokens > fit.cap && fit.cap <= 0) {
+        return `${card.id} cannot be Ready: the Coding model's window leaves no room for any issue's content; assign a Coding model with a larger window`;
+      }
       if (fit.tokens > fit.cap) {
         return `${card.id}'s Zone 3 content is ${fit.tokens.toLocaleString("en-US")} tokens, over Zone 3's cap of ${fit.cap.toLocaleString("en-US")}; split it before it is Ready`;
       }

@@ -1,8 +1,14 @@
-import { readdirSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { createServer } from "node:http";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { CardStore } from "@sekhemet/kernel";
+import { ModelRegistry } from "@sekhemet/models";
 import { describe, expect, it } from "vitest";
 import { openLocalLedger } from "../src/ledger_cmds.js";
-import { cardInReview, sandboxDirs, sekhemet } from "./cli_fixture.js";
+import { BIN, cardInReview, sandboxDirs, sekhemet } from "./cli_fixture.js";
 
 /**
  * FINDINGS_C1 CLI-04, CLI-05 and CLI-06, through the built binary: a usage
@@ -66,6 +72,87 @@ describe("CLI-05, CLI-06: a folder that is not a project", () => {
     const review = sekhemet(["review"], where);
     expect(review.status).toBe(2);
     expect(oneLine(review.stderr)).toMatch(/is not a Sekhemet project yet/);
+  }, 120_000);
+
+  it("CLI-05 (N0): `models fetch` and `models add` outside a project create no ledger, so a later bare `sekhemet` still takes the first run", () => {
+    const where = sandboxDirs();
+    const folder = join(where.home, "models");
+    mkdirSync(folder, { recursive: true });
+    // No one to ask: nothing is downloaded, and nothing is written here.
+    const fetched = sekhemet(["models", "fetch", "--recommended", "--folder", folder], where);
+    expect(fetched.stdout + fetched.stderr).toMatch(
+      /Nothing was downloaded|nothing was downloaded/,
+    );
+    expect(readdirSync(where.cwd), "models fetch").toEqual([]);
+    const added = sekhemet(["models", "add", join(where.home, "absent.gguf")], where);
+    expect(added.status).not.toBe(0);
+    expect(readdirSync(where.cwd), "models add").toEqual([]);
+    // The folder is still no project: `review` says so rather than reading an empty ledger.
+    const review = sekhemet(["review"], where);
+    expect(review.status).toBe(2);
+    expect(oneLine(review.stderr)).toMatch(/is not a Sekhemet project yet/);
+  }, 120_000);
+
+  it("DEC-60: `models fetch` in no project records its request and the verified download on the machine's ledger, and the folder stays no project", async () => {
+    const where = sandboxDirs();
+    const weights = Buffer.alloc(20_000, 7);
+    const sha256 = createHash("sha256").update(weights).digest("hex");
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-length": weights.length });
+      res.end(weights);
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    try {
+      const a = server.address();
+      const port = typeof a === "object" && a ? a.port : 0;
+      mkdirSync(join(where.home, ".sekhemet"), { recursive: true });
+      new ModelRegistry(join(where.home, ".sekhemet", "models.json")).recordSource("m", {
+        url: `http://127.0.0.1:${port}/o/r/resolve/main/m.gguf`,
+        host: "127.0.0.1",
+        sha256,
+        sizeBytes: weights.length,
+      });
+      const folder = join(where.home, "models");
+      mkdirSync(folder);
+      // Asynchronous, so this process's server can answer the child's request.
+      const r = await new Promise<{ code: number | null; out: string }>((done) => {
+        const child = spawn(process.execPath, [BIN, "models", "fetch", "m", "--folder", folder], {
+          cwd: where.cwd,
+          env: {
+            PATH: process.env.PATH ?? "",
+            HOME: where.home,
+            SEKHEMET_CONFIG_DIR: join(where.home, ".sekhemet"),
+            SEKHEMET_USER_CONFIG: "/nonexistent/sekhemet-test-user-config.toml",
+            BROWSER: "false",
+          },
+        });
+        let out = "";
+        child.stdout.on("data", (d) => {
+          out += d;
+        });
+        child.stderr.on("data", (d) => {
+          out += d;
+        });
+        child.on("close", (code) => done({ code, out }));
+      });
+      expect(r.code, r.out).toBe(0);
+      expect(readdirSync(where.cwd), "the folder").toEqual([]);
+      const db = new DatabaseSync(join(where.home, ".sekhemet", "machine", "events.db"), {
+        readOnly: true,
+      });
+      try {
+        const downloaded = db
+          .prepare("SELECT payload FROM events WHERE type = 'model/downloaded'")
+          .all() as { payload: string }[];
+        expect(downloaded.map((d) => JSON.parse(d.payload))).toMatchObject([
+          { model: "m", sha256, verified: true },
+        ]);
+      } finally {
+        db.close();
+      }
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
   }, 120_000);
 
   it("gate outside a project names it, with no package manager's error codes", () => {
@@ -230,5 +317,57 @@ describe("CLI-07: the plan in the board's words (SUR-97)", () => {
     expect(verbose.stdout).toMatch(/The plan's checks \(INVEST\):/);
     expect(verbose.stdout).toMatch(/\d+ points?, difficulty \d/);
     expect(verbose.stdout).not.toMatch(/pre-flight/);
+  });
+});
+
+describe("S1B-B04: after `sekhemet init` the folder is a project for every command", () => {
+  it("init in a fresh git repository, then a plain `status` exits 0 and `status --json` is one object", () => {
+    const where = sandboxDirs();
+    execFileSync("git", ["init", "-q"], { cwd: where.cwd });
+    const init = sekhemet(["init"], where);
+    expect(init.stdout, init.stderr).toMatch(/Wrote .*config\.toml/);
+    const plain = sekhemet(["status"], where);
+    expect(plain.status, plain.stdout + plain.stderr).toBe(0);
+    expect(plain.stderr).not.toMatch(/is not a Sekhemet project yet/);
+    const json = sekhemet(["status", "--json"], where);
+    expect(json.status, json.stdout + json.stderr).toBe(0);
+    const lines = json.stdout.split("\n").filter((l) => l.trim() !== "");
+    expect(lines, json.stdout).toHaveLength(1);
+    expect(JSON.parse(lines[0] as string)).toMatchObject({
+      command: "status",
+      ok: true,
+      exitCode: 0,
+    });
+  });
+
+  it("init where the history carries a Ledger-Head trailer starts no second workspace (SUR-79): refused, nothing written; --new-workspace starts one", () => {
+    const where = sandboxDirs();
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: where.cwd });
+    git("init", "-q");
+    git(
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      `feat: merged\n\nLedger-Head: 7:${"a".repeat(64)}`,
+    );
+    const refused = sekhemet(["init"], where);
+    expect(refused.status, refused.stdout + refused.stderr).toBe(1);
+    expect(oneLine(refused.stderr)).toMatch(
+      /belongs to a Sekhemet workspace already.*--new-workspace/,
+    );
+    expect(readdirSync(where.cwd).sort()).toEqual([".git"]);
+    const fresh = sekhemet(["init", "--new-workspace"], where);
+    // Exit 1 only for a machine not ready to run (no models here); never refused.
+    expect([0, 1], fresh.stdout + fresh.stderr).toContain(fresh.status);
+    expect(existsSync(join(where.cwd, ".sekhemet", "events.db")), "the project's ledger").toBe(
+      true,
+    );
+    const status = sekhemet(["status"], where);
+    expect(status.status, status.stdout + status.stderr).toBe(0);
   });
 });

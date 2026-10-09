@@ -141,6 +141,21 @@ describe("the lifecycle's entry conditions (NEW-kernel-5, K-N6-5)", () => {
     expect((await store.getCard("d"))?.status).toBe("parked");
   });
 
+  it("K-N5-7, N0: a Coding model window with no room for any issue is said as that, never a negative cap", async () => {
+    const b = board({ zone3Fit: () => ({ tokens: 300, cap: 0 }) });
+    await store.createCard({
+      id: "tiny",
+      tier: "task",
+      title: "Tiny",
+      status: "backlog",
+      acceptanceCriteria: ["x"],
+    });
+    await expect(move(b, "tiny", "backlog", "ready")).rejects.toMatchObject({
+      code: "entry_condition",
+      message: expect.stringMatching(/Coding model's window leaves no room for any issue/),
+    });
+  });
+
   it("K-N5-7: Ready from Backlog or Planning is refused when Zone 3 does not fit; a parent is exempt", async () => {
     const zone3 = { tokens: 5000, cap: 3792 };
     const b = board({ zone3Fit: () => zone3 });

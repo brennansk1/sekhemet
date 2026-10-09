@@ -109,6 +109,7 @@ import {
   ledgerCommand,
   ledgerHeadTrailers,
   openLocalLedger,
+  openMachineLedger,
 } from "./ledger_cmds.js";
 import { cardBranchHead, ledgerEvidenceSummary } from "./ledger_evidence.js";
 import { effectiveLogLevel, installLogLevels } from "./log_levels.js";
@@ -124,6 +125,7 @@ import {
 } from "./model_access.js";
 import { nightModelServer, runOvernight } from "./overnight.js";
 import { DEFAULT_PM_MODEL, pmModelFor } from "./pm/service.js";
+import { seshatModelName, seshatSetupGap, setUpBeforeLoading } from "./pm/seshat_model.js";
 import { PmStore } from "./pm/store.js";
 import {
   installProcessErrorHandlers,
@@ -924,7 +926,20 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   }
 
   if (config.command === "init") {
-    // `sekhemet init [--force]`: the first-run wizard (H25).
+    // `sekhemet init [--force]`: the first-run wizard (H25). As the bare
+    // first run, a repository whose history names a workspace starts no
+    // second one unless --new-workspace (SUR-79), and nothing is written.
+    if (workspace.firstRun && !argv.includes("--new-workspace")) {
+      const refusal = belongsElsewhere(config.repoPath);
+      if (refusal) return refuseWorkspace(refusal);
+    }
+    // S1B-B04: the folder is a project for every command afterwards, as after
+    // the bare first run's board: its ledger opened the product's own way
+    // (CLI-05 reads a folder with no ledger and no workspace as none):
+    // the schema, the install's person and Team rules (K-N2-1). Opened first,
+    // so a ledger that cannot be opened (a newer schema, an unreadable Team
+    // config) stops init before it writes anything or says Ready.
+    openLocalLedger(config.repoPath).db.close();
     const r = runInit(config.repoPath, { force: argv.includes("--force") });
     if (!r.ready) process.exitCode = 1;
     return;
@@ -1058,6 +1073,52 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     return;
   }
 
+  if (config.command === "models" && argv[argv.indexOf("models") + 1] === "add") {
+    // `sekhemet models add <path> [--id <id>] [--sampling …]` (MD-N12-9, F16): register a GGUF a
+    // person already has, so it can run as a role. It writes the model list only, before the
+    // kernel opens: no ledger is created in a folder that has none (CLI-05, N0).
+    const { modelsAdd } = await import("./models_cmd.js");
+    const path = argv[argv.indexOf("add") + 1];
+    if (!path || path.startsWith("-"))
+      return usageError("models", "models add needs the path of a .gguf file");
+    const idAt = argv.indexOf("--id");
+    const id = idAt === -1 ? undefined : argv[idAt + 1];
+    // Live-test F16: the model card's sampling, recorded in the registry.
+    const samplingAt = argv.indexOf("--sampling");
+    const sampling = samplingAt === -1 ? undefined : (argv[samplingAt + 1] ?? "");
+    process.exitCode = await modelsAdd(path, {
+      registry: modelRegistry(),
+      ...(id ? { id } : {}),
+      ...(sampling !== undefined ? { sampling } : {}),
+    });
+    return;
+  }
+
+  if (config.command === "models" && argv[argv.indexOf("models") + 1] === "fetch") {
+    // `sekhemet dev models fetch <model> | --role <role> | --recommended [--yes]
+    // [--folder <path>]` (MD-N12-6, MD-N18-3, MD-N22-2/-3): the page's
+    // Download… in the terminal, the same verified implementation. CLI-05
+    // (N0): in a project its requests and the download are on the project's
+    // ledger; in a folder with none, no ledger is created (a stray one would
+    // make the folder look like a project, and a later bare `sekhemet` would
+    // skip the first run), so they go on the machine's own ledger in the
+    // user directory (DEC-60): still durable, and no folder is changed.
+    const { modelsFetchCommand } = await import("./models_cmd.js");
+    const fetchLedger = workspace.firstRun ? openMachineLedger() : initLocalKernel(config.repoPath);
+    process.exitCode = await modelsFetchCommand(
+      argv
+        .slice(argv.indexOf("fetch") + 1)
+        .filter((a, i, all) => a !== "--repo" && all[i - 1] !== "--repo"),
+      {
+        repoPath: config.repoPath,
+        log: fetchLedger.log,
+        principal: fetchLedger.log.localPrincipal(),
+        registry: modelRegistry(),
+      },
+    );
+    return;
+  }
+
   const { db, log, cardStore, boardService } = initLocalKernel(config.repoPath);
   // The repository is a project (K14); cards created without one join it.
   const project = await ensureRepoProject(cardStore, config.repoPath).catch(() => undefined);
@@ -1104,45 +1165,6 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       defaultBenchmarkEnv({ repoPath: config.repoPath, log, cardStore, fit: fit.fit }),
       (l) => console.log(l),
       cardStore.localPrincipal(),
-    );
-    return;
-  }
-
-  if (config.command === "models" && argv[argv.indexOf("models") + 1] === "add") {
-    // `sekhemet models add <path> [--id <id>] [--sampling …]` (MD-N12-9, F16): register a GGUF a
-    // person already has, so it can run as a role.
-    const { modelsAdd } = await import("./models_cmd.js");
-    const path = argv[argv.indexOf("add") + 1];
-    if (!path || path.startsWith("-"))
-      return usageError("models", "models add needs the path of a .gguf file");
-    const idAt = argv.indexOf("--id");
-    const id = idAt === -1 ? undefined : argv[idAt + 1];
-    // Live-test F16: the model card's sampling, recorded in the registry.
-    const samplingAt = argv.indexOf("--sampling");
-    const sampling = samplingAt === -1 ? undefined : (argv[samplingAt + 1] ?? "");
-    process.exitCode = await modelsAdd(path, {
-      registry: modelRegistry(),
-      ...(id ? { id } : {}),
-      ...(sampling !== undefined ? { sampling } : {}),
-    });
-    return;
-  }
-
-  if (config.command === "models" && argv[argv.indexOf("models") + 1] === "fetch") {
-    // `sekhemet dev models fetch <model> | --role <role> | --recommended [--yes]
-    // [--folder <path>]` (MD-N12-6, MD-N18-3, MD-N22-2/-3): the page's
-    // Download… in the terminal, the same verified implementation.
-    const { modelsFetchCommand } = await import("./models_cmd.js");
-    process.exitCode = await modelsFetchCommand(
-      argv
-        .slice(argv.indexOf("fetch") + 1)
-        .filter((a, i, all) => a !== "--repo" && all[i - 1] !== "--repo"),
-      {
-        repoPath: config.repoPath,
-        log,
-        principal: cardStore.localPrincipal(),
-        registry: modelRegistry(),
-      },
     );
     return;
   }
@@ -1430,16 +1452,21 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const rest = argv.slice(argv.indexOf("ask") + 1);
     const firstFlag = rest.findIndex((a) => a.startsWith("-"));
     const question = (firstFlag === -1 ? rest : rest.slice(0, firstFlag)).join(" ");
+    // N0 (c6 #2, #3): Seshat's model is the person's Planning model, and one
+    // that is missing or not verified is said with where to set it up.
+    const askModel = seshatModelName(config.repoPath, { registry: modelRegistry() });
     process.exitCode = await runAsk(question, {
       repoPath: config.repoPath,
       cardStore,
       pmStore: new PmStore(log),
-      pmModel: DEFAULT_PM_MODEL,
-      acquire: pmModelFor(DEFAULT_PM_MODEL, modelRegistry(), log),
+      pmModel: askModel,
+      acquire: setUpBeforeLoading(pmModelFor(askModel, modelRegistry(), log), () =>
+        seshatSetupGap(askModel, modelRegistry(), "terminal"),
+      ),
       board: boardService,
       // SUR-51 (C5): a server that answers but has not Seshat's model, in its words.
       whyNotServed: async () => {
-        const health = await describeModel(DEFAULT_PM_MODEL, "planner", {
+        const health = await describeModel(askModel, "planner", {
           registry: modelRegistry(),
         }).healthCheck?.();
         return health && !health.ok && health.reachable ? health.detail : undefined;
@@ -1486,12 +1513,15 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   if (config.command === "acp") {
     // `sekhemet acp`: the Agent Client Protocol on stdio, for editors (H14).
     const acpResearcher = process.env.SEKHEMET_RESEARCHER;
+    const acpModel = seshatModelName(config.repoPath, { registry: modelRegistry() });
     await runAcpStdio({
       repoPath: config.repoPath,
       cardStore,
       pmStore: new PmStore(log),
-      pmModel: DEFAULT_PM_MODEL,
-      acquire: pmModelFor(DEFAULT_PM_MODEL, modelRegistry(), log),
+      pmModel: acpModel,
+      acquire: setUpBeforeLoading(pmModelFor(acpModel, modelRegistry(), log), () =>
+        seshatSetupGap(acpModel, modelRegistry(), "terminal"),
+      ),
       board: boardService,
       ...(acpResearcher
         ? {
@@ -1606,7 +1636,9 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const spec = config.targetArg || "New feature specification";
     console.log(`\nPlanning feature: "${spec}"`);
     // Model first (planner-pm §2.1.2, PM-P1-2): --planner (or the older
-    // --sketcher), else an explicit [models] planner, else Seshat's model.
+    // --sketcher), else the person's Planning assignment on this host (N0,
+    // c6 #2: as the queue resolves it), else an explicit [models] planner,
+    // else Seshat's model.
     // It is loaded before the Worker and unloaded after planning, so the two
     // never share memory.
     const flagged = (name: string) =>
@@ -1618,11 +1650,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const configured = effectiveConfig(config.repoPath).config.models.planner;
     const plannerName = resolvePlannerModel({
       flag: named,
+      assigned: roleModelName("planner", undefined, { registry }),
       configured,
       seshatModel: DEFAULT_PM_MODEL,
       isRegistered: (m) => registry.get(m) !== undefined,
     });
     if (!plannerName && named !== "none" && configured !== "none") {
+      // Only the shipped default is ever dropped (an assignment is the person's own).
       console.error(
         `Planning model: ${DEFAULT_PM_MODEL}, Seshat's model, is not in Sekhemet's model list; planning without a model.`,
       );

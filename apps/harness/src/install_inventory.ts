@@ -154,13 +154,23 @@ export function installInventory(opts: InventoryOptions = {}): InventoryItem[] {
   const items: InventoryItem[] = [];
   if (existsSync(dir)) {
     const backups = join(dir, "backups");
+    // DEC-60: the machine's own ledger is a ledger, kept unless --include-ledgers.
+    const machine = join(dir, "machine");
     items.push({
       kind: "path",
       name: dir,
       what: "the user directory: configuration, model registry and downloaded models, trust records, credentials, logs",
-      bytes: sizeOf(dir) - sizeOf(backups),
-      except: existsSync(backups) ? ["backups"] : [],
+      bytes: sizeOf(dir) - sizeOf(backups) - sizeOf(machine),
+      except: [backups, machine].filter((p) => existsSync(p)).map((p) => p.slice(dir.length + 1)),
     });
+    if (existsSync(machine))
+      items.push({
+        kind: "path",
+        name: machine,
+        what: "the machine's own ledger: what was downloaded outside any project",
+        bytes: sizeOf(machine),
+        ledger: true,
+      });
     if (existsSync(backups))
       items.push({
         kind: "path",

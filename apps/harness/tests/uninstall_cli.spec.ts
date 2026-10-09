@@ -40,6 +40,8 @@ function seed(p: Place) {
   w(join(user, "config.toml"), '[network]\nmode = "offline"\n');
   w(join(user, "models", "tiny.gguf"), "x".repeat(50_000));
   w(join(user, "backups", "ws_aaaaaaaaaaaa", "set-1", "events.db"), "b".repeat(3_000));
+  // DEC-60: the machine's own ledger (what `models fetch` asked in no project).
+  w(join(user, "machine", "events.db"), "m".repeat(2_000));
   w(
     join(user, "identity", "ws_aaaaaaaaaaaa", "credentials.json"),
     `{"passwords":{"a":"${SECRET}"}}`,
@@ -236,6 +238,9 @@ describe("SUR-59: `sekhemet uninstall --yes` removes them, keeping ledgers and b
     expect(existsSync(join(s.repo, ".sekhemet", "events.db-wal"))).toBe(true);
     expect(existsSync(join(s.repo, ".sekhemet", "blobs", "ab", "abcd.json"))).toBe(true);
     expect(existsSync(join(s.user, "backups", "ws_aaaaaaaaaaaa", "set-1", "events.db"))).toBe(true);
+    expect(existsSync(join(s.user, "machine", "events.db")), "the machine ledger (DEC-60)").toBe(
+      true,
+    );
     expect(r.out).toMatch(/Each project's ledger and every backup were kept/);
     expect(r.out).toMatch(/Now remove the package itself: npm uninstall -g sekhemet/);
 
@@ -260,6 +265,7 @@ describe("SUR-59: `sekhemet uninstall --yes` removes them, keeping ledgers and b
       env: s.env,
     });
     expect(all.code, all.out).toBe(0);
+    expect(existsSync(join(s.user, "machine", "events.db")), "--include-ledgers").toBe(false);
     // The ledger went; what is left of `.sekhemet/` is the repository's own.
     expect(readdirSync(join(s.repo, ".sekhemet")).sort()).toEqual([
       "config.toml",

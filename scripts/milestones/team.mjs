@@ -6,7 +6,7 @@
  * passwords and sessions with CSRF (teams §2.3).
  */
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -109,10 +109,13 @@ export class Team {
 
   /** The first Admin, with the setup token the server wrote (TEAM-31). */
   async setup(key, name, email) {
-    const token = readFileSync(
-      join(this.env.SEKHEMET_CONFIG_DIR, "identity", "setup-token"),
-      "utf8",
-    ).trim();
+    // The identity is the workspace's own (`identity/<workspace id>/`, runtime
+    // item 35a); this server's user directory holds its one workspace.
+    const identity = join(this.env.SEKHEMET_CONFIG_DIR, "identity");
+    const dirs = readdirSync(identity).filter((d) => existsSync(join(identity, d, "setup-token")));
+    if (dirs.length !== 1)
+      throw new Error(`expected one workspace's setup token in ${identity}, found ${dirs.length}`);
+    const token = readFileSync(join(identity, dirs[0], "setup-token"), "utf8").trim();
     return this.#signedIn(
       await this.call("POST", "/api/setup", undefined, { token, name, email, password: PASSWORD }),
       { key, name, email, level: "admin" },

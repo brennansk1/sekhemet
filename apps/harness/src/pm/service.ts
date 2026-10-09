@@ -71,9 +71,15 @@ export function pmModelFor(
   modelId = DEFAULT_PM_MODEL,
   registry?: ModelRegistry,
   ledger?: SwapLedger,
+  opts: { refuseUnknownFootprint?: boolean } = {},
 ): () => Promise<ModelHold> {
   return sharedQueue(
-    { queue: "chat", role: "planner", name: modelId },
+    {
+      queue: "chat",
+      role: "planner",
+      name: modelId,
+      ...(opts.refuseUnknownFootprint ? { refuseUnknownFootprint: true } : {}),
+    },
     { ...(registry ? { registry } : {}), ...(ledger ? { ledger } : {}) },
   );
 }

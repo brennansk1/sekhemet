@@ -69,6 +69,27 @@ describe("PM-P1-2: with no [models] planner, plan with Seshat's model", () => {
     );
   });
 
+  it("N0 (c6 #2): the person's Planning model assignment stands after the flag, before config.toml and Seshat's default", () => {
+    expect(
+      resolvePlannerModel({ assigned: "my-planner", configured: "qwen", seshatModel: "dirk" }),
+    ).toBe("my-planner");
+    expect(resolvePlannerModel({ assigned: "my-planner", seshatModel: "dirk" })).toBe("my-planner");
+    expect(
+      resolvePlannerModel({ flag: "cli-model", assigned: "my-planner", seshatModel: "dirk" }),
+    ).toBe("cli-model");
+    expect(
+      resolvePlannerModel({ flag: "none", assigned: "my-planner", seshatModel: "dirk" }),
+    ).toBeUndefined();
+    // An assignment is the person's own: it is not dropped for an unlisted name.
+    expect(
+      resolvePlannerModel({
+        assigned: "my-planner",
+        seshatModel: "dirk",
+        isRegistered: () => false,
+      }),
+    ).toBe("my-planner");
+  });
+
   it("plans without a model when 'none' is named or configured", () => {
     expect(resolvePlannerModel({ flag: "none", seshatModel: "dirk-27b:latest" })).toBeUndefined();
     expect(

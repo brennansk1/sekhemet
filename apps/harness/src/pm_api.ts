@@ -28,7 +28,7 @@ import { readSettings } from "./integrations.js";
 import { readIssueForms } from "./issue_forms.js";
 import { learnFromProposalChoices } from "./learning/reflect.js";
 import { LearningStore } from "./learning/store.js";
-import { sharedModelAccess } from "./model_access.js";
+import { roleModelName, sharedModelAccess } from "./model_access.js";
 import { meterModelUsage, modelUse, recordUsageOn } from "./model_usage.js";
 import { ProposalError, applyProposal } from "./pm/apply.js";
 import { type Audience, nameFor, soloAudience } from "./pm/audience.js";
@@ -50,7 +50,8 @@ import {
   sentTo,
   withApprovalNames,
 } from "./pm/send_for_approval.js";
-import { DEFAULT_PM_MODEL, answerQueued, pmModelFor, runnerLease } from "./pm/service.js";
+import { answerQueued, pmModelFor, runnerLease } from "./pm/service.js";
+import { seshatModelName, seshatSetupGap, setUpBeforeLoading } from "./pm/seshat_model.js";
 import {
   type CarryTo,
   SprintRefusal,
@@ -211,7 +212,10 @@ export function createPmApi(ctx: PmApiContext) {
       .map((p) => ({ kind: p.kind, state: p.state as "applied" | "discarded" }));
     await learnFromProposalChoices(learning, choices).catch(() => undefined);
   };
-  const pmModel = ctx.pmModel ?? DEFAULT_PM_MODEL;
+  // N0 (c6 #2): Seshat's model is the person's Planning model, read when it
+  // is needed, so an assignment made while the server runs is used next.
+  const pmModelNow = (): string =>
+    ctx.pmModel ?? seshatModelName(ctx.repoPath, { registry: modelRegistry() });
   const audience = (): Audience => ctx.audience?.() ?? soloAudience();
   const personOf = (req: IncomingMessage): string =>
     ctx.principalOf?.(req) ?? ctx.log.localPrincipal();
@@ -248,7 +252,13 @@ export function createPmApi(ctx: PmApiContext) {
     // already under memory pressure. The message stays queued; it is answered
     // on the next message once pressure is normal, or by the next queue run.
     const level = (ctx.pressureLevel ?? readKernelPressureLevel)();
-    if (level !== undefined && level > 1) {
+    const underPressure = level !== undefined && level > 1;
+    const pmModel = pmModelNow();
+    // N0 (c6 #3): a model that is missing or not verified is said at once —
+    // saying so loads nothing, so memory pressure does not hold it back.
+    const setUpGap = () =>
+      ctx.pmAdapter ? undefined : seshatSetupGap(pmModel, modelRegistry(), "dashboard");
+    if (underPressure && !setUpGap()) {
       void pmStore.setStatus({
         phase: "idle",
         detail:
@@ -268,27 +278,40 @@ export function createPmApi(ctx: PmApiContext) {
           });
           return async () => ({ role: "chat", adapter: a, release: () => {} });
         })()
-      : pmModelFor(pmModel, modelRegistry(), ctx.log);
+      : // Not left queued for ever behind a footprint no one can measure.
+        setUpBeforeLoading(
+          pmModelFor(pmModel, modelRegistry(), ctx.log, { refuseUnknownFootprint: true }),
+          setUpGap,
+          "dashboard",
+        );
     // Rule 20f (b): the Planner role's quick answerer, when a person named one
     // and the measured headroom admits it beside what is resident.
-    const quick = ctx.pmAdapter
-      ? undefined
-      : quickAnswererFor(
-          sharedModelAccess(),
-          effectiveConfig(ctx.repoPath).config.models.quickAnswerer,
-        );
+    const quick =
+      ctx.pmAdapter || underPressure
+        ? undefined
+        : quickAnswererFor(
+            sharedModelAccess(),
+            effectiveConfig(ctx.repoPath).config.models.quickAnswerer,
+          );
     // PM-P1-2: /plan with the Planner role's model — `[models] planner`,
     // else Seshat's — and without one when it is "none".
     const plannerName = ctx.pmAdapter
       ? undefined
       : resolvePlannerModel({
+          ...(ctx.pmModel
+            ? {}
+            : { assigned: roleModelName("planner", undefined, { registry: modelRegistry() }) }),
           configured: effectiveConfig(ctx.repoPath).config.models.planner,
           seshatModel: pmModel,
         });
+    // Under memory pressure (only when Seshat's set-up gap is being said) no
+    // other model is loaded.
     const planner = plannerName
       ? plannerName === pmModel
         ? acquire
-        : pmModelFor(plannerName, modelRegistry(), ctx.log)
+        : underPressure
+          ? undefined
+          : pmModelFor(plannerName, modelRegistry(), ctx.log)
       : undefined;
     // The loop answers everyone's queued messages: it is not the person's who
     // happened to start it (kernel K-N2-8).
@@ -308,7 +331,7 @@ export function createPmApi(ctx: PmApiContext) {
           ...(quick ? { quick } : {}),
           ...(planner ? { planner } : {}),
           audience: audience(),
-          ...(researcherModel
+          ...(researcherModel && !underPressure
             ? {
                 researcher: (q: string, o?: { deep?: boolean }) =>
                   oneShotResearcher(ctx.repoPath, researcherModel, cardStore, ctx.log)(q, o),
@@ -343,7 +366,7 @@ export function createPmApi(ctx: PmApiContext) {
       await pmStore.setStatus({
         phase: "waiting_for_step",
         detail: "Pausing the Agent after its current step",
-        model: lease.pmModel ?? pmModel,
+        model: lease.pmModel ?? pmModelNow(),
         workerPaused: false,
       });
     } else {
@@ -395,7 +418,7 @@ export function createPmApi(ctx: PmApiContext) {
       ctx.json(res, 200, {
         messages: await threadFor(req, since),
         status: await pmStore.status(),
-        model: lease?.pmModel ?? pmModel,
+        model: lease?.pmModel ?? pmModelNow(),
       });
       return true;
     }
@@ -1341,7 +1364,7 @@ export function createPmApi(ctx: PmApiContext) {
 
     // --- Model roster (worker, Seshat, reviewer, researcher) -------------------
     if (url === "/api/models" && req.method === "GET") {
-      ctx.json(res, 200, modelRoster(ctx.repoPath, pmModel));
+      ctx.json(res, 200, modelRoster(ctx.repoPath, pmModelNow()));
       return true;
     }
 
@@ -1464,7 +1487,7 @@ export function createPmApi(ctx: PmApiContext) {
  */
 export function modelRoster(
   repoPath: string,
-  pmModel: string = DEFAULT_PM_MODEL,
+  pmModel: string = seshatModelName(repoPath, { registry: modelRegistry() }),
 ): {
   roles: { role: string; model?: string; state: string; note?: string }[];
   coResident: boolean;

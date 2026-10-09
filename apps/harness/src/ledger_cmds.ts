@@ -41,6 +41,7 @@ import type { CliExit } from "./commands/cli_result.js";
 import type { CommandHandler } from "./commands/registry.js";
 import { userSetup } from "./config.js";
 import { backupCredentials, identityDir, restoreCredentials } from "./team/credential_store.js";
+import { userPaths } from "./user_dir.js";
 import { holdsLedger, ledgerFacts, workspaceFolderOf } from "./workspace_locator.js";
 
 /**
@@ -146,6 +147,35 @@ export function openLocalLedger(repoPath: string): { db: DatabaseSync; log: Even
   log.retryBlobErasures(new BlobStore(workspace));
   // RUN-57: likewise any run file (transcript, observation) an erasure named.
   log.retryFileErasures(join(workspace, ".sekhemet"));
+  return { db, log };
+}
+
+/**
+ * The machine's own ledger (DEC-60), for what a command records while the
+ * person is in no project (`models fetch`): opened as a project's is — the
+ * schema migrated, the install's one person recorded, Team rules under a
+ * Team install (K-N2-1), its erasure register beside it — but under the user
+ * directory, so no folder is made to look like a project (CLI-05).
+ */
+export function openMachineLedger(): { db: DatabaseSync; log: EventLog } {
+  const path = userPaths().machineLedger;
+  const folder = dirname(path);
+  mkdirSync(folder, { recursive: true });
+  const db = new DatabaseSync(path);
+  const person = localPersonDetails(process.cwd());
+  let setup: "solo" | "team";
+  try {
+    initSchema(db, { localPerson: person });
+    setup = userSetup();
+  } catch (err) {
+    db.close();
+    throw err;
+  }
+  const log: EventLog = new EventLog(db, {
+    erasureRegister: () => workspaceErasureRegister(folder, log.workspaceId()),
+    setup,
+  });
+  log.ensureLocalPerson(person);
   return { db, log };
 }
 

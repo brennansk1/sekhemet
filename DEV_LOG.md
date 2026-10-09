@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 85 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 86 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,44 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 86 — 2026-10-09 (N0: the overnight run's journey blockers, DEC-60 and DEC-61; qualification on the C5 build; the overnight sweeps' first findings)
+
+- **N0** (one Opus implementer, from builder 5's c6 findings):
+  1. **Seshat on the person's Planning model:**
+     - `plan`, `sekhemet "<spec>"`, serve's Seshat, `ask` and `acp` resolve it in the order flag, assignment, `[models] planner`, default.
+     - Seshat's model is read on each answer.
+  2. **No more *The model is still loading* for ever:**
+     - The dashboard's chat queue refuses at once a model whose memory cannot be measured (`refuseUnknownFootprint`, `UnknownFootprint`, MD-N9-3).
+     - `seshatSetupGap` names a model the dashboard cannot load, with where to set it up.
+     - Chat needs no Planning qualification; the queue's planning still does.
+     - In the terminal, an Ollama tag the list does not hold is asked of Ollama directly (SUR-51).
+  3. **`models fetch` and `add`** no longer write a ledger in a folder that is no project (CLI-05). Outside a project, fetch's requests and verified downloads go on the machine's own ledger, `machine/events.db` in the user directory. This is **DEC-60**: N0's first version had used an in-memory ledger, which would have lost the egress records.
+  4. **Two planner messages:**
+     - the dictation check is narrower ("lines" and a number is no longer dictation), and Seshat's eval rubric shares it;
+     - the Zone 3 cap is clamped at 0, with `windowTooSmall` saying why.
+  5. **The acceptance tests' copy into the worktree** was already right: a regression test now holds it.
+- **From the overnight sweep, added to N0:**
+  - **S1B-B04:** `init` printed Ready, but `status` then refused the folder as "not a Sekhemet project yet". `init` now opens the ledger the product's own way, before writing anything. It refuses under Ledger-Head trailers, as the first run does.
+- **Milestone runner fix:** B4.10's runner read the old flat `identity/setup-token`. It now finds the workspace's own. **B4.10: PASS** again on this build (`evidence/milestones/B4.10_2026-10-08.json`).
+- **Review:** 1 blocker and 2 majors, all fixed and re-checked; the B04 add-on had a separate review.
+  - **Blocker:** N0's first version refused chat for an unqualified Planning model, which broke three SUR-51 tests.
+  - **Majors:** `uninstall --yes` deleted the machine ledger; the machine ledger skipped the project opener's set-up (now `openMachineLedger`).
+  - **Minors:** 2 fixed by the lead; the rest are in `lead-work/c6_findings.md`.
+- **Qualification on the C5/N0 build** (the context versions changed):
+  - **Coding:** nail-mtp, 100%.
+  - **Planning:** qwen3.8-27b-gsq-rco **failed**, 94.7% (arguments 75%, multi_step 70%) at 2.9 tok/s. nail-mtp qualified for Planning at 100%, at 16.7 tok/s. **DEC-61:** on the reference machine one resident model, nail-mtp, serves Coding and Planning.
+  - **Research:** apodex-1.1-mini scored 0% because nothing reached the model; its 16 GB IQ3_M weights do not fit. qualify recorded that as a failed qualification, which is a P1 bug for the morning batch. The Research role stays unfilled.
+- **Overnight N1, first findings** (Haiku personas; `lead-work/overnight/FINDINGS.md`): Solo, CLI and Team sweeps with no models. No P0.
+  - **P1, wording and state:** a 404 on the story map; the Models page against Machine's roles; "128 GB" said on 24 GB; Jira and Linear shown as "Connected"; `models list`'s role names; an epic shown In progress while its issues are held; `reject`'s self-contradicting refusal; "Send back"; a Viewer's enabled "Start a project".
+  - **Test leakage:** two fixture entries in the owner's real model registry.
+  - **Team access controls:** they hold.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` 0, `biome check .` 0, vitest 944 files passed, 2 skipped; 7,299 tests passed, 74 skipped (maxForks=2, 44 min). The first gate failed only the entry-point counts (+2 conflicts from criterion ids cited in partial rows), which were reworded.
+- **Where the cards stop:**
+  - N0 is committed.
+  - Next, the overnight run: S3, tonight's own project (a tool library's lending desk, `lead-work/overnight/fixture_s3`, no hidden suite) through the capstone's Sekhemet-arm machinery, on the night-1 snapshot. Its first issue is watched as the smoke; Haiku watches every 20 minutes.
+  - Then the morning batch (the P1s and P2s, one review, one gate).
+  - The capstone itself waits for the vault migration, which the owner does.
 
 ### Entry 85 — 2026-10-08 (C5: install, docs and journeys. The core product findings fixed, install/upgrade/uninstall and the Team image, doctor's verdict and next steps, the user guide and community files, the pre-publication pass, the audience journeys; unit-only built criteria 36 → 18)
 

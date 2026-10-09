@@ -40,9 +40,28 @@ export function workerPromptBudget(
   );
 }
 
-/** Zone 3's cap at a prompt budget W: 0.50 × (W − 2,400) (context rule 10). */
+/**
+ * Zone 3's cap at a prompt budget W: 0.50 × (W − 2,400) (context rule 10),
+ * never below zero — a W under Zone 1 leaves no room for any issue's
+ * content, which {@link windowTooSmall} says (N0, c6 #7).
+ */
 export function zone3Cap(promptBudgetTokens: number): number {
-  return Math.floor((PROMPT_ZONE_FRACTIONS[3] as number) * (promptBudgetTokens - ZONE1_TOKENS));
+  return Math.max(
+    0,
+    Math.floor((PROMPT_ZONE_FRACTIONS[3] as number) * (promptBudgetTokens - ZONE1_TOKENS)),
+  );
+}
+
+const tokens = (n: number) => n.toLocaleString("en-US");
+
+/**
+ * Why no issue fits a Coding model's window, when none can (Zone 3's cap is
+ * zero), else undefined: what its prompt budget leaves against Zone 1 (N0).
+ */
+export function windowTooSmall(windowTokens: number): string | undefined {
+  const w = workerPromptBudget(windowTokens);
+  if (zone3Cap(w) > 0) return undefined;
+  return `The Coding model's window of ${tokens(windowTokens)} tokens is too small for any issue: after its answer, thinking and margin, ${tokens(Math.max(0, w))} tokens are left for the prompt, and its fixed instructions take ${tokens(ZONE1_TOKENS)}. Assign a Coding model with a larger window.`;
 }
 
 /** The parts of a card that make up its Zone 3 content. */

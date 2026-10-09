@@ -109,6 +109,58 @@ describe("@sekhemet/harness execution ledger events", () => {
     ]);
   });
 
+  it("c6 #1 (N0): a planned issue's acceptance test, at the path the planner wrote in the working copy, reaches the worktree", async () => {
+    // The planner writes tests/<x>.spec.ts in the working copy, not under
+    // acceptance/: it is uncommitted, so only staging puts it in the worktree.
+    const test = 'import { it } from "vitest";\nit("b", () => {});\n';
+    mkdirSync(join(repo, "tests"));
+    writeFileSync(join(repo, "tests", "b.spec.ts"), test);
+    const card = await cardStore.createCard({
+      id: "card_planned",
+      tier: "story",
+      title: "Write a",
+      scopeFiles: ["src/a.ts"],
+      stepBudget: 2,
+      spec: "Write src/a.ts",
+      acceptanceTests: ["tests/b.spec.ts"],
+    });
+    const lines: string[] = [];
+    const ctx = {
+      repoPath: repo,
+      restrictedMode: false,
+      cardStore,
+      boardService,
+      log: (l: string) => {
+        lines.push(l);
+      },
+      headroomCheck: false,
+    };
+    // The Worker's first step reads the staged test: it is there to read.
+    const model = new MockInferenceAdapter("scripted", [
+      {
+        text: "",
+        toolCalls: [{ id: "1", name: "read_file", arguments: { path: "tests/b.spec.ts" } }],
+        usage: { promptTokens: 1, completionTokens: 1, durationMs: 1 },
+      },
+      {
+        text: "",
+        toolCalls: [{ id: "2", name: "finish_card", arguments: {} }],
+        usage: { promptTokens: 1, completionTokens: 1, durationMs: 1 },
+      },
+    ]);
+    await executeCard(ctx, card, model, "1. Export a.");
+    expect(lines.join("\n")).toMatch(/staged acceptance test: tests\/b\.spec\.ts/);
+    const staged = (await cardStore.cardEvents(card.id, ["test/staged"])).map((e) => e.payload);
+    expect(staged).toEqual([
+      {
+        cardId: card.id,
+        path: "tests/b.spec.ts",
+        sha256: createHash("sha256").update(test).digest("hex"),
+        author: "repository",
+      },
+    ]);
+  });
+
   it("appends one card/step per turn, the repair plan, and the accept sha; the chain stays valid", async () => {
     const card = await cardStore.createCard({
       id: "card_exec",

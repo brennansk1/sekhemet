@@ -10,7 +10,7 @@ Run one with `pnpm milestone <id>` (for example `pnpm milestone B3`), or `pnpm m
 | [B2.5](#b25) | NOT RUN | 2026-09-29 | `4747051a6d` |
 | [B3](#b3) | PASS | 2026-10-02 | `73532310b1` |
 | [B4.4](#b44) | NOT RUN | 2026-09-28 | `150b7f8ebd` |
-| [B4.10](#b410) | PASS | 2026-10-02 | `73532310b1` |
+| [B4.10](#b410) | PASS | 2026-10-08 | `76da777900` |
 | [B4.11](#b411) | NOT RUN | 2026-09-28 | `150b7f8ebd` |
 | [C](#c) | NOT RUN | — | — |
 
@@ -103,10 +103,10 @@ How it ran: the take-over half runs `apps/harness/tests/takeover_fixtures.spec.t
 
 **PASS**
 
-- Evidence: `evidence/milestones/B4.10_2026-10-02.json`
-- Commit: `73532310b1`
-- Tree: tree `b9c0bc6415151846751e9381ab7530535ad1bc3c`, the files it ran on (the commit that holds them has this tree; `git diff b9c0bc6415 <commit>` shows any difference)
-- Date: 2026-10-02, on darwin arm64 with 24 GB
+- Evidence: `evidence/milestones/B4.10_2026-10-08.json`
+- Commit: `76da777900` with uncommitted changes
+- Tree: tree `12251d58bce1a1139b6ba6b5dc365c48f926a745`, the files it ran on (the commit that holds them has this tree; `git diff 12251d58bc <commit>` shows any difference)
+- Date: 2026-10-08, on darwin arm64 with 24 GB
 - Runner: `scripts/milestones/b4_10.mjs`
 
 - ✓ five people at four levels sign in: Ada Admin admin, Lee Lead member, Mo Member member, Sam Stakeholder stakeholder, Vi Viewer viewer

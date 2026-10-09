@@ -47,6 +47,12 @@ export function userPaths() {
     installId: join(d, "install-id"),
     /** Diagnostic logs per workspace: the lost-record log (runtime item 29a, RUN-89). */
     logs: join(d, "logs"),
+    /**
+     * The machine's own ledger (DEC-60): what a command run in no project asks
+     * the network for (`models fetch`), so it is recorded without making a
+     * folder look like a project (CLI-05).
+     */
+    machineLedger: join(d, "machine", "events.db"),
   };
 }
 

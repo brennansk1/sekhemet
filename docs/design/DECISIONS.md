@@ -668,6 +668,23 @@ Not a chat assistant (the conversation plans and reports; code is written on car
 - **Where:** `lead-work/research_design.md` (the evidence); design-stage NEW-design-stage-9 (DS-N9-*), worker-loop, context, models, security 33a, gates (the shared probe runner).
 - **Reopen if:** the research golden set (once a person confirms it) or the frozen-suite A/B shows the packet or the notes make cards worse.
 
+### DEC-60 — the machine's own ledger, for what runs in no project
+**A command that reaches the network while the person is in no project (`sekhemet dev models fetch` before a first run) records its requests and the verified download on the machine's own ledger, `machine/events.db` in the user directory, never on a ledger in the current folder (lead, 2026-10-08, N0).**
+- **Why:** CLI-05 must not let a stray `.sekhemet/events.db` make a folder look like a project; an in-memory ledger would have kept that rule but lost the egress records, which the spine forbids (the event log is the only durable channel).
+- **Scope:** only commands that need no project and write records (today `models fetch`). Inside a project they still go on its ledger. `sekhemet log` does not read the machine ledger yet; doctor and the Activity view may read it later.
+- **Where:** surface.md's CLI-05 row; `user_dir.ts` `machineLedger`; `index.ts`; `cli_errors.spec.ts` *DEC-60*.
+- **Reopen if:** a second command needs it, or the person needs to see these records in the dashboard.
+
+### DEC-61 — the reference machine's Planning model is nail-mtp, for now
+**On the reference machine (24 GB), the Planning model, Seshat's, is nail-mtp, the same weights as the Coding model, so one resident model serves both roles (lead, 2026-10-09, under the owner's delegation and "work with the best we got").**
+- **Evidence:** on the C5/N0 build the Planning context version changed (820e14d0b135ade7 → 78eea08ff804cea8), so the earlier qualification lapsed.
+  - **qwen3.8-27b-gsq-rco:** failed on re-qualification at 94.7% (arguments 75%, multi_step 70%), at 2.9 tok/s.
+  - **nail-mtp:** qualified for Planning at 100% on every check, at 16.7 tok/s (`qualify --role planner`).
+  - **Other registered models:** none holds a Planning qualification on this host.
+- **Effect:** no swap between Seshat and the Worker. `sekhemet models restore planner` returns to the earlier assignment.
+- **Not decided here:** the shipped default for other machines (MODELS.md), which needs the golden-brief comparison (B2.5's labels).
+- **Reopen if:** a Planning candidate qualifies and beats nail-mtp on the golden briefs or the pm-conversations eval, or a single trial's 94.7% is shown to be noise by a re-run at temperature 0.
+
 ## Founder decisions on record
 
 - **Name:** Sekhemet, a deliberate variant spelling, paired with its descriptor where the product introduces itself.
