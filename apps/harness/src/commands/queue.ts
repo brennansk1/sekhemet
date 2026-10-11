@@ -10,7 +10,6 @@ import {
   type UnloadableAdapter,
   type WorkerOverride,
   describeOverride,
-  escalationWindow,
   measureThroughput,
   readSwapUsedBytes,
 } from "@sekhemet/models";
@@ -59,7 +58,10 @@ import {
   ModelAccess,
   type QueueSpec,
   describeModel,
+  describeServed,
+  planningQueueSpecs,
   roleModelName,
+  servedWindow,
   weightsKey,
 } from "../model_access.js";
 import { sendPush, startNotifier } from "../notify.js";
@@ -268,22 +270,29 @@ export const queueCommand: CommandHandler = async (_args, env) => {
     const pmModelName = managerAsked ?? DEFAULT_PM_MODEL;
     const quickName = effectiveConfig(config.repoPath, argv).config.models.quickAnswerer.trim();
     const roleRegistry = modelRegistry();
+    // N1-WIN: the Planning model runs, and is gated, at the window it is
+    // verified at for the Planning role on this host (Seshat's chat too).
+    const served = { registry: roleRegistry };
     const roles = verifiedQueueRoles<QueueSpec>(
       roleRegistry,
       [
         { queue: "worker", role: "worker", name: workerModel ?? defaultWorkerName() },
-        // The Planner doubles as the PM you chat with during the run.
-        { queue: "manager", role: "planner", name: pmModelName },
-        // Seshat answering a person: the same weights, the interactive class
-        // (models rule 20e: a person waiting; its swaps are interactive, C7).
-        { queue: "seshat", role: "planner", name: pmModelName },
-        // The Planner's (stronger, dense) model as a coder, for --escalate-retries.
-        { queue: "escalation", role: "planner", name: pmModelName, window: escalationWindow() },
+        // The manager, Seshat and escalation queues: the Planning model's weights.
+        ...planningQueueSpecs(pmModelName, served),
         ...(researcherAsked
           ? [{ queue: "researcher", role: "researcher" as const, name: researcherAsked }]
           : []),
         // Rule 20f (b): the Planner role's quick answerer, when a person named one.
-        ...(quickName ? [{ queue: "quick", role: "planner" as const, name: quickName }] : []),
+        ...(quickName
+          ? [
+              {
+                queue: "quick",
+                role: "planner" as const,
+                name: quickName,
+                ...servedWindow(quickName, "planner", served),
+              },
+            ]
+          : []),
       ],
       // review-git §2.3.7, RG-P8-10: the Review model, never of the Coding
       // model's family; unfilled, each passing issue says why in Review.
@@ -293,7 +302,7 @@ export const queueCommand: CommandHandler = async (_args, env) => {
         worker: workerModel ?? defaultWorkerName(),
         familyOf: (m) => familyOf(m, roleRegistry),
       }),
-      (name, role) => describeModel(name, role, { registry: roleRegistry }),
+      (name, role) => describeServed(name, role, served),
     );
     const managerModel = roles.has("manager") ? managerAsked : undefined;
     const researcherModel = roles.has("researcher") ? researcherAsked : undefined;

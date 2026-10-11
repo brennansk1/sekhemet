@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,6 +16,18 @@ import { join } from "node:path";
  * through the support helpers' environments, for the commands they spawn.
  * Its name is short: macOS caps a socket path at 104 bytes.
  */
+/** The run's `sysctl` stand-in: normal memory pressure and no swap; anything else is the system's. */
+export const HOST_SYSCTL = `#!/bin/sh
+value() { case " $* " in *" -n "*) echo "$2";; *) echo "$1: $2";; esac; }
+for a in "$@"; do
+  case "$a" in
+    kern.memorystatus_vm_pressure_level) value "$a" 1 "$@"; exit 0;;
+    vm.swapusage) value "$a" "total = 2048.00M  used = 0.00M  free = 2048.00M  (encrypted)" "$@"; exit 0;;
+  esac
+done
+exec /usr/sbin/sysctl "$@"
+`;
+
 export default function setup(): () => void {
   // Each project of the config runs this too: the first one owns the folder.
   if (process.env.SEKHEMET_TEST_RUN_TMP) return () => undefined;
@@ -23,7 +35,22 @@ export default function setup(): () => void {
   const dir = mkdtempSync(join(tmpdir(), "skv-"));
   process.env.TMPDIR = dir;
   process.env.SEKHEMET_TEST_RUN_TMP = dir;
+  // The host's memory is not under test (N1a): the owner's own work on this
+  // machine put the kernel at a pressure warning, the memory watchdog of every
+  // spawned `queue` held its worktrees, and 146 waits timed tests out. A
+  // `sysctl` first on PATH, for the workers and every command they spawn,
+  // answers the two memory readings as normal and passes every other query
+  // to the system's. A test about pressure puts its own `sysctl` ahead of this
+  // one, or drives it in-process (`g5_host.mjs`), as before.
+  const before_path = process.env.PATH;
+  const bin = join(dir, "host-bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "sysctl"), HOST_SYSCTL);
+  chmodSync(join(bin, "sysctl"), 0o755);
+  process.env.PATH = `${bin}:${before_path ?? "/usr/bin:/bin"}`;
   return () => {
+    if (before_path === undefined) Reflect.deleteProperty(process.env, "PATH");
+    else process.env.PATH = before_path;
     killUnder(dir);
     rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
     // `process.env.X = undefined` would set the string "undefined".

@@ -8,7 +8,13 @@ import {
 import type { ModelHold, ModelRegistry } from "@sekhemet/models";
 import { unenforcedInvariants } from "../architecture_gate.js";
 import { LearningStore } from "../learning/store.js";
-import { type SwapLedger, sharedQueue } from "../model_access.js";
+import {
+  type ModelAccess,
+  type SwapLedger,
+  servedWindow,
+  sharedModelAccess,
+  sharedQueue,
+} from "../model_access.js";
 import { projectStoryMap } from "../project_done.js";
 import { registrySearch } from "../research/plan_research.js";
 import { forecastSentence } from "../status_api.js";
@@ -71,16 +77,21 @@ export function pmModelFor(
   modelId = DEFAULT_PM_MODEL,
   registry?: ModelRegistry,
   ledger?: SwapLedger,
-  opts: { refuseUnknownFootprint?: boolean } = {},
+  opts: { refuseUnknownFootprint?: boolean; access?: ModelAccess } = {},
 ): () => Promise<ModelHold> {
+  // N1-WIN: at the window the model is verified at for the Planning role here.
+  const served = registry ? servedWindow(modelId, "planner", { registry }) : {};
+  const options = { ...(registry ? { registry } : {}), ...(ledger ? { ledger } : {}) };
   return sharedQueue(
     {
       queue: "chat",
       role: "planner",
       name: modelId,
+      ...served,
       ...(opts.refuseUnknownFootprint ? { refuseUnknownFootprint: true } : {}),
     },
-    { ...(registry ? { registry } : {}), ...(ledger ? { ledger } : {}) },
+    options,
+    opts.access ?? sharedModelAccess(options),
   );
 }
 

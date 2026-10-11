@@ -3,7 +3,7 @@ import type { CardStore } from "@sekhemet/kernel";
 import { ModelRegistry } from "@sekhemet/models";
 import { plural } from "@sekhemet/ui";
 import { McpHub, loadMcpConfig } from "../mcp_client.js";
-import { ModelAccess, sharedModelAccess } from "../model_access.js";
+import { ModelAccess, planQueueSpec, sharedModelAccess } from "../model_access.js";
 import { runnerLease } from "../runner_lease.js";
 import { renderDisagreements } from "./claims.js";
 import { crawl4aiInstalled } from "./crawl4ai.js";
@@ -222,7 +222,7 @@ async function reuseQueriesCommand(
     return 1;
   }
   // MD-N9-4: the Planner's model through its own scheduler, as `plan` loads it.
-  const access = ModelAccess.forQueues([{ queue: "plan", role: "planner", name }], {
+  const access = ModelAccess.forQueues([planQueueSpec(name, { registry })], {
     registry,
     ledger: log,
   });

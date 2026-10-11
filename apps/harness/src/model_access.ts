@@ -23,6 +23,7 @@ import {
   type WatchdogLevel,
   admitLoad,
   currentAssignment,
+  escalationWindow,
   gpuCeilingsFrom,
   hostFingerprintHash,
   isManagedModelName,
@@ -30,6 +31,7 @@ import {
   measureUsableMemory,
   pageCacheWarmer,
   resolveWorkerModelId,
+  roleOf,
   setModelLeaseOwner,
   tierSettingsOf,
   withMeasurementRun,
@@ -194,6 +196,96 @@ export function describeModel(
     role,
     opts.want ?? {},
   );
+}
+
+/**
+ * The window a role's model is qualified at on this host (N1-WIN): the
+ * context of its newest qualified combination for that role here, else
+ * undefined, and the roster's window for the role applies. The paths that
+ * serve or check the Planning model ask for it through `servedWindow` and
+ * `describeServed` (models.md's residency row names each), so the model runs
+ * at the window it was verified at, never a smaller default (on 2026-10-09
+ * nail-mtp, verified for Planning at 16,384, answered at the roster's 8,192).
+ */
+export function qualifiedWindow(
+  name: string,
+  role: ModelRole,
+  opts: { registry: ModelRegistry; host?: string },
+): ResolveOptions | undefined {
+  const plain = name.replace(/^ollama\//, "");
+  const entry = opts.registry.get(plain) ?? opts.registry.get(weightsKey(plain));
+  const host = opts.host ?? hostFingerprintHash();
+  const newest = [...(entry?.qualifications ?? [])]
+    .reverse()
+    .find(
+      (q) =>
+        q.status === "qualified" &&
+        q.combination.host === host &&
+        roleOf(q.combination) === role &&
+        q.combination.settings.contextTokens > 0,
+    );
+  return newest ? { contextTokens: newest.combination.settings.contextTokens } : undefined;
+}
+
+/**
+ * A queue spec's window for a role's model (N1-WIN): the Planning model's
+ * qualified window here, when it has one; nothing otherwise, so the roster's
+ * window for the role applies. Only the Planning role is sized this way.
+ */
+export function servedWindow(
+  name: string,
+  role: ModelRole,
+  opts: { registry: ModelRegistry; host?: string },
+): { window?: ResolveOptions } {
+  if (role !== "planner") return {};
+  const window = qualifiedWindow(name, role, opts);
+  return window ? { window } : {};
+}
+
+/**
+ * A role's adapter for gating it (N1-WIN): described at the window it is
+ * served at (`servedWindow`), so a gate and the runtime size the model alike
+ * — the queue's gate, doctor's role verification.
+ */
+export function describeServed(
+  name: string,
+  role: ModelRole,
+  opts: { registry: ModelRegistry; host?: string },
+): UnloadableAdapter {
+  const { window } = servedWindow(name, role, opts);
+  return describeModel(name, role, {
+    registry: opts.registry,
+    ...(window ? { want: window } : {}),
+  });
+}
+
+/**
+ * The queues the Planning model's weights serve in `queue` (MD-N8-1): the
+ * manager, Seshat answering a person, and escalation (the Planner as a
+ * coder, at `escalationWindow`). The manager and Seshat run at the Planning
+ * model's served window (N1-WIN).
+ */
+export function planningQueueSpecs(
+  name: string,
+  opts: { registry: ModelRegistry; host?: string },
+): QueueSpec[] {
+  return [
+    // The Planner doubles as the PM you chat with during the run.
+    { queue: "manager", role: "planner", name, ...servedWindow(name, "planner", opts) },
+    // Seshat answering a person: the same weights, the interactive class
+    // (models rule 20e: a person waiting; its swaps are interactive, C7).
+    { queue: "seshat", role: "planner", name, ...servedWindow(name, "planner", opts) },
+    // The Planner's (stronger, dense) model as a coder, for --escalate-retries.
+    { queue: "escalation", role: "planner", name, window: escalationWindow() },
+  ];
+}
+
+/** `plan`'s one queue for the Planner's model (MD-N9-4), at its served window (N1-WIN). */
+export function planQueueSpec(
+  name: string,
+  opts: { registry: ModelRegistry; host?: string },
+): QueueSpec {
+  return { queue: "plan", role: "planner", name, ...servedWindow(name, "planner", opts) };
 }
 
 /** The same managed launch with some settings changed, for a probe. */

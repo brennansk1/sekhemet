@@ -59,7 +59,7 @@ import { checkFreeSpace, formatBytes } from "./disk_space.js";
 import { packageManagerOf, toolProbeOptions } from "./init.js";
 import { countLostRecords, lostRecordsPath } from "./lost_records.js";
 import { pendingM0InRepo } from "./m0_path.js";
-import { describeModel, roleModelName } from "./model_access.js";
+import { describeModel, describeServed, roleModelName } from "./model_access.js";
 import { setupFor } from "./planner_live.js";
 import { rolePromptVersions } from "./prompt_versions.js";
 import { type CombinationDeps, qualificationCombination } from "./qualify.js";
@@ -1514,8 +1514,9 @@ export function roleQualificationCheck(
 ): DiagnosticCheck {
   if (!registry) return check("Role verification", "warn", "no model list on this host");
   const host = opts.host ?? hostFingerprintHash();
+  // N1-WIN: each role described at the window it is served at, as the queue's gate does.
   const describe =
-    opts.describe ?? ((n: string, r: ModelRole) => describeModel(n, r, { registry }));
+    opts.describe ?? ((n: string, r: ModelRole) => describeServed(n, r, { registry, host }));
   let configured: ReturnType<typeof queueDefaults> = {};
   if (opts.repoPath)
     try {

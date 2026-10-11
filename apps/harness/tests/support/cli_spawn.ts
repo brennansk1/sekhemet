@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach } from "vitest";
-import { runTmpEnv } from "./hygiene.js";
+import { hostMemoryNormal, runTmpEnv } from "./hygiene.js";
 
 /**
  * The built command as a person runs it, for the front door's entry-point
@@ -114,7 +114,12 @@ export function cliEnv(p: Place, extra: Record<string, string> = {}): Record<str
     BROWSER: join(p.root, "browser.sh"),
     ...runTmpEnv(),
     ...extra,
-    NODE_OPTIONS: [`--import=${join(p.root, "guard.mjs")}`, extra.NODE_OPTIONS ?? ""]
+    // The host's memory held at normal unless the test drives it (hygiene.ts).
+    NODE_OPTIONS: [
+      `--import=${join(p.root, "guard.mjs")}`,
+      `--import=${hostMemoryNormal()}`,
+      extra.NODE_OPTIONS ?? "",
+    ]
       .join(" ")
       .trim(),
   };

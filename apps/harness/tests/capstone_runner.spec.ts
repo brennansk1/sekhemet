@@ -814,7 +814,11 @@ describe("the Sekhemet arm's person-simulator", () => {
       pollMs: 10,
       budget: { ...runner.AGENTIC, budgetMinutes: { "release-1": 0, "change-request": 0 } },
     });
-    expect(r).toMatchObject({ ok: true });
+    // Nothing was planned in either phase: the run goes on, and fails, named (N1-DRV).
+    expect(r).toMatchObject({
+      ok: false,
+      why: "release-1: no issue was ever planned; change-request: no issue was ever planned",
+    });
     const kinds = grid
       .readLog(grid.runPaths("sekhemet-local", 1, e))
       .map((l: { kind: string }) => l.kind);

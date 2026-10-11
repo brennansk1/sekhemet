@@ -119,6 +119,7 @@ import { readMeasurementMarker } from "./measure_cmd.js";
 import {
   ModelAccess,
   describeModel,
+  planQueueSpec,
   resolveWorkerName,
   roleModelName,
   workerZone3Fit,
@@ -1661,9 +1662,10 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         `Planning model: ${DEFAULT_PM_MODEL}, Seshat's model, is not in Sekhemet's model list; planning without a model.`,
       );
     }
-    // MD-N9-4: the Planner's model through the scheduler, loaded when first asked.
+    // MD-N9-4: the Planner's model through the scheduler, loaded when first asked,
+    // at the window it is verified at for the Planning role here (N1-WIN).
     const planAccess = plannerName
-      ? ModelAccess.forQueues([{ queue: "plan", role: "planner", name: plannerName }], {
+      ? ModelAccess.forQueues([planQueueSpec(plannerName, { registry })], {
           registry,
           ledger: log,
         })

@@ -98,3 +98,23 @@ describe("F31: test hygiene", () => {
     await until(() => !alive(grandchild) && !alive(child.pid as number));
   });
 });
+
+describe("N1a: the host's memory is not under test", () => {
+  it("a spawned command reads normal memory pressure and no swap, whatever the host's own state; other queries reach the system", () => {
+    // The owner's own work on this machine put the kernel at a pressure
+    // warning (level 2): every spawned `queue` held its worktrees, and the
+    // tests timed out. The run's `sysctl` is first on PATH for every child.
+    const pressure = spawnSync("sysctl", ["-n", "kern.memorystatus_vm_pressure_level"], {
+      encoding: "utf8",
+    });
+    expect(pressure.stdout.trim()).toBe("1");
+    const swap = spawnSync("sysctl", ["-n", "vm.swapusage"], { encoding: "utf8" });
+    expect(swap.stdout).toMatch(/used = 0\.00M/);
+    const memsize = spawnSync("sysctl", ["-n", "hw.memsize"], { encoding: "utf8" });
+    expect(Number(memsize.stdout.trim())).toBeGreaterThan(0);
+    const named = spawnSync("sysctl", ["kern.memorystatus_vm_pressure_level"], {
+      encoding: "utf8",
+    });
+    expect(named.stdout.trim()).toBe("kern.memorystatus_vm_pressure_level: 1");
+  });
+});

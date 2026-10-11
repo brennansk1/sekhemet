@@ -96,7 +96,7 @@
   },
   "NEW-measurement-8": {
     "na": {
-      "empty,loading,error,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Per-run settings and the history view read recorded runs; no criterion names an empty, loading, failure, slow, outage, access, scale, concurrency, undo, retry or restart path for them."
+      "loading,slow,model_down,offline,permission,large_data,concurrent,undo,retry,restart": "Per-run settings and the history view read recorded runs; no criterion names a loading, slow, outage, access, scale, concurrency, undo, retry or restart path for them. Empty and error are tested since N1a (MS-N8-6: a phase whose board never held an issue fails; MS-N8-7: an unbacked claim is logged)."
     }
   },
   "NEW-models-14 (the measurement)": {

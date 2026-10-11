@@ -167,6 +167,18 @@ export const SESHAT_DATA = {
 };
 
 /**
+ * N1-CLAIM: a reply that claims a proposal its turn did not make (the model
+ * never certifies its own work). `notice` is added to that reply when no
+ * proposal from an earlier turn is still open; it says only that this reply
+ * proposed nothing, never that no proposal exists. Here because the reply,
+ * notice included, is read back in Seshat's later prompts.
+ */
+export const SESHAT_CLAIM_CHECK = {
+  notice:
+    "This reply proposed nothing new, so nothing from it is waiting for you to review or apply. Ask me again if you want it proposed.",
+};
+
+/**
  * One line per fact of Seshat's knowledge beyond the board (`pm/knowledge.ts`,
  * P6), each carrying the id Seshat cites it by: rendered into its prompt and,
  * for a ledger answer, into the reply (PM-P6-1, -2, -6).

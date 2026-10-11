@@ -29,13 +29,22 @@
  *    later release.
  *    Steps 3 to 6 repeat until every issue of the phase is done or its budget
  *    is spent. A stall (nothing can move) is waited on until the budget ends,
- *    never taken for the end of release 1 (the protocol's fixed point).
+ *    never taken for the end of release 1 (the protocol's fixed point). A
+ *    phase whose board never held one of its issues has done nothing: it
+ *    fails, "no issue was ever planned", never "every issue is done" (N1-DRV).
  * 7. **Release 1.** She accepts release 1 (`POST /api/slices/<id>/accept`) and
  *    tags it (`sekhemet release --confirm <id>`) when the product proposes it.
  *    The runner then tags the integration branch `release-1` for the
  *    regression count: the fixed point.
  * 8. **The change.** `change_request.md`, hash-checked, is her next message;
- *    steps 2 to 6 run again for the change phase, then the run ends.
+ *    steps 2 to 6 run again for the change phase, then the run ends. A failed
+ *    phase does not stop the protocol (the run is still scored, as a failure),
+ *    but the run reports `ok: false` naming each failed phase.
+ *
+ * A reply of Seshat's that says it proposed something while carrying no
+ * proposal is recorded in the log (`unbacked_claim`), so the run's record is
+ * honest about it (N1-CLAIM); she says nothing about it to Seshat, since she
+ * never says more than the FAQ.
  *
  * Accept moves the integration branch by plumbing and leaves the person's
  * checkout behind (RG-S5-2); the product says how to catch up
@@ -247,6 +256,21 @@ export async function awaitIdle(ctx, deadline) {
   }
 }
 
+/** What the person-simulator's log says when a reply names a proposal it does not carry. */
+export const UNBACKED_CLAIM = "Seshat's reply named a proposal but none was attached";
+
+/**
+ * A reply's words saying it proposed something: "I've proposed…", "I have
+ * proposed…", "I'm proposing…", "Proposed changes, 2."; the sentence that
+ * says so, or null.
+ */
+export function proposalClaim(text) {
+  const claim =
+    /\b(?:I(?:['\u2019]ve| have)?(?: just)?\s+proposed|I(?:['\u2019]m| am)\s+proposing|proposed\s+(?:changes?|plan|issues?|cards?|project)\b)/i;
+  const sentences = (text ?? "").replace(/\r\n/g, "\n").match(/[^.!?\n]+[.!?]?/g) ?? [];
+  return sentences.map((x) => x.trim()).find((x) => claim.test(x)) ?? null;
+}
+
 /** She approves every open proposal Seshat sends (`planDecision`), each logged with the product's answer. */
 async function applyProposals(ctx, phase, reply) {
   for (const p of reply.proposals.filter((x) => x.state === "open")) {
@@ -287,6 +311,16 @@ export async function converse(ctx, phase, seq, given, deadline) {
       proposals: reply.proposals.map((p) => ({ id: p.id, kind: p.kind, state: p.state })),
       textSha256: sha256(reply.text),
     });
+    // The model never certifies its own work: a claim with no proposal behind it is recorded.
+    const claim = reply.proposals.length === 0 ? proposalClaim(reply.text) : null;
+    if (claim)
+      logEvent(ctx.paths, {
+        kind: "unbacked_claim",
+        phase,
+        replies: reply.ids,
+        note: UNBACKED_CLAIM,
+        claim,
+      });
     at = reply.seq;
     await applyProposals(ctx, phase, reply);
     if (reply.failed) return "Seshat's reply failed";
@@ -498,6 +532,9 @@ export const STALL_POLL_MS = 60_000;
 
 const STALLED = "the phase's time budget was spent while nothing could be moved";
 
+/** Why a phase fails when its board never held one of its issues (N1-DRV). */
+export const NOTHING_PLANNED = "no issue was ever planned";
+
 /**
  * The issues of a later release (the story map's slices after the first), so
  * release 1's phase neither pulls them nor waits on them. Empty with no story
@@ -556,17 +593,33 @@ async function pullNext(ctx, phase, cards, later, deadline) {
  * never a stall). With `ctx.waitOnStall` false (a Web-Bench attempt, which
  * has no fixed point to protect) a stall ends the phase at once. Returns why
  * it ended.
+ *
+ * The phase's issues are those not finished when it began (release 1: not in
+ * a later release), and those planned since. A phase that never held one
+ * fails with `NOTHING_PLANNED`, logged as `phase_failed`, whether its board
+ * emptied or its budget ran out first: an empty board is not a finished one
+ * (N1-DRV).
  */
 export async function work(ctx, phase, deadline) {
   let stalledFor = null;
+  const finishedBefore = new Set(
+    (await issues(ctx)).filter((c) => ["done", "rejected"].includes(c.status)).map((c) => c.id),
+  );
+  const held = new Set();
   for (let pass = 1; ; pass += 1) {
     await approveCriteria(ctx, phase);
     await decideReviews(ctx, phase);
     let cards = await issues(ctx);
-    if (Date.now() >= deadline) return stalledFor ? STALLED : "the phase's time budget was spent";
     const later = await laterReleases(ctx, phase);
     const open = () =>
       cards.filter((c) => !["done", "rejected"].includes(c.status) && !later.has(c.id));
+    for (const c of cards) if (!finishedBefore.has(c.id) && !later.has(c.id)) held.add(c.id);
+    const spent = Date.now() >= deadline;
+    if (held.size === 0 && (spent || open().length === 0)) {
+      logEvent(ctx.paths, { kind: "phase_failed", phase, why: NOTHING_PLANNED });
+      return NOTHING_PLANNED;
+    }
+    if (spent) return stalledFor ? STALLED : "the phase's time budget was spent";
     if (open().length === 0)
       return phase === "release-1" ? "every issue of release 1 is done" : "every issue is done";
     if (!cards.some((c) => c.status === "ready")) {
@@ -869,9 +922,17 @@ export async function driveSekhemet({
   const r2 = await work(ctx, "change-request", deadline2);
   logUsage(ctx, "change-request", seq2);
   catchUp(ctx, "the end of the run");
-  logEvent(paths, { kind: "end", reason: r2 });
+  const failed = [
+    ["release-1", r1],
+    ["change-request", r2],
+  ]
+    .filter(([, why]) => why === NOTHING_PLANNED)
+    .map(([phase, why]) => `${phase}: ${why}`);
+  const ok = failed.length === 0;
+  logEvent(paths, { kind: "end", reason: r2, ok, ...(ok ? {} : { failed }) });
   return {
-    ok: true,
+    ok,
+    ...(ok ? {} : { why: failed.join("; ") }),
     paths: paths.dir,
     releaseOne: { conversation: talk1, work: r1, ...release },
     change: { conversation: talk2, work: r2 },

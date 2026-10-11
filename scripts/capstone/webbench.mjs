@@ -1018,7 +1018,9 @@ export function claudeCodeAttempt({ env = process.env, budget = WEBBENCH_AGENTIC
  * answered with `NO_ANSWER`), then the board worked as the capstone's
  * person works it (`sekhemet_arm.mjs`: criteria approved, the queue run,
  * Review decided, the next Backlog issue moved with the product's `/ready`)
- * until every issue is done or nothing can move. The tree scored is her checkout,
+ * until every issue is done or nothing can move (an attempt that planned no
+ * issue ends "no issue was ever planned", logged as `phase_failed`). The tree
+ * scored is her checkout,
  * brought up to the integration branch.
  */
 export function sekhemetAttempt({

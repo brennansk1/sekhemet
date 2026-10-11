@@ -44,9 +44,90 @@ export function modelPortGuard(): string {
   return file;
 }
 
-/** `node` arguments that load the guard first, then `preload` when given. */
+/**
+ * Loaded into every spawned command after the guard: the host's memory as the
+ * memory watchdog, the run guard and `doctor` read it — the kernel's pressure
+ * level (`sysctl kern.memorystatus_vm_pressure_level`, Linux's
+ * `/proc/pressure/memory`) and the swap in use (`sysctl vm.swapusage`,
+ * `/proc/meminfo`) — held at normal with no swap. The owner's own work on this
+ * machine is not part of any behaviour under test: without this, a queue test
+ * waited on "the memory watchdog asks to stop new worktrees" until it timed
+ * out whenever the host itself was under pressure.
+ *
+ * A test about memory pressure drives it itself and is left alone: through
+ * `support/g5_host.mjs` (`G5_PRESSURE` set), or with its own `sysctl` ahead of
+ * the system's on PATH (runtime_watchdog_cli). Nothing else is changed.
+ */
+export const HOST_MEMORY_NORMAL = String.raw`import { createRequire, syncBuiltinESMExports } from "node:module";
+import { delimiter, join } from "node:path";
+if (!process.env.G5_PRESSURE) {
+  const require = createRequire(import.meta.url);
+  const cp = require("node:child_process");
+  const fs = require("node:fs");
+  const SYSTEM = new Set(["/usr/sbin", "/sbin", "/usr/bin", "/bin"]);
+  // The first sysctl on PATH is the test's own stand-in: it drives the host.
+  const standIn = () => {
+    for (const dir of String(process.env.PATH ?? "").split(delimiter)) {
+      if (!dir) continue;
+      try {
+        fs.accessSync(join(dir, "sysctl"), fs.constants.X_OK);
+      } catch {
+        continue;
+      }
+      return !SYSTEM.has(dir);
+    }
+    return false;
+  };
+  const as = (opts, t) => {
+    const enc = typeof opts === "string" ? opts : opts?.encoding;
+    return enc && enc !== "buffer" ? t : Buffer.from(t);
+  };
+  const realExecFileSync = cp.execFileSync;
+  cp.execFileSync = function execFileSync(cmd, args, opts, ...rest) {
+    if (cmd === "sysctl" && Array.isArray(args) && !standIn()) {
+      if (args.includes("kern.memorystatus_vm_pressure_level")) return as(opts, "1\n");
+      if (args.includes("vm.swapusage")) {
+        return as(opts, "total = 2048.00M  used = 0.00M  free = 2048.00M  (encrypted)\n");
+      }
+    }
+    return realExecFileSync.call(this, cmd, args, opts, ...rest);
+  };
+  const realRead = fs.readFileSync;
+  fs.readFileSync = function readFileSync(path, ...rest) {
+    if (path === "/proc/pressure/memory") {
+      return as(rest[0], "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
+    }
+    if (path === "/proc/meminfo") {
+      const real = String(realRead.call(this, path, "utf8"));
+      const total = /SwapTotal:\s+(\d+)/.exec(real)?.[1] ?? "0";
+      return as(rest[0], real.replace(/SwapFree:\s+\d+/, "SwapFree:       " + total));
+    }
+    return realRead.call(this, path, ...rest);
+  };
+  syncBuiltinESMExports();
+}
+`;
+
+/** The host-memory preload's file, written once per worker beside the guard. */
+export function hostMemoryNormal(): string {
+  const dir = join(tmpdir(), `sek-guard-${process.pid}`);
+  const file = join(dir, "host_memory_normal.mjs");
+  if (!existsSync(file)) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(file, HOST_MEMORY_NORMAL);
+  }
+  return file;
+}
+
+/** `node` arguments that load the guard and the host's memory first, then `preload` when given. */
 export function guardedImports(preload?: string): string[] {
-  return ["--import", modelPortGuard(), ...(preload ? ["--import", preload] : [])];
+  return [
+    "--import",
+    modelPortGuard(),
+    "--import",
+    hostMemoryNormal(),
+    ...(preload ? ["--import", preload] : []),
+  ];
 }
 
 /** The run's temporary folder for a spawned command's environment (`global_tmp.ts`). */

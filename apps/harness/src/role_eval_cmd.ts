@@ -20,7 +20,7 @@ import {
   runSeededDefects,
 } from "./learning/review_eval.js";
 import { sendBackCatches } from "./learning/send_back_catch.js";
-import { roleModelName, sharedQueue } from "./model_access.js";
+import { roleModelName, servedWindow, sharedQueue } from "./model_access.js";
 import {
   type SeshatEvalResult,
   compareSkillRuns,
@@ -92,11 +92,16 @@ async function withModel<T>(
 ): Promise<T> {
   const acquire =
     deps.acquire ??
-    ((r: "planner" | "reviewer", name: string) =>
-      sharedQueue(
-        { queue: r === "planner" ? "chat" : "reviewer", role: r, name },
-        { registry: deps.registry ?? new ModelRegistry(), ledger: deps.log },
-      )());
+    ((r: "planner" | "reviewer", name: string) => {
+      const registry = deps.registry ?? new ModelRegistry();
+      return sharedQueue(
+        // N1-WIN: Seshat is scored at the window the product chats at.
+        r === "planner"
+          ? { queue: "chat", role: r, name, ...servedWindow(name, r, { registry }) }
+          : { queue: "reviewer", role: r, name },
+        { registry, ledger: deps.log },
+      )();
+    });
   const hold = await acquire(role, model);
   try {
     return await work(hold.adapter);

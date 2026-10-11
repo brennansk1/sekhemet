@@ -42,6 +42,7 @@ import {
   DUPLICATE_OF_DESCRIPTION,
   PM_TOOL_COPY,
   PROPOSE_SPLIT_CARD_DESCRIPTION,
+  SESHAT_CLAIM_CHECK,
   SESHAT_DATA,
   SESHAT_FACTS,
   SESHAT_READER_SYSTEM,
@@ -435,14 +436,68 @@ const whyOf = (reason: string) =>
 const because = (why: string) => `. Why: ${why}.`;
 const PRIORITY_NAME = ["No priority", "Urgent", "High", "Medium", "Low"];
 
+/** A tool call that proposes a change (a `propose_*` tool or `start_project`). */
+const isProposing = (c: ToolCall): boolean =>
+  c.name.startsWith("propose_") || c.name === "start_project";
+
+/** The verbs of a first-person claim to have made something (N1-CLAIM). */
+const CLAIM_VERBS = "proposed|drafted|created|added|opened|filed|queued|suggested|set up|started";
+/**
+ * "I've proposed …", "I have created …", "I just drafted …" — not after a
+ * conditional or a modal ("If I proposed a split now …"). The words after the
+ * verb, to the end of the sentence, are captured; the claim's clause is
+ * those up to the first comma, colon or semicolon.
+ */
+const FIRST_PERSON_CLAIM = new RegExp(
+  `(?<!\\b(?:[Ii]f|[Ww]hen|[Oo]nce|[Uu]nless|[Uu]ntil|[Bb]efore|[Aa]fter|[Ss]hould|[Cc]ould|[Ww]ould|[Mm]ay|[Mm]ight)\\s+)\\bI(?:'ve|\u2019ve| have)?\\s+(?:just\\s+|now\\s+|also\\s+)?(?:${CLAIM_VERBS})\\b([^.!?\\n]{0,80})`,
+  "g",
+);
+/** What a claim is about: a proposal or a piece of planned work. */
+const CLAIM_OBJECT =
+  /\b(?:proposals?|changes?|issues?|cards?|projects?|sprints?|cycles?|stor(?:y|ies)|tasks?|tickets?|splits?|epics?)\b/i;
+/** "I've proposed no changes", "I have created nothing": a negated claim is none. */
+const NEGATED = /\b(?:no|not|nothing|none|never)\b/i;
+/**
+ * A sentence that refers back to earlier turns or to work a person already
+ * acted on ("As I proposed earlier", "yesterday", "on Monday", "when you
+ * applied it"): it describes past work, not this turn's, so it is no claim.
+ */
+const BACK_REFERENCE =
+  /\b(?:earlier|yesterday|previously|already|last (?:week|time|turn|night|month|sprint)|on (?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day|as I|you(?:'ve|\u2019ve| have)? (?:applied|accepted|approved))\b/i;
+/** "Proposed changes, 2." or "Here are the two proposed changes": a proposal said to exist. */
+const PROPOSALS_SAID = [
+  /^\s*(?:\*\*)?proposed (?:changes?|issues?|cards?|projects?|splits?)\b/i,
+  /\b(?:I have|I've|[Hh]ere (?:is|are))\s+(?:(?!not\b|no\b|never\b)\w+\s+){0,2}proposed (?:changes?|issues?|cards?|projects?|splits?)\b/,
+];
+/** A sentence or a line, with its closing mark. */
+const SENTENCES = /[^.!?\n]+[.!?]?/g;
+
+/**
+ * Whether a reply claims a proposal or created work (N1-CLAIM): conservative,
+ * sentence by sentence, a first-person past claim whose clause names a work
+ * object and is not negated, or a proposal said to exist. Offers ("I could
+ * propose"), questions, negations ("I have not proposed"), other actors ("The
+ * Agent created …"), conditionals and sentences that refer back to earlier
+ * turns are not claims.
+ */
+export function claimsProposal(text: string): boolean {
+  for (const sentence of text.match(SENTENCES) ?? []) {
+    if (BACK_REFERENCE.test(sentence)) continue;
+    if (PROPOSALS_SAID.some((r) => r.test(sentence))) return true;
+    for (const m of sentence.matchAll(FIRST_PERSON_CLAIM)) {
+      const clause = (m[1] ?? "").split(/[,:;]/)[0] ?? "";
+      if (CLAIM_OBJECT.test(clause) && !NEGATED.test(clause)) return true;
+    }
+  }
+  return false;
+}
+
 /** The model's tool calls as proposals, and how many were left out for giving no reason. */
 export function proposalsFrom(
   calls: ToolCall[],
   cards: CardRecord[],
 ): { proposals: ProposalDraft[]; unreasoned: number } {
-  const proposing = calls.filter(
-    (c) => c.name.startsWith("propose_") || c.name === "start_project",
-  );
+  const proposing = calls.filter(isProposing);
   const unreasoned = proposing.filter((c) => !asString(c.arguments?.reason)).length;
   return { proposals: toProposals(calls, cards), unreasoned };
 }
@@ -1185,6 +1240,14 @@ export async function answer(
   // complete or ready changes nothing; while a must-have is unproven the
   // reply states the proven count instead.
   let text = guardCompletionClaim(stripReasoning(res.text), snapshot.storyMap).text;
+  // N1-CLAIM: a reply claiming a proposal its turn did not make is said to
+  // have proposed nothing new — unless an earlier turn's proposal is still
+  // open, which the claim may name. The model is not asked again: a re-ask
+  // is a prompt variant rule 35 has not admitted (PROMPT_STANDARD).
+  const openEarlier = history.some((m) => m.proposals?.some((p) => p.state === "open"));
+  if (text && proposals.length === 0 && !openEarlier && claimsProposal(text)) {
+    text = `${text}\n\n${SESHAT_CLAIM_CHECK.notice}`;
+  }
   if (!text) {
     text =
       proposals.length > 0

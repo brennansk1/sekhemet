@@ -20,6 +20,8 @@ import { afterEach, describe, expect, it } from "vitest";
 // @ts-expect-error: plain ESM scripts, run by hand and checked here.
 import * as grid from "../../../scripts/capstone/grid.mjs";
 // @ts-expect-error: plain ESM scripts, run by hand and checked here.
+import * as person from "../../../scripts/capstone/person.mjs";
+// @ts-expect-error: plain ESM scripts, run by hand and checked here.
 import * as runner from "../../../scripts/capstone/runner.mjs";
 // @ts-expect-error: plain ESM scripts, run by hand and checked here.
 import * as score from "../../../scripts/capstone/score.mjs";
@@ -201,6 +203,18 @@ function standInQueue(
 
 const git = (repo: string, ...a: string[]) =>
   execFileSync("git", a, { cwd: repo, encoding: "utf8" }).trim();
+
+/** A one-commit repository on `main`: the person's checkout, already caught up. Returns its HEAD. */
+function checkout(dir: string): string {
+  const g = (...a: string[]) => git(dir, ...a);
+  g("init", "-q", "-b", "main");
+  g("config", "user.name", "Jane Doe");
+  g("config", "user.email", "jane@example.com");
+  writeFileSync(join(dir, "a.txt"), "one\n");
+  g("add", "-A");
+  g("commit", "-q", "-m", "one");
+  return g("rev-parse", "HEAD");
+}
 
 type Ev = { kind: string; [k: string]: unknown };
 const decisions = (log: Ev[], what: string) =>
@@ -421,7 +435,7 @@ describe("the Sekhemet arm, driven end to end against a stand-in model", () => {
     expect(log.at(-1)?.kind).toBe("end");
   }, 240_000);
 
-  it("stops answering Seshat at the reply cap", async () => {
+  it("stops answering Seshat at the reply cap, and a board that never held an issue fails each phase (MS-N8-6)", async () => {
     const e = sealedEnv();
     const s = await served(e, [
       { text: "Which day does your work week start on?" },
@@ -445,6 +459,54 @@ describe("the Sekhemet arm, driven end to end against a stand-in model", () => {
     // No plan was proposed, so nothing was built; the run still reaches the change and its end.
     expect(queue.passes.length).toBe(0);
     expect(log.some((l) => l.kind === "change_given")).toBe(true);
+    // A board that never held an issue is no success (N1-DRV): each phase
+    // fails, named, and the run says so; it is counted as a failed run, never
+    // left out of the statistics.
+    expect(r).toMatchObject({
+      ok: false,
+      why: "release-1: no issue was ever planned; change-request: no issue was ever planned",
+      releaseOne: { work: "no issue was ever planned" },
+      change: { work: "no issue was ever planned" },
+    });
+    expect(log.filter((l) => l.kind === "phase_failed")).toMatchObject([
+      { phase: "release-1", why: "no issue was ever planned" },
+      { phase: "change-request", why: "no issue was ever planned" },
+    ]);
+    expect(log.find((l) => l.kind === "release_1_finished")?.reason).toBe(
+      "no issue was ever planned",
+    );
+    expect(log.at(-1)).toMatchObject({
+      kind: "end",
+      ok: false,
+      failed: ["release-1: no issue was ever planned", "change-request: no issue was ever planned"],
+    });
+    expect(score.runValidity(log, "sekhemet-local")).toEqual([]);
+    // The product's own board, over HTTP: it never held an issue.
+    const board = (await (await fetch(`${s.url}/api/board`)).json()) as { cards?: unknown[] };
+    expect(board.cards ?? []).toEqual([]);
+  }, 120_000);
+
+  it("2026-10-09's night through a real dashboard: Seshat says it proposed a project and attaches nothing; the run logs the unbacked claim and fails, never 'every issue is done' (MS-N8-6, MS-N8-7)", async () => {
+    const e = sealedEnv();
+    const s = await served(e, [{ text: "I've proposed starting a project for the lending desk." }]);
+    const queue = standInQueue(s.repo, s.cards);
+    const r = await arm.driveSekhemet({
+      run: 1,
+      url: s.url,
+      env: e,
+      pollMs: 25,
+      runQueue: queue.run,
+    });
+    const log = grid.readLog(grid.runPaths("sekhemet-local", 1, e)) as Ev[];
+    expect(log.filter((l) => l.kind === "unbacked_claim")[0]).toMatchObject({
+      phase: "release-1",
+      note: "Seshat's reply named a proposal but none was attached",
+    });
+    expect(queue.passes.length).toBe(0);
+    expect(r).toMatchObject({ ok: false, releaseOne: { work: "no issue was ever planned" } });
+    // The product's own board, over HTTP: it never held an issue.
+    const board = (await (await fetch(`${s.url}/api/board`)).json()) as { cards?: unknown[] };
+    expect(board.cards ?? []).toEqual([]);
   }, 120_000);
 });
 
@@ -564,6 +626,195 @@ describe("the Sekhemet arm's person at a terminal", () => {
     const stalled = log.filter((l) => l.kind === "no_ready_issue");
     expect(stalled.length).toBe(1);
     expect(stalled[0]).toMatchObject({ phase: "release-1", waiting: [{ id: "ISSUE-2" }] });
+  });
+
+  it("fails a phase whose board never held one of its issues, never 'every issue is done' (N1-DRV)", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "capstone-empty-")));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    const paths = { log: join(dir, "log.jsonl"), input: dir };
+    let posted = 0;
+    let queued = 0;
+    // Release 1 on an empty board; the change on a board whose issues were all
+    // finished before the phase began; and a phase whose budget the
+    // conversation spent before any issue was planned.
+    const phases: [string, { id: string; status: string }[], number][] = [
+      ["release-1", [], 60_000],
+      [
+        "change-request",
+        [
+          { id: "ISSUE-1", status: "done" },
+          { id: "ISSUE-2", status: "rejected" },
+        ],
+        60_000,
+      ],
+      ["change-request", [{ id: "ISSUE-1", status: "done" }], -1],
+    ];
+    for (const [phase, board, budgetMs] of phases) {
+      const d = {
+        get: async (path: string) =>
+          path === "/api/board"
+            ? { status: 200, json: { cards: board } }
+            : { status: 404, json: null, text: "" },
+        post: async () => {
+          posted += 1;
+          return { status: 500, json: null, text: "" };
+        },
+      };
+      const ctx = {
+        paths,
+        d,
+        pollMs: 5,
+        stallPollMs: 20,
+        approved: new Set(),
+        decided: new Set(),
+        runQueue: async () => {
+          queued += 1;
+          return { exit: 0, timedOut: false };
+        },
+      };
+      expect(await arm.work(ctx, phase, Date.now() + budgetMs)).toBe("no issue was ever planned");
+    }
+    expect(posted).toBe(0);
+    expect(queued).toBe(0);
+    const log = grid.readLog(paths) as Ev[];
+    expect(log.filter((l) => l.kind === "phase_failed")).toMatchObject([
+      { phase: "release-1", why: "no issue was ever planned" },
+      { phase: "change-request", why: "no issue was ever planned" },
+      { phase: "change-request", why: "no issue was ever planned" },
+    ]);
+  });
+
+  it("ends a phase as done when an issue it held is finished, even one accepted on its first pass", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "capstone-held-")));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    const head = checkout(dir);
+    const paths = { log: join(dir, "..", `${sha(dir).slice(0, 8)}-held.jsonl`), input: dir };
+    cleanups.push(() => rmSync(paths.log, { force: true }));
+    // ISSUE-1 was finished before the change; ISSUE-2, the change's, waits in Review.
+    const board = [
+      { id: "ISSUE-1", status: "done" },
+      { id: "ISSUE-2", status: "review" },
+    ];
+    const d = {
+      get: async (path: string) => {
+        if (path === "/api/board") return { status: 200, json: { cards: board } };
+        if (path === "/api/cards/ISSUE-2/evidence")
+          return {
+            status: 200,
+            json: { evidence: { id: "e1", rungResults: [{ gate: "unit", passed: true }] } },
+          };
+        if (path === "/api/cards/ISSUE-2/review")
+          return {
+            status: 200,
+            json: {
+              findings: [{ id: "f1", verdict: "met", text: "shown by a passing check" }],
+              implementationFiles: ["a.txt"],
+            },
+          };
+        return { status: 404, json: null, text: "" };
+      },
+      post: async (path: string) => {
+        if (path === "/api/cards/ISSUE-2/accept") {
+          (board[1] as { status: string }).status = "done";
+          return { status: 200, json: { sha: "abc" }, text: "" };
+        }
+        return { status: 200, json: {}, text: "" };
+      },
+    };
+    const ctx = {
+      paths,
+      d,
+      repo: dir,
+      branch: "main",
+      synced: head,
+      pollMs: 5,
+      stallPollMs: 20,
+      approved: new Set(),
+      decided: new Set(),
+      noReviewer: REVIEW_DESK_COPY.noReviewer,
+      runQueue: async () => ({ exit: 0, timedOut: false }),
+    };
+    expect(await arm.work(ctx, "change-request", Date.now() + 60_000)).toBe("every issue is done");
+    const log = grid.readLog(paths) as Ev[];
+    expect(decisions(log, "accept")).toMatchObject([{ basis: { issue: "ISSUE-2", status: 200 } }]);
+    expect(log.some((l) => l.kind === "phase_failed")).toBe(false);
+  });
+
+  it("records a reply that says it proposed something with no proposal attached, and says nothing more to Seshat (N1-CLAIM)", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "capstone-claim-")));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    const head = checkout(dir);
+    const paths = { log: join(dir, "..", `${sha(dir).slice(0, 8)}-claim.jsonl`), input: dir };
+    cleanups.push(() => rmSync(paths.log, { force: true }));
+    const claim = "I've proposed two changes for the power-tool fee.";
+    const question = "Needs a decision from Ruth: which day does your work week start on?";
+    const replies = [
+      // The run's own words: a proposal named, none attached.
+      {
+        text: "I've proposed starting a project for the Larkfield Tool Library Lending Desk.\n\n**Next steps:** Once applied, the project will generate the initial issues.",
+        proposals: [],
+      },
+      // Named and attached: nothing to record.
+      {
+        text: "I've proposed starting a project for the lending desk.",
+        proposals: [{ id: "p1", kind: "start_project", state: "applied" }],
+      },
+      // Named, none attached, and a question: she answers from the FAQ alone.
+      { text: `${question}\n\n${claim}\n\nProposed changes, 2. Your call.`, proposals: [] },
+    ];
+    const posted: string[] = [];
+    const ends: string[] = [];
+    for (const [i, reply] of replies.entries()) {
+      const messages = [
+        { id: "m1", seq: 1, role: "user", text: "the brief" },
+        { id: `r${i}`, seq: 2, role: "pm", state: "done", ...reply },
+      ];
+      const d = {
+        get: async () => ({ status: 200, json: { messages, status: { phase: "idle" } } }),
+        post: async (_path: string, body: { text?: string }) => {
+          posted.push(body.text ?? "");
+          return { status: 200, json: { message: { seq: 3 } }, text: "" };
+        },
+      };
+      const ctx = {
+        paths,
+        d,
+        repo: dir,
+        branch: "main",
+        synced: head,
+        pollMs: 5,
+        budget: { maxReplies: 20 },
+        fixture: grid.TIMESHEET_DIR,
+      };
+      ends.push(await arm.converse(ctx, "release-1", 1, ["release-1"], Date.now() + 300));
+    }
+    expect(ends).toEqual([
+      "Seshat asked nothing more",
+      "Seshat asked nothing more",
+      "the phase's time budget was spent waiting for Seshat",
+    ]);
+    const log = grid.readLog(paths) as Ev[];
+    expect(log.filter((l) => l.kind === "unbacked_claim")).toMatchObject([
+      {
+        phase: "release-1",
+        replies: ["r0"],
+        note: "Seshat's reply named a proposal but none was attached",
+        claim: "I've proposed starting a project for the Larkfield Tool Library Lending Desk.",
+      },
+      {
+        phase: "release-1",
+        replies: ["r2"],
+        note: "Seshat's reply named a proposal but none was attached",
+        claim,
+      },
+    ]);
+    // Her only words are the FAQ's answer to the question; the claim changes nothing she says.
+    expect(posted).toEqual([
+      person.replyTo(replies[2]?.text ?? "", {
+        given: ["release-1"],
+        fixture: grid.TIMESHEET_DIR,
+      }).text,
+    ]);
   });
 
   it("waits for Seshat to be idle, and says when it is not by the deadline", async () => {

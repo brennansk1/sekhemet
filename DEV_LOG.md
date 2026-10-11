@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 86 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 87 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,41 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 87 — 2026-10-11 (N1a: the night's blockers — the driver's false "done", Seshat's window, unbacked claims; hermetic queue tests; the test-and-refine loop designed)
+
+- **Why:** the 2026-10-09 overnight build produced nothing. Seshat (nail-mtp) replied "I've proposed starting a project…" with no proposal on the ledger, at an 8,192-token window, and the capstone driver called the empty board "every issue is done". The session's crons never fired, so nobody saw it (FINDINGS N1-CRON, N1-DRV, N1-CLAIM, N1-WIN, N1-LOOP).
+- **Built** (one workflow: two Opus builders, one Opus review with 6 majors, a fix round, a re-check):
+  - **N1-DRV, the driver** (`scripts/capstone/sekhemet_arm.mjs`):
+    - a phase whose board never held one of its issues ends "no issue was ever planned", logs `phase_failed`, and the run returns `ok: false`, scored as a failure and never left out;
+    - a reply that says it proposed something with none attached logs `unbacked_claim`;
+    - MS-N8-6 and MS-N8-7 are tested end to end through a real dashboard, including a replay of that night's exact case, and the product's board is checked over HTTP.
+  - **N1-WIN, the Planning model's window:** chat, the queue's manager, Seshat and quick queues and its gate, `plan`, `doctor`, `measure seshat` and `research reuse-queries` all size the Planning model at the window it qualified at (`servedWindow`, `describeServed`, `planningQueueSpecs`, `planQueueSpec`), never the roster's 8,192. A model with no Planning qualification keeps today's window.
+  - **N1-CLAIM, the product:**
+    - a cautious detector (`claimsProposal`) works per clause and skips back-references and negations;
+    - a reply that claims a proposal the turn did not make gets a plain notice, and none while an earlier proposal is open;
+    - the automatic re-ask was withdrawn: an unadmitted prompt variant needs PROMPT_STANDARD rule 35's A/B first.
+  - **N1-LOOP:** not explained by the window (the FAQ answer was in the newest turn every time). It stays open for Phase 2's replay.
+- **Found and fixed on the way:**
+  - **Hermetic tests.** With the owner working, the host sat at kernel memory pressure 2. The product's memory watchdog correctly stopped `queue` from starting worktrees, which made 45 tests fail (146 watchdog stops in the log), on main too. The run's global setup now puts a `sysctl` stand-in first on PATH that answers the memory readings as normal and passes every other query on. Tests about pressure still drive it. A hygiene test pins it.
+  - **The disk.** The data volume had 3.8 GB free, under the product's 5 GB floor, from the owner's own data. The SSD copies of Apodex and Qwen 3.8 GSQ, both unused, were moved to the HDD (`llm-moved-from-ssd-2026-10-11`, nothing deleted), leaving 30 GB free.
+  - **A corrected finding.** Apodex's 0% qualification was a wrong weights path (the registry looks for `llm/Apodex-1.1-mini-IQ3_M.gguf`; the file is in a subfolder), not memory fit.
+- **The test-and-refine loop** (owner, 2026-10-11), designed in `lead-work/LOOP_DESIGN.md`, with its prompts in `lead-work/loop/PROMPTS.md`:
+  - spec- and feature-driven, over a generated matrix of 2,232 rows: all 1,654 criteria of the 16 specs, features, checklist rows, commands, routes, doctor checks and config keys;
+  - Phase 1 (no model) before Phase 2 (real projects, in episodes from save points);
+  - lowest-hanging fruit first; adaptive batching of slow tests; small fix waves with time boxes;
+  - a depth audit (Missing, Shallow, Partial, Built, Professional); polish built in; docs per feature in `docs/guide`;
+  - Haiku 5.5 as the UI bug hunter, with oracles and a separate verifier.
+- **Measured:** the gate at 3 workers with the owner working took 55 min, against 44 min at 2 workers on a quiet host. Contention sets the pace, so it runs 2 workers in the daytime.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` 0, `biome check .` 0, vitest 946 files passed, 2 skipped; 7,322 tests passed, 74 skipped (2 workers, 48 min, the owner working). Earlier runs failed on the host's memory pressure (fixed: hermetic tests), on unit-only 18 → 20 (fixed: MS-N8-6 and MS-N8-7 tested end to end), and on the unhappy matrix (the n/a list narrowed: empty and error are now covered).
+- **Where the cards stop:**
+  - N1a is committed.
+  - **Next is Phase 1 (no model):** wave 1, the CLI (surface), with persona B's findings re-verified first, then the dashboard, following the matrix's order.
+  - **Owed before Phase 2:**
+    - re-qualify nail-mtp for Planning (its context version changed);
+    - fix Apodex's weights path;
+    - the owner's vault migration and golden-brief labels.
+  - The scheduled N2 task stalled on a permission prompt at 01:00 on 2026-10-10. The next unattended run is pre-approved with "Run now" first.
 
 ### Entry 86 — 2026-10-09 (N0: the overnight run's journey blockers, DEC-60 and DEC-61; qualification on the C5 build; the overnight sweeps' first findings)
 
