@@ -31,11 +31,17 @@ export class CsvError extends Error {
  * (INT-28), rather than swallowing the rest of the file into one field.
  */
 export function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
+  return parseCsvLines(text).map((r) => r.cells);
+}
+
+/** `parseCsv`'s rows, each with the file line it starts on (W6 A3: a note names it). */
+export function parseCsvLines(text: string): { cells: string[]; line: number }[] {
+  const rows: { cells: string[]; line: number }[] = [];
   let row: string[] = [];
   let field = "";
   let quoted = false;
   let line = 1;
+  let startsOn = 1;
   let openedOn = 0;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
@@ -58,19 +64,21 @@ export function parseCsv(text: string): string[][] {
         line++;
       }
       row.push(field);
-      if (row.some((f) => f !== "")) rows.push(row);
+      if (row.some((f) => f !== "")) rows.push({ cells: row, line: startsOn });
       row = [];
       field = "";
+      startsOn = line;
     } else field += c;
   }
   if (quoted) {
+    // W6 A5: one sentence a person can act on, naming the line (INT-28).
     throw new CsvError(
-      `unterminated quote on line ${openedOn}: a quoted field opens there and never closes`,
+      `Line ${openedOn} has a quote that opens and never closes. Close that quote, then try again.`,
       openedOn,
     );
   }
   row.push(field);
-  if (row.some((f) => f !== "")) rows.push(row);
+  if (row.some((f) => f !== "")) rows.push({ cells: row, line: startsOn });
   return rows;
 }
 
@@ -92,7 +100,19 @@ const SYNCED = new Set(["github", "forgejo"]);
 const cleanTitle = (t: string) => t.replace(/\s*\(SPIDR:[^)]*\)\s*$/, "").trim();
 
 type Fields = Record<string, unknown>;
-type Row = { fields: Fields; key?: string; sekhemetId?: string; url?: string };
+type Row = {
+  fields: Fields;
+  key?: string;
+  sekhemetId?: string;
+  url?: string;
+  /** The row's parent as the file names it: a tracker's key or a Sekhemet id. */
+  parent?: string;
+  /** Where the row is, as a person finds it: *Line 4* of a CSV, *Item 2* of a JSON file. */
+  where: string;
+};
+
+/** What a read of the file found: its rows, and what it left out or did not keep (W6 A3). */
+type Read = { rows: Row[]; notes: string[]; system?: "jira" | "linear" };
 
 /** Which tracker a CSV came from: the format names it, or the header gives it away. */
 function csvSystem(format: string, header: string[]): "jira" | "linear" | undefined {
@@ -104,12 +124,38 @@ function csvSystem(format: string, header: string[]): "jira" | "linear" | undefi
   return undefined;
 }
 
-function csvRows(format: string, content: string): { rows: Row[]; system?: "jira" | "linear" } {
-  const [header, ...rows] = parseCsv(content);
-  if (!header) return { rows: [] };
+/**
+ * A row's issue type as the card fields the board reads it from
+ * (`issueTypeOf`; integrations item 17's types): what the preview shows is
+ * what Apply creates (W6 A4). No type, or a type Sekhemet has not, is a Task,
+ * the type Apply has always given an imported row.
+ */
+const TYPES: Record<string, Fields> = {
+  epic: { tier: "epic" },
+  story: { tier: "story" },
+  task: { tier: "task" },
+  subtask: { tier: "task" },
+  "sub-task": { tier: "task" },
+  bug: { tier: "story", change: "fix" },
+  spike: { tier: "story", kind: "spike" },
+};
+
+const MAX_TITLE = 300;
+
+/** The title as kept, and a note when it was cut. */
+function keptTitle(t: string, where: string, notes: string[]): string {
+  if (t.length > MAX_TITLE)
+    notes.push(`${where}: the title is ${t.length} characters; the first ${MAX_TITLE} are kept.`);
+  return t.slice(0, MAX_TITLE);
+}
+
+function csvRows(format: string, content: string): Read {
+  const [header, ...rows] = parseCsvLines(content);
+  const notes: string[] = [];
+  if (!header) return { rows: [], notes };
   const col = (...names: string[]) =>
-    header.findIndex((h) => names.includes(h.trim().toLowerCase()));
-  const system = csvSystem(format, header);
+    header.cells.findIndex((h) => names.includes(h.trim().toLowerCase()));
+  const system = csvSystem(format, header.cells);
   const title = col("summary", "title", "name");
   const desc = col("description", "body");
   const prio = col("priority");
@@ -117,6 +163,8 @@ function csvRows(format: string, content: string): { rows: Row[]; system?: "jira
   const labels = col("labels", "label");
   const due = col("due date", "duedate", "due");
   const sekhemet = col("sekhemet id");
+  const type = col("issue type", "issuetype", "type");
+  const parent = col("parent", "parent id", "parent key");
   // The row's key: Jira's issue key, Linear's identifier; our own export's
   // Jira CSV carries the card's id as its `Issue Id` (NEW-integrations-5,
   // INT-46a) — or, written before DEC-55, as its Sekhemet id — which is then the key.
@@ -129,13 +177,25 @@ function csvRows(format: string, content: string): { rows: Row[]; system?: "jira
         ? col("id", "identifier")
         : -1;
   const url = col("url", "link", "issue url");
-  if (title < 0) return { rows: [], ...(system ? { system } : {}) };
+  if (title < 0) return { rows: [], notes, ...(system ? { system } : {}) };
   const out: Row[] = [];
-  for (const r of rows) {
+  for (const { cells: r, line } of rows) {
+    const where = `Line ${line}`;
     const t = r[title]?.trim();
-    if (!t) continue;
-    const p = prio >= 0 ? pickPriority(r[prio] ?? "") : undefined;
-    const e = est >= 0 ? Number(r[est]) : Number.NaN;
+    if (!t) {
+      notes.push(`${where} has no title, so it is not imported.`);
+      continue;
+    }
+    const rawPrio = prio >= 0 ? (r[prio] ?? "").trim() : "";
+    const p = rawPrio ? pickPriority(rawPrio) : undefined;
+    if (rawPrio && p === undefined)
+      notes.push(
+        `${where}: priority “${rawPrio}” is not Urgent, High, Medium, Low or 0–4, so it is left out.`,
+      );
+    const rawEst = est >= 0 ? (r[est] ?? "").trim() : "";
+    const e = rawEst ? Number(rawEst) : Number.NaN;
+    if (rawEst && !(Number.isFinite(e) && e > 0))
+      notes.push(`${where}: estimate “${rawEst}” is not a positive number, so it is left out.`);
     // PM_CONTRACT §2: the kernel refuses any estimate outside {1,2,3,5,8}.
     // A Jira (or other) import's own scale is mapped to the nearest allowed
     // value rather than failing the import; the imported number is kept in
@@ -143,6 +203,17 @@ function csvRows(format: string, content: string): { rows: Row[]; system?: "jira
     const mappedEstimate = Number.isFinite(e) && e > 0 ? nearestCardEstimate(e) : undefined;
     const l = labels >= 0 ? (r[labels] ?? "").split(/[,\s]+/).filter(Boolean) : [];
     const d = due >= 0 ? (r[due] ?? "").trim() : "";
+    if (d && !/^\d{4}-\d{2}-\d{2}/.test(d))
+      notes.push(`${where}: due date “${d}” is not a date (YYYY-MM-DD), so it is left out.`);
+    const rawType = type >= 0 ? (r[type] ?? "").trim() : "";
+    const typeFields = TYPES[rawType.toLowerCase()];
+    if (rawType && !typeFields)
+      notes.push(
+        `${where}: issue type “${rawType}” is not one Sekhemet has, so it is imported as a Task.`,
+      );
+    // The parent is named once the row is matched (`importPreview`): a row
+    // that is already an issue with that parent loses nothing.
+    const rawParent = parent >= 0 ? (r[parent] ?? "").trim() : "";
     const sid = sekhemet >= 0 ? r[sekhemet]?.trim() : undefined;
     const k = (key >= 0 ? r[key]?.trim() : undefined) || sid;
     const u = url >= 0 ? r[url]?.trim() : undefined;
@@ -152,8 +223,10 @@ function csvRows(format: string, content: string): { rows: Row[]; system?: "jira
         ? `Imported story points: ${e} (mapped to the nearest allowed value, ${mappedEstimate}).`
         : undefined;
     out.push({
+      where,
       fields: {
-        title: t.slice(0, 300),
+        title: keptTitle(t, where, notes),
+        ...(typeFields ?? TYPES.task),
         ...(spec || estimateNote
           ? { spec: [spec, estimateNote].filter(Boolean).join("\n\n") }
           : {}),
@@ -165,18 +238,30 @@ function csvRows(format: string, content: string): { rows: Row[]; system?: "jira
       ...(k ? { key: k } : {}),
       ...(sid ? { sekhemetId: sid } : {}),
       ...(u ? { url: u } : {}),
+      ...(rawParent ? { parent: rawParent } : {}),
     });
   }
-  return { rows: out, ...(system ? { system } : {}) };
+  return { rows: out, notes, ...(system ? { system } : {}) };
 }
 
-function jsonRows(content: string): Row[] {
-  const parsed = JSON.parse(content) as unknown;
+function jsonRows(content: string): Read {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    // W6 A5: the parser's own message is not a person's.
+    throw new Error("The file is not valid JSON. Export it again, then try again.");
+  }
   const list = Array.isArray(parsed) ? parsed : ((parsed as { cards?: unknown[] }).cards ?? []);
   const out: Row[] = [];
-  for (const item of list as Record<string, unknown>[]) {
-    const t = typeof item.title === "string" ? item.title.trim() : "";
-    if (!t) continue;
+  const notes: string[] = [];
+  for (const [i, item] of (list as Record<string, unknown>[]).entries()) {
+    const where = `Item ${i + 1}`;
+    const t = typeof item?.title === "string" ? item.title.trim() : "";
+    if (!t) {
+      notes.push(`${where} has no title, so it is not imported.`);
+      continue;
+    }
     const labelNames = Array.isArray(item.labels)
       ? item.labels
           .map((l) => (typeof l === "string" ? l : String((l as { name?: string }).name ?? "")))
@@ -194,8 +279,10 @@ function jsonRows(content: string): Row[] {
           ? item.id
           : undefined;
     out.push({
+      where,
       fields: {
-        title: t.slice(0, 300),
+        title: keptTitle(t, where, notes),
+        ...TYPES.task,
         ...(typeof item.body === "string" && item.body.trim() ? { spec: item.body.trim() } : {}),
         ...(typeof item.spec === "string" ? { spec: item.spec } : {}),
         ...(p !== undefined ? { priority: p } : {}),
@@ -204,7 +291,7 @@ function jsonRows(content: string): Row[] {
       ...(sid ? { sekhemetId: sid } : {}),
     });
   }
-  return out;
+  return { rows: out, notes };
 }
 
 /**
@@ -271,6 +358,69 @@ function diff(card: CardRecord, fields: Fields): { patch: Fields; before: Fields
   return { patch, before };
 }
 
+const SYSTEM_NAMES: Record<string, string> = {
+  jira: "Jira",
+  linear: "Linear",
+  github: "GitHub",
+  forgejo: "Forgejo",
+};
+
+/** The fields an update changes, in words (W6 A1): never a field's key. */
+const FIELD_WORDS: Record<string, string> = {
+  title: "title",
+  priority: "priority",
+  estimate: "points",
+  labels: "labels",
+  dueDate: "due date",
+};
+
+function wordsList(items: string[]): string {
+  return items.length <= 1
+    ? (items[0] ?? "")
+    : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
+
+/** A repeated row: the same key, or with no key the same fields, as an earlier row. */
+function sameAs(row: Row, seen: Map<string, string>): string | undefined {
+  const id = row.key ? `key:${row.key}` : `fields:${JSON.stringify(row.fields)}`;
+  const earlier = seen.get(id);
+  if (!earlier) seen.set(id, row.where.toLowerCase());
+  return earlier;
+}
+
+/** A card's parent as an export writes it (`exportBoard`'s `Parent`): its parent issue, else its epic. */
+const parentOf = (c: CardRecord) => c.parentId ?? (c.tier === "epic" ? undefined : c.epicId);
+
+/**
+ * The note for a row's parent, which an import does not link (W6 A4), or
+ * none when the row is already an issue with that parent — a round trip
+ * loses nothing. The parent is named by its title when it is an issue here
+ * or a row of the file, else by the tracker's key; never by a Sekhemet id.
+ */
+function parentNote(
+  row: Row,
+  card: CardRecord | undefined,
+  system: string | undefined,
+  cards: CardRecord[],
+  rows: Row[],
+): string | undefined {
+  const raw = row.parent;
+  if (!raw) return undefined;
+  const parent =
+    cards.find((c) => c.id === raw) ??
+    (system
+      ? cards.find((c) => c.externalRef?.system === system && c.externalRef.id === raw)
+      : undefined);
+  if (card && parent && parentOf(card) === parent.id) return undefined;
+  const ours = /^card_/.test(raw);
+  const title = ours
+    ? (parent?.title ??
+      rows.find((r) => r.sekhemetId === raw || r.key === raw)?.fields.title?.toString())
+    : undefined;
+  const named = title ? `“${cleanTitle(title)}” ` : ours ? "" : `${raw} `;
+  return `${row.where}: its parent ${named}is not linked; an import does not bring parent links.`;
+}
+
 /**
  * Proposals for a file: an update for each row that is already a card — none
  * when it changes nothing, so a second import proposes nothing — and a new
@@ -281,25 +431,53 @@ export function importProposals(
   content: string,
   cards: CardRecord[] = [],
 ): ProposalDraft[] {
-  let rows: Row[] = [];
-  let system: "jira" | "linear" | undefined;
+  return importPreview(format, content, cards).drafts;
+}
+
+/**
+ * `importProposals` with what the read left out or did not keep, in words
+ * (W6 A3): a row with no title, a value that is not one Sekhemet knows, a
+ * title cut short, a repeated row proposed once, a parent link not brought,
+ * and, when every proposal only links an issue, that nothing else changes.
+ */
+export function importPreview(
+  format: string,
+  content: string,
+  cards: CardRecord[] = [],
+): { drafts: ProposalDraft[]; notes: string[] } {
+  let read: Read = { rows: [], notes: [] };
   if (format === "jira-csv" || format === "linear-csv" || format === "csv") {
-    ({ rows, system } = csvRows(format, content));
+    read = csvRows(format, content);
   } else if (format === "github-json" || format === "json") {
-    rows = jsonRows(content);
+    read = jsonRows(content);
   }
+  const { rows, system } = read;
+  const notes = [...read.notes];
   const taken = new Set<string>();
+  const seen = new Map<string, string>();
   const out: ProposalDraft[] = [];
+  const systemName = system ? (SYSTEM_NAMES[system] ?? system) : "";
+  let linksOnly = 0;
   for (const row of rows) {
+    const earlier = sameAs(row, seen);
+    if (earlier) {
+      notes.push(`${row.where} is the same as ${earlier}, so it is proposed once.`);
+      continue;
+    }
     const ref: ExternalRef | undefined =
       system && row.key ? { system, id: row.key, url: row.url ?? "" } : undefined;
     const card = matchCard(row, system, cards, taken);
-    if (card === "taken") continue;
+    if (card === "taken") {
+      notes.push(`${row.where} is an issue an earlier row already names, so it is proposed once.`);
+      continue;
+    }
+    const parentSays = parentNote(row, card, system, cards, rows);
+    if (parentSays) notes.push(parentSays);
     if (!card) {
       out.push({
         kind: "create_card",
         cards: [{ ...row.fields, ...(ref ? { externalRef: ref } : {}) }],
-        summary: `Import ${String(row.fields.title)}`,
+        summary: String(row.fields.title),
         origin: "import",
       });
       continue;
@@ -313,15 +491,27 @@ export function importProposals(
       patch.externalRef = ref;
       before.externalRef = card.externalRef ?? null;
     }
-    if (Object.keys(patch).length === 0) continue;
+    const changed = Object.keys(patch);
+    if (changed.length === 0) continue;
+    const title = cleanTitle(card.title);
+    const fields = changed.filter((f) => f !== "externalRef").map((f) => FIELD_WORDS[f] ?? f);
+    const link = patch.externalRef ? `the link to ${systemName}` : "";
+    if (fields.length === 0) linksOnly++;
     out.push({
       kind: "update_card",
       cardId: card.id,
       patch,
       before,
-      summary: `Import ${cleanTitle(card.title)}: ${Object.keys(patch).join(", ")}`,
+      summary:
+        fields.length === 0
+          ? `Link “${title}” to ${systemName}`
+          : `${title}: ${wordsList([...fields, ...(link ? [link] : [])])}`,
       origin: "import",
     });
   }
-  return out;
+  if (out.length > 0 && linksOnly === out.length)
+    notes.push(
+      `Every row is already an issue here. Applying links each one to its row in ${systemName}; nothing else changes.`,
+    );
+  return { drafts: out, notes };
 }

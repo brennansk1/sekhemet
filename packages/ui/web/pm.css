@@ -635,6 +635,7 @@
 .prop .sum {
   margin: 4px 0 0;
   font-size: var(--text-sm);
+  overflow-wrap: anywhere;
 }
 .pdiff {
   margin: 8px 0 0;
@@ -722,6 +723,8 @@
 .pcards .t {
   flex: 1;
   min-width: 0;
+  /* Loop wave 6, A6: a long word wraps inside the row, never over its meta. */
+  overflow-wrap: anywhere;
 }
 .pcards .meta {
   font-size: var(--text-xs);

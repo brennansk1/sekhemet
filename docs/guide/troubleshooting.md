@@ -92,7 +92,7 @@ An issue ID that does not exist is answered with the closest ID when it looks li
 
 ### Skills
 
-**Do:** Add skills under .sekhemet/skills/, or leave it: a project runs without skills.
+**Do:** Add skills under .sekhemet/skills/, or leave it: a project runs without skills; a skill it names as not approved or changed loads once you read it and run `sekhemet skills approve <name>`.
 
 ### Playbook and skills
 
@@ -132,7 +132,7 @@ An issue ID that does not exist is answered with the closest ID when it looks li
 
 ### Hooks
 
-**Do:** Fix .sekhemet/hooks.toml where it says.
+**Do:** Fix .sekhemet/hooks.toml where it says; a file waiting for trust runs once you read it with `sekhemet dev trust` and trust it with `sekhemet dev trust --yes`.
 
 ### Research
 
@@ -210,6 +210,10 @@ An issue ID that does not exist is answered with the closest ID when it looks li
 **An issue's dev server is not reachable on Linux.** The issue's port relays need `socat`: `sudo apt install socat`. The *Port relays* check above says so.
 
 **A download is refused with "network policy refused".** Sekhemet is offline by default. The message names the setting that allows the request; [Privacy and network](privacy-and-network.md) lists every host and its setting.
+
+**Push or email says *Last test failed* or *Last send failed*.** The server you connected did not take the last test, or the last notice Sekhemet sent: the card names the reason (a refused connection reads *could not reach* the host). Your network settings allowed the request, and Network activity lists it as *Allowed* and *not reached*. Check the server's address and port, then send a test, or connect it again; until a send arrives the card is not counted as connected, and once one does it says *Connected* again.
+
+**An import leaves rows out.** The Import sheet names each by its line in the file — a row with no title, a priority, estimate or due date it cannot read, a repeated row (proposed once), a parent link a new issue does not get (an import does not bring hierarchy), and the rows past the first 500, which go in a second file — above the proposals. New issues are created in the project you are on. Nothing changes until you apply.
 
 **The dashboard says it cannot open the Activity log, or a newer version wrote it.** After a rollback, restore the backup the message names ([Upgrade and uninstall](upgrade-and-uninstall.md)). `sekhemet log` says whether the log's hash chain verifies.
 

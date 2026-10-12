@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { integrationGroups, secretStoreNotice } from "../src/integrations_view.js";
+import {
+  connectedCount,
+  integrationGroups,
+  integrationState,
+  secretStoreNotice,
+} from "../src/integrations_view.js";
 
 /**
  * DB-N2-7: Integrations renders what `/api/integrations` returns, grouped by
@@ -126,5 +131,86 @@ describe("Integrations says where secrets are kept", () => {
     const src = readFileSync(join(import.meta.dirname, "..", "web", "integrations.js"), "utf8");
     expect(src).toContain("/api/integrations/secret-store");
     expect(src).toContain("secretStoreNotice(");
+  });
+});
+
+/**
+ * Loop wave 5, builder A (A1–A3): a card says *Connected* or *On* only for a
+ * connection that is there and working, and the header counts only those.
+ */
+describe("what Integrations calls connected (dashboard §2.11; loop wave 5)", () => {
+  it("A1: Jira and Linear are files only: never Connected, never counted", () => {
+    for (const id of ["jira", "linear"]) {
+      // Even an older server's `connected: true` is not shown as a connection.
+      const s = integrationState({ id, name: id, connected: true });
+      expect(s.tone).toBe("off");
+      expect(s.label).not.toMatch(/connected/i);
+    }
+    expect(
+      connectedCount([
+        { id: "jira", name: "Jira", connected: true },
+        { id: "linear", name: "Linear", connected: true },
+      ]),
+    ).toBe(0);
+  });
+
+  it("A2: PR on Accept is On only with GitHub connected; switched on without it, it says so", () => {
+    expect(integrationState({ id: "github-pr", name: "", connected: true, enabled: true })).toEqual(
+      {
+        tone: "on",
+        label: "On",
+      },
+    );
+    expect(
+      integrationState({ id: "github-pr", name: "", connected: true, enabled: false }),
+    ).toEqual({
+      tone: "off",
+      label: "Off",
+    });
+    const stuck = integrationState({ id: "github-pr", name: "", connected: false, enabled: true });
+    expect(stuck.tone).toBe("fail");
+    expect(stuck.label).toMatch(/GitHub/);
+    expect(
+      connectedCount([
+        { id: "github-pr", name: "", connected: true, enabled: false },
+        { id: "github-pr", name: "", connected: false, enabled: true },
+      ]),
+    ).toBe(0);
+  });
+
+  it("A3: push or email whose last send did not arrive is not Connected, and not counted", () => {
+    const failed = {
+      id: "push",
+      name: "",
+      connected: true,
+      lastSend: {
+        ok: false,
+        at: "2026-10-11T10:00:00.000Z",
+        kind: "test",
+        error: "connect ECONNREFUSED",
+      },
+    };
+    expect(integrationState(failed)).toEqual({ tone: "fail", label: "Last test failed" });
+    expect(integrationState({ ...failed, id: "email" }).tone).toBe("fail");
+    // W6 review: a notice the notifier sent later is the state, failed or delivered.
+    expect(
+      integrationState({ ...failed, lastSend: { ...failed.lastSend, kind: "review" } }),
+    ).toEqual({ tone: "fail", label: "Last send failed" });
+    expect(
+      integrationState({
+        ...failed,
+        lastSend: { ok: true, at: failed.lastSend.at, kind: "review" },
+      }),
+    ).toEqual({ tone: "on", label: "Connected" });
+    expect(connectedCount([failed, { id: "slack", name: "", connected: true }])).toBe(1);
+  });
+
+  it("research web access is On or Off, and counted when on", () => {
+    expect(
+      integrationState({ id: "research-web", name: "", connected: true, enabled: true }),
+    ).toEqual({ tone: "on", label: "On" });
+    expect(
+      connectedCount([{ id: "research-web", name: "", connected: false, enabled: true }]),
+    ).toBe(1);
   });
 });

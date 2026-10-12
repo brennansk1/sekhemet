@@ -6,6 +6,7 @@
 // store. Anyone but an Admin gets the server's refusal (DB-N9-16), and Solo
 // has no Audit (DB-N9-12). Every word is `/app/lib/team_admin.js`'s.
 import { $, aiBadge, esc, getJSON, icon } from "./dom.js";
+import { noteFor } from "./level_gate.js";
 import { refusalMessage } from "./lib/account.js";
 import { AUDIT_CATEGORIES, AUDIT_COPY as C, teamOnlyNotice } from "./lib/team_admin.js";
 import { getSession } from "./session.js";
@@ -156,6 +157,19 @@ export function mount(view) {
     const t = e.target instanceof Element ? e.target : null;
     if (t?.closest("[data-au-more]")) void load(true);
   });
+  // Loop sweep 3 (teams item 27): below Admin the page says who can open it
+  // and asks the server nothing it would refuse; the server still refuses.
+  const refused = noteFor("audit.view");
+  if (refused) {
+    ui.error = refused;
+    render();
+    return {
+      unmount() {
+        root.remove();
+        ui.root = null;
+      },
+    };
+  }
   render();
   void load();
   void loadFilters();

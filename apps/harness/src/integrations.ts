@@ -12,7 +12,7 @@ import {
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
-import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
+import type { CardRecord, CardStore, EventLog, EventRecord } from "@sekhemet/kernel";
 import {
   DELEGATE_LABEL,
   type GitHubClient,
@@ -36,7 +36,7 @@ import {
   integrationFetch,
   integrationRefusal,
 } from "./github_transport.js";
-import { importProposals } from "./import_board.js";
+import { CsvError, importPreview, importProposals } from "./import_board.js";
 import { keychainStore, probeSecretStore } from "./keychain.js";
 import type { ProposalDraft } from "./pm/agent.js";
 import { type Audience, soloAudience } from "./pm/audience.js";
@@ -84,6 +84,67 @@ export interface IntegrationSettings {
   /** Email through an SMTP server, each notice to one person's own address (TEAM-43); see email.ts. */
   email?: import("./email.js").EmailSettings;
   lastSync?: Record<string, string>;
+  /**
+   * Where on the ledger push and email were last connected: its last seq
+   * then (W6 review). What a channel's sends found is the ledger's
+   * `pm/notify` after it, never kept here (the spine: the event log is the
+   * only durable channel); connecting again starts afresh.
+   */
+  connectedAfter?: Partial<Record<"push" | "email", number>>;
+}
+
+/** A channel's last send since it was connected, from the ledger: when, what, whether it arrived, and why not. */
+export interface SendResult {
+  ok: boolean;
+  at: string;
+  /** The notice's kind: `test` for *Send test*, else what the notifier sent. */
+  kind: string;
+  error?: string;
+}
+
+/** The push and email channels as `pm/notify` names them. */
+const CHANNELS: Record<"push" | "email", string[]> = {
+  push: ["ntfy", "gotify"],
+  email: ["email"],
+};
+
+/** Each channel's last send since it was connected (W6 review), read from the ledger. */
+async function lastSends(
+  log: EventLog | undefined,
+  settings: IntegrationSettings,
+): Promise<Partial<Record<"push" | "email", SendResult>>> {
+  if (!log) return {};
+  const out: Partial<Record<"push" | "email", SendResult>> = {};
+  const events = await log.getEventsByTypes([PM_EVENTS.notify]);
+  for (const channel of ["push", "email"] as const) {
+    const after = settings.connectedAfter?.[channel] ?? 0;
+    const last = events
+      .filter((e) => e.seq > after)
+      .filter((e) =>
+        CHANNELS[channel].includes(String((e.payload as { channel?: unknown }).channel)),
+      )
+      .at(-1) as EventRecord | undefined;
+    if (!last) continue;
+    const p = last.payload as { kind?: unknown; ok?: unknown };
+    const error = last.private?.error;
+    out[channel] = {
+      ok: p.ok === true,
+      at: last.createdAt,
+      kind: String(p.kind ?? ""),
+      ...(p.ok !== true && typeof error === "string" && error ? { error } : {}),
+    };
+  }
+  return out;
+}
+
+/** Connecting a channel starts its state afresh from here on the ledger; disconnecting forgets it. */
+function markConnected(repoPath: string, log: EventLog, channel: "push" | "email", on: boolean) {
+  const connectedAfter = { ...readSettings(repoPath).connectedAfter };
+  if (on) connectedAfter[channel] = log.lastSeq();
+  else delete connectedAfter[channel];
+  writeSettings(repoPath, {
+    connectedAfter: Object.keys(connectedAfter).length ? connectedAfter : undefined,
+  });
 }
 
 function settingsPath(repoPath: string): string {
@@ -282,6 +343,8 @@ export interface IntegrationEntry {
   lastSyncAt?: string;
   via: Via;
   enabled?: boolean;
+  /** Push and email: the last send since connecting, when one ran (A3; W6 review: from the ledger). */
+  lastSend?: SendResult;
 }
 
 const CATALOGUE: Omit<IntegrationEntry, "connected">[] = [
@@ -305,8 +368,12 @@ const CATALOGUE: Omit<IntegrationEntry, "connected">[] = [
   { id: "confluence", name: "Confluence publishing", tier: "later", via: "api" },
 ];
 
-export async function listIntegrations(repoPath: string): Promise<IntegrationEntry[]> {
+export async function listIntegrations(
+  repoPath: string,
+  log?: EventLog,
+): Promise<IntegrationEntry[]> {
   const settings = readSettings(repoPath);
+  const sends = await lastSends(log, settings);
   const found = await githubRepoOf(repoPath);
   // Offline by default (integrations §4): a connected repository the network
   // policy cannot reach says so, naming the setting.
@@ -335,7 +402,8 @@ export async function listIntegrations(repoPath: string): Promise<IntegrationEnt
         };
       case "jira":
       case "linear":
-        return { ...base, connected: true, detail: "CSV import and export, no account needed" };
+        // Files only: nothing to connect, so never "connected" (dashboard §2.11).
+        return { ...base, connected: false, detail: "Export and import a file; no account needed" };
       case "research-web": {
         const provider = process.env.SEKHEMET_SEARXNG_URL
           ? "SearXNG"
@@ -356,6 +424,7 @@ export async function listIntegrations(repoPath: string): Promise<IntegrationEnt
         return {
           ...base,
           connected: Boolean(p),
+          ...(p && sends.push ? { lastSend: sends.push } : {}),
           detail: p
             ? `${p.kind === "ntfy" ? `ntfy topic ${p.topic}` : "Gotify"} at ${new URL(p.url).host}; ${(p.events ?? ["review", "parked", "budget", "question", "run_report"]).join(", ")}`
             : "Not connected: a self-hosted ntfy or Gotify server pushes review, on-hold, budget and question alerts to your phone",
@@ -367,6 +436,7 @@ export async function listIntegrations(repoPath: string): Promise<IntegrationEnt
         return {
           ...base,
           connected: Boolean(e),
+          ...(e && sends.email ? { lastSend: sends.email } : {}),
           detail: e
             ? `From ${e.from} through ${e.host}:${e.port}${e.user ? ` as ${e.user}` : ""}${e.password ? " (password kept)" : ""}; each person at their own address, within their daily limit`
             : "Not connected: an SMTP server sends each person their own notices at their own address",
@@ -857,6 +927,18 @@ function takeoverSummary(r: import("./takeover.js").TakeoverReport): string {
 
 let takeoverRunning = false;
 
+/** The most proposals one import offers (W6 review: the rest are named in a note). */
+const IMPORT_MAX = 500;
+
+/** An import format as a person names it (W6 A1: never `jira-csv`). */
+const IMPORT_FORMAT_NAMES: Record<string, string> = {
+  "jira-csv": "a Jira CSV file",
+  "linear-csv": "a Linear CSV file",
+  csv: "a CSV file",
+  "github-json": "a GitHub JSON file",
+  json: "a Sekhemet JSON file",
+};
+
 // --- Routes ---------------------------------------------------------------------
 
 export interface IntegrationsContext {
@@ -915,7 +997,7 @@ async function integrationsRoutes(
   ctx: IntegrationsContext,
 ): Promise<boolean> {
   if (url === "/api/integrations" && req.method === "GET") {
-    ctx.json(res, 200, await listIntegrations(ctx.repoPath));
+    ctx.json(res, 200, await listIntegrations(ctx.repoPath, ctx.log));
     return true;
   }
 
@@ -949,7 +1031,7 @@ async function integrationsRoutes(
     ctx.json(
       res,
       200,
-      (await listIntegrations(ctx.repoPath)).find((i) => i.id === "research-web"),
+      (await listIntegrations(ctx.repoPath, ctx.log)).find((i) => i.id === "research-web"),
     );
     return true;
   }
@@ -957,11 +1039,21 @@ async function integrationsRoutes(
   if (url === "/api/integrations/github-pr" && req.method === "PUT") {
     if (!ctx.mutationGuard(req, res)) return true;
     const b = await ctx.readJsonBody(req);
+    // Loop wave 5, A2: Accept could only refuse with no GitHub repository to
+    // open the pull request on, so the setting is not switched on without one.
+    // Switching it off is always allowed.
+    if (b.enabled === true && !(await githubRepoOf(ctx.repoPath)).repo) {
+      ctx.json(res, 409, {
+        error:
+          "Connect GitHub first: this repository has no GitHub remote, so Accept could not open a pull request.",
+      });
+      return true;
+    }
     writeSettings(ctx.repoPath, { githubPrOnAccept: b.enabled === true });
     ctx.json(
       res,
       200,
-      (await listIntegrations(ctx.repoPath)).find((i) => i.id === "github-pr"),
+      (await listIntegrations(ctx.repoPath, ctx.log)).find((i) => i.id === "github-pr"),
     );
     return true;
   }
@@ -989,7 +1081,7 @@ async function integrationsRoutes(
     ctx.json(
       res,
       200,
-      (await listIntegrations(ctx.repoPath)).find((i) => i.id === "slack"),
+      (await listIntegrations(ctx.repoPath, ctx.log)).find((i) => i.id === "slack"),
     );
     return true;
   }
@@ -999,6 +1091,7 @@ async function integrationsRoutes(
     const { validatePush, writePush, ALL_EVENTS } = await import("./notify.js");
     if (req.method === "DELETE") {
       writePush(ctx.repoPath, undefined);
+      markConnected(ctx.repoPath, ctx.log, "push", false);
     } else {
       const b = await ctx.readJsonBody(req);
       const events = Array.isArray(b.events)
@@ -1019,11 +1112,12 @@ async function integrationsRoutes(
         return true;
       }
       writePush(ctx.repoPath, push);
+      markConnected(ctx.repoPath, ctx.log, "push", true);
     }
     ctx.json(
       res,
       200,
-      (await listIntegrations(ctx.repoPath)).find((i) => i.id === "push"),
+      (await listIntegrations(ctx.repoPath, ctx.log)).find((i) => i.id === "push"),
     );
     return true;
   }
@@ -1034,6 +1128,7 @@ async function integrationsRoutes(
     const { ALL_EVENTS } = await import("./notify.js");
     if (req.method === "DELETE") {
       writeEmail(ctx.repoPath, undefined);
+      markConnected(ctx.repoPath, ctx.log, "email", false);
     } else {
       const b = await ctx.readJsonBody(req);
       const events = Array.isArray(b.events)
@@ -1067,11 +1162,12 @@ async function integrationsRoutes(
         return true;
       }
       writeEmail(ctx.repoPath, email);
+      markConnected(ctx.repoPath, ctx.log, "email", true);
     }
     ctx.json(
       res,
       200,
-      (await listIntegrations(ctx.repoPath)).find((i) => i.id === "email"),
+      (await listIntegrations(ctx.repoPath, ctx.log)).find((i) => i.id === "email"),
     );
     return true;
   }
@@ -1089,35 +1185,29 @@ async function integrationsRoutes(
       });
       return true;
     }
-    ctx.json(
-      res,
-      200,
-      await sendEmail(
-        ctx.repoPath,
-        {
-          event: "test",
-          title: "Sekhemet email works",
-          message: `Email notifications work for ${basename(ctx.repoPath)}.`,
-        },
-        address,
-        { log: ctx.log, record: { to: asker } },
-      ),
+    const sent = await sendEmail(
+      ctx.repoPath,
+      {
+        event: "test",
+        title: "Sekhemet email works",
+        message: `Email notifications work for ${basename(ctx.repoPath)}.`,
+      },
+      address,
+      { log: ctx.log, record: { to: asker } },
     );
+    ctx.json(res, 200, sent);
     return true;
   }
 
   if (url === "/api/integrations/push/test" && req.method === "POST") {
     if (!ctx.mutationGuard(req, res)) return true;
     const { sendPush } = await import("./notify.js");
-    ctx.json(
-      res,
-      200,
-      await sendPush(
-        ctx.repoPath,
-        { event: "test", title: "Sekhemet", message: `Push works for ${basename(ctx.repoPath)}.` },
-        { log: ctx.log },
-      ),
+    const sent = await sendPush(
+      ctx.repoPath,
+      { event: "test", title: "Sekhemet", message: `Push works for ${basename(ctx.repoPath)}.` },
+      { log: ctx.log },
     );
+    ctx.json(res, 200, sent);
     return true;
   }
 
@@ -1326,34 +1416,98 @@ async function integrationsRoutes(
     }
     const format = typeof body.format === "string" ? body.format : "";
     const content = typeof body.content === "string" ? body.content : "";
+    // W6 review: the project the page is on, which a new row is created in —
+    // a workspace of two projects needs it to apply one. Only a project the
+    // person can see, and may create issues in (a Member there).
+    const projectId =
+      typeof body.projectId === "string" && body.projectId ? body.projectId : undefined;
+    if (projectId) {
+      const project = ctx.cardStore?.getProject(projectId);
+      const who = ctx.principalOf?.(req);
+      const audience = ctx.audience?.();
+      const level = who && audience ? audience.levelOf(who, projectId) : "admin";
+      if (!project || level === undefined) {
+        ctx.json(res, 404, {
+          error: "No project to import into. Choose a project, then try again.",
+        });
+        return true;
+      }
+      if (level !== "member" && level !== "admin") {
+        ctx.json(res, 403, {
+          error: `You're a ${level === "viewer" ? "Viewer" : "Stakeholder"} on ${project.name}. A Member can create issues.`,
+          refused: "permission",
+          permission: "issue.create",
+          level,
+          needs: "member",
+        });
+        return true;
+      }
+    }
     let drafts: ProposalDraft[];
+    let notes: string[];
     try {
       // INT-27: a row that is already a card updates it; INT-28: a malformed
-      // CSV is refused with the line named.
-      drafts = importProposals(format, content, (await ctx.cardStore?.listCards()) ?? []);
+      // CSV is refused with the line named; W6 A3: what is left out is named.
+      ({ drafts, notes } = importPreview(
+        format,
+        content,
+        (await ctx.cardStore?.listCards()) ?? [],
+      ));
     } catch (err) {
+      // W6 A5: one sentence, the file's fault in words; the page names the file.
+      const known = err instanceof CsvError || /^The file /.test(String((err as Error)?.message));
       ctx.json(res, 400, {
-        error: `Could not read that file: ${err instanceof Error ? err.message : String(err)}`,
+        error: known
+          ? (err as Error).message
+          : "It is not a file this import reads. Export it again, then try again.",
       });
       return true;
     }
     if (drafts.length === 0) {
       if (importDrafts(format, content).length > 0) {
         // Every row is already a card and changes nothing: an idempotent re-import.
-        ctx.json(res, 200, { proposals: [], unchanged: true });
+        ctx.json(res, 200, {
+          proposals: [],
+          unchanged: true,
+          notes: [
+            ...notes,
+            "Every row is already an issue here, and nothing in the file changes it.",
+          ],
+        });
         return true;
       }
-      ctx.json(res, 400, { error: "No issues found. The file needs a Summary or Title column." });
+      ctx.json(res, 400, {
+        error: "No issues found. The file needs a Summary or Title column, and a row with a title.",
+        notes,
+      });
       return true;
+    }
+    // W6 review: at most IMPORT_MAX proposals; the rest are named, never dropped silently.
+    if (drafts.length > IMPORT_MAX) {
+      const rest = drafts.length - IMPORT_MAX;
+      notes = [
+        ...notes,
+        `Only the first ${IMPORT_MAX} of ${drafts.length} are proposed; import the other ${rest} in a second file.`,
+      ];
+      drafts = drafts.slice(0, IMPORT_MAX);
+    }
+    // A new row is created in the page's project (W6 review).
+    if (projectId) {
+      drafts = drafts.map((d) =>
+        d.kind === "create_card"
+          ? { ...d, cards: (d.cards ?? []).map((c) => ({ ...c, projectId })) }
+          : d,
+      );
     }
     // Stored as a PM message so each import proposal is applied or discarded
     // through exactly the same flow as the PM's own.
+    const label = IMPORT_FORMAT_NAMES[format] ?? "the file";
     const reply = await ctx.pmStore.appendReply({
       replyTo: [],
-      text: `Import preview: ${drafts.length} issue${drafts.length === 1 ? "" : "s"} from ${format}. Apply the ones you want.`,
-      proposals: drafts.slice(0, 500),
+      text: `Import preview: ${drafts.length} issue${drafts.length === 1 ? "" : "s"} from ${label}. Apply the ones you want.`,
+      proposals: drafts,
     });
-    ctx.json(res, 200, { proposals: reply.proposals ?? [], messageId: reply.id });
+    ctx.json(res, 200, { proposals: reply.proposals ?? [], messageId: reply.id, notes });
     return true;
   }
 

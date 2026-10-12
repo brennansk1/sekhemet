@@ -975,6 +975,9 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     to: s(PRINCIPAL, true),
     notice: s(ID, true),
     day: s(DAY, true),
+    // W6 review: why a send did not arrive, in the server's words (never a
+    // token or a topic), read back as Integrations' *Last send failed*.
+    error: priv("free_text", TEXT),
   },
   "pm/notice_held": {
     kind: s(NOTICE_KIND),

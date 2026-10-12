@@ -168,13 +168,15 @@ describe("idempotent Jira and Linear import (NEW-integrations-1)", () => {
 
   it("INT-28: a CSV with an unterminated quote is refused, naming the line", async () => {
     expect(() => parseCsv('Title\n"closed"\n"never closed\n')).toThrow(CsvError);
-    expect(() => parseCsv('Title\n"closed"\n"never closed\n')).toThrow(/line 3/);
+    expect(() => parseCsv('Title\n"closed"\n"never closed\n')).toThrow(/line 3/i);
     // Quoted newlines count: the bad quote opens on the file's fourth line.
     const csv = 'Title,Description\n"A","two\nlines"\n"B,unterminated\n';
-    expect(() => parseCsv(csv)).toThrow(/line 4/);
+    expect(() => parseCsv(csv)).toThrow(/line 4/i);
     const res = await post("/api/import", { format: "jira-csv", content: csv });
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toMatch(/unterminated quote.*line 4/i);
+    expect(((await res.json()) as { error: string }).error).toMatch(
+      /line 4 has a quote that opens and never closes/i,
+    );
     // A well-formed file with quoted commas and newlines still parses.
     expect(parseCsv('a,b\r\n"x, y","1\n2"\r\n')).toEqual([
       ["a", "b"],

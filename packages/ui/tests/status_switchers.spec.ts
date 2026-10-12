@@ -212,6 +212,20 @@ describe("DEC-57's switchers (DB-N25-1..3; SHL-01, STA-07)", () => {
     expect(s.newProject).toEqual({ label: "New project" });
   });
 
+  it("a person given no path (a Viewer, W6 review) sees no path, and two of one name still apart", () => {
+    const bare = projects.map(({ rootPath, ...p }) => ({
+      ...p,
+      folder: rootPath.split("/").pop() as string,
+    }));
+    const s = projectSwitcher(bare, "proj_a", { canCreate: false });
+    expect(s.title).toBe("Timesheets");
+    expect(s.rows.map((r) => [r.id, r.detail])).toEqual([
+      ["proj_a", "Active · timesheets"],
+      ["proj_c", "Active"],
+      ["proj_b", "Idle · timesheets-copy"],
+    ]);
+  });
+
   it("filters as the person types, and offers New project only to who may create one", () => {
     const s = projectSwitcher(projects, "proj_a", { canCreate: false, filter: "store" });
     expect(s.rows.map((r) => r.id)).toEqual(["proj_c"]);

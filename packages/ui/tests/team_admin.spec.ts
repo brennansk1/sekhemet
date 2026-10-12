@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AUDIT_CATEGORIES,
   AUDIT_TYPES,
+  MEMBERS_PARTS_COPY,
   UI_LIB_MODULES,
   agentStatusLine,
   auditActorText,
@@ -396,5 +397,32 @@ describe("close-out C3: a release's lead is on the audit log (teams items 27, 28
     const entry = auditEntry(row, names);
     expect(entry?.target).toBe("Mo Member for a release on Chronicle");
     expect(JSON.stringify(entry)).not.toContain("SLICE-9");
+  });
+});
+
+describe("W6 teams (loop sweep 3): words a person reads on Members and Audit", () => {
+  it("names the one project in Members' Projects cell, never 'The 1 project'", () => {
+    expect(MEMBERS_PARTS_COPY.allProjects(["chronicle"])).toBe("chronicle");
+    expect(MEMBERS_PARTS_COPY.allProjects(["Chronicle", "Billing"])).toBe("All 2");
+  });
+
+  it("an invite's audit target is where it invites to, never the invite's record id (TEAM-27)", () => {
+    const names = {
+      person: (p: string) => ({ p_ada: "Ada Admin" })[p],
+      project: (id: string) => ({ proj_a: "Chronicle" })[id],
+    };
+    const row = {
+      seq: 7,
+      at: "2026-10-11T10:00:00.000Z",
+      type: "member/invited",
+      actor: "human",
+      principal: "p_ada",
+      payload: { invite: "inv_334e46f950400f5596", level: "viewer", expires: "2026-10-18" },
+    };
+    const whole = auditEntry(row, names);
+    expect(whole?.target).toBe("Whole workspace");
+    expect(JSON.stringify(whole)).not.toContain("inv_");
+    const one = auditEntry({ ...row, payload: { ...row.payload, project: "proj_a" } }, names);
+    expect(one?.target).toBe("Chronicle");
   });
 });

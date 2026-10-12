@@ -31,8 +31,13 @@ import { formatWait, parseTitle, plural, pluralWord } from "./vocabulary.js";
 export interface ProjectFacts {
   id: string;
   name: string;
-  /** Where its repository is on the server: the project switcher's tooltip (DB-N25-1). */
+  /**
+   * Where its repository is on the server: the project switcher's tooltip
+   * (DB-N25-1); absent for a person who may not start a project (W6 review).
+   */
   rootPath?: string;
+  /** The repository folder's last part: tells two projects of one name apart (STA-07). */
+  folder?: string;
   /** The project's rollup (kernel K-N5-3). */
   state: "active" | "idle" | "done" | "paused" | "archived";
   /** The lead's name ("you" for the viewer), or null when none is named. */

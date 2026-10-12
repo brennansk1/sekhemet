@@ -295,6 +295,9 @@ export function policyAllowsEveryHost(
   return policy.mode === "open";
 }
 
+/** The request-filtering agent's refusal of a private, metadata or denied address. */
+const FILTERED = /^DNS lookup .* is not allowed\b/;
+
 export function policyFetch(
   policy: EffectiveNetworkPolicy,
   options: {
@@ -342,7 +345,13 @@ export function policyFetch(
         options.stream === true,
       );
     } catch (err) {
-      return refuse(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      // A private or metadata address found at connect time is the policy's
+      // refusal (item 30); any other failure is the server not answering a
+      // request the policy allowed, recorded and said as that (loop wave 5, A4).
+      if (FILTERED.test(message)) return refuse(message);
+      await options.record?.({ ...base, allowed: true, reason: `not reached: ${message}` });
+      throw new Error(`could not reach ${host}: ${message}`);
     }
     await options.record?.({ ...base, allowed: true, status: res.status });
     return res;

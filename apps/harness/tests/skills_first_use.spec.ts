@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readSkillLock } from "@sekhemet/context";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { probeSkills } from "../src/doctor.js";
 import { openLocalLedger } from "../src/ledger_cmds.js";
 import { loadRepoSkills, skillsLockPath } from "../src/workspace_trust.js";
 import { sandboxDirs, sekhemet } from "./cli_fixture.js";
@@ -102,5 +103,61 @@ describe("SEC-02, EXT-4: no trust on first use", () => {
     const r = sekhemet(["skills", "approve", "nothing-here"], where);
     expect(r.status).toBe(1);
     expect(r.stderr + r.stdout).toMatch(/\.sekhemet\/skills/);
+  });
+});
+
+describe("EXT-3: the listing shows each skill's current state, not the lock's", () => {
+  it("lists a skill changed after approval as waiting for approval, never as pinned", () => {
+    const where = project();
+    expect(sekhemet(["skills", "approve", "deploy"], where).status).toBe(0);
+    appendFileSync(join(where.cwd, ".sekhemet", "skills", "deploy", "SKILL.md"), "And more.\n");
+    // The listing alone, before any load has recorded the change.
+    const r = sekhemet(["skills"], where);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).not.toMatch(/deploy pinned/);
+    expect(r.stdout).toMatch(
+      /deploy changed since it was approved .*it does not load until you approve it again: sekhemet skills approve deploy/,
+    );
+  });
+
+  it("lists a skill nobody approved as not approved", () => {
+    const where = project();
+    const r = sekhemet(["skills"], where);
+    expect(r.stdout).toMatch(
+      /deploy is not approved: it does not load until you approve it: sekhemet skills approve deploy/,
+    );
+  });
+
+  it("does not keep an old rejection line once the skill is approved", () => {
+    const where = project();
+    // A load while unapproved records the rejection in the lock's audit.
+    expect(loadRepoSkills(where.cwd).rejected().length).toBe(1);
+    expect(sekhemet(["skills", "approve", "deploy"], where).status).toBe(0);
+    const r = sekhemet(["skills"], where);
+    expect(r.stdout).toMatch(/deploy pinned [0-9a-f]{12} by human/);
+    expect(r.stdout).not.toMatch(/rejected/);
+    expect(r.stdout).not.toMatch(/approve with/);
+  });
+});
+
+describe("EXT-3: doctor's Skills check names a skill that does not load", () => {
+  it("warns of a skill changed since approval, and passes once it is approved again", () => {
+    const where = project();
+    expect(sekhemet(["skills", "approve", "deploy"], where).status).toBe(0);
+    expect(probeSkills(where.cwd).status).toBe("pass");
+    appendFileSync(join(where.cwd, ".sekhemet", "skills", "deploy", "SKILL.md"), "And more.\n");
+    const changed = probeSkills(where.cwd);
+    expect(changed.status).toBe("warn");
+    expect(changed.detail).toMatch(/deploy changed since it was approved/);
+    expect(changed.do).toMatch(/sekhemet skills approve/);
+    expect(sekhemet(["skills", "approve", "deploy"], where).status).toBe(0);
+    expect(probeSkills(where.cwd).status).toBe("pass");
+  });
+
+  it("warns of a skill nobody approved", () => {
+    const where = project();
+    const check = probeSkills(where.cwd);
+    expect(check.status).toBe("warn");
+    expect(check.detail).toMatch(/deploy is not approved/);
   });
 });

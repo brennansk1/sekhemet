@@ -76,9 +76,15 @@ export const TRIAGE_COPY = {
   duplicated: (key: string, of: string) => `${key} marked a duplicate of ${of}.`,
   snoozed: (key: string, until: string) => `${key} snoozed until ${until}.`,
   memberDecides: "A Member triages. You can read what waits here.",
-  /** The New issue form, for a person who files for triage (DB-N10-1). */
-  filedForTriage:
-    "A Member triages what you file. Until then it waits in Backlog with the project lead as its assignee.",
+  /**
+   * The New issue form, for a person who files for triage (DB-N10-1): the
+   * server makes the project lead its assignee, so the form names them, and
+   * promises no assignee for a project with no lead (loop sweep 3).
+   */
+  filedForTriage: (lead: string | null | undefined) =>
+    lead
+      ? `A Member triages what you file. Until then it waits in Backlog with the project lead, ${lead}, as its assignee.`
+      : "A Member triages what you file. Until then it waits in Backlog, unassigned.",
   /** The New issue form's button for a person who files for triage. */
   fileSubmit: "File issue",
   filed: "Filed. It waits in Triage for a Member.",

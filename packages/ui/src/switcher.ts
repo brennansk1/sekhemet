@@ -12,8 +12,13 @@ export interface SwitcherProject {
   id: string;
   name: string;
   state?: string;
-  /** Where its repository is on the server: the switcher's tooltip, never the sidebar. */
+  /**
+   * Where its repository is on the server: the switcher's tooltip, never the
+   * sidebar; absent for a person who may not start a project (W6 review).
+   */
   rootPath?: string;
+  /** The repository folder's last part, given to everyone (W6 review). */
+  folder?: string;
 }
 
 export interface ProjectSwitcherRow {
@@ -59,11 +64,14 @@ export function projectInitials(name: string): string {
   return letters.toUpperCase() || "?";
 }
 
-const folderOf = (path: string | undefined) =>
+const lastPart = (path: string | undefined) =>
   (path ?? "")
     .replace(/[\\/]+$/, "")
     .split(/[\\/]/)
     .pop() ?? "";
+
+/** The project's folder, as two of one name are told apart (STA-07): never its full path. */
+const folderOf = (p: SwitcherProject) => p.folder || lastPart(p.rootPath);
 
 /**
  * The project switcher (DB-N25-1, -2): the current project's badge and name
@@ -84,14 +92,12 @@ export function projectSwitcher(
     .sort((a, b) => {
       if (a.id === chosen?.id) return -1;
       if (b.id === chosen?.id) return 1;
-      return (
-        a.name.localeCompare(b.name) || folderOf(a.rootPath).localeCompare(folderOf(b.rootPath))
-      );
+      return a.name.localeCompare(b.name) || folderOf(a).localeCompare(folderOf(b));
     })
     .filter((p) => !q || p.name.toLowerCase().includes(q))
     .map((p) => {
       const state = STATE_WORDS[p.state ?? ""] ?? "";
-      const folder = (named.get(p.name) ?? 0) > 1 ? folderOf(p.rootPath) : "";
+      const folder = (named.get(p.name) ?? 0) > 1 ? folderOf(p) : "";
       return {
         id: p.id,
         name: p.name,

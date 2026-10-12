@@ -57,6 +57,38 @@ describe("EXT-10: a broken hooks.toml is named, with its error, by doctor and to
   });
 });
 
+describe("EXT-10, item 1: an untrusted hooks.toml is named as waiting for trust, with its errors", () => {
+  beforeEach(() => {
+    setInvocationTrust(false);
+    vi.stubEnv("SEKHEMET_TRUST_DIR", join(root, "trust"));
+  });
+  afterEach(() => setInvocationTrust(true));
+
+  it("does not pass 'none declared': it names the file, what it declares and the unknown event", () => {
+    const repo = project(
+      '[[hook]]\nevent = "pre-tool"\ntool = "write_file"\ncommand = "true"\n\n[[hook]]\nevent = "post-tolol"\ncommand = "true"\n',
+    );
+    // Nothing of it runs before trust.
+    expect(hookEngineFor(repo).count).toBe(0);
+    const check = hooksCheck(repo);
+    expect(check.status).toBe("warn");
+    expect(check.detail).not.toMatch(/none declared/);
+    expect(check.detail).toContain(join(repo, ".sekhemet", "hooks.toml"));
+    expect(check.detail).toMatch(/waits for trust/);
+    expect(check.detail).toMatch(/2 hooks declared/);
+    expect(check.detail).toContain('unknown event "post-tolol"');
+    expect(check.do).toMatch(/sekhemet dev trust/);
+  });
+
+  it("names invalid TOML in an untrusted file", () => {
+    const repo = project("[[hook]\nevent = ");
+    const check = hooksCheck(repo);
+    expect(check.status).toBe("warn");
+    expect(check.detail).toMatch(/waits for trust: none runs until you trust it/);
+    expect(check.detail).toMatch(/hooks\.toml: hooks\.toml: /);
+  });
+});
+
 describe("EXT-11: a hook that exits before reading its stdin does not crash the harness", () => {
   it("continues, reading the exit code as usual", async () => {
     const repo = project(

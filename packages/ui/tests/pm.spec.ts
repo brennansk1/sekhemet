@@ -648,3 +648,32 @@ describe("model roster and research sources", () => {
     ]);
   });
 });
+
+describe("an import's link in words (loop wave 6, A1)", () => {
+  it("shows a tracker link as its tracker and key, never its JSON or field key", () => {
+    const rows = proposalDiff({
+      kind: "update_card",
+      cardId: "card_a",
+      patch: { externalRef: { system: "jira", id: "SEK-12", url: "" } },
+      before: { externalRef: null },
+    });
+    expect(rows).toEqual([
+      expect.objectContaining({ label: "Link", before: "None", after: "Jira SEK-12" }),
+    ]);
+  });
+});
+
+describe("a title in a diff reads as the board shows it (loop wave 6, A6)", () => {
+  it("drops the planner's (SPIDR: …) marker the board and the exports never show", () => {
+    const rows = proposalDiff({
+      kind: "update_card",
+      cardId: "card_a",
+      patch: { title: "Define contract types v2" },
+      before: { title: "Define contract types (SPIDR: Interface)" },
+    });
+    expect(rows[0]).toMatchObject({
+      before: "Define contract types",
+      after: "Define contract types v2",
+    });
+  });
+});

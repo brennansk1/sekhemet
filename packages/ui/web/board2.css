@@ -1002,6 +1002,22 @@
 .itag.on .ic {
   color: var(--state-pass);
 }
+/* Loop wave 5, A2–A3: a connection that is set but not working. */
+.itag.fail {
+  color: var(--text-primary);
+}
+.itag.fail .ic {
+  color: var(--state-fail);
+}
+.istatus.ifail {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+.istatus .ic {
+  flex: none;
+  margin-top: 1px;
+}
 .idoes {
   font-size: var(--text-sm);
 }
@@ -1211,6 +1227,45 @@
   display: inline-flex;
   gap: 8px;
   align-items: center;
+}
+/* Loop wave 6, A6: the File label and its control stay on one line, inside the sheet. */
+.isheet label.file {
+  min-width: 0;
+  max-width: 100%;
+}
+.isheet label.file input {
+  min-width: 0;
+  max-width: 100%;
+  font-size: var(--text-xs);
+}
+/* At phone width every input is 44 px tall (§2.14.5): the file control's
+   button sits at the top of that box unless it is centred in it. */
+.isheet label.file input[type="file"]::file-selector-button {
+  min-height: 32px;
+}
+@media (max-width: 767px) {
+  .isheet label.file input[type="file"] {
+    padding-block: 6px;
+  }
+}
+.inotes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.inotes li {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+.inotes .ic {
+  flex: none;
+  margin-top: 1px;
 }
 .isheet select,
 .isheet textarea {

@@ -2,7 +2,12 @@
 // entry says what leaves this machine when connected; nothing is on by default.
 // Import is a preview of proposals, never a silent write.
 import { esc, getJSON, icon, postJSON, sendJSON } from "./dom.js";
-import { integrationGroups, secretStoreNotice } from "./lib/integrations_view.js";
+import {
+  connectedCount,
+  integrationGroups,
+  integrationState,
+  secretStoreNotice,
+} from "./lib/integrations_view.js";
 import { formatWait } from "./lib/vocabulary.js";
 import { bindProposals, proposalGroupHtml } from "./proposals.js";
 import { setTopbar } from "./shell.js";
@@ -163,7 +168,11 @@ const ui = {
   busy: new Set(),
   sync: null,
   importFormat: null,
+  /** The Import… button that opened the sheet, so closing it returns focus there. */
+  importOpener: null,
   importList: null,
+  /** What the server left out of the file or did not keep, in words (W6 A3). */
+  importNotes: [],
   importTitle: "",
   importError: "",
   importContent: "",
@@ -188,11 +197,36 @@ function merged() {
   return [...g.now, ...g.next, ...g.later].map((e) => ({ ...e, known: true }));
 }
 
+/** The card's tag: Connected or On only for a connection that is there and working (A1–A3). */
 function stateTag(e) {
   if (ui.status === 404) return '<span class="itag">Not available on this server yet</span>';
-  if (e.connected || e.enabled)
-    return `<span class="itag on">${icon("check", 12, "ic s12")}${e.id === "github-pr" ? "On" : "Connected"}</span>`;
-  return '<span class="itag">Not connected</span>';
+  const s = integrationState(e);
+  if (s.tone === "on")
+    return `<span class="itag on">${icon("check", 12, "ic s12")}${esc(s.label)}</span>`;
+  if (s.tone === "fail")
+    return `<span class="itag fail">${icon("alert", 12, "ic s12")}${esc(s.label)}</span>`;
+  return `<span class="itag">${esc(s.label)}</span>`;
+}
+
+/** Push and email: what the last send found since connecting — a test or a notice (A3; W6 review). */
+function testLine(e) {
+  const t = e.lastSend;
+  if (!t) return "";
+  const when = clock(t.at);
+  const what = t.kind === "test" ? "The test" : "The last notice";
+  return t.ok
+    ? `<p class="istatus">${icon("check", 12, "ic s12 i-pass")} ${what}${when ? ` at ${esc(when)}` : ""} arrived.</p>`
+    : `<p class="istatus ifail">${icon("alert", 12, "ic s12 i-fail")}<span>${what}${when ? ` at ${esc(when)}` : ""} did not arrive${t.error ? `: ${esc(t.error)}` : ""}. Check the server details, then send a test.</span></p>`;
+}
+
+function clock(iso) {
+  const ms = Date.parse(iso ?? "");
+  if (!Number.isFinite(ms)) return "";
+  return new Date(ms).toLocaleTimeString([], {
+    hourCycle: "h23",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function mono(e) {
@@ -214,8 +248,17 @@ function controls(e) {
       return `<div class="iacts">${b("pull", "Pull")}${b("push", "Push")}${b("both", "Sync both", true)}<a class="btn sm ghost" href="/api/export?format=github-json" download>${icon("download", 12, "ic s12")}Export GitHub JSON</a></div>${res}`;
     }
     case "github-pr": {
-      const on = Boolean(e.enabled ?? e.connected);
-      return `<div class="iacts"><button class="switch" type="button" role="switch" aria-checked="${on}" aria-label="Open a pull request on Accept" data-toggle-pr data-needs="integration.connect" ${busy("pr") ? "disabled" : ""}><span></span></button><span class="sec">${on ? "Accept opens a pull request." : "Accept merges locally as one commit."}</span></div>`;
+      // A2: the switch goes on only with GitHub connected; once on, it can always go off.
+      const on = Boolean(e.enabled);
+      const needsGithub = !e.connected;
+      const why = on
+        ? needsGithub
+          ? "On, but this repository has no GitHub remote, so Accept leaves the issue in Review. Turn this off, or add a GitHub remote."
+          : "Accept opens a pull request."
+        : needsGithub
+          ? "Connect GitHub first: this repository has no GitHub remote. Accept merges locally as one commit."
+          : "Accept merges locally as one commit.";
+      return `<div class="iacts"><button class="switch" type="button" role="switch" aria-checked="${on}" aria-label="Open a pull request on Accept" aria-describedby="pr-why" data-toggle-pr data-needs="integration.connect" ${busy("pr") || (!on && needsGithub) ? "disabled" : ""}><span></span></button><span class="sec" id="pr-why">${esc(why)}</span></div>`;
     }
     case "research-web": {
       const on = Boolean(e.enabled ?? e.connected);
@@ -223,13 +266,13 @@ function controls(e) {
     }
     case "push": {
       if (e.connected) {
-        return `<div class="iacts"><button class="btn sm" type="button" data-push-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test alert"}</button><button class="btn sm ghost" type="button" data-push-off data-needs="integration.connect">Disconnect</button></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
+        return `<div class="iacts"><button class="btn sm" type="button" data-push-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test alert"}</button><button class="btn sm ghost" type="button" data-push-off data-needs="integration.connect">Disconnect</button></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}${testLine(e)}`;
       }
       return `<form class="iacts push-form" data-push-form><select name="kind" aria-label="Server"><option value="ntfy">ntfy</option><option value="gotify">Gotify</option></select><input name="url" type="url" required placeholder="https://ntfy.sh or http://192.168.1.5:8080" aria-label="Server URL" autocomplete="off" spellcheck="false"><input name="topic" type="text" placeholder="Topic (ntfy)" aria-label="ntfy topic" autocomplete="off" spellcheck="false"><input name="token" type="password" placeholder="Token (optional for ntfy, required for Gotify)" aria-label="Access token" autocomplete="off"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The token is a credential. ${esc(keptWhere())} The server URL stays in your user directory, never in the repository or the Activity log.</span></p>`;
     }
     case "email": {
       if (e.connected) {
-        return `<div class="iacts"><button class="btn sm" type="button" data-email-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test email to me"}</button><button class="btn sm ghost" type="button" data-email-off data-needs="integration.connect">Disconnect</button></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
+        return `<div class="iacts"><button class="btn sm" type="button" data-email-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test email to me"}</button><button class="btn sm ghost" type="button" data-email-off data-needs="integration.connect">Disconnect</button></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}${testLine(e)}`;
       }
       return `<form class="iacts email-form" data-email-form><input name="host" type="text" required placeholder="SMTP server, e.g. smtp.example.com" aria-label="SMTP server" autocomplete="off" spellcheck="false"><input name="port" type="number" required min="1" max="65535" value="587" aria-label="Port"><label class="sec"><input name="secure" type="checkbox"> TLS from the start (port 465)</label><input name="user" type="text" placeholder="User name (optional)" aria-label="SMTP user name" autocomplete="off" spellcheck="false"><input name="password" type="password" placeholder="Password (optional)" aria-label="SMTP password" autocomplete="off"><input name="from" type="email" required placeholder="Send from, e.g. sekhemet@example.com" aria-label="Sender address" autocomplete="off" spellcheck="false"><button class="btn sm primary" type="submit" data-needs="integration.connect" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The password is a credential. ${esc(keptWhere())} It is never in the repository or the Activity log, and never shown again.</span></p>`;
     }
@@ -273,9 +316,12 @@ function importHtml() {
     (f) =>
       `<option value="${f.id}"${f.id === ui.importFormat ? " selected" : ""}>${esc(f.label)}</option>`,
   ).join("");
-  const preview = ui.importList
-    ? `${proposalGroupHtml(ui.importList, { title: ui.importTitle })}<p class="inote">The same preview is in Seshat's thread. Nothing changes until you apply.</p>`
+  const notes = ui.importNotes.length
+    ? `<ul class="inotes" aria-label="Read from the file">${ui.importNotes.map((n) => `<li>${icon("alert", 12, "ic s12 i-park")}<span>${esc(n)}</span></li>`).join("")}</ul>`
     : "";
+  const preview = ui.importList?.length
+    ? `${notes}${proposalGroupHtml(ui.importList, { title: ui.importTitle })}<p class="inote">The same preview is in Seshat's thread. Nothing changes until you apply.</p>`
+    : notes;
   return `<section class="isheet" aria-label="Import"><header><h2>Import</h2><button class="icon-btn" type="button" data-import-close aria-label="Close import">${icon("x", 14, "ic s14")}</button></header><form data-import-form><div class="irow"><label>Format <select name="format">${opts}</select></label><label class="file">File <input type="file" name="file" accept=".csv,.json,text/csv,application/json"></label></div><textarea name="content" rows="5" placeholder="Or paste the export here" spellcheck="false">${esc(ui.importContent ?? "")}</textarea><div class="iacts"><button class="btn sm primary" type="submit" ${ui.busy.has("import") ? "disabled" : ""}>${ui.busy.has("import") ? "Reading…" : "Preview as proposals"}</button><span class="sec">Import is never silent: each issue becomes a proposal you apply or discard.</span></div>${ui.importError ? `<p class="ierr">${icon("alert", 12, "ic s12 i-fail")}${esc(ui.importError)}</p>` : ""}</form>${preview}</section>`;
 }
 
@@ -306,17 +352,20 @@ function render() {
   const g = grouped();
   const now = g.now.map((e) => ({ ...e, known: true }));
   const { next, later } = g;
-  const connected = now.filter((e) => e.connected || e.enabled).length;
+  const connected = connectedCount(now);
   setTopbar({
     title: "Integrations",
     crumb: ui.status === 404 ? "" : `${connected} of ${now.length} connected`,
   });
+  // A5: no answer keeps the last known cards, and says so.
   const banner =
     ui.status === 404
       ? `<p class="ibanner">${icon("alert", 14, "ic s14 i-park")}<span><b>Integrations aren't on this server yet.</b> Update Sekhemet and restart it to connect GitHub, Jira, Linear and Slack.</span></p>`
-      : ui.status && ui.status !== 200
-        ? `<p class="ibanner">${icon("alert", 14, "ic s14 i-fail")}<span><b>Couldn't load integrations.</b> The server returned ${esc(ui.status)}.</span></p>`
-        : "";
+      : ui.status === 0
+        ? `<p class="ibanner">${icon("alert", 14, "ic s14 i-fail")}<span><b>Sekhemet can't be reached.</b> ${ui.entries.length ? "Showing the last known state." : "Integrations will show when it answers."}</span></p>`
+        : ui.status && ui.status !== 200
+          ? `<p class="ibanner">${icon("alert", 14, "ic s14 i-fail")}<span><b>Couldn't load integrations.</b> The server returned ${esc(ui.status)}.${ui.entries.length ? " Showing the last known state." : ""}</span></p>`
+          : "";
   const html = `<div class="ints">${banner}<p class="ilede">Every integration is off until you connect it, and each one says what leaves this machine. Sekhemet uses your own CLI logins and webhook URLs and keeps no tokens in the repository.</p>${secretStoreHtml()}${importHtml()}${now.length ? `<section><h2>Now <span class="sec">Connect these</span></h2><div class="igrid">${now.map(nowCard).join("")}</div></section>` : ""}${next.length ? `<section><h2>Next <span class="sec">Planned</span></h2><div class="igrid next">${next.map(nextCard).join("")}</div></section>` : ""}${later.length ? `<section><h2>Later <span class="sec">On the roadmap</span></h2><ul class="ilater">${later.map(laterRow).join("")}</ul></section>` : ""}</div>`;
   const scroll = ui.root.scrollTop;
   ui.root.innerHTML = html;
@@ -326,15 +375,18 @@ function render() {
 async function load() {
   try {
     const r = await getJSON("/api/integrations");
-    ui.status = r.status;
+    ui.status = r.ok ? 200 : r.status || 0;
     const list = Array.isArray(r.data)
       ? r.data
       : Array.isArray(r.data?.integrations)
         ? r.data.integrations
         : [];
-    ui.entries = r.ok ? list : [];
+    // A5: a failed read keeps the last known entries; only a server without
+    // integrations (404) has none to show.
+    if (r.ok) ui.entries = list;
+    else if (r.status === 404) ui.entries = [];
   } catch {
-    ui.status = -1;
+    ui.status = 0;
   }
   try {
     const s = await getJSON("/api/integrations/secret-store");
@@ -442,9 +494,10 @@ async function onClick(e) {
       else
         toast({
           tone: "fail",
-          text: "The server didn't accept the test alert.",
+          text: "The test alert didn't arrive.",
           detail: r.data?.error ?? err(r),
         });
+      await load();
     });
     return;
   }
@@ -466,9 +519,10 @@ async function onClick(e) {
       else
         toast({
           tone: "fail",
-          text: "The SMTP server didn't take the test email.",
+          text: "The test email didn't arrive.",
           detail: r.data?.error ?? err(r),
         });
+      await load();
     });
     return;
   }
@@ -505,17 +559,40 @@ async function onClick(e) {
   const imp = t.closest("[data-import]");
   if (imp) {
     ui.importFormat = imp.dataset.import;
+    ui.importOpener = imp.dataset.import;
     ui.importList = null;
+    ui.importNotes = [];
     ui.importError = "";
     render();
     ui.root.querySelector(".isheet")?.scrollIntoView({ block: "start" });
     ui.root.querySelector(".isheet select")?.focus();
     return;
   }
-  if (t.closest("[data-import-close]")) {
-    ui.importFormat = null;
-    ui.importList = null;
-    render();
+  if (t.closest("[data-import-close]")) closeImport();
+}
+
+/** Close the Import sheet and give focus back to the button that opened it (W6 A6). */
+function closeImport() {
+  if (!ui.importFormat) return false;
+  ui.importFormat = null;
+  ui.importList = null;
+  ui.importNotes = [];
+  render();
+  const opener = ui.importOpener
+    ? ui.root?.querySelector(`[data-import="${CSS.escape(ui.importOpener)}"]`)
+    : null;
+  if (opener instanceof HTMLElement) opener.focus();
+  return true;
+}
+
+/** Escape inside the sheet closes it, even from one of its fields (W6 A6). */
+function onKeydown(e) {
+  if (e.key !== "Escape" || e.metaKey || e.ctrlKey || e.altKey) return;
+  const t = e.target instanceof Element ? e.target : null;
+  if (!t?.closest(".isheet")) return;
+  if (closeImport()) {
+    e.preventDefault();
+    e.stopPropagation();
   }
 }
 
@@ -588,8 +665,18 @@ async function onSubmit(e) {
       return;
     }
     await withBusy("import", async () => {
-      const r = await postJSON("/api/import", { format, content });
+      // A new row is created in the project the page is on (W6 review: a
+      // workspace of two projects cannot apply one otherwise).
+      const projectId = store.state.project?.id;
+      const r = await postJSON("/api/import", {
+        format,
+        content,
+        ...(projectId ? { projectId } : {}),
+      });
+      ui.importNotes = Array.isArray(r.data?.notes) ? r.data.notes.map(String) : [];
       if (!r.ok) {
+        // W6 A5: the server's one sentence says what is wrong and where.
+        ui.importList = null;
         ui.importError = `Couldn't read that ${FORMATS.find((f) => f.id === format)?.label ?? format} file. ${err(r)}`;
         return;
       }
@@ -608,6 +695,7 @@ export function mount(view) {
   ui.root = host;
   host.addEventListener("click", onClick);
   host.addEventListener("submit", onSubmit);
+  host.addEventListener("keydown", onKeydown);
   bindProposals(host, { sources: () => (ui.importList ? [ui.importList] : []), onChange: render });
   const unsub = store.on((_s, patch) => {
     if ("connection" in patch || "meta" in patch) render();
@@ -615,6 +703,8 @@ export function mount(view) {
   render();
   load();
   return {
+    /** Escape with focus elsewhere on the page closes an open Import sheet (W6 A6). */
+    onEscape: () => closeImport(),
     unmount() {
       unsub();
       host.remove();

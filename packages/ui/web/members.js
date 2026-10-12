@@ -144,7 +144,7 @@ function rowHtml(row) {
       : `<button class="btn sm ghost" type="button" data-mb-menu="${esc(row.principal)}" aria-haspopup="menu" aria-label="${esc(`${C.actions}: ${row.name}`)}">${icon("more", 14, "ic s14")}</button>`
     : "";
   const k = P.columns;
-  const projects = `${ui.projects.length ? esc(P.allProjects(ui.projects.length)) : `<span class="sec">${esc(P.noProjects)}</span>`}${row.overrides.length ? overrides : ""}`;
+  const projects = `${ui.projects.length ? esc(P.allProjects(ui.projects.map((p) => p.name))) : `<span class="sec">${esc(P.noProjects)}</span>`}${row.overrides.length ? overrides : ""}`;
   const accepts = row.acceptIn.length
     ? esc(row.acceptIn.join(", "))
     : `<span class="sec" aria-label="${esc(C.none)}">—</span>`;

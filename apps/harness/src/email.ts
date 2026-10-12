@@ -189,6 +189,8 @@ export async function sendEmail(
         ...(deps.record?.notice ? { notice: deps.record.notice } : {}),
         ...(deps.record?.day ? { day: deps.record.day } : {}),
       },
+      // W6 review: why it failed, privately, for Integrations to say (never the password).
+      ...(!result.ok && result.error ? { private: { error: result.error.slice(0, 500) } } : {}),
     })
     .catch(() => undefined);
   return result;

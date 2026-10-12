@@ -465,6 +465,14 @@ export function startDashboardServer(
     },
     // planner-pm §2.8.5, §2.18 (B4.3): who Seshat answers, from the access module.
     audience: () => audienceFromAccess(() => access, options.db),
+    // W6 review: a check the route makes once it has read the message (teams item 6).
+    refuseUnless: (req, res, permission) => {
+      const principal = principalOf(req);
+      const decision = access.decide(principal, permission, undefined, undefined, ceilingOf(req));
+      if (decision.allowed) return false;
+      refuse(res, json, log, decision, { principal });
+      return true;
+    },
     // SEC-27c: the choice to keep secrets in a file is a config write, recorded with the person.
     userConfigPath: configPath,
     recordConfigWrite: (principal, write) =>
@@ -537,6 +545,7 @@ export function startDashboardServer(
         localPrincipal: log.localPrincipal(),
       };
     },
+    mayShowPaths: (req) => access.can(principalOf(req), "project.converse"),
     mayChangeReviewCapacity: (req, project) => {
       const name = options.cardStore?.getProject(project)?.name;
       const d = access.decide(principalOf(req), "review.capacity", project, name, ceilingOf(req));
@@ -1925,6 +1934,8 @@ export function startDashboardServer(
         log,
         me: principalOf(req),
         audience: audienceFromAccess(() => access, options.db),
+        // W6 review: a folder of the server's disk only for a person who may start a project.
+        showPaths: access.can(principalOf(req), "project.converse"),
         repoPath,
         models: {
           roles: modelRoster(repoPath).roles as RosterRoleLike[],
@@ -1959,6 +1970,12 @@ export function startDashboardServer(
       // one the person typed, `?folder=`), says before any approval when
       // that folder cannot take it, and whether this person may create a
       // project or ends with Send for approval (TEAM-57).
+      // Loop sweep 3 (teams item 6): a person who may not start a project
+      // conversation — a Viewer — is told no folder on the server's disk.
+      if (!access.can(principalOf(req), "project.converse")) {
+        json(res, 200, { allowed: true, mayCreate: false, mayConverse: false });
+        return;
+      }
       if (await createsNewFolder({ repoPath, cardStore: store, log })) {
         const workspaceFolder = workspaceFolderOf(repoPath);
         const typed = query.get("folder")?.trim();
@@ -1998,11 +2015,17 @@ export function startDashboardServer(
     if (url === "/api/projects" && req.method !== "POST") {
       const store = options.cardStore;
       // K-N5-3: each project with its derived rollup (active, idle, done, paused, archived).
+      // W6 review: below the level that may start a project, no folder of
+      // the server's disk — the folder's last part tells two apart.
+      const paths = access.can(principalOf(req), "project.converse");
       const projects = store
         ? await Promise.all(
-            store
-              .listProjects()
-              .map(async (p) => ({ ...p, rollup: await store.projectRollup(p.id) })),
+            store.listProjects().map(async ({ rootPath, ...p }) => ({
+              ...p,
+              ...(paths ? { rootPath } : {}),
+              folder: basename(rootPath),
+              rollup: await store.projectRollup(p.id),
+            })),
           )
         : [];
       json(res, 200, { projects, activeCap: store?.activeProjectCap });

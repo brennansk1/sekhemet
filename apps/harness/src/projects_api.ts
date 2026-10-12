@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
 import { CRITERIA_APPROVAL_HOLD } from "@sekhemet/planner";
 import {
@@ -40,6 +41,12 @@ export async function projectsOverview(deps: {
   models: ProjectsOverview["models"];
   /** Injectable for tests: the forecast's resampling. */
   random?: () => number;
+  /**
+   * Whether the person is shown each project's folder on the server's disk
+   * (W6 review: only one who may start a project); the folder's last part
+   * is always given, to tell two projects of one name apart. Default true.
+   */
+  showPaths?: boolean;
 }): Promise<ProjectsOverview> {
   const a = deps.audience ?? soloAudience();
   const team = a.setup === "team";
@@ -149,8 +156,10 @@ export async function projectsOverview(deps: {
     projects.push({
       id: project.id,
       name: project.name,
-      // The project switcher's tooltip (DB-N25-1): the path, never the sidebar's text.
-      rootPath: project.rootPath,
+      // The project switcher's tooltip (DB-N25-1): the path, never the
+      // sidebar's text, and only for a person who may start a project.
+      ...(deps.showPaths === false ? {} : { rootPath: project.rootPath }),
+      folder: basename(project.rootPath),
       state: await store.projectRollup(project.id),
       lead: leadId ? nameFor(a, leadId, me) : team ? null : "you",
       health: facts.health ?? null,

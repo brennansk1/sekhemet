@@ -226,6 +226,13 @@ export interface ConfigApiDeps {
     project: string,
   ) => { allowed: boolean; reason?: string };
   /**
+   * Whether the person behind a request is shown folders of the server's
+   * disk — the project's repository, the model folders, where new projects
+   * go (W6 review, teams item 6): a person who may start a project
+   * conversation (`project.converse`). Everyone when absent (Solo).
+   */
+  mayShowPaths?: (req: IncomingMessage) => boolean;
+  /**
    * The facts of a project's Definition of done (dashboard DB-N14-1): its
    * checks from `gates.toml`, its depth profile and who its Accept rule
    * names. Read-only: it enforces nothing (DB-N14-3).
@@ -2486,15 +2493,32 @@ export function createConfigApi(deps: ConfigApiDeps) {
               return undefined;
             }
           })();
+          // W6 review: below the level that may start a project, no folder
+          // of the server's disk — the repository's path, the model folders
+          // or where new projects go.
+          const paths = deps.mayShowPaths?.(req) ?? true;
+          const config = paths
+            ? r.config
+            : {
+                ...r.config,
+                models: (({ folders: _f, ...rest }) => rest)(r.config.models),
+                workspace: (({ projectsDir: _d, ...rest }) => rest)(r.config.workspace),
+              };
           deps.json(res, 200, {
-            config: r.config,
+            config,
             layers: r.layers,
             problems: r.problems,
             sources: r.sources,
             ...(capacity ? { reviewCapacity: capacity } : {}),
             ...(done ? { definitionOfDone: done } : {}),
             ...(record
-              ? { project: { id: record.id, name: record.name, rootPath: record.rootPath } }
+              ? {
+                  project: {
+                    id: record.id,
+                    name: record.name,
+                    ...(paths ? { rootPath: record.rootPath } : {}),
+                  },
+                }
               : {}),
           });
           return true;

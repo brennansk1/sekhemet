@@ -83,7 +83,11 @@ server does not answer to is refused with 421 before any endpoint runs.
   `{ messages: PmMessage[], status: PmStatus }`.
 - `POST /api/pm/messages` with `{ text, documents?: { name, text }[],
   context?: { cardId?, view? } }` returns `{ message: PmMessage, notice? }`
-  (role `user`, state `queued`). The text is kept whole, whatever its length
+  (role `user`, state `queued`). In the Team setup a message that opens a
+  project conversation — it starts with *Start a new project:* — needs
+  `project.converse` (a Stakeholder or above): below it, 403 with the
+  level's note, recorded `access/refused`, and nothing queued (teams item 6;
+  W5–W6 review). The text is kept whole, whatever its length
   (planner-pm NEW-planner-pm-10). Each document the composer attached, and
   the text itself when it is longer than 8,000 characters
   (`SESHAT_DOCUMENT_CHARS`), is a project document: committed, byte for

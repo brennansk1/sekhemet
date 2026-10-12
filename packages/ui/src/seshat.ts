@@ -142,6 +142,14 @@ export function composerStarters(ctx: StarterContext = {}): Starter[] {
   return out;
 }
 
+/**
+ * The bare *Start a new project:* starter, not yet finished (dashboard 2.7.6
+ * item 6: the person finishes it and sends it): Send waits for their words.
+ */
+export function unfinishedStarter(text: string): boolean {
+  return /^\s*start a (?:new )?project\s*:?\s*$/i.test(text);
+}
+
 /** The line under the composer while a person starts a project (DB-P5-3); empty otherwise. */
 export function composerHint(text: string): string {
   return /^\s*start a (?:new )?project\s*:/i.test(text) ? SESHAT_COPY.startHint : "";

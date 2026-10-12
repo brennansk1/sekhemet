@@ -136,7 +136,7 @@ ${propsHtml({ forTriage })}
 ${reproHtml()}
 <fieldset class="qc-repro qc-form" hidden></fieldset>
 <p class="qc-err" id="qc-err" role="alert"></p>
-<p class="qc-note" id="qc-note">${icon(forTriage ? "inbox" : "chat", 12, "ic s12")}<span>${esc(forTriage ? TRIAGE_COPY.filedForTriage : T.note)}</span></p>
+<p class="qc-note" id="qc-note">${icon(forTriage ? "inbox" : "chat", 12, "ic s12")}<span>${esc(forTriage ? TRIAGE_COPY.filedForTriage(store.state.project?.list?.find((p) => p.id === projectId)?.lead) : T.note)}</span></p>
 <footer><button class="btn ghost" type="button" data-close>${esc(T.cancel)}</button><button class="btn primary" type="submit">${esc(forTriage ? TRIAGE_COPY.fileSubmit : T.submit)}</button></footer>
 </form>`;
   document.getElementById("overlay-root").append(node);

@@ -408,7 +408,9 @@ export const MEMBERS_PARTS_COPY = {
     acceptIn: "Can accept in",
     lastActive: "Last active",
   },
-  allProjects: (n: number) => (n === 1 ? "The 1 project" : `All ${n}`),
+  /** The projects a person's level covers: the one project by name, else "All n". */
+  allProjects: (names: readonly string[]) =>
+    names.length === 1 ? (names[0] ?? "") : `All ${names.length}`,
   noProjects: "No projects yet",
   aiTitle: "AI teammates",
   aiNote: "not members · no access level · no seat",
@@ -912,7 +914,8 @@ export function auditEntry(
   } else if (row.type.startsWith("token/")) {
     target = `Token ${str(p.token)}`;
   } else if (row.type === "member/invited") {
-    target = `Invite ${str(p.invite)}${projectName ? ` to ${projectName}` : ""}`;
+    // TEAM-27: where the invite is to, in words; its record id is never the target.
+    target = projectName || MEMBERS_PARTS_COPY.wholeWorkspace;
   } else if (row.type.startsWith("session/")) {
     // TEAM-06: a sign-in's person is its actor; naming them again as the target says nothing.
     target = "";

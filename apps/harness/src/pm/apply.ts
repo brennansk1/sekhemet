@@ -80,6 +80,15 @@ function toCreate(fields: Record<string, unknown>, extra: Record<string, unknown
   return input as unknown as Parameters<CardStore["createCard"]>[0];
 }
 
+/** The type an import's row carries (`import_board.ts` `TYPES`): tier, spike or bug only. */
+function importedType(fields: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (["epic", "story", "task"].includes(String(fields.tier))) out.tier = fields.tier;
+  if (fields.kind === "spike") out.kind = "spike";
+  if (fields.change === "fix") out.change = "fix";
+  return out;
+}
+
 /**
  * Apply one approved proposal to the board.
  *
@@ -174,7 +183,15 @@ export async function applyProposal(
             ? await ctx.cardStore.getCard(traces[0].changeFor)
             : undefined;
         const created = await ctx.cardStore.createCard(
-          toCreate(fields, was?.projectId ? { projectId: was.projectId } : {}),
+          toCreate(fields, {
+            ...(was?.projectId ? { projectId: was.projectId } : {}),
+            // W6 A4: an imported row is created as the type its preview showed,
+            // in the project the import named (W6 review: two projects need one).
+            ...(proposal.origin === "import" ? importedType(fields) : {}),
+            ...(proposal.origin === "import" && typeof fields.projectId === "string"
+              ? { projectId: fields.projectId }
+              : {}),
+          }),
           actor,
         );
         for (const t of traces) {

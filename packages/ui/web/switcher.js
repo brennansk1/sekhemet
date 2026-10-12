@@ -40,6 +40,9 @@ function listOf(overview) {
     status: p.state,
     state: p.state,
     ...(p.rootPath ? { rootPath: p.rootPath } : {}),
+    ...(p.folder ? { folder: p.folder } : {}),
+    // The New issue form names the assignee a filing gets (DB-N10-1).
+    ...(p.lead !== undefined ? { lead: p.lead } : {}),
   }));
 }
 

@@ -16,6 +16,7 @@ import { resolvePlannerModel } from "@sekhemet/planner";
 import {
   CARD_VERSION_FIELDS,
   type Reproduction,
+  START_PROJECT_OPENING,
   cardVersion,
   issueSpec,
   quickCreateRequest,
@@ -119,12 +120,26 @@ export interface PmApiContext {
    * teams items 6, 19a, 20). A Solo install's one person when omitted.
    */
   audience?: () => Audience;
+  /**
+   * Refuse the request — 403 with the level's note, recorded — when the
+   * person may not take this action (teams item 6); true when it answered.
+   * A Solo install, or a context without it, refuses nothing.
+   */
+  refuseUnless?: (
+    req: IncomingMessage,
+    res: ServerResponse,
+    permission: "project.converse",
+  ) => boolean;
   /** The user config.toml, and its writes recorded with the person (TEAM-44; SEC-27c's choice). */
   userConfigPath?: string;
   recordConfigWrite?: <T>(principal: string, write: () => T) => T;
 }
 
 const CARD_ID = "[A-Za-z0-9_-]+";
+
+/** A message that opens a project conversation as the page's Start a project does (`START_PROJECT_OPENING`). */
+const startsProject = (text: string): boolean =>
+  text.trimStart().toLowerCase().startsWith(START_PROJECT_OPENING.trim().toLowerCase());
 
 /** Card fields the dashboard may edit inline (PM_CONTRACT §2). */
 const PATCHABLE: Record<string, (v: unknown) => unknown> = {
@@ -458,6 +473,12 @@ export function createPmApi(ctx: PmApiContext) {
       } catch (err) {
         if (!(err instanceof MessageRefused)) throw err;
         ctx.json(res, err.status, { error: err.message, ...err.detail });
+        return true;
+      }
+      // W6 review (teams item 6): a project-start conversation — the words
+      // the page's Start a project opens with — is a Stakeholder's or
+      // above (`project.converse`), refused on the server, not only greyed.
+      if (startsProject(incoming.text) && ctx.refuseUnless?.(req, res, "project.converse")) {
         return true;
       }
       const raw = (body.context ?? {}) as Record<string, unknown>;

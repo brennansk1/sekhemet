@@ -90,6 +90,34 @@ describe("the one network policy", () => {
     expect(records[0]?.payloadHash).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it("records a request the policy allowed but the server never answered as allowed, not refused (loop wave 5, A4)", async () => {
+    // A port nothing listens on: the policy allows loopback, the connection is refused.
+    const port = await new Promise<number>((resolve) => {
+      const s = createServer().listen(0, "127.0.0.1", () => {
+        const a = s.address();
+        s.close(() => resolve(typeof a === "object" && a ? a.port : 0));
+      });
+    });
+    const records: NetworkRequestRecord[] = [];
+    const f = policyFetch(mergeNetworkConfigs({}, {}), {
+      purpose: "integration:push",
+      record: (r) => records.push(r),
+    });
+    const err = await f(`http://127.0.0.1:${port}/x`).then(
+      () => undefined,
+      (e: unknown) => e as Error,
+    );
+    expect(err?.message).toMatch(/ECONNREFUSED/);
+    expect(err?.message).not.toMatch(/network policy refused/);
+    expect(records).toEqual([
+      expect.objectContaining({
+        host: "127.0.0.1",
+        allowed: true,
+        reason: expect.stringMatching(/ECONNREFUSED/),
+      }),
+    ]);
+  });
+
   it("sends localhost to 127.0.0.1 itself and accepts a body-less reply", async () => {
     const port = await new Promise<number>((resolve) => {
       server = createServer((_req, res) => {

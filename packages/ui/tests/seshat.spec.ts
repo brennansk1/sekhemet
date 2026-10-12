@@ -13,6 +13,7 @@ import {
   paletteSeshat,
   seshatHeader,
   seshatOpensIn,
+  unfinishedStarter,
   visibleNav,
 } from "../src/index.js";
 import { reviewPlanButtonHtml } from "../web/review_plan_view.js";
@@ -195,5 +196,16 @@ describe("DB-P5-7: a non-developer at 400 px starts a project and asks how it is
   it("is served to the browser as /app/lib/seshat.js", () => {
     expect(UI_LIB_MODULES).toContain("seshat.js");
     expect(SESHAT_COPY.title).toBe("Seshat · Project manager");
+  });
+});
+
+describe("the start of a project is the person's to finish (dashboard 2.7.6 item 6; loop sweep 3)", () => {
+  it("knows the bare starter, with or without its space, as not yet a message", () => {
+    expect(unfinishedStarter(START_PROJECT_OPENING)).toBe(true);
+    expect(unfinishedStarter("Start a new project:")).toBe(true);
+    expect(unfinishedStarter("  start a project:  ")).toBe(true);
+    expect(unfinishedStarter("Start a new project: a recipe site")).toBe(false);
+    expect(unfinishedStarter("Standup")).toBe(false);
+    expect(unfinishedStarter("")).toBe(false);
   });
 });

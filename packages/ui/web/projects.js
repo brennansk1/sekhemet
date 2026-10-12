@@ -59,11 +59,14 @@ function progressHtml(r) {
 function folderNote(r) {
   const all = ui.overview?.projects ?? [];
   if (all.filter((p) => p.name === r.name).length < 2) return "";
-  const root = all.find((p) => p.id === r.id)?.rootPath ?? "";
-  const folder = root
-    .replace(/[\\/]+$/, "")
-    .split(/[\\/]/)
-    .pop();
+  const own = all.find((p) => p.id === r.id);
+  // The folder's last part (W6 review: a Viewer is given no full path).
+  const folder =
+    own?.folder ||
+    (own?.rootPath ?? "")
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .pop();
   return folder ? ` · ${folder}` : "";
 }
 
@@ -140,9 +143,9 @@ function render() {
       html = `<div class="ib-empty">${icon("layers", 24, "ic s24")}<b>${esc(v.unavailable)}</b><span>${esc(C.notOnServerDetail)}</span></div>`;
     } else if (v.empty) {
       // DB-N9-21: one empty state and nothing else.
-      html = `<div class="ib-empty pj-empty">${icon("layers", 24, "ic s24")}<b>${esc(v.empty.heading)}</b><span>${esc(v.empty.detail)}</span><button class="btn primary" type="button" data-new>${icon("plus", 14, "ic s14")}${esc(v.empty.button)}</button></div>`;
+      html = `<div class="ib-empty pj-empty">${icon("layers", 24, "ic s24")}<b>${esc(v.empty.heading)}</b><span>${esc(v.empty.detail)}</span><button class="btn primary" type="button" data-new data-needs="project.converse">${icon("plus", 14, "ic s14")}${esc(v.empty.button)}</button></div>`;
     } else {
-      html = `<div class="pj-head">${totalsHtml(v)}<button class="btn primary" type="button" data-new>${icon("plus", 14, "ic s14")}${esc(v.newProject)}</button></div>${tableHtml(v)}${waitingHtml(v.waiting)}${modelsHtml(v.models)}`;
+      html = `<div class="pj-head">${totalsHtml(v)}<button class="btn primary" type="button" data-new data-needs="project.converse">${icon("plus", 14, "ic s14")}${esc(v.newProject)}</button></div>${tableHtml(v)}${waitingHtml(v.waiting)}${modelsHtml(v.models)}`;
     }
   }
   if (html === ui.last) return;

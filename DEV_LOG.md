@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 90 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 91 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,48 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 91 — 2026-10-11 (Loop waves 5 and 6: integrations that never claim more than happened, extensibility truth, the import flow, the Team UI following the server's rules)
+
+- **Why:** the Phase 1 sweep of integrations, extensibility and teams (two Haiku 5.5 explorers; 16 app faults and 14 lead decisions; `lead-work/loop/waves/W5_W6_integrations_teams.md`). No server-side permission breach was found by the sweep.
+- **Fixed** (two Opus builders):
+  - **Honest states:**
+    - Jira and Linear are export and import, never "Connected";
+    - PR-on-Accept cannot be switched on without GitHub (the server refuses with 409);
+    - email and push show a failed test;
+    - a refused connection is no longer blamed on the network policy (`network_policy.ts` tells a policy refusal from an unreachable host);
+    - the Integrations page keeps its last state when the server is gone.
+  - **Extensibility:** doctor names declared hooks, including unknown events; `skills` never lists a changed skill as pinned and drops its stale rejection line.
+  - **Import:**
+    - person-readable previews;
+    - Apply all settles the sheet;
+    - no row dropped silently: notes per line for missing titles, values not kept, duplicates, parents and types;
+    - the issue type and Parent link carried through;
+    - one clear error;
+    - Escape closes the sheet.
+  - **Teams:**
+    - every control a level may not use is disabled, with who can;
+    - a Viewer is never told to fix what they cannot;
+    - no server path or internal id reaches a person (the projects API too);
+    - Members' wording and the Accept rule shown truly;
+    - the issue dialog's lead promise kept;
+    - no 403 noise for non-admins;
+    - the composer's starter text never sent in one press;
+    - the standup on connect is mentioned.
+- **Review:** 6 majors, all fixed and re-checked (461/461).
+  - **A Viewer's start-project message was refused only by the page; the server now refuses it too.**
+  - Test-send outcomes are recorded on the event log, not a settings file (the spine).
+  - Paths reaching a Viewer through the projects API.
+  - The import's parent note, the silent 500-row cap, and apply-all in a two-project workspace.
+- **DEC-62 (decided; to be built next in the integrations area):** integration setting changes (research web access, PR on Accept, and email, push and Slack connect, disconnect and test) are recorded as a new ledger event `integration/changed` with the person as principal, shown on the Activity log and in Audit. The config audit (TEAM-44) cannot carry them: its state is the HMAC digest of the user config.toml, and these settings live in the per-repository file. Owner-delegated, so it is recorded with that workstream.
+- **Gate fixes:**
+  - a spec note had cited TEAM-44 inside a built row, which raised unit-only and conflicts by one each; it was reworded;
+  - orphans fell to 375 (the ceiling was lowered).
+- **Process:** the owner adopted the pre-gate (`lead-work/loop/pregate.sh`, 30 s) and batch gating, recorded in LOOP_DESIGN.md.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` 0, `biome check .` 0, vitest 968 files passed, 2 skipped; 7,497 tests passed, 74 skipped (3 workers, 43 min, with wave 7's builders alongside).
+- **Where the cards stop:**
+  - W5+W6 are committed.
+  - Next: W7+W8 (models, measurement and scoping) batch-gated as one commit, then the next sweeps: spec hygiene, kernel, review-git, runtime, security.
 
 ### Entry 90 — 2026-10-11 (Loop waves 3 and 4: the dashboard's standards — targets, keyboard, clipping, glyphs — and its words)
 

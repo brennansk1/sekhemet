@@ -247,6 +247,9 @@ export async function sendPush(
   } catch (err) {
     result = { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+  // W6 review: why it failed is kept with the send, privately, without the
+  // topic or token (the push's credentials), for Integrations to say.
+  const why = result.ok || !result.error ? undefined : withoutCredentials(result.error, p);
   await deps.log
     ?.append({
       actor: "harness",
@@ -260,9 +263,19 @@ export async function sendPush(
         ...(deps.record?.notice ? { notice: deps.record.notice } : {}),
         ...(deps.record?.day ? { day: deps.record.day } : {}),
       },
+      ...(why ? { private: { error: why } } : {}),
     })
     .catch(() => undefined);
   return result;
+}
+
+/** An error's words without the push's topic or token. */
+function withoutCredentials(text: string, p: PushSettings): string {
+  let out = text;
+  for (const secret of [p.topic, p.token]) {
+    if (secret) out = out.split(secret).join("…");
+  }
+  return out.slice(0, 500);
 }
 
 const BUDGET = /budget|token|wall-?clock|time limit/i;
@@ -768,8 +781,29 @@ export async function startNotifier(
     return out;
   };
 
+  /**
+   * INT-18 (loop sweep 3): the standup goes once a day at `standupAt`. A
+   * channel that begins accepting it after today's was due — connected, or
+   * its kinds changed, while this notifier runs — starts with tomorrow's, not
+   * at once; a channel present when the notifier starts is unchanged.
+   */
+  let standupChannels: Set<string> | undefined;
+  const standupWaitsPast = new Map<string, string>();
+  const noteStandupChannels = (channels: Channel[]) => {
+    const names = new Set(channels.filter((c) => c.accepts("standup")).map((c) => c.name));
+    const added = standupChannels ? [...names].filter((x) => !standupChannels?.has(x)) : [];
+    if (added.length) {
+      const clock = now();
+      const due = minutesOf(opts.standupAt ?? readSettings(repoPath).standupAt);
+      if (clock.getHours() * 60 + clock.getMinutes() >= due)
+        for (const name of added) standupWaitsPast.set(name, dayOf(clock));
+    }
+    standupChannels = names;
+  };
+
   const tick = async (): Promise<number> => {
     const channels = await channelsOf(repoPath, log, opts);
+    noteStandupChannels(channels);
     if (channels.length === 0) {
       seq = (await log.getLastEvent())?.seq ?? seq;
       return 0;
@@ -1108,6 +1142,7 @@ export async function startNotifier(
     }
     const waiting = accepting.filter((c) => {
       if (went.has(c.name) || (failures.get(c.name) ?? 0) >= STANDUP_ATTEMPTS) return false;
+      if (standupWaitsPast.get(c.name) === day) return false;
       const failed = standupFailedAt.get(`${day}:${c.name}`);
       return failed === undefined || clock.getTime() - failed >= STANDUP_RETRY_MS;
     });

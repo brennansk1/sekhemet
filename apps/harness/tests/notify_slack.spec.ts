@@ -287,6 +287,28 @@ describe("the one notifier with Slack as a channel (P9)", () => {
       expect.objectContaining({ channel: "slack", kind: "standup", ok: true }),
     ]);
   });
+  it("INT-18: a channel connected after today's standup was due starts with tomorrow's, not at once (loop sweep 3)", async () => {
+    clock = new Date(2026, 8, 25, 22, 52, 0);
+    const n = await startNotifier(log, dir, {
+      intervalMs: 60_000,
+      now,
+      standupAt: "09:00",
+      standup: async () => "Working: nothing.",
+    });
+    expect(await n.tick()).toBe(0);
+    // Connected at 22:53: the day's standup went at 09:00; this channel waits for tomorrow's.
+    writeSettings(dir, { slackWebhookUrl: hook, slackEvents: ["standup"] });
+    clock = new Date(2026, 8, 25, 22, 53, 0);
+    expect(await n.tick()).toBe(0);
+    clock = new Date(2026, 8, 25, 23, 30, 0);
+    expect(await n.tick()).toBe(0);
+    expect(hits).toHaveLength(0);
+    clock = new Date(2026, 8, 26, 9, 1, 0);
+    expect(await n.tick()).toBe(1);
+    n.stop();
+    expect(hits).toHaveLength(1);
+  });
+
   it("B2: two notifiers on one ledger send each notice and the standup once, and the budget holds", async () => {
     writeSettings(dir, { slackWebhookUrl: hook });
     // One person on the ledger, as the server and a queue run both see it.

@@ -398,7 +398,7 @@ function retroHtml() {
 
 function askHtml() {
   // STA-10: an empty question is refused beside the box, never silently dropped.
-  return `<form class="stp-ask" data-ask novalidate><label class="sr-only" for="stp-ask-q">${esc(C.askLabel)}</label><input id="stp-ask-q" autocomplete="off" aria-describedby="stp-ask-note" placeholder="${esc(C.askPlaceholder)}"><button class="btn" type="submit">${icon("chat", 14, "ic s14")}${esc(C.ask)}</button></form><button class="btn primary stp-start" type="button" data-start>${icon("plus", 14, "ic s14")}${esc(C.startProject)}</button><p class="why sec" id="stp-ask-note" role="status" data-ask-note></p>`;
+  return `<form class="stp-ask" data-ask novalidate><label class="sr-only" for="stp-ask-q">${esc(C.askLabel)}</label><input id="stp-ask-q" autocomplete="off" aria-describedby="stp-ask-note" placeholder="${esc(C.askPlaceholder)}"><button class="btn" type="submit">${icon("chat", 14, "ic s14")}${esc(C.ask)}</button></form><button class="btn primary stp-start" type="button" data-start data-needs="project.converse">${icon("plus", 14, "ic s14")}${esc(C.startProject)}</button><p class="why sec" id="stp-ask-note" role="status" data-ask-note></p>`;
 }
 
 function render() {

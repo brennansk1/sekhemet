@@ -10,6 +10,7 @@
 // one: the page asks the server first and says so before any drafting, with
 // Plan the next piece of work (`/plan`) instead of a conversation (DS-N7-1).
 import { $, aiBadge, esc, getJSON, icon, postJSON } from "./dom.js";
+import { noteFor } from "./level_gate.js";
 import { START_PROJECT_OPENING } from "./lib/seshat.js";
 import {
   START_COPY as C,
@@ -87,9 +88,13 @@ function checkFolder(folder) {
 /** The place bar above the conversation: the folder, its refusal, Add an existing repository. */
 function placeHtml(v, folder) {
   const folderLine = v.folderLine
-    ? `<p class="sp-folder">${icon("layers", 14, "ic")}<span data-folder-line>${esc(v.folderLine)}</span><button type="button" class="btn ghost sm" data-change-folder aria-expanded="${ui.form === "folder"}">${esc(v.changeFolder)}</button></p>`
+    ? `<p class="sp-folder">${icon("layers", 14, "ic")}<span data-folder-line>${esc(v.folderLine)}</span><button type="button" class="btn ghost sm" data-change-folder data-needs="project.converse" aria-expanded="${ui.form === "folder"}">${esc(v.changeFolder)}</button></p>`
     : "";
-  const add = `<button type="button" class="btn ghost sm" data-add-repo aria-expanded="${ui.form === "repo"}">${icon("merge", 14, "ic")}${esc(v.addRepository)}</button>`;
+  // Loop sweep 3 (teams items 5, 6): taking a repository over creates a
+  // project (the server's project.create); a person who may not start a
+  // project conversation is told so here, with no folder of the server's.
+  const converse = noteFor("project.converse");
+  const add = `<button type="button" class="btn ghost sm" data-add-repo data-needs="project.create" aria-expanded="${ui.form === "repo"}">${icon("merge", 14, "ic")}${esc(v.addRepository)}</button>`;
   const folderForm =
     ui.form === "folder"
       ? `<form class="sp-form" data-folder-form><label for="sp-folder-in">${esc(C.folderLabel)}</label><div class="sp-inline"><input id="sp-folder-in" name="folder" type="text" autocomplete="off" spellcheck="false" value="${esc(folder)}"><button class="btn sm" type="submit">${esc(C.useFolder)}</button></div></form>`
@@ -98,7 +103,7 @@ function placeHtml(v, folder) {
     r
       ? `<div class="sp-refusal" role="alert"><p>${esc(r.text)}</p>${
           r.openIt || r.addInstead
-            ? `<div class="sp-acts">${r.openIt ? `<button type="button" class="btn sm" data-open-project="${esc(r.openIt.project)}">${esc(r.openIt.label)}</button>` : ""}${r.addInstead ? `<button type="button" class="btn sm" data-add-instead="${esc(folder)}">${esc(v.addRepository)}</button>` : ""}</div>`
+            ? `<div class="sp-acts">${r.openIt ? `<button type="button" class="btn sm" data-open-project="${esc(r.openIt.project)}">${esc(r.openIt.label)}</button>` : ""}${r.addInstead ? `<button type="button" class="btn sm" data-add-instead="${esc(folder)}" data-needs="project.create">${esc(v.addRepository)}</button>` : ""}</div>`
             : ""
         }</div>`
       : "";
@@ -112,7 +117,8 @@ function placeHtml(v, folder) {
       : "";
   const refusal = refusalHtml(v.refusal);
   const note = v.approvalNote ? `<p class="sec sp-note">${esc(v.approvalNote)}</p>` : "";
-  return `<div class="sp-row">${folderLine}${add}</div>${folderForm}${repoForm}${refusal}${note}`;
+  const level = converse ? `<p class="level-note sp-level">${esc(converse)}</p>` : "";
+  return `${level}<div class="sp-row">${folderLine}${add}</div>${folderForm}${repoForm}${refusal}${note}`;
 }
 
 /** The brief's lines are Markdown (DEC-44): its *emphasis* reads as emphasis. */
@@ -183,7 +189,8 @@ function render() {
   // No draft yet: the composer starts the project, for the person to finish (DB-P5-3).
   if (!ui.offered && store.state.pm.available === true) {
     ui.offered = true;
-    if (!group) ui.thread?.prefill(START_PROJECT_OPENING);
+    // Loop sweep 3: the project's start is offered only to who may start one.
+    if (!group && !noteFor("project.converse")) ui.thread?.prefill(START_PROJECT_OPENING);
   }
   const folder = folderShown(group);
   if (folder) checkFolder(folder);
@@ -191,7 +198,10 @@ function render() {
     newFolder: ui.place?.newFolder === true,
     ...(folder ? { folder } : {}),
     ...(ui.place?.folder === folder && ui.place?.shown ? { shown: ui.place.shown } : {}),
-    ...(ui.place?.mayCreate !== undefined ? { mayCreate: ui.place.mayCreate } : {}),
+    // A person who may not start a project sends nothing for approval either.
+    ...(ui.place?.mayCreate !== undefined && ui.place?.mayConverse !== false
+      ? { mayCreate: ui.place.mayCreate }
+      : {}),
     ...(ui.place?.refusal && ui.place?.folder === folder ? { refusal: ui.place.refusal } : {}),
   });
   const placeEl = $(".start-place", ui.root);

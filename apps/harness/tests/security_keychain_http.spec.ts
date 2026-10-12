@@ -156,7 +156,9 @@ describe.runIf(darwin)(
       const r = g6Repo();
       // A settings file from before the keychain: the token in the clear.
       await served(r, async (base) => {
-        const res = await fetch(`${base}/api/integrations/github-pr`, {
+        // Any settings write creates the file; PR on Accept now needs a GitHub
+        // remote to switch on (loop wave 5, A2), so Research web access writes it.
+        const res = await fetch(`${base}/api/integrations/research-web`, {
           method: "PUT",
           headers: { "content-type": "application/json", ...(await pageWriteHeaders(base)) },
           body: JSON.stringify({ enabled: true }),

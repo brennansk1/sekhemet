@@ -8,7 +8,7 @@
  * everything that turns model text into markup escapes first.
  */
 
-import { boardColumnLabel, formatTokens, plural } from "./vocabulary.js";
+import { boardColumnLabel, formatTokens, parseTitle, plural } from "./vocabulary.js";
 
 // ---------------------------------------------------------------------------
 // Priority (contract §2: Linear's 0..4 scale) and points
@@ -198,6 +198,15 @@ export const FIELD_LABELS: Record<string, string> = {
   dependsOn: "Waits on",
   acceptanceCriteria: "Acceptance criteria",
   scopeFiles: "Files in scope",
+  externalRef: "Link",
+};
+
+/** A tracker's name as people write it, for a link (`ExternalRef.system`). */
+const TRACKER_NAMES: Record<string, string> = {
+  jira: "Jira",
+  linear: "Linear",
+  github: "GitHub",
+  forgejo: "Forgejo",
 };
 
 export function fieldLabel(field: string): string {
@@ -232,6 +241,17 @@ export function formatFieldValue(field: string, value: unknown, ctx: DiffContext
       );
     case "status":
       return ctx.statusLabel ? ctx.statusLabel(String(value)) : String(value);
+    case "title":
+      // As the board shows it: an older card's `(SPIDR: …)` marker is not part of the title.
+      return parseTitle(String(value)).title;
+    case "externalRef": {
+      // Loop wave 6, A1: a link in words (*Jira SEK-12*), never its JSON.
+      const ref = value as { system?: unknown; id?: unknown };
+      const system = String(ref.system ?? "");
+      return [TRACKER_NAMES[system] ?? system, ref.id === undefined ? "" : String(ref.id)]
+        .filter(Boolean)
+        .join(" ");
+    }
     case "dependsOn":
       return (value as unknown[])
         .map((id) => ctx.cards?.find((c) => c.id === id)?.display?.title ?? String(id))

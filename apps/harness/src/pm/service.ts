@@ -35,7 +35,7 @@ import {
 import { type Audience, nameFor, soloAudience } from "./audience.js";
 import { capabilityReport, capabilitySummary } from "./capability.js";
 import { namedDecisions } from "./decisions.js";
-import { failureDetail, seshatFailure } from "./failure.js";
+import { failureDetail, failureForAsker, seshatFailure } from "./failure.js";
 import { guardProposals, judgementAnswer, judgementQuestion } from "./judgement.js";
 import {
   briefText,
@@ -961,7 +961,8 @@ async function answerFor(
   } catch (err) {
     // PM-01: a plain sentence and its cause in the conversation; the
     // exception's own text (paths, addresses, variables) to the server's log.
-    const failure = seshatFailure(err);
+    // Teams items 6, 9: below Admin, the next step is an Admin's, not the asker's.
+    const failure = failureForAsker(seshatFailure(err), level === "admin");
     console.error(`Seshat could not reply (${failure.cause}): ${failureDetail(err)}`);
     // PM-02: with no model, "How is it going?" is answered as /status is.
     const statusShaped =

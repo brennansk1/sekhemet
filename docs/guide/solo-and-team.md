@@ -22,6 +22,8 @@ Every person has one level for the workspace. An Admin or a project's lead can r
 | **Stakeholder** | File issues, comment, talk to Seshat and start a project conversation, answer questions addressed to them. Cannot start the Agent, change scope or priority, or accept |
 | **Viewer** | Read everything in the projects they can see, comment, and ask Seshat questions |
 
+A button your level does not allow is shown disabled, with your level and who can do it written beside it — *You're a Viewer in this workspace. A Stakeholder can start a project conversation.* The server refuses the same actions whatever the page shows. A Viewer is shown no folder of the server's disk: the project switcher and Configuration name each project, not where it lives.
+
 ## The Accept rule
 
 Each project has an **Accept rule**: who may accept its issues. An Admin or the project's lead edits it on the project's settings. Accept is refused to anyone the rule does not name. When a member leaves and the rule names nobody left, Accept is refused, and the lead and the Admins are told, until a person edits the rule; Sekhemet never picks someone else to accept.

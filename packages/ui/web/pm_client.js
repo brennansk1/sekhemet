@@ -228,6 +228,8 @@ export async function applyAll(proposals) {
   let done = 0;
   for (const p of open) {
     const r = await decide(p, "apply", { quiet: true });
+    // W6 A2: the caller's own list (an import preview) shows the new state too.
+    if (r.ok) Object.assign(p, r.proposal);
     if (!r.ok) {
       toast({
         tone: "fail",
@@ -246,6 +248,7 @@ export async function discardAll(proposals) {
   const open = proposals.filter((p) => p.state === "open");
   for (const p of open) {
     const r = await decide(p, "discard", { quiet: true });
+    if (r.ok) Object.assign(p, r.proposal);
     if (!r.ok) {
       toast({ tone: "fail", text: `Couldn't discard “${p.summary}”.`, detail: r.error });
       return;

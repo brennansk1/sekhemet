@@ -60,7 +60,7 @@ Yes: run `sekhemet` in it. To adopt an unfinished project, with its own history 
 
 ### Does it replace Jira or Linear?
 
-It has its own board, in their words ([Concepts](concepts.md)). GitHub issues, pull requests and the Projects board sync both ways; Jira and Linear boards move by export and import.
+It has its own board, in their words ([Concepts](concepts.md)). GitHub issues, pull requests and the Projects board sync both ways; Jira and Linear boards move by export and import: an import shows each row as a proposal you apply or discard, and names what it leaves out — a row with no title, a value it does not keep, a repeated row, a parent link — by its line in the file. Jira and Linear are never shown as *Connected*: they are files.
 
 ### Can I use it from my editor?
 

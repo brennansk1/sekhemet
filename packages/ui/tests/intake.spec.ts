@@ -134,3 +134,21 @@ describe("the query is:untriaged", () => {
 it("ships to the browser as lib/intake.js", () => {
   expect(UI_LIB_MODULES).toContain("intake.js");
 });
+
+describe("the New issue form promises only the assignee the server sets (DB-N10-1; loop sweep 3)", () => {
+  it("names the project lead as the assignee when the project has one", () => {
+    expect(TRIAGE_COPY.filedForTriage("Lee Lead")).toBe(
+      "A Member triages what you file. Until then it waits in Backlog with the project lead, Lee Lead, as its assignee.",
+    );
+  });
+
+  it("promises no assignee when the project has no lead, or none is known", () => {
+    for (const lead of [null, undefined]) {
+      const text = TRIAGE_COPY.filedForTriage(lead);
+      expect(text).toBe(
+        "A Member triages what you file. Until then it waits in Backlog, unassigned.",
+      );
+      expect(text).not.toMatch(/lead/);
+    }
+  });
+});

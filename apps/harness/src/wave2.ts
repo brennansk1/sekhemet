@@ -151,7 +151,7 @@ import { RESEARCH_GOLDEN_RUN } from "./research_bakeoff.js";
 import { userPaths } from "./user_dir.js";
 import { workerFloorRefusal } from "./watchdog_actions.js";
 import { realPath } from "./workspace_locator.js";
-import { loadRepoSkills, skillsLockPath } from "./workspace_trust.js";
+import { loadRepoSkills, skillApprovals, skillsLockPath } from "./workspace_trust.js";
 
 /**
  * Production wiring for the planner, eval and sync APIs (wave 2, Builder C):
@@ -1674,16 +1674,30 @@ export async function runDevCommand(
         print(`Revoked ${name}${whose}; it will not load until approved again.`);
         return 0;
       }
+      // EXT-3: each skill's current state, its content against the lock — a
+      // changed or unapproved skill does not load, so it is never "pinned" here;
+      // the lock's audit keeps the history of decisions.
+      const onDisk = skillApprovals(k.repoPath);
+      for (const s of onDisk) {
+        const mine = s.scope === "user" ? " (your own skill)" : "";
+        const approve = `sekhemet skills approve ${s.name}${s.scope === "user" ? " --user" : ""}`;
+        if (s.state === "approved" && s.pinned)
+          print(`${s.name}${mine} pinned ${s.sha256.slice(0, 12)} by ${s.pinned.approvedBy}`);
+        else if (s.state === "changed" && s.pinned)
+          print(
+            `${s.name}${mine} changed since it was approved at ${s.pinned.sha256.slice(0, 12)} (now ${s.sha256.slice(0, 12)}): it does not load until you approve it again: ${approve}`,
+          );
+        else
+          print(
+            `${s.name}${mine} is not approved: it does not load until you approve it: ${approve}`,
+          );
+      }
       const lock = readSkillLock(lockPath);
       for (const [n, e] of Object.entries(lock?.skills ?? {}))
-        print(`${n} pinned ${e.sha256.slice(0, 12)} by ${e.approvedBy}`);
-      for (const a of (lock?.audit ?? [])
-        .filter((x) => x.action.startsWith("rejected"))
-        .slice(-10)) {
-        print(
-          `rejected ${a.skill} (${a.action}) at ${a.at}: approve with sekhemet skills approve ${a.skill}`,
-        );
-      }
+        if (!onDisk.some((s) => s.name === n))
+          print(
+            `${n} pinned ${e.sha256.slice(0, 12)} by ${e.approvedBy} (no skill folder by that name now)`,
+          );
       return 0;
     }
     case "release": {

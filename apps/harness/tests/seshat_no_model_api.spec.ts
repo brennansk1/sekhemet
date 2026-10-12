@@ -6,7 +6,7 @@ import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isStatusShaped } from "../src/pm/agent.js";
-import { seshatFailure } from "../src/pm/failure.js";
+import { SeshatNotSetUp, failureForAsker, seshatFailure } from "../src/pm/failure.js";
 import { startDashboardServer } from "../src/server.js";
 import { pageWriteHeaders } from "./page_headers.js";
 
@@ -148,5 +148,31 @@ describe("PM-01: Seshat's failure reply is a plain sentence, never a raw excepti
       expect(f.text).toMatch(/Your message is kept/);
     }
     expect(slow.text).toMatch(/took too long/);
+  });
+});
+
+describe("a person who cannot change Configuration is not told to (loop sweep 3; teams items 6, 9)", () => {
+  const notSetUp = new SeshatNotSetUp(
+    "Seshat's model, dirk-27b:latest, is not set up on this machine: it is not in Sekhemet's model list. Your message is kept: choose and verify a Planning model in Configuration › Models, then press Retry.",
+  );
+
+  it("tells a non-Admin that an Admin sets the model up, keeping what is missing", () => {
+    for (const err of [notSetUp, new Error("connect ECONNREFUSED 127.0.0.1:8099")]) {
+      const f = failureForAsker(seshatFailure(err), false);
+      expect(f.cause).toBe("no_model");
+      expect(f.text).not.toMatch(/choose and verify|set up a Planning model in Configuration/);
+      expect(f.text).toMatch(
+        /Your message is kept: an Admin sets up a Planning model in Configuration › Models; press Retry once they have\.$/,
+      );
+    }
+    expect(failureForAsker(seshatFailure(notSetUp), false).text).toMatch(
+      /^Seshat's model, dirk-27b:latest, is not set up/,
+    );
+  });
+
+  it("leaves the words unchanged for a person who can, and for other causes", () => {
+    expect(failureForAsker(seshatFailure(notSetUp), true)).toEqual(seshatFailure(notSetUp));
+    const timeout = seshatFailure(new Error("The operation was aborted due to timeout"));
+    expect(failureForAsker(timeout, false)).toEqual(timeout);
   });
 });

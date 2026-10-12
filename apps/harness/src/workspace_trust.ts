@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
-import { SkillsRegistry } from "@sekhemet/context";
+import { type SkillLockEntry, SkillsRegistry, readSkillLock, skillSha256 } from "@sekhemet/context";
 import { type TomlTable, parseToml } from "@sekhemet/kernel";
 import { hasAdmin, memberOf } from "./team/members.js";
 import { userPaths } from "./user_dir.js";
@@ -299,6 +299,41 @@ export function loadRepoSkills(repoPath: string): SkillsRegistry {
   skills.loadFromDirectory(join(repoPath, ".sekhemet", "skills"), { ...trust, scope: "project" });
   for (const s of personal) if (!skills.getSkill(s.name)) skills.registerSkill(s);
   return skills;
+}
+
+/**
+ * Each skill on disk and whether it loads now (EXT-3, item 15): its content
+ * against the person's lock, read without writing an audit row. A skill
+ * changed since it was approved, or never approved, does not load, and the
+ * listing and doctor say so rather than repeat the lock.
+ */
+export interface SkillApproval {
+  name: string;
+  scope: "user" | "project";
+  state: "approved" | "changed" | "unapproved";
+  sha256: string;
+  pinned?: SkillLockEntry;
+}
+
+export function skillApprovals(repoPath: string): SkillApproval[] {
+  const lock = readSkillLock(skillsLockPath(repoPath));
+  const out: SkillApproval[] = [];
+  const dirs = [
+    { dir: userPaths().skills, scope: "user" as const },
+    { dir: join(repoPath, ".sekhemet", "skills"), scope: "project" as const },
+  ];
+  for (const { dir, scope } of dirs) {
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir).sort()) {
+      const file = join(dir, name, "SKILL.md");
+      if (!existsSync(file)) continue;
+      const sha = skillSha256(readFileSync(file, "utf8"));
+      const pinned = lock?.skills[name];
+      const state = !pinned ? "unapproved" : pinned.sha256 === sha ? "approved" : "changed";
+      out.push({ name, scope, state, sha256: sha, ...(pinned ? { pinned } : {}) });
+    }
+  }
+  return out;
 }
 
 // --- The repository itself, and other agents' configuration (B4.1) ---------

@@ -529,7 +529,7 @@ function render() {
   if (s.loaded && s.cards.length === 0) {
     ui.layoutKey = "";
     // DS-TO-16 (dashboard item 10): start from a brief, or take over a repository someone left.
-    ui.root.innerHTML = `<div class="board-empty">${brandMark(24)}<b>No issues yet.</b><span class="board-empty-acts"><button type="button" class="btn primary" data-empty-action="start">Start a project</button> <button type="button" class="btn" data-empty-action="takeover">Take over a project</button></span><span>Take over reads a repository someone else left, runs what it can once you trust it, and proposes a plan in Seshat.</span><span>From the terminal: <code>sekhemet plan "Build a timesheet app with overtime rules"</code></span></div>`;
+    ui.root.innerHTML = `<div class="board-empty">${brandMark(24)}<b>No issues yet.</b><span class="board-empty-acts"><button type="button" class="btn primary" data-empty-action="start" data-needs="project.converse">Start a project</button> <button type="button" class="btn" data-empty-action="takeover" data-needs="project.create">Take over a project</button></span><span>Take over reads a repository someone else left, runs what it can once you trust it, and proposes a plan in Seshat.</span><span>From the terminal: <code>sekhemet plan "Build a timesheet app with overtime rules"</code></span></div>`;
     return;
   }
   $(".board-empty", ui.root)?.remove();

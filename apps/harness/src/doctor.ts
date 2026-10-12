@@ -78,7 +78,7 @@ import {
 } from "./team/credential_store.js";
 import { type TeamEnginesReport, checkTeamEngines } from "./team_engines.js";
 import { readMoveRecord, userDir } from "./user_dir.js";
-import { hookEngineFor } from "./user_hooks.js";
+import { hookEngineFor, loadUserHooks, parseHooksFile } from "./user_hooks.js";
 import { playbookDoctorCheck } from "./wave2.js";
 import {
   holdsLedger,
@@ -87,6 +87,7 @@ import {
   rewriteLocators,
   workspaceFolderOf,
 } from "./workspace_locator.js";
+import { skillApprovals } from "./workspace_trust.js";
 
 export type CheckStatus = "pass" | "warn" | "fail";
 
@@ -205,7 +206,7 @@ export const DOCTOR_CHECKS: readonly DoctorCheckSpec[] = [
   {
     id: "skills",
     title: "Skills",
-    do: "add skills under .sekhemet/skills/, or leave it: a project runs without skills",
+    do: "add skills under .sekhemet/skills/, or leave it: a project runs without skills; a skill it names as not approved or changed loads once you read it and run `sekhemet skills approve <name>`",
   },
   {
     id: "playbook",
@@ -252,7 +253,11 @@ export const DOCTOR_CHECKS: readonly DoctorCheckSpec[] = [
     title: "Config upgrades",
     do: "read the renamed keys it lists; each file's backup sits beside it",
   },
-  { id: "hooks", title: "Hooks", do: "fix .sekhemet/hooks.toml where it says" },
+  {
+    id: "hooks",
+    title: "Hooks",
+    do: "fix .sekhemet/hooks.toml where it says; a file waiting for trust runs once you read it with `sekhemet dev trust` and trust it with `sekhemet dev trust --yes`",
+  },
   {
     id: "research",
     title: "Research",
@@ -633,7 +638,7 @@ export function judgeConfinement(
 }
 
 /** Report on the skills directory the context engine loads from. */
-function probeSkills(repoPath: string): DiagnosticCheck {
+export function probeSkills(repoPath: string): DiagnosticCheck {
   // SUR-64: a folder not set up yet is not warned about skills.
   if (!existsSync(join(repoPath, ".sekhemet")))
     return check("Skills", "pass", "not set up here yet: skills load once the project is");
@@ -644,6 +649,22 @@ function probeSkills(repoPath: string): DiagnosticCheck {
   try {
     const entries = execFileSync("ls", ["-1", dir], { encoding: "utf8" }).trim();
     const count = entries ? entries.split("\n").length : 0;
+    // EXT-3: a skill changed since approval, or never approved, does not load;
+    // doctor names it rather than count it as discoverable.
+    const waiting = skillApprovals(repoPath).filter((s) => s.state !== "approved");
+    if (waiting.length)
+      return check(
+        "Skills",
+        "warn",
+        `${plural(count, "skill")} discoverable; ${waiting
+          .map((s) =>
+            s.state === "changed"
+              ? `${s.name} changed since it was approved`
+              : `${s.name} is not approved`,
+          )
+          .join(", ")}: ${waiting.length === 1 ? "it does" : "they do"} not load`,
+        "read each skill it names, then approve it with `sekhemet skills approve <name>`",
+      );
     return check("Skills", count > 0 ? "pass" : "warn", `${plural(count, "skill")} discoverable`);
   } catch {
     return check("Skills", "warn", "skills directory unreadable");
@@ -1135,6 +1156,26 @@ export function secretStoreCheck(): DiagnosticCheck {
  */
 export function hooksCheck(repoPath: string): DiagnosticCheck {
   const { errors, count } = hookEngineFor(repoPath);
+  // Item 1: a project file not yet trusted is not loaded, but it is declared —
+  // say which file waits for trust, what it declares and what would not load
+  // (parsing it runs nothing), never "none declared".
+  if (loadUserHooks(repoPath).untrusted) {
+    const path = join(repoPath, ".sekhemet", "hooks.toml");
+    const parsed = parseHooksFile(path);
+    // An entry that will not load is still declared; a file that is not TOML declares none we can count.
+    const declared =
+      parsed.hooks.length + parsed.errors.filter((e) => e.startsWith("hook ")).length;
+    return check(
+      "Hooks",
+      "warn",
+      [
+        `${path} waits for trust: ${declared ? `${plural(declared, "hook")} declared, ` : ""}none runs until you trust it`,
+        ...parsed.errors.map((e) => `${path}: ${e}`),
+        ...errors,
+      ].join("; "),
+      "read what it would run with `sekhemet dev trust`, fix what it names, then trust it with `sekhemet dev trust --yes`",
+    );
+  }
   if (errors.length) return check("Hooks", "warn", errors.join("; "));
   return check("Hooks", "pass", count ? `${plural(count, "hook")} loaded` : "none declared");
 }

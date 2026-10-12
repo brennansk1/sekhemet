@@ -64,6 +64,22 @@ export function seshatFailure(err: unknown): SeshatFailure {
   return { cause, text: WORDS[cause] };
 }
 
+/**
+ * The failure as its asker reads it (loop sweep 3; teams items 6, 9): a
+ * person who cannot change the server's configuration — anyone below Admin
+ * in the Team setup — is told an Admin sets the model up, never to do it
+ * themselves; what is missing is said to them as to anyone.
+ */
+export function failureForAsker(f: SeshatFailure, mayConfigure: boolean): SeshatFailure {
+  if (mayConfigure || f.cause !== "no_model") return f;
+  const at = f.text.indexOf(`${KEPT}:`);
+  const why = at >= 0 ? f.text.slice(0, at) : `${f.text} `;
+  return {
+    ...f,
+    text: `${why}${KEPT}: an Admin sets up a Planning model in Configuration › Models; press Retry once they have.`,
+  };
+}
+
 /** The exception's own text, for the server's log (never the conversation). */
 export function failureDetail(err: unknown): string {
   return err instanceof Error ? (err.stack ?? err.message) : String(err);

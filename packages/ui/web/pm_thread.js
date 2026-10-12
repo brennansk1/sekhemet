@@ -11,6 +11,7 @@ import {
   threadNotice,
 } from "./lib/pm.js";
 import {
+  START_PROJECT_OPENING,
   composerCostLine,
   composerHint,
   composerPlaceholder,
@@ -18,6 +19,7 @@ import {
   documentChip,
   pastedDocument,
   slashMatches,
+  unfinishedStarter,
   userMessageView,
 } from "./lib/seshat.js";
 import { columnLabel } from "./lib/vocabulary.js";
@@ -445,7 +447,8 @@ export function mountThread(
         ? starters()
             .map(
               (t) =>
-                `<button class="starter" type="button" data-starter="${esc(t.text)}">${esc(t.label)}</button>`,
+                // W6 review: Start a new project is a Stakeholder's or above, as the server refuses it.
+                `<button class="starter" type="button" data-starter="${esc(t.text)}"${t.text === START_PROJECT_OPENING ? ' data-needs="project.converse" data-needs-quiet' : ""}>${esc(t.label)}</button>`,
             )
             .join("")
         : "";
@@ -455,11 +458,21 @@ export function mountThread(
     }
     const why = disabledReason();
     ta.disabled = Boolean(why);
-    $("[data-send]", host).disabled = Boolean(why);
     const cost = costLine();
     const costEl = $("[data-cost]", host);
     if (costEl.textContent !== cost) costEl.textContent = cost;
     renderHint();
+  }
+
+  /**
+   * Send waits while the composer holds only the bare *Start a new project:*
+   * starter: the person finishes it with their own words (dashboard 2.7.6
+   * item 6); the hint below says what to write. And while sending is off.
+   */
+  function renderSend() {
+    const btn = $("[data-send]", host);
+    const off = Boolean(disabledReason()) || (unfinishedStarter(ta.value) && !attached.length);
+    if (btn.disabled !== off) btn.disabled = off;
   }
 
   /** While a person starts a project, what to write and that nothing is created yet (DB-P5-3). */
@@ -468,6 +481,7 @@ export function mountThread(
     const el = $("[data-hint]", host);
     if (el.textContent !== hint) el.textContent = hint;
     el.hidden = !hint;
+    renderSend();
   }
 
   function render() {
@@ -478,6 +492,7 @@ export function mountThread(
   async function send() {
     const text = ta.value.trim();
     if ((!text && !attached.length) || disabledReason()) return;
+    if (unfinishedStarter(text) && !attached.length) return;
     const here = currentContext();
     const ctx = dismissed || (here.view === "pm" && !here.cardId) ? undefined : here;
     const docs = attached;

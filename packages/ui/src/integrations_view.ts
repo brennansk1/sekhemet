@@ -18,6 +18,11 @@ export interface IntegrationEntryLike {
   detail?: string;
   lastSyncAt?: string;
   via?: string;
+  /**
+   * Push and email: the last send since connecting, a *Send test* or a
+   * notice, as the ledger records it (loop wave 5, A3; W6 review).
+   */
+  lastSend?: { ok: boolean; at: string; kind?: string; error?: string };
 }
 
 /** The page's words for an integration it knows. */
@@ -61,6 +66,43 @@ export function integrationGroups(
     });
   }
   return out;
+}
+
+/** What a card's tag says: on (a check), off, or a connection that is not working. */
+export interface IntegrationState {
+  tone: "on" | "off" | "fail";
+  label: string;
+}
+
+/** Integrations that are a file, never a connection (dashboard §2.11). */
+const FILE_ONLY = new Set(["jira", "linear"]);
+
+/**
+ * A card's state in words (dashboard §2.11; loop wave 5, A1–A3): *Connected*
+ * or *On* only for a connection that is there and working. Jira and Linear
+ * are files, never connected; *PR on Accept* is on only with GitHub
+ * connected; push or email whose last send did not arrive says so.
+ */
+export function integrationState(e: IntegrationEntryLike): IntegrationState {
+  if (FILE_ONLY.has(e.id)) return { tone: "off", label: "Export and import" };
+  if (e.id === "github-pr") {
+    if (e.enabled && !e.connected) return { tone: "fail", label: "On, but GitHub isn't connected" };
+    return e.enabled ? { tone: "on", label: "On" } : { tone: "off", label: "Off" };
+  }
+  if (e.id === "research-web")
+    return e.enabled ? { tone: "on", label: "On" } : { tone: "off", label: "Off" };
+  if (!e.connected) return { tone: "off", label: "Not connected" };
+  if (e.lastSend && !e.lastSend.ok)
+    return {
+      tone: "fail",
+      label: e.lastSend.kind === "test" ? "Last test failed" : "Last send failed",
+    };
+  return { tone: "on", label: "Connected" };
+}
+
+/** The header's count: connections that are there and working. */
+export function connectedCount(entries: readonly IntegrationEntryLike[]): number {
+  return entries.filter((e) => integrationState(e).tone === "on").length;
 }
 
 /** `GET /api/integrations/secret-store` (`apps/harness/src/secret_store.ts` `SecretStoreStatus`). */
