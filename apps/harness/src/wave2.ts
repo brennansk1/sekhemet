@@ -541,8 +541,9 @@ export async function planCommand(
  * title, the ones held in Planning, rejected or waiting, and the decisions
  * waiting — no *cards*, no *Zone 3 tokens*, no *INVEST pre-flight*. Points,
  * routing, estimates, each held issue's reasons and the plan's checks are
- * printed with `--verbose`. A title another new issue already has is said
- * to be the same, so two issues never read as one.
+ * printed with `--verbose`. Titles are quoted, and a title another new issue
+ * already has is marked *same title as <ID>* beside it, so two issues never
+ * read as one (S1B-P2s).
  */
 export function planReportLines(
   result: Parameters<typeof formatPlanReport>[0],
@@ -561,7 +562,7 @@ export function planReportLines(
     const same = firstWithTitle.get(c.title.toLowerCase());
     if (!same) firstWithTitle.set(c.title.toLowerCase(), c.id);
     lines.push(
-      `  ${c.id.padEnd(width)}  ${c.title}${same ? ` (the same title as ${same})` : ""}${held.has(c.id) ? "  · held in Planning" : ""}`,
+      `  ${c.id.padEnd(width)}  "${c.title}"${same ? `  · same title as ${same}` : ""}${held.has(c.id) ? "  · held in Planning" : ""}`,
     );
     if (verbose) {
       lines.push(
@@ -574,17 +575,17 @@ export function planReportLines(
     lines.push(
       "Held issues wait for a concrete example in a criterion or for your approval of their criteria; --verbose prints each one's reasons.",
     );
-  for (const r of result.rejected) lines.push(`Rejected: ${r.title} — ${r.reason}`);
+  for (const r of result.rejected) lines.push(`Rejected: "${r.title}" — ${r.reason}`);
   for (const s of result.serialized)
     lines.push(
       `${s.id} waits for ${s.after}, which changes the same files (${s.files.join(", ")}).`,
     );
   for (const e of result.epics)
     lines.push(
-      `Re-split as an epic: ${e.title} — a ${e.mechanism} is many issues, not one; plan it on its own.`,
+      `Re-split as an epic: "${e.title}" — a ${e.mechanism} is many issues, not one; plan it on its own.`,
     );
   for (const c of result.proposedChanges)
-    lines.push(`Proposed change (not an issue): ${c.title} — ${c.reason}.`);
+    lines.push(`Proposed change (not an issue): "${c.title}" — ${c.reason}.`);
   for (const s of result.proposedSplits)
     lines.push(
       `Proposed split: ${s.id} "${s.title}" is ${plural(s.points, "point")}; split it before it runs.`,
@@ -1052,6 +1053,12 @@ export async function runDevCommand(
       }
       if (sub === "licenses") {
         const audit = repoLicenseAudit(k.repoPath);
+        // S1B-B39: an empty list says so rather than printing nothing.
+        if (audit.length === 0)
+          return done(
+            "Licences: none listed — no direct dependency in package.json, requirements.txt or Cargo.toml here.",
+            0,
+          );
         for (const a of audit)
           print(
             `${a.ok ? "ok  " : "FAIL"} ${a.dep} (${a.license ?? "unknown"}) ${a.why} [${a.manifest}]`,
@@ -1281,16 +1288,12 @@ export async function runDevCommand(
       const host = (io.combinationDeps?.host ?? hostFingerprintHash)();
       const principal = k.cardStore.localPrincipal();
       if (sub === "list") {
-        // MD-N4-9: the Reviewer default, or unfilled when no other family qualified here.
-        const worker = currentAssignment(registry, host, "worker")?.model;
-        fillReviewerDefault(registry, host, worker ? registry.get(worker)?.family : "qwen");
-        for (const r of roles) {
-          const a = currentAssignment(registry, host, r);
-          const b = currentAssignment(registry, host, r, "baseline");
-          print(
-            `${r}: ${a ? `${a.model} (${a.scope}, ${a.by}, ${a.date.slice(0, 10)})` : "unassigned"}${b ? `; baseline ${b.model}` : ""}`,
-          );
-        }
+        // S1B-B25: each role's model as the project runs it, where it comes
+        // from and in NAMING's words — `init` reports the same lines. The
+        // Reviewer default is filled first (MD-N4-9).
+        const { effectiveRoleModels, roleModelLines } = await import("./role_models.js");
+        for (const line of roleModelLines(effectiveRoleModels(k.repoPath, { registry, host })))
+          print(line);
         return 0;
       }
       if (sub === "restore" && role) {

@@ -20,6 +20,8 @@ import {
   type DisplayContext,
   boardColumnOf,
   describeCard,
+  shownStatus,
+  withShownStatus,
 } from "../src/vocabulary.js";
 
 /**
@@ -704,6 +706,46 @@ describe("DB-P3-16: the board is a function of the board payload", () => {
       "in_progress",
       "in_review",
       "on_hold",
+    ]);
+  });
+});
+
+describe("S1B-B16: a parent is shown where its issues are", () => {
+  const kids = (...s: CardStatus[]) => s.map((status) => ({ status }));
+
+  it("an epic whose issues are all held in Planning is To do (Planning), never In progress", () => {
+    expect(shownStatus("in_progress", kids("planning", "planning"))).toBe("planning");
+    expect(boardColumnOf(shownStatus("in_progress", kids("planning", "planning")))).toBe("todo");
+  });
+
+  it("not started: Ready before Planning before Backlog; started once any issue ran", () => {
+    expect(shownStatus("in_progress", kids("planning", "ready"))).toBe("ready");
+    expect(shownStatus("in_progress", kids("backlog", "backlog"))).toBe("backlog");
+    expect(shownStatus("backlog", kids("backlog", "in_progress"))).toBe("in_progress");
+    expect(shownStatus("in_progress", kids("planning", "review"))).toBe("in_progress");
+    expect(shownStatus("backlog", kids("done", "ready"))).toBe("in_progress");
+    // A rejected issue is no part of it.
+    expect(shownStatus("in_progress", kids("planning", "rejected"))).toBe("planning");
+  });
+
+  it("a closed or held parent, one with no open issues, and a leaf keep their stored state", () => {
+    expect(shownStatus("done", kids("planning"))).toBe("done");
+    expect(shownStatus("parked", kids("planning"))).toBe("parked");
+    expect(shownStatus("rejected", kids("ready"))).toBe("rejected");
+    expect(shownStatus("in_progress", kids("done", "done"))).toBe("in_progress");
+    expect(shownStatus("in_progress", [])).toBe("in_progress");
+  });
+
+  it("withShownStatus moves only parents, by their own issues", () => {
+    const cards = [
+      { id: "e1", status: "in_progress" as CardStatus },
+      { id: "s1", status: "planning" as CardStatus, parentId: "e1" },
+      { id: "s2", status: "in_progress" as CardStatus },
+    ];
+    expect(withShownStatus(cards).map((c) => [c.id, c.status])).toEqual([
+      ["e1", "planning"],
+      ["s1", "planning"],
+      ["s2", "in_progress"],
     ]);
   });
 });

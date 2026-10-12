@@ -281,3 +281,26 @@ describe("X17/X18/X20: production paths", () => {
     expect(report.checks.find((c) => c.name === "Project records")?.status).toBe("pass");
   }, 30_000);
 });
+
+// S1B-B39 (wave 1): an empty list says so instead of printing nothing.
+describe("S1B-B39: `register licenses` with no dependency says none are listed", () => {
+  it("prints that no dependency is listed, naming the manifests it reads, and exits 0", async () => {
+    const root = mkdtempSync(join(tmpdir(), "reg-none-"));
+    dirs.push(root);
+    const db = new DatabaseSync(join(root, "events.db"));
+    initSchema(db);
+    const log = new EventLog(db);
+    const k = { repoPath: root, log, cardStore: new CardStore(db, log) };
+    const lines: string[] = [];
+    try {
+      expect(
+        await runDevCommand("register", ["licenses"], k, { print: (l) => lines.push(l) }),
+      ).toBe(0);
+    } finally {
+      db.close();
+    }
+    expect(lines).toEqual([
+      "Licences: none listed — no direct dependency in package.json, requirements.txt or Cargo.toml here.",
+    ]);
+  });
+});

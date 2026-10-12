@@ -15,7 +15,7 @@ Every command, with what it does, every form it takes and one example. `sekhemet
 | `sekhemet "<spec>"` | Plan the work; each issue is built once you approve it |
 | `sekhemet run [issue]` | Run an issue, resume a stopped one, or run the queue |
 | `sekhemet review` | Show the next issue waiting on you |
-| `sekhemet accept <issue>` | Accept and merge. Also: request-changes &lt;issue&gt; "&lt;reason&gt;", park / unpark &lt;issue&gt;, reject &lt;issue&gt; "&lt;reason&gt;", reopen &lt;issue&gt;, revert &lt;issue&gt;; sekhemet card message\|pause\|hand-back\|take-over &lt;issue&gt; for a running one |
+| `sekhemet accept <issue>` | Accept and merge. Also: request-changes &lt;issue&gt; "&lt;reason&gt;", park / unpark &lt;issue&gt;, reject &lt;issue&gt; "&lt;reason&gt;", reopen &lt;issue&gt;, revert &lt;issue&gt;; sekhemet issue message\|pause\|hand-back\|take-over &lt;issue&gt; for a running one |
 | `sekhemet ask "<question>"` | Ask Seshat from the terminal; the reply prints here |
 | `sekhemet doctor` | Check the install, including the model weights |
 | `sekhemet dev <command>` | Everything for developing Sekhemet itself |
@@ -36,7 +36,7 @@ Example: `sekhemet abort TS-101 "wrong approach"`
 
 ### `accept`
 
-Accept and merge. Also: request-changes &lt;issue&gt; "&lt;reason&gt;", park / unpark &lt;issue&gt;, reject &lt;issue&gt; "&lt;reason&gt;", reopen &lt;issue&gt;, revert &lt;issue&gt;; sekhemet card message|pause|hand-back|take-over &lt;issue&gt; for a running one.
+Accept and merge. Also: request-changes &lt;issue&gt; "&lt;reason&gt;", park / unpark &lt;issue&gt;, reject &lt;issue&gt; "&lt;reason&gt;", reopen &lt;issue&gt;, revert &lt;issue&gt;; sekhemet issue message|pause|hand-back|take-over &lt;issue&gt; for a running one.
 
 ```
 sekhemet accept <issue> [--ack <finding numbers>] [--json]
@@ -168,7 +168,7 @@ Example: `sekhemet calibrate --models cyber-tiel=worker`
 
 ### `card`
 
-Talk to a running issue: send a message, pause it, hand it back, or take it over yourself.
+The alias of issue, its former name: talk to a running issue.
 
 ```
 sekhemet card message <issue> "<text>"
@@ -402,6 +402,19 @@ sekhemet init [--force]
 
 Example: `sekhemet init`
 
+### `issue`
+
+Talk to a running issue: send a message, pause it, hand it back, or take it over yourself (alias: card).
+
+```
+sekhemet issue message <issue> "<text>"
+sekhemet issue pause <issue>
+sekhemet issue hand-back <issue>
+sekhemet issue take-over <issue>
+```
+
+Example: `sekhemet issue message TS-101 "Use the existing date helper"`
+
 ### `log`
 
 The Activity log's newest entries and whether its hash chain verifies.
@@ -622,7 +635,7 @@ Example: `sekhemet replay TS-101 --attempt 2`
 
 ### `request-changes`
 
-Send an issue in Review back to the Coding model with what to change.
+Request changes on an issue in Review: the Coding model works on it again with what to change (alias: send-back).
 
 ```
 sekhemet request-changes <issue> "<what to change>"
@@ -734,7 +747,7 @@ Flags: `--arm`, `--auto-accept`, `--escalate-retries`, `--explore`, `--json`, `-
 
 ### `send-back`
 
-Request changes' former name: send an issue back with what to change.
+The alias of request-changes, its former name: Request changes on an issue in Review.
 
 ```
 sekhemet send-back <issue> "<what to change>"

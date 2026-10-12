@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 87 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 88 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,38 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 88 — 2026-10-11 (Loop wave 1: the CLI, Phase 1)
+
+- **Why:** the first wave of the test-and-refine loop (`lead-work/LOOP_DESIGN.md`). The 2026-10-08 CLI sweep's findings were re-verified in an isolated home, with every exit code taken directly; the verifier refuted one quote and confirmed the rest (`lead-work/loop/waves/W1_surface.md`).
+- **Fixed** (two Opus builders on split files, tests first):
+  - **Words (NAMING):** `request-changes` reads "Request changes"; `issue message|pause|hand-back|take-over` is the listed command, with `card` and `send-back` as hidden aliases.
+  - **Errors:**
+    - `gates init`, `register licenses` and `traces` say what is missing and the next step;
+    - one error style (one prefix, a `Do:` line);
+    - an unknown issue gets a hint;
+    - park and revert on a state that cannot take them are refusals, never the crash path, while a stale read still gets the kernel's stale_from report (K-S4-1, K-S4-8).
+  - **`reject`** from Planning is allowed, as the triage spec says (the refusal listed the state).
+  - **An epic whose issues are all held in Planning** no longer shows In progress in `status` and on the terminal board.
+  - **`models list` and `init` agree** on each role's effective model and where it comes from, in NAMING's role names (`role_models.ts`, from the one `MODEL_ROLES` list).
+  - **Polish:** plan reports quote titles.
+- **Review:** 2 majors and 9 minors.
+  - Major 1 is fixed and re-checked.
+  - **Major 2's residual is parked:** `run` takes the Planning **assignment** for the review resolution, while the queue uses the effective rule.
+  - The minors are in the wave file.
+- **Gate fixes:**
+  - a person-facing refusal was exempted in the literal detector (the record is unchanged, at 415);
+  - `role_models` takes its list from `MODEL_ROLES`;
+  - the park pre-check is limited to no stale read;
+  - DB-3 (`dashboard_faults_ui`) timed out once under load and passed 6/6 alone. It is tracked as a flake with an owner and was never retried into a pass.
+- **Measured:**
+  - the gate at 3 workers on a quiet host took 37 min, against 44 min at 2;
+  - with the host busy (the owner working, plus builders' tests) it took 55 min, and vitest's worker RPC timed out.
+  - So the rule is 3 workers only on a quiet host, and one gate at a time.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` 0, `biome check .` 0, vitest 950 files passed, 2 skipped; 7,358 tests passed, 74 skipped (3 workers, 37 min).
+- **Where the cards stop:**
+  - W1 is committed.
+  - Next: W2 (dashboard truth), W3+W4 (standards, words) and W5+W6 (integrations, import, teams). The first three are built and re-checked and wait for their gates.
 
 ### Entry 87 — 2026-10-11 (N1a: the night's blockers — the driver's false "done", Seshat's window, unbacked claims; hermetic queue tests; the test-and-refine loop designed)
 

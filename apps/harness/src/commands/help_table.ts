@@ -378,13 +378,14 @@ const MAIN_HELP: Readonly<Record<string, HelpRow>> = {
   // The board's decisions on an issue (surface items 13, 16), run as typed.
   "request-changes": {
     usage: 'request-changes <issue> "<reason>"',
-    what: "Send an issue in Review back to the Coding model with what to change",
+    what: "Request changes on an issue in Review: the Coding model works on it again with what to change (alias: send-back)",
     synopsis: 'sekhemet request-changes <issue> "<what to change>"',
     example: 'sekhemet request-changes TS-101 "Keep the header row"',
   },
+  // An alias keeps its help for whoever types it, and is not listed on its own line.
   "send-back": {
     usage: 'send-back <issue> "<reason>"',
-    what: "Request changes' former name: send an issue back with what to change",
+    what: "The alias of request-changes, its former name: Request changes on an issue in Review",
     synopsis: 'sekhemet send-back <issue> "<what to change>"',
     example: 'sekhemet send-back TS-101 "Keep the header row"',
   },
@@ -418,14 +419,28 @@ const MAIN_HELP: Readonly<Record<string, HelpRow>> = {
     synopsis: 'sekhemet revert <issue> ["<reason>"]',
     example: 'sekhemet revert TS-101 "Broke the weekly report"',
   },
+  issue: {
+    usage: "issue message|pause|hand-back|take-over <issue> […]",
+    what: "Talk to a running issue: send a message, pause it, hand it back, or take it over yourself (alias: card)",
+    synopsis:
+      'sekhemet issue message <issue> "<text>"   |   sekhemet issue pause <issue>   |   sekhemet issue hand-back <issue>   |   sekhemet issue take-over <issue>',
+    example: 'sekhemet issue message TS-101 "Use the existing date helper"',
+  },
   card: {
     usage: "card message|pause|hand-back|take-over <issue> […]",
-    what: "Talk to a running issue: send a message, pause it, hand it back, or take it over yourself",
+    what: "The alias of issue, its former name: talk to a running issue",
     synopsis:
       'sekhemet card message <issue> "<text>"   |   sekhemet card pause <issue>   |   sekhemet card hand-back <issue>   |   sekhemet card take-over <issue>',
     example: 'sekhemet card message TS-101 "Use the existing date helper"',
   },
 };
+
+/**
+ * Old command names kept working (NAMING: CLI aliases keep old commands
+ * working). Each has its own `--help`, but `sekhemet dev --help` lists only
+ * the command it names, whose description ends with the alias (S1B-B22).
+ */
+const ALIASES: ReadonlySet<string> = new Set(["send-back", "card"]);
 
 /** A command's help row: its registry entry's, else `main`'s table's. */
 export function helpFor(name: string | undefined): HelpRow | undefined {
@@ -450,15 +465,19 @@ export function helpLines(row: HelpRow): string[] {
 
 /**
  * The commands `sekhemet dev --help` lists, each on its own line: every name
- * with a help row but those on the front door (rule 14), in name order.
+ * with a help row but those on the front door (rule 14), in name order. The
+ * aliases only with `aliases` (the CLI reference documents every name).
  */
-export function devHelpRows(frontDoor: ReadonlySet<string>): [string, HelpRow][] {
+export function devHelpRows(
+  frontDoor: ReadonlySet<string>,
+  opts: { aliases?: boolean } = {},
+): [string, HelpRow][] {
   const names = new Set<string>([
     ...Object.keys(MAIN_HELP),
     ...COMMAND_REGISTRY.map((c) => c.name),
   ]);
   return [...names]
-    .filter((n) => !frontDoor.has(n))
+    .filter((n) => !frontDoor.has(n) && (opts.aliases === true || !ALIASES.has(n)))
     .sort()
     .map((n) => [n, helpFor(n) as HelpRow]);
 }

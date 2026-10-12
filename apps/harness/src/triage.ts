@@ -1,5 +1,11 @@
 import type { BoardServiceImpl } from "@sekhemet/board";
-import type { CardRecord, CardStatus, CardStore, EventLog } from "@sekhemet/kernel";
+import {
+  type CardRecord,
+  type CardStatus,
+  type CardStore,
+  type EventLog,
+  LEGAL_TRANSITIONS,
+} from "@sekhemet/kernel";
 import { boardColumnLabel } from "@sekhemet/ui";
 import { recordDecision } from "./accept.js";
 import { releaseHeldCards } from "./execute.js";
@@ -23,6 +29,22 @@ export interface TriageContext {
   log: EventLog;
   /** The person deciding (kernel rule 19); the install's person when omitted (Solo). */
   principal?: string;
+}
+
+/**
+ * A decision the card's state does not allow (surface item 18b): a refusal
+ * the CLI says in one line with the card's next step, and the board shows,
+ * never an error that stops the process. `status` is the stored state it
+ * was refused in.
+ */
+export class TriageRefusal extends Error {
+  constructor(
+    message: string,
+    public readonly status: CardStatus,
+  ) {
+    super(message);
+    this.name = "TriageRefusal";
+  }
 }
 
 export {
@@ -95,13 +117,15 @@ export async function sendBack(
   // or Parked. A running card is stopped with `abort`.
   const stored = (await ctx.cardStore.getCard(card.id)) ?? card;
   if (stored.status === "in_progress" || stored.status === "verify") {
-    throw new Error(
+    throw new TriageRefusal(
       `${card.id} is ${stored.status === "verify" ? "being checked" : "running"}; stop it with \`sekhemet abort ${card.id}\` first. Request changes is for an issue In review or On hold.`,
+      stored.status,
     );
   }
   if (stored.status !== "review" && stored.status !== "parked") {
-    throw new Error(
+    throw new TriageRefusal(
       `${card.id} is ${boardColumnLabel(stored.status)}; request changes on an issue In review or On hold`,
+      stored.status,
     );
   }
   await decidedInReview(ctx, stored, "send_back");
@@ -151,9 +175,29 @@ export async function sendBack(
   await drainReview(ctx, card);
 }
 
+/**
+ * The states a card may be put on hold from (kernel rule 25): every state
+ * whose legal edges include Parked, read from the one table.
+ */
+const PARKABLE = (Object.keys(LEGAL_TRANSITIONS) as CardStatus[]).filter((s) =>
+  LEGAL_TRANSITIONS[s].includes("parked"),
+);
+
 /** Set a card aside. `unpark` is its undo. */
 export async function park(ctx: TriageContext, card: CardRecord, reason = ""): Promise<void> {
   const why = reason.trim().slice(0, 2000);
+  // Item 18b (S1B-B19): a state that cannot be put on hold is a refusal, never a crash.
+  // Only when the stored state is the one the caller read: a caller that read the card
+  // in another state moves from that read, so the kernel refuses it with stale_from
+  // (K-S4-1, K-S4-8) and the person learns the card changed under them.
+  const stored = (await ctx.cardStore.getCard(card.id)) ?? card;
+  if (stored.status === card.status && !PARKABLE.includes(stored.status)) {
+    const columns = [...new Set(PARKABLE.map(boardColumnLabel))];
+    throw new TriageRefusal(
+      `${card.id} is ${boardColumnLabel(stored.status)}; an issue is put on hold from ${columns.slice(0, -1).join(", ")} or ${columns.at(-1)}`,
+      stored.status,
+    );
+  }
   await decidedInReview(ctx, card, "park");
   await ctx.boardService.transitionCard({
     cardId: card.id,
@@ -182,7 +226,10 @@ export async function unparkTarget(cardStore: CardStore, cardId: string): Promis
 /** Put a parked card back where it was parked from, or in Ready. */
 export async function unpark(ctx: TriageContext, card: CardRecord): Promise<CardStatus> {
   if (card.status !== "parked")
-    throw new Error(`${card.id} is not On hold (it is ${boardColumnLabel(card.status)})`);
+    throw new TriageRefusal(
+      `${card.id} is not On hold (it is ${boardColumnLabel(card.status)})`,
+      card.status,
+    );
   const to = await unparkTarget(ctx.cardStore, card.id);
   await ctx.boardService.transitionCard({
     cardId: card.id,
@@ -195,16 +242,24 @@ export async function unpark(ctx: TriageContext, card: CardRecord): Promise<Card
 }
 
 /**
- * Reject a card (§2.4, RG-S5-11): from Review, Parked, Ready or Backlog,
+ * Where a card may be rejected from (§2.4, RG-S5-11; S1B-B21): every state
+ * of the board's In review, On hold, To do (Ready and Planning) and Backlog
+ * columns — the columns the refusal names. Nothing is running in any of them.
+ */
+const REJECTABLE: readonly CardStatus[] = ["review", "parked", "ready", "planning", "backlog"];
+
+/**
+ * Reject a card (§2.4, RG-S5-11): from In review, On hold, To do or Backlog,
  * with a required reason; `reopen` is its undo.
  */
 export async function reject(ctx: TriageContext, card: CardRecord, reason: string): Promise<void> {
   const why = reason.trim().slice(0, 2000);
   if (!why) throw new Error("A rejection needs a reason");
   const stored = (await ctx.cardStore.getCard(card.id)) ?? card;
-  if (!["review", "parked", "ready", "backlog"].includes(stored.status)) {
-    throw new Error(
+  if (!REJECTABLE.includes(stored.status)) {
+    throw new TriageRefusal(
       `${card.id} is ${boardColumnLabel(stored.status)}; an issue is rejected from In review, On hold, To do or Backlog`,
+      stored.status,
     );
   }
   await decidedInReview(ctx, stored, "reject");
@@ -221,7 +276,10 @@ export async function reject(ctx: TriageContext, card: CardRecord, reason: strin
 /** Put a rejected card back in Ready (`sekhemet reopen`; kernel rule 25, K-S4-7). */
 export async function reopen(ctx: TriageContext, card: CardRecord, reason = ""): Promise<void> {
   if (card.status !== "rejected") {
-    throw new Error(`${card.id} is not marked Won't do (it is ${boardColumnLabel(card.status)})`);
+    throw new TriageRefusal(
+      `${card.id} is not marked Won't do (it is ${boardColumnLabel(card.status)})`,
+      card.status,
+    );
   }
   const why = reason.trim().slice(0, 2000);
   await ctx.boardService.transitionCard({

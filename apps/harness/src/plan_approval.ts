@@ -30,6 +30,7 @@ import {
 } from "@sekhemet/planner";
 import { mergeNetworkConfigs } from "@sekhemet/sandbox";
 import { plural } from "@sekhemet/ui";
+import { noIssueRefusal, printRefusal } from "./commands/cli_result.js";
 import { networkConfigs } from "./config_apply.js";
 import { researchFetch } from "./research_consent.js";
 
@@ -287,7 +288,12 @@ export async function approveCommand(
   const ledger = ledgerOf(k);
   const card = await k.cardStore.getCard(id);
   if (!card) {
-    print(`No issue ${id}.`);
+    // Surface item 18b: the CLI's one refusal style, with the closest ID.
+    const { what, next } = noIssueRefusal(
+      id,
+      (await k.cardStore.listCards()).map((c) => c.id),
+    );
+    printRefusal(what, next);
     return 1;
   }
   const profile = projectDepthProfile(k.cardStore, card.projectId);

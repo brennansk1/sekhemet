@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { routeFrontDoor } from "../src/cli_commands.js";
 import { initLocalKernel, main } from "../src/index.js";
 
@@ -101,6 +101,135 @@ describe("triage from the command line", () => {
     await main(["park", "card_t", "--repo", repo]);
     await main(["unpark", "card_t", "--repo", repo]);
     expect(await status(repo)).toBe("backlog");
+  });
+
+  /** A card held in Planning, as a plan without a model leaves it (To do on the board). */
+  async function inPlanning(): Promise<string> {
+    const repo = await withCard();
+    const { db, cardStore } = initLocalKernel(repo);
+    await cardStore.createCard({
+      id: "card_p",
+      tier: "story",
+      title: "Held",
+      scopeFiles: ["b.ts"],
+      status: "planning",
+    });
+    db.close();
+    return repo;
+  }
+  const statusOf = async (repo: string, id: string): Promise<string | undefined> => {
+    const { db, cardStore } = initLocalKernel(repo);
+    const c = await cardStore.getCard(id);
+    db.close();
+    return c?.status;
+  };
+  /** What `main` writes to stderr, and whether it threw past the refusal. */
+  async function stderrOf(argv: string[]): Promise<string> {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+      lines.push(a.map(String).join(" "));
+    });
+    try {
+      await main(argv);
+    } finally {
+      spy.mockRestore();
+    }
+    return lines.join("\n");
+  }
+
+  it("S1B-B21: reject takes an issue from To do, held in Planning too (review-git §2.4: Review, Parked, Ready, Planning, Backlog)", async () => {
+    const repo = await inPlanning();
+    await main(["reject", "card_p", "out of scope", "--repo", repo]);
+    expect(process.exitCode ?? 0).toBe(0);
+    expect(await statusOf(repo, "card_p")).toBe("rejected");
+    // Its undo still puts it in Ready (RG-S5-11).
+    await main(["reopen", "card_p", "--repo", repo]);
+    expect(await statusOf(repo, "card_p")).toBe("ready");
+  });
+
+  it("S1B-B19: a triage verb refused by the issue's state is one `sekhemet:` line and a Do: line, exit 1 — never the crash line", async () => {
+    const repo = await inPlanning();
+    const out = await stderrOf(["request-changes", "card_p", "fix it", "--repo", repo]);
+    expect(out).toMatch(
+      /^sekhemet: card_p is To do; request changes on an issue In review or On hold/m,
+    );
+    expect(out).toMatch(/^ {2}Do: sekhemet approve card_p/m);
+    expect(out).not.toMatch(/sekhemet stopped|details are in/);
+    expect(process.exitCode).toBe(1);
+    expect(await statusOf(repo, "card_p")).toBe("planning");
+    process.exitCode = undefined;
+    const unpark = await stderrOf(["unpark", "card_t", "--repo", repo]);
+    expect(unpark).toMatch(/^sekhemet: card_t is not On hold \(it is To do\)/m);
+    expect(unpark).not.toMatch(/sekhemet stopped/);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("S1B-B19: park on a Won't do or Done issue, and revert on one not Done, are refusals with a Do: line — never the crash line", async () => {
+    const repo = await inPlanning();
+    await main(["reject", "card_p", "out of scope", "--repo", repo]);
+    expect(process.exitCode ?? 0).toBe(0);
+    const parkRejected = await stderrOf(["park", "card_p", "x", "--repo", repo]);
+    expect(parkRejected).toMatch(
+      /^sekhemet: card_p is Won't do; an issue is put on hold from Backlog, To do, In progress or In review$/m,
+    );
+    expect(parkRejected).toMatch(/^ {2}Do: sekhemet reopen card_p$/m);
+    expect(parkRejected).not.toMatch(/sekhemet stopped|details are in/);
+    expect(process.exitCode).toBe(1);
+    expect(await statusOf(repo, "card_p")).toBe("rejected");
+    process.exitCode = undefined;
+
+    const { db, cardStore } = initLocalKernel(repo);
+    await cardStore.createCard({
+      id: "card_d",
+      tier: "story",
+      title: "Done",
+      scopeFiles: ["c.ts"],
+    });
+    // A Done issue as a fixture (full_text_search.spec does the same): reaching
+    // Done by the transition law needs a run, its gates and an accept.
+    db.prepare("UPDATE cards SET status = 'done' WHERE id = ?").run("card_d");
+    db.close();
+    const parkDone = await stderrOf(["park", "card_d", "x", "--repo", repo]);
+    expect(parkDone).toMatch(/^sekhemet: card_d is Done; an issue is put on hold from /m);
+    expect(parkDone).toMatch(/^ {2}Do: to undo its accept: sekhemet revert card_d$/m);
+    expect(parkDone).not.toMatch(/sekhemet stopped|details are in/);
+    expect(process.exitCode).toBe(1);
+    expect(await statusOf(repo, "card_d")).toBe("done");
+    process.exitCode = undefined;
+
+    const revert = await stderrOf(["revert", "card_t", "x", "--repo", repo]);
+    expect(revert).toMatch(
+      /^sekhemet: card_t is not Done \(it is To do\); only an accepted issue is reverted$/m,
+    );
+    expect(revert).toMatch(/^ {2}Do: sekhemet run card_t/m);
+    expect(revert).not.toMatch(/sekhemet stopped|details are in/);
+    expect(process.exitCode).toBe(1);
+    expect(await statusOf(repo, "card_t")).toBe("ready");
+  });
+
+  it("S1B-B19: Accept on an issue not In review names the step that brings it there", async () => {
+    const repo = await inPlanning();
+    const out = await stderrOf(["accept", "card_p", "--repo", repo]);
+    expect(out).toMatch(
+      /^sekhemet: Issue card_p is To do\. Only an issue In review can be accepted\.$/m,
+    );
+    expect(out).toMatch(/^ {2}Do: sekhemet approve card_p/m);
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+    const ready = await stderrOf(["accept", "card_t", "--repo", repo]);
+    expect(ready).toMatch(/^ {2}Do: sekhemet run card_t/m);
+  });
+
+  it("S1B-B19: an unknown issue is one line and a hint: the closest ID, or where the IDs are listed", async () => {
+    const repo = await withCard();
+    const near = await stderrOf(["park", "card_u", "--repo", repo]);
+    expect(near).toMatch(/^sekhemet: no issue card_u\. Did you mean card_t\?$/m);
+    expect(near).toMatch(/^ {2}Do: sekhemet status lists every issue with its ID$/m);
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+    const far = await stderrOf(["reject", "zzzzzzzz", "why", "--repo", repo]);
+    expect(far).toMatch(/^sekhemet: no issue zzzzzzzz$/m);
+    expect(far).toMatch(/^ {2}Do: sekhemet status lists every issue with its ID$/m);
   });
 
   it("refuses a send-back without a reason", async () => {

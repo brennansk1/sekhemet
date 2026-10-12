@@ -93,3 +93,55 @@ describe("OpenTelemetry spans in SQLite (H22)", () => {
     expect(JSON.stringify(toOtlp(tracer.spans()))).toContain('"code":2');
   });
 });
+
+// S1B-B45 (wave 1): zero spans is explained — why, and where to look.
+describe("S1B-B45: `traces` with no span in the window says why and where to look", () => {
+  const run = async (repo: string, argv: string[]) => {
+    const lines: string[] = [];
+    const code = await tracesCommand(repo, argv, { say: (l) => lines.push(l) });
+    return { code, text: lines.join("\n") };
+  };
+
+  it("no span ever: no issue has run in this project; names the file and how to start one", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "trace-none-"));
+    const r = await run(repo, []);
+    expect(r.code).toBe(0);
+    expect(r.text).toBe(
+      [
+        "Last 24 h: 0 spans.",
+        "No issue has run in this project yet, so nothing is recorded. Spans are written to .sekhemet/traces.db while an issue runs: sekhemet run starts one.",
+      ].join("\n"),
+    );
+    const out = await run(repo, ["--out", join(repo, "t.json")]);
+    expect(out.text).toMatch(
+      /^Wrote 0 spans as OTLP\/JSON to .*t\.json\.\nNo issue has run in this project yet/,
+    );
+  });
+
+  it("older spans only: no issue ran in the window; names how many are older and how to widen it", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "trace-old-"));
+    const tracer = Tracer.forRepo(repo);
+    const old = BigInt(Date.now() - 72 * 3_600_000) * 1_000_000n;
+    for (const id of ["a", "b"])
+      tracer.write({
+        traceId: `t${id}`,
+        spanId: `s${id}`,
+        name: "card.run",
+        startNs: old,
+        endNs: old + 1_000_000n,
+        attributes: {},
+        status: "ok",
+      });
+    tracer.close();
+    const r = await run(repo, ["--since-hours", "24"]);
+    expect(r.code).toBe(0);
+    expect(r.text).toBe(
+      [
+        "Last 24 h: 0 spans.",
+        "No issue ran in the last 24 h. 2 older spans are recorded: sekhemet traces --since-hours <n> looks further back.",
+      ].join("\n"),
+    );
+    // A window that reaches them finds them.
+    expect((await run(repo, ["--since-hours", "96"])).text).toMatch(/^Last 96 h: 2 spans\./);
+  });
+});

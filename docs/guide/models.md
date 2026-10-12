@@ -39,7 +39,14 @@ Then assign it to a role. The command names the roles by their internal names: `
 sekhemet models assign worker <model>
 ```
 
-`sekhemet models list` shows what is registered and which role each fills.
+`sekhemet models list` shows the model each role runs and where it comes from — your assignment on this machine, the project's `config.toml`, or the default — and `sekhemet init` reports the same lines. The Review model shown is the one that reviews: a Review model of the Coding model's family, or one not verified on this machine, is not used, and with none the Planning model reviews when it is of another family and verified for Review:
+
+```
+Coding model: nail-mtp (config.toml [models] executor)
+Planning model: qwen3.8-27b-gsq-rco (config.toml [models] planner)
+Review model: unfilled — no model of another family than the Coding model's is verified on this machine, so a change reaches you without an AI review
+Research model: none — research runs once one is assigned: sekhemet models assign researcher <model>
+```
 
 ## Verifying a model on this machine
 

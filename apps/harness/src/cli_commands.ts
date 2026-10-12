@@ -1,3 +1,4 @@
+import { editDistance } from "./commands/cli_result.js";
 import { helpFor } from "./commands/help_table.js";
 import { COMMAND_REGISTRY, helpRow } from "./commands/registry.js";
 import { DEV_COMMANDS } from "./wave2.js";
@@ -385,7 +386,7 @@ export type FrontDoorRoute =
   | { kind: "card"; verb: CardVerb; cardId: string; text: string; flags: string[] }
   | { kind: "argv"; argv: string[] };
 
-/** `sekhemet card <verb> <card> …`: collaborating on a running issue (WL-N10-1..3). */
+/** `sekhemet issue <verb> <issue> …` (alias `card`): collaborating on a running issue (WL-N10-1..3). */
 export const CARD_VERBS = ["message", "pause", "hand-back", "take-over"] as const;
 export type CardVerb = (typeof CARD_VERBS)[number];
 
@@ -421,23 +422,7 @@ export function firstWord(argv: readonly string[]): string | undefined {
   return positional[0] === "dev" ? positional[1] : positional[0];
 }
 
-/** Edit distance, for "did you mean". */
-function distance(a: string, b: string): number {
-  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
-  for (let j = 1; j <= b.length; j++) (d[0] as number[])[j] = j;
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      const row = d[i] as number[];
-      const prev = d[i - 1] as number[];
-      row[j] = Math.min(
-        (prev[j] as number) + 1,
-        (row[j - 1] as number) + 1,
-        (prev[j - 1] as number) + (a[i - 1] === b[j - 1] ? 0 : 1),
-      );
-    }
-  }
-  return (d[a.length] as number[])[b.length] as number;
-}
+const distance = editDistance;
 
 export function routeFrontDoor(argv: readonly string[]): FrontDoorRoute {
   // SUR-13: the version is printed before anything else is read or written.
@@ -459,7 +444,7 @@ export function routeFrontDoor(argv: readonly string[]): FrontDoorRoute {
     const [cmd] = rest;
     if (!cmd || cmd === "help" || argv.includes("--help")) return { kind: "dev-help" };
     // The board's decisions route as they do without `dev`.
-    if ((TRIAGE as readonly string[]).includes(cmd) || cmd === "card") {
+    if ((TRIAGE as readonly string[]).includes(cmd) || cmd === "issue" || cmd === "card") {
       const at = argv.indexOf("dev");
       return routeFrontDoor([...argv.slice(0, at), ...argv.slice(at + 1)]);
     }
@@ -480,12 +465,13 @@ export function routeFrontDoor(argv: readonly string[]): FrontDoorRoute {
   }
 
   const [cardId = "", ...words] = rest;
-  if (first === "card") {
+  // `issue` is NAMING's word; `card`, its former name, is kept as an alias (S1B-B22).
+  if (first === "issue" || first === "card") {
     const [verb = "", id = "", ...text] = rest;
     if (!(CARD_VERBS as readonly string[]).includes(verb) || !id) {
       return {
         kind: "unknown",
-        word: `sekhemet card needs a verb and an issue ID: sekhemet card ${CARD_VERBS.join("|")} <issue> …`,
+        word: `sekhemet ${first} needs a verb and an issue ID: sekhemet ${first} ${CARD_VERBS.join("|")} <issue> …`,
       };
     }
     return { kind: "card", verb: verb as CardVerb, cardId: id, text: text.join(" "), flags };

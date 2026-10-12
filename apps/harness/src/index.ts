@@ -17,7 +17,13 @@ import {
   startGateHost,
   verificationRungs,
 } from "@sekhemet/gates";
-import { CardStore, DEFAULT_STEP_BUDGET, EventLog, initSchema } from "@sekhemet/kernel";
+import {
+  type CardRecord,
+  CardStore,
+  DEFAULT_STEP_BUDGET,
+  EventLog,
+  initSchema,
+} from "@sekhemet/kernel";
 import {
   ModelRegistry,
   NAIL_WORKER_PROFILE,
@@ -64,7 +70,10 @@ import {
   baseResult,
   enterJsonMode,
   jsonFatal,
+  nextStepFor,
+  noIssueRefusal,
   printJsonResult,
+  printRefusal,
 } from "./commands/cli_result.js";
 import { devHelpRows, helpFor, helpLines } from "./commands/help_table.js";
 import { setProjectRunning } from "./commands/project_pause.js";
@@ -143,6 +152,7 @@ import { deepPriorArtFor, planResearch, planResearcher } from "./research/plan_r
 import { oneShotResearcher } from "./research/service.js";
 import { runResearchBakeoffCommand } from "./research_bakeoff.js";
 import { parseUntil, releaseMachine, reserveMachine } from "./reservation.js";
+import { effectiveRoleModels, roleModelLines } from "./role_models.js";
 import { LEASE_TOKEN_ENV, acquireRunnerLease, leaseRefusal } from "./runner_lease.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
 import { awakeReport } from "./sleep_assertion.js";
@@ -158,7 +168,7 @@ import { identityRoot } from "./team/credential_store.js";
 import { newSetupTokenCommand, recordSwitchToSolo } from "./team/serve.js";
 import { terminalBoardLines } from "./terminal_board.js";
 import { tracesCommand } from "./tracing.js";
-import { park, reject, reopen, revertAccept, sendBack, unpark } from "./triage.js";
+import { TriageRefusal, park, reject, reopen, revertAccept, sendBack, unpark } from "./triage.js";
 import {
   describeTuning,
   globalTuningPath,
@@ -502,6 +512,14 @@ function usageError(command: string, what: string): void {
   const row = helpFor(command);
   console.error(`sekhemet: ${what}${row ? `: ${row.synopsis}` : ""}`);
   process.exitCode = 2;
+}
+
+/** Item 18b: an ID no issue has, with the closest ID and where the IDs are listed; exit 1. */
+async function refuseNoIssue(cardStore: CardStore, id: string): Promise<void> {
+  const known = (await cardStore.listCards().catch(() => [])).map((c) => c.id);
+  const { what, next } = noIssueRefusal(id, known);
+  printRefusal(what, next);
+  process.exitCode = 1;
 }
 
 /**
@@ -941,7 +959,12 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // so a ledger that cannot be opened (a newer schema, an unreadable Team
     // config) stops init before it writes anything or says Ready.
     openLocalLedger(config.repoPath).db.close();
-    const r = runInit(config.repoPath, { force: argv.includes("--force") });
+    // S1B-B25: the models each role runs, as `models list` says them.
+    const r = runInit(config.repoPath, {
+      force: argv.includes("--force"),
+      roleModels: (repo) =>
+        roleModelLines(effectiveRoleModels(repo, { registry: modelRegistry() })),
+    });
     if (!r.ready) process.exitCode = 1;
     return;
   }
@@ -1973,7 +1996,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // The one gate deriver (surface item 5.3, P10), as the first run uses.
     const derived = deriveGates(config.repoPath);
     if (derived.defs.length === 0) {
-      console.error("No manifest recognised (package.json, pyproject.toml, Cargo.toml, go.mod).");
+      // S1B-B15: say what was missing and the next step, "Do: …" on its own line.
+      const read = ["package.json", "pyproject.toml", "requirements.txt", "Cargo.toml", "go.mod"];
+      const found = read.find((f) => existsSync(join(config.repoPath, f)));
+      console.error(
+        found
+          ? `sekhemet: ${found} names no check to run (no test, type-check or lint command).\n  Do: add ${found === "package.json" ? 'a "test" script' : "a test command"} to ${found}, then run sekhemet gates init again.`
+          : `sekhemet: no manifest to derive checks from (${read.join(", ")}) in ${config.repoPath}.\n  Do: run it in the project's root folder, or add its manifest, then run sekhemet gates init again.`,
+      );
       process.exitCode = 1;
       return;
     }
@@ -1987,6 +2017,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // `sekhemet abort <card> [reason]`: the running card stops before its next turn (L25).
     const cardId = config.targetArg;
     if (!cardId) return usageError("abort", "abort needs an issue ID");
+    if (!(await cardStore.getCard(cardId))) return refuseNoIssue(cardStore, cardId);
     const reason = argv
       .slice(argv.indexOf(cardId) + 1)
       .filter((a) => !a.startsWith("--"))
@@ -2053,11 +2084,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const as = flagOf("--as");
     if (as) {
       const card = await cardStore.getCard(cardId);
-      if (!card) {
-        console.error(`sekhemet: no issue ${cardId}`);
-        process.exitCode = 1;
-        return;
-      }
+      if (!card) return refuseNoIssue(cardStore, cardId);
       const replayCtx = {
         repoPath: config.repoPath,
         restrictedMode: config.restrictedMode,
@@ -2316,64 +2343,17 @@ type TriageRoute = Extract<
 /** The board's decisions, from the command line (triage.ts is shared with it). */
 async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
   const { db, log, cardStore, boardService, hooksIdle } = initLocalKernel(repoPath);
-  const ctx = { repoPath, cardStore, boardService, log };
   try {
     const card = await cardStore.getCard(route.cardId);
-    if (!card) {
-      console.error(`sekhemet: no issue ${route.cardId}`);
-      process.exitCode = 1;
-      return;
-    }
-    if (route.kind === "send-back") {
-      if (!route.reason.trim()) {
-        console.error(
-          `sekhemet: requesting changes needs a reason — it is what the Agent is told next.\n  sekhemet request-changes ${card.id} "<what to change>"`,
-        );
-        process.exitCode = 2;
-        return;
-      }
-      await sendBack(ctx, card, route.reason);
-      console.log(`${card.id} is back in To do. Its next attempt is told: ${route.reason}`);
-    } else if (route.kind === "park") {
-      await park(ctx, card, route.reason);
-      console.log(`${card.id} is on hold. Undo: sekhemet unpark ${card.id}`);
-    } else if (route.kind === "reopen") {
-      await reopen(ctx, card, route.reason);
-      console.log(`${card.id} is back in Ready.`);
-    } else if (route.kind === "reject") {
-      if (!route.reason.trim()) {
-        console.error(
-          `sekhemet: a rejection needs a reason.\n  sekhemet reject ${card.id} "<why>"`,
-        );
-        process.exitCode = 2;
-        return;
-      }
-      await reject(ctx, card, route.reason);
-      console.log(`${card.id} is rejected. Undo: sekhemet reopen ${card.id}`);
-    } else if (route.kind === "revert") {
-      // SEC-03, surface rule 16: the reversal verbs share the dashboard's
-      // who-may-accept rule — the card's project's Accept rule, as `accept` reads it.
-      const { acceptHolders } = acceptRuleFor(db, log, cardStore, card, repoPath);
-      const sha = await revertAccept(ctx, card, route.reason, undefined, acceptHolders).catch(
-        (err: unknown) => {
-          if (err instanceof AcceptRefusedError) {
-            console.error(`sekhemet: ${err.message}`);
-            process.exitCode = 1;
-            return undefined;
-          }
-          throw err;
-        },
-      );
-      if (sha === undefined) return;
-      console.log(
-        `${card.id}'s accept is reverted (${sha.slice(0, 10)} on ${integrationBranch(repoPath)}); the issue is back in Ready.`,
-      );
-    } else {
-      const to = await unpark(ctx, card);
-      console.log(
-        `${card.id} is back in ${to === "ready" ? "Ready" : to === "backlog" ? "Backlog" : "Planning"}.`,
-      );
-    }
+    if (!card) return await refuseNoIssue(cardStore, route.cardId);
+    await triageDecision(route, repoPath, card, { db, log, cardStore, boardService }).catch(
+      (err: unknown) => {
+        // Item 18b: a decision the issue's state refuses is a refusal with its next step.
+        if (!(err instanceof TriageRefusal)) throw err;
+        printRefusal(err.message, nextStepFor({ id: card.id, status: err.status }));
+        process.exitCode = 1;
+      },
+    );
   } finally {
     // EXT-9 (C5): the move's hooks run and their objections are recorded
     // before the ledger closes; closing first lost them.
@@ -2382,8 +2362,68 @@ async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
   }
 }
 
+/** One triage decision on a card that exists (`runTriage`). */
+async function triageDecision(
+  route: TriageRoute,
+  repoPath: string,
+  card: CardRecord,
+  k: Pick<ReturnType<typeof initLocalKernel>, "db" | "log" | "cardStore" | "boardService">,
+): Promise<void> {
+  const { db, log, cardStore, boardService } = k;
+  const ctx = { repoPath, cardStore, boardService, log };
+  if (route.kind === "send-back") {
+    if (!route.reason.trim()) {
+      console.error(
+        `sekhemet: requesting changes needs a reason — it is what the Agent is told next.\n  sekhemet request-changes ${card.id} "<what to change>"`,
+      );
+      process.exitCode = 2;
+      return;
+    }
+    await sendBack(ctx, card, route.reason);
+    console.log(`${card.id} is back in To do. Its next attempt is told: ${route.reason}`);
+  } else if (route.kind === "park") {
+    await park(ctx, card, route.reason);
+    console.log(`${card.id} is on hold. Undo: sekhemet unpark ${card.id}`);
+  } else if (route.kind === "reopen") {
+    await reopen(ctx, card, route.reason);
+    console.log(`${card.id} is back in Ready.`);
+  } else if (route.kind === "reject") {
+    if (!route.reason.trim()) {
+      console.error(`sekhemet: a rejection needs a reason.\n  sekhemet reject ${card.id} "<why>"`);
+      process.exitCode = 2;
+      return;
+    }
+    await reject(ctx, card, route.reason);
+    console.log(`${card.id} is rejected. Undo: sekhemet reopen ${card.id}`);
+  } else if (route.kind === "revert") {
+    // SEC-03, surface rule 16: the reversal verbs share the dashboard's
+    // who-may-accept rule — the card's project's Accept rule, as `accept` reads it.
+    const { acceptHolders } = acceptRuleFor(db, log, cardStore, card, repoPath);
+    const sha = await revertAccept(ctx, card, route.reason, undefined, acceptHolders).catch(
+      (err: unknown) => {
+        if (err instanceof AcceptRefusedError) {
+          // Item 18b: an issue not Done is refused with the step that moves it on.
+          printRefusal(err.message, err.code === "not_done" ? nextStepFor(card) : undefined);
+          process.exitCode = 1;
+          return undefined;
+        }
+        throw err;
+      },
+    );
+    if (sha === undefined) return;
+    console.log(
+      `${card.id}'s accept is reverted (${sha.slice(0, 10)} on ${integrationBranch(repoPath)}); the issue is back in Ready.`,
+    );
+  } else {
+    const to = await unpark(ctx, card);
+    console.log(
+      `${card.id} is back in ${to === "ready" ? "Ready" : to === "backlog" ? "Backlog" : "Planning"}.`,
+    );
+  }
+}
+
 /**
- * `sekhemet card message|pause|hand-back|take-over <card> …` (worker-loop
+ * `sekhemet issue message|pause|hand-back|take-over <card> …` (worker-loop
  * NEW-worker-loop-10): the dashboard's four actions over the same functions.
  * Exit 0 done, 1 refused (no such card, not paused, its agent running), 2 a
  * usage error (a message with no text) — surface S10.
@@ -2396,15 +2436,11 @@ async function runCardVerb(
   const ctx = { repoPath, restrictedMode: false, cardStore, boardService };
   try {
     const card = await cardStore.getCard(route.cardId);
-    if (!card) {
-      console.error(`sekhemet: no issue ${route.cardId}`);
-      process.exitCode = 1;
-      return;
-    }
+    if (!card) return await refuseNoIssue(cardStore, route.cardId);
     if (route.verb === "message") {
       if (!route.text.trim()) {
         console.error(
-          `sekhemet: a message needs text.\n  sekhemet card message ${card.id} "<what to tell the agent>"`,
+          `sekhemet: a message needs text.\n  sekhemet issue message ${card.id} "<what to tell the agent>"`,
         );
         process.exitCode = 2;
         return;
@@ -2414,7 +2450,7 @@ async function runCardVerb(
     } else if (route.verb === "pause") {
       await requestPause(cardStore, card.id);
       console.log(
-        `${card.id} pauses at its agent's next step. Then: sekhemet card hand-back ${card.id} "<note>", or sekhemet card take-over ${card.id}`,
+        `${card.id} pauses at its agent's next step. Then: sekhemet issue hand-back ${card.id} "<note>", or sekhemet issue take-over ${card.id}`,
       );
     } else if (route.verb === "hand-back") {
       await handBack(ctx, card.id, route.text);

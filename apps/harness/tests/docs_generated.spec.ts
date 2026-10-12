@@ -46,6 +46,7 @@ const NAMES = [
     "reopen",
     "reject",
     "revert",
+    "issue",
     "card",
   ]),
 ].sort();

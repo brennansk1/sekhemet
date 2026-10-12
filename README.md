@@ -128,7 +128,7 @@ the operator's detail is in [INSTALL.md](docs/reference/INSTALL.md).
 | `sekhemet "<spec>"` | Plan the work; each issue is built once you approve it |
 | `sekhemet run [issue]` | Run an issue, resume a stopped one, or run the queue |
 | `sekhemet review` | Show the next issue waiting on you |
-| `sekhemet accept <issue>` | Accept and merge. Also: request-changes &lt;issue&gt; "&lt;reason&gt;", park / unpark &lt;issue&gt;, reject &lt;issue&gt; "&lt;reason&gt;", reopen &lt;issue&gt;, revert &lt;issue&gt;; sekhemet card message\|pause\|hand-back\|take-over &lt;issue&gt; for a running one |
+| `sekhemet accept <issue>` | Accept and merge. Also: request-changes &lt;issue&gt; "&lt;reason&gt;", park / unpark &lt;issue&gt;, reject &lt;issue&gt; "&lt;reason&gt;", reopen &lt;issue&gt;, revert &lt;issue&gt;; sekhemet issue message\|pause\|hand-back\|take-over &lt;issue&gt; for a running one |
 | `sekhemet ask "<question>"` | Ask Seshat from the terminal; the reply prints here |
 | `sekhemet doctor` | Check the install, including the model weights |
 | `sekhemet dev <command>` | Everything for developing Sekhemet itself |

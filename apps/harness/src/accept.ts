@@ -280,7 +280,8 @@ export class AcceptRefusedError extends Error {
       | "no_branch"
       | "not_code_owner"
       | "pr_unavailable"
-      | "open_thread",
+      | "open_thread"
+      | "not_done",
     message: string,
     /**
      * For `unacknowledged`: the findings (dossier entry ids) and the files
@@ -1166,7 +1167,9 @@ async function revertAcceptIn(
 ): Promise<string> {
   const stored = await ctx.cardStore.getCard(card.id);
   if (stored?.status !== "done") {
-    throw new Error(
+    // Item 18b (S1B-B19): a refusal the caller says with the issue's next step.
+    throw new AcceptRefusedError(
+      "not_done",
       `${card.id} is not Done (it is ${stored ? boardColumnLabel(stored.status) : "missing"}); only an accepted issue is reverted`,
     );
   }

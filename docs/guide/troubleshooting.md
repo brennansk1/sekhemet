@@ -8,6 +8,17 @@ sekhemet doctor
 
 It checks the install, prints `Do:` under each check that does not pass, and ends with one verdict: *Ready to run an issue*, or *Not ready* naming the first step to take. `sekhemet doctor --json` gives the same for a script, and `sekhemet doctor --verify-weights` also checks each model file against its recorded hash (slow: it reads every file).
 
+## When a command refuses
+
+A command that cannot do what you asked says so in one line starting `sekhemet:`, and, when there is a step that moves things on, a second line starting `Do:` with that step:
+
+```
+sekhemet: Issue TS-101 is To do. Only an issue In review can be accepted.
+  Do: sekhemet run TS-101 (it reaches In review when its checks pass)
+```
+
+An issue ID that does not exist is answered with the closest ID when it looks like a typo, and `Do: sekhemet status lists every issue with its ID`. A refusal exits 1 (2 for a usage error) and writes no error report; only an error nothing handled prints a line saying Sekhemet stopped, naming its report.
+
 ## When asking for help
 
 `sekhemet doctor --report` writes a report folder, prints its path and lists what is in it: the checks, the settings, counts from the Activity log (never a title, text or diff) and the end of the diagnostic logs, with secrets, your paths, login, host name and email addresses taken out. Nothing is sent anywhere. Read it, then attach it to a bug report ([SUPPORT](../../.github/SUPPORT.md)).
@@ -202,4 +213,4 @@ It checks the install, prints `Do:` under each check that does not pass, and end
 
 **The dashboard says it cannot open the Activity log, or a newer version wrote it.** After a rollback, restore the backup the message names ([Upgrade and uninstall](upgrade-and-uninstall.md)). `sekhemet log` says whether the log's hash chain verifies.
 
-**An issue stopped and asks for you.** Open it on the board: its *Activity* tab says why it stopped and what it needs. `sekhemet request-changes <issue> "<what to change>"` sends it back with guidance, or `sekhemet card message <issue> "<text>"` guides one that is still running.
+**An issue stopped and asks for you.** Open it on the board: its *Activity* tab says why it stopped and what it needs. `sekhemet request-changes <issue> "<what to change>"` sends it back with guidance, or `sekhemet issue message <issue> "<text>"` guides one that is still running.

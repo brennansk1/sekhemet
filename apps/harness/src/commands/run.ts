@@ -31,7 +31,14 @@ import { Access } from "../team/access.js";
 import { agentRefusalFor } from "../team/ai_teammates.js";
 import { PressureControls, createCardWatchdog, workerFloorRefusal } from "../watchdog_actions.js";
 import { modelRegistry } from "../wave2.js";
-import { type CliExit, type RunResult, baseResult, issueRef } from "./cli_result.js";
+import {
+  type CliExit,
+  type RunResult,
+  baseResult,
+  issueRef,
+  noIssueRefusal,
+  refusalLines,
+} from "./cli_result.js";
 import { findProject, setProjectRunning } from "./project_pause.js";
 import type { CommandHandler } from "./registry.js";
 
@@ -68,7 +75,13 @@ export const runCommand: CommandHandler = async (args, env) => {
     return { ...baseResult("run", exitCode, lines.join(" ")), ...extra };
   };
   const card = await cardStore.getCard(cardId);
-  if (!card) return stopped(1, [`sekhemet: no issue ${cardId}`]);
+  if (!card) {
+    const { what, next } = noIssueRefusal(
+      cardId,
+      (await cardStore.listCards()).map((c) => c.id),
+    );
+    return stopped(1, refusalLines(what, next));
+  }
   // Runtime item 2a, SUR-75: the card runs in its own project's root,
   // wherever in the workspace the command was started.
   const cardRoot = projectRootOf(cardStore, card) ?? env.repoPath;

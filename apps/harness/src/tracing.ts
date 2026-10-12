@@ -407,6 +407,15 @@ export async function tracesCommand(
           `  ${name}: ${e.n}, ${(e.ms / 1000).toFixed(1)} s total, ${(e.ms / e.n / 1000).toFixed(1)} s mean`,
         );
     }
+    // S1B-B45: zero spans says why, and where to look.
+    if (spans.length === 0) {
+      const older = tracer.spans().length;
+      say(
+        older
+          ? `No issue ran in the last ${hours} h. ${plural(older, "older span")} ${older === 1 ? "is" : "are"} recorded: sekhemet traces --since-hours <n> looks further back.`
+          : "No issue has run in this project yet, so nothing is recorded. Spans are written to .sekhemet/traces.db while an issue runs: sekhemet run starts one.",
+      );
+    }
     return 0;
   } finally {
     tracer.close();

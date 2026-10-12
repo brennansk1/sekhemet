@@ -158,3 +158,86 @@ export function jsonFatal(line: string): void {
   if (!realStdout || printed) return;
   printJsonResult({ ok: false, error: line });
 }
+
+/**
+ * Surface item 18b (S1B-B19): a refusal is said one way, whichever command
+ * gives it — one line `sekhemet: <what>` and, when there is a step that
+ * moves things on, the next line `  Do: <that step>`, as `doctor` prints its
+ * next steps (SUR-62). A refusal is never the crash line of item 18a.
+ */
+export function refusalLines(what: string, next?: string): string[] {
+  return [`sekhemet: ${what}`, ...(next ? [`  Do: ${next}`] : [])];
+}
+
+/** Print a refusal on stderr (item 18b). */
+export function printRefusal(what: string, next?: string): void {
+  for (const line of refusalLines(what, next)) console.error(line);
+}
+
+/** Edit distance, for "did you mean" (commands and issue IDs). */
+export function editDistance(a: string, b: string): number {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) (d[0] as number[])[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const row = d[i] as number[];
+      const prev = d[i - 1] as number[];
+      row[j] = Math.min(
+        (prev[j] as number) + 1,
+        (row[j - 1] as number) + 1,
+        (prev[j - 1] as number) + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+  }
+  return (d[a.length] as number[])[b.length] as number;
+}
+
+/** Where every issue's ID is listed: the hint an unknown ID ends with. */
+export const LIST_ISSUES_STEP = "sekhemet status lists every issue with its ID";
+
+/**
+ * An ID no issue has (item 18b): what was asked for, the closest ID when one
+ * is within two edits (a typo), and where the IDs are listed.
+ */
+export function noIssueRefusal(
+  id: string,
+  knownIds: readonly string[],
+): { what: string; next: string } {
+  const best = knownIds
+    .map((k) => ({ k, d: editDistance(id, k) }))
+    .sort((a, b) => a.d - b.d || a.k.localeCompare(b.k))[0];
+  const close = best && best.d <= 2 ? best.k : undefined;
+  return {
+    what: close ? `no issue ${id}. Did you mean ${close}?` : `no issue ${id}`,
+    next: LIST_ISSUES_STEP,
+  };
+}
+
+/**
+ * The step that moves an issue on from its stored state (item 18b): the
+ * `Do:` line of a refusal that turned on the issue's state — Accept on an
+ * issue not In review, a triage verb on an issue in the wrong column.
+ */
+export function nextStepFor(card: { id: string; status: string }): string | undefined {
+  switch (card.status) {
+    case "backlog":
+      return `finish the issues ${card.id} depends on first; sekhemet status shows them`;
+    case "planning":
+      return `sekhemet approve ${card.id} (it leaves Planning once its acceptance criteria are approved)`;
+    case "ready":
+      return `sekhemet run ${card.id} (it reaches In review when its checks pass)`;
+    case "in_progress":
+    case "verify":
+      return `wait for its run to reach In review, or stop it: sekhemet abort ${card.id}`;
+    case "review":
+      return `sekhemet review ${card.id}`;
+    case "parked":
+      return `sekhemet unpark ${card.id}`;
+    case "rejected":
+      return `sekhemet reopen ${card.id}`;
+    case "done":
+      return `to undo its accept: sekhemet revert ${card.id}`;
+    default:
+      return undefined;
+  }
+}

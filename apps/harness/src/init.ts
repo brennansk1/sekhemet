@@ -932,7 +932,18 @@ export interface InitResult {
  */
 export function runInit(
   repo: string,
-  opts: { force?: boolean; run?: Run; totalBytes?: number; say?: (l: string) => void } = {},
+  opts: {
+    force?: boolean;
+    run?: Run;
+    totalBytes?: number;
+    say?: (l: string) => void;
+    /**
+     * S1B-B25: each role's model as the project runs it, and where it comes
+     * from — `models list`'s lines (`role_models.ts`), read after
+     * `config.toml` is written. Without it, the recommended roster.
+     */
+    roleModels?: (repo: string) => string[];
+  } = {},
 ): InitResult {
   const say = opts.say ?? ((l: string) => console.log(l));
   const checks = toolchainChecks(opts.run);
@@ -959,7 +970,15 @@ export function runInit(
   say(
     `Machine: ${Math.round((opts.totalBytes ?? totalmem()) / 1024 ** 3)} GB, class ${roster.tier}. ${roster.note}`,
   );
-  say(rosterLine(roster));
+  if (opts.roleModels) {
+    // MD-N16-3: below the supported memory the note still says the set does not fit.
+    say(
+      roster.supported
+        ? "Models, and where each is set (`sekhemet models list` shows the same):"
+        : `Models: ${roster.note}`,
+    );
+    for (const line of opts.roleModels(repo)) say(`  ${line}`);
+  } else say(rosterLine(roster));
   for (const c of checks)
     say(
       `  ${c.ok ? "✓" : c.required ? "✗" : "·"} ${c.name}: ${c.detail}${c.ok ? "" : ` → ${c.fix}`}`,

@@ -281,6 +281,54 @@ export function boardColumnOf(status: string): BoardColumnId | "wont_do" | undef
     | undefined;
 }
 
+/** A child that ran, or has been accepted: its parent's work has started. */
+const STARTED: readonly CardStatus[] = ["in_progress", "verify", "review", "done"];
+
+/**
+ * The state a parent (an epic, an initiative) is shown in (S1B-B16). A
+ * parent never runs itself — its scope is its children's (board B7) — and
+ * the planner stores a new epic In progress, so its stored state says
+ * nothing about work. It is shown where its issues are: In progress once any
+ * of them ran (or was accepted), as Jira's epics are; before that, the most
+ * advanced not-started state among them (Ready, then Planning, then Backlog).
+ * A parent that is Done, On hold or Won't do, one whose open issues are all
+ * Done (the rollup moves it), or a card with no issues keeps its stored
+ * state. Rejected issues are no part of it.
+ */
+export function shownStatus(
+  stored: CardStatus,
+  children: readonly { status: CardStatus }[],
+): CardStatus {
+  if (stored === "done" || stored === "parked" || stored === "rejected") return stored;
+  const live = children.map((c) => c.status).filter((s) => s !== "rejected");
+  if (live.length === 0 || live.every((s) => s === "done")) return stored;
+  if (live.some((s) => STARTED.includes(s))) return "in_progress";
+  if (live.includes("ready")) return "ready";
+  if (live.includes("planning")) return "planning";
+  return "backlog";
+}
+
+/**
+ * Cards as the board shows them (S1B-B16): each parent in its
+ * {@link shownStatus}, read from its own issues among `cards`; every other
+ * card as stored.
+ */
+export function withShownStatus<
+  C extends { id: string; status: CardStatus; parentId?: string | null | undefined },
+>(cards: readonly C[]): C[] {
+  const children = new Map<string, C[]>();
+  for (const c of cards) {
+    if (!c.parentId) continue;
+    children.set(c.parentId, [...(children.get(c.parentId) ?? []), c]);
+  }
+  return cards.map((c) => {
+    const own = children.get(c.id);
+    if (!own) return c;
+    const status = shownStatus(c.status, own);
+    return status === c.status ? c : { ...c, status };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Actors
 // ---------------------------------------------------------------------------

@@ -202,7 +202,10 @@ describe("assigning and restoring a role's model (MD-N10-1, MD-N10-2, MD-N4-9)",
       /worker: restored alpha-coder:latest \(replacing beta-coder:latest\)/,
     );
     const list = await sekhemet(["models", "list"], p);
-    expect(list.stdout).toMatch(/^worker: alpha-coder:latest \(personal/m);
+    // S1B-B25: NAMING's role name, and the person's assignment as its source.
+    expect(list.stdout).toMatch(
+      /^Coding model: alpha-coder:latest \(your assignment on this machine, /m,
+    );
   }, 180_000);
 
   it("MD-N10-1: changing the recorded baseline or the shipped default needs a recorded bake-off on this host", async () => {
@@ -239,8 +242,8 @@ describe("assigning and restoring a role's model (MD-N10-1, MD-N10-2, MD-N4-9)",
       "qwen-beta:latest is of the qwen family, the Coding model's (qwen); the Review model must be of another family",
     );
     const list = await sekhemet(["models", "list"], p);
-    expect(list.stdout).not.toMatch(/^reviewer: qwen-beta/m);
-    expect(list.stdout).toMatch(/^reviewer: (unassigned|.*unfilled)/m);
+    expect(list.stdout).not.toMatch(/^Review model: qwen-beta/m);
+    expect(list.stdout).toMatch(/^Review model: unfilled — /m);
   }, 180_000);
 });
 

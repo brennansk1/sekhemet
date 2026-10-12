@@ -1,4 +1,5 @@
-import { BOARD_COLUMNS } from "@sekhemet/ui";
+import type { CardRecord } from "@sekhemet/kernel";
+import { BOARD_COLUMNS, plainStatus, withShownStatus } from "@sekhemet/ui";
 import { setupFor } from "../planner_live.js";
 import { type Audience, audienceFromAccess, soloAudience } from "../pm/audience.js";
 import { namedDecisions } from "../pm/decisions.js";
@@ -16,6 +17,32 @@ import type { CommandHandler } from "./registry.js";
  * (rule 14). Read-only: it writes nothing to the ledger. In the Team setup
  * it holds only the issues the person at the terminal can see (PM-N9-8).
  */
+/**
+ * Each board column's issues, a parent where its issues are (S1B-B16:
+ * `withShownStatus`): `status` stays the stored state, `state` says the
+ * shown one in plain words, as the text board shows it.
+ */
+export function statusColumns(cards: readonly CardRecord[]): NonNullable<StatusResult["columns"]> {
+  const shown = withShownStatus(cards);
+  const columns: NonNullable<StatusResult["columns"]> = [];
+  for (const col of BOARD_COLUMNS) {
+    const issues = shown.filter((c) => col.states.includes(c.status));
+    if (col.onlyWithCards && issues.length === 0) continue;
+    columns.push({
+      name: col.label,
+      issues: issues.map((c) => {
+        const stored = cards.find((s) => s.id === c.id) ?? c;
+        return {
+          ...issueRef(stored),
+          state: plainStatus(c.status),
+          steps: { used: c.stepsUsed, budget: c.stepBudget },
+        };
+      }),
+    });
+  }
+  return columns;
+}
+
 export const statusCommand: CommandHandler = async (_args, env) => {
   const { db, log, cardStore, boardService } = await env.kernel("read");
   try {
@@ -27,19 +54,7 @@ export const statusCommand: CommandHandler = async (_args, env) => {
     const state = await boardService.getBoardState();
     const cards = state.cards.filter((c) => audience.canSee(me, c.projectId));
     const board = { ...state, cards };
-
-    const columns: NonNullable<StatusResult["columns"]> = [];
-    for (const col of BOARD_COLUMNS) {
-      const issues = cards.filter((c) => col.states.includes(c.status));
-      if (col.onlyWithCards && issues.length === 0) continue;
-      columns.push({
-        name: col.label,
-        issues: issues.map((c) => ({
-          ...issueRef(c),
-          steps: { used: c.stepsUsed, budget: c.stepBudget },
-        })),
-      });
-    }
+    const columns = statusColumns(cards);
     // The Ready issues in the order the queue takes them, as the standup's *Next up*.
     const ready = cards.filter(
       (c) => c.status === "ready" && (c.tier === "story" || c.tier === "task"),

@@ -16,6 +16,9 @@ import {
   type FindingRef,
   baseResult,
   issueRef,
+  nextStepFor,
+  noIssueRefusal,
+  printRefusal,
 } from "./cli_result.js";
 import type { CommandHandler } from "./registry.js";
 
@@ -106,11 +109,23 @@ export const acceptCommand: CommandHandler = async (args, env) => {
   const cardId = args.positionals[0] as string;
   const { db, log, cardStore, boardService } = await env.kernel("write");
   const card = await cardStore.getCard(cardId);
-  const refused = (exitCode: CliExit, message: string, extra: Partial<AcceptResult> = {}) => {
-    console.error(`sekhemet: ${message}`);
+  const refused = (
+    exitCode: CliExit,
+    message: string,
+    extra: Partial<AcceptResult> = {},
+    next?: string,
+  ) => {
+    // Surface item 18b: one line, and the step that moves the issue on.
+    printRefusal(message, next);
     return { ...baseResult("accept", exitCode, message), accepted: false, ...extra };
   };
-  if (!card) return refused(1, `no issue ${cardId}`);
+  if (!card) {
+    const { what, next } = noIssueRefusal(
+      cardId,
+      (await cardStore.listCards()).map((c) => c.id),
+    );
+    return refused(1, what, {}, next);
+  }
 
   const findings = await numberedFindings(cardStore, cardId);
   const acknowledged: string[] = [];
@@ -199,9 +214,18 @@ export const acceptCommand: CommandHandler = async (args, env) => {
         ...(files.length ? { files } : {}),
       });
     }
-    return refused(1, err instanceof Error ? err.message : String(err), {
-      issue: issueRef(card),
-      ...(err instanceof AcceptRefusedError ? { refusal: err.code } : {}),
-    });
+    // S1B-B19: Accept on an issue not In review names the step that brings it there.
+    const stored = (await cardStore.getCard(cardId)) ?? card;
+    return refused(
+      1,
+      err instanceof Error ? err.message : String(err),
+      {
+        issue: issueRef(stored),
+        ...(err instanceof AcceptRefusedError ? { refusal: err.code } : {}),
+      },
+      err instanceof AcceptRefusedError && err.code === "not_in_review"
+        ? nextStepFor(stored)
+        : undefined,
+    );
   }
 };

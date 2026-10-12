@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { COMMANDS } from "../src/cli_commands.js";
-import { helpFor } from "../src/commands/help_table.js";
+import { COMMANDS, PRIMARY_COMMANDS, routeFrontDoor } from "../src/cli_commands.js";
+import { devHelpRows, helpFor } from "../src/commands/help_table.js";
 import { BIN, cliEnv, place } from "./support/cli_spawn.js";
 
 // Every command's own help, through the built binary (surface item 19a,
@@ -21,6 +21,7 @@ const NAMES = [
     "reopen",
     "reject",
     "revert",
+    "issue",
     "card",
   ]),
 ].sort();
@@ -93,5 +94,64 @@ describe("every command has its own help, from one table (SUR-94, CLI-03)", () =
     const front = run(["--help"]);
     expect(front.code).toBe(0);
     expect(front.stdout).not.toMatch(SPEC_ID);
+  });
+});
+
+// S1B-B20, S1B-B22 (wave 1): the help's words are NAMING's. The review
+// verdict is *Request changes*; the thing is an *issue* (a *card* only as
+// its tile on a board); an old command name is an alias, said beside its
+// command, never its own line in `sekhemet dev --help`.
+describe("the help table speaks NAMING's words (S1B-B20, S1B-B22)", () => {
+  const FRONT = new Set(["run", "review", "accept", "ask", "doctor"]);
+  const listed = () => devHelpRows(FRONT);
+
+  it("S1B-B20: request-changes is described as Request changes, not as sending an issue back", () => {
+    const row = helpFor("request-changes");
+    expect(row?.what).toMatch(/^Request changes\b/);
+    // The alias note, "(alias: send-back)", is the command's old name, not its description.
+    expect(row?.what.replace(/ \(alias: [^)]+\)$/, "")).not.toMatch(/\bsend\b[^.]*\bback\b/i);
+  });
+
+  it("S1B-B22: `sekhemet dev --help` lists no alias on its own line; request-changes names send-back as its alias", () => {
+    const names = listed().map(([n]) => n);
+    expect(names).not.toContain("send-back");
+    expect(names).not.toContain("card");
+    expect(names).toContain("request-changes");
+    expect(names).toContain("issue");
+    expect(helpFor("request-changes")?.what).toMatch(/\(alias: send-back\)$/);
+    expect(helpFor("issue")?.what).toMatch(/\(alias: card\)$/);
+    // The alias keeps its own help for whoever types it.
+    expect(helpFor("send-back")?.what).toMatch(/alias of request-changes/i);
+  });
+
+  it("S1B-B22: no listed help line, nor the front door, names the running-issue verbs as `card`", () => {
+    for (const [name, row] of listed()) {
+      expect(`${row.usage} ${row.what}`, name).not.toMatch(
+        /\bcard (message|pause|hand-back|take-over)\b/,
+      );
+    }
+    for (const c of PRIMARY_COMMANDS) expect(c.what).not.toMatch(/\bsekhemet card\b/);
+    expect(helpFor("issue")?.synopsis).toContain("sekhemet issue message <issue>");
+    expect(helpFor("card")?.what).toMatch(/alias of issue/i);
+  });
+
+  it("S1B-B22: `sekhemet issue <verb>` routes as `card <verb>` did, and `card` still works", () => {
+    for (const word of ["issue", "card"]) {
+      expect(routeFrontDoor([word, "message", "TS-101", "Use", "the", "helper"])).toEqual({
+        kind: "card",
+        verb: "message",
+        cardId: "TS-101",
+        text: "Use the helper",
+        flags: [],
+      });
+      expect(routeFrontDoor(["dev", word, "pause", "TS-101"])).toMatchObject({
+        kind: "card",
+        verb: "pause",
+      });
+    }
+    expect(routeFrontDoor(["issue", "frob"])).toMatchObject({
+      kind: "unknown",
+      word: expect.stringContaining("sekhemet issue message|pause|hand-back|take-over <issue>"),
+    });
   });
 });

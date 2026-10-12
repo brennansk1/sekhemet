@@ -50,6 +50,12 @@ describe("a refusal is model-facing only where the Worker meets it", () => {
     expect(texts("apps/harness/src/qualify.ts", refusal("qualificationRefusal"))).toEqual([]);
   });
 
+  it("does not inventory the CLI's refusal of an unknown issue ID, said to the person who typed it", () => {
+    const source =
+      "export function noIssueRefusal(id: string, close?: string) { return { what: close ? `no issue ${id}. Did you mean ${close}?` : `no issue ${id}` }; }";
+    expect(texts("apps/harness/src/commands/cli_result.ts", source)).toEqual([]);
+  });
+
   it("names the person-facing builders, so another refusal in the app is still inventoried", () => {
     expect(texts("apps/harness/src/x.ts", refusal("toolRefusal"))).toHaveLength(1);
   });

@@ -1,6 +1,6 @@
 import type { BoardState } from "@sekhemet/board";
 import type { CardStatus } from "@sekhemet/kernel";
-import { BOARD_COLUMNS, columnLabel } from "@sekhemet/ui";
+import { BOARD_COLUMNS, columnLabel, withShownStatus } from "@sekhemet/ui";
 
 /**
  * `sekhemet board --terminal` in the board's words (surface NEW-surface-2,
@@ -40,10 +40,16 @@ export function terminalBoardLines(state: BoardState): string[] {
       "",
     );
   }
+  // S1B-B16: a parent (an epic) is listed where its issues are, never In
+  // progress while nothing of it runs.
+  const shown = withShownStatus(state.cards);
+  // A WIP limit counts work items: a parent never takes a slot of its own.
+  const parents = new Set(state.cards.map((c) => c.parentId).filter(Boolean));
   for (const col of COLUMNS) {
-    const cards = state.cards.filter((c) => col.states.includes(c.status));
+    const cards = shown.filter((c) => col.states.includes(c.status));
     if (col.onlyWhenNonEmpty && cards.length === 0) continue;
-    const count = (s: CardStatus) => cards.filter((c) => c.status === s).length;
+    const count = (s: CardStatus) =>
+      cards.filter((c) => c.status === s && !parents.has(c.id)).length;
     let heading = `${col.name}  ${cards.length}`;
     if (col.states.length === 1) {
       const limit = limitOf(state, col.states[0] as CardStatus);

@@ -160,7 +160,7 @@ export const COMMAND_REGISTRY: readonly CommandSpec[] = [
     name: "accept",
     visibility: "front",
     usage: "sekhemet accept <issue>",
-    what: 'Accept and merge. Also: request-changes <issue> "<reason>", park / unpark <issue>, reject <issue> "<reason>", reopen <issue>, revert <issue>; sekhemet card message|pause|hand-back|take-over <issue> for a running one',
+    what: 'Accept and merge. Also: request-changes <issue> "<reason>", park / unpark <issue>, reject <issue> "<reason>", reopen <issue>, revert <issue>; sekhemet issue message|pause|hand-back|take-over <issue> for a running one',
     synopsis: "sekhemet accept <issue> [--ack <finding numbers>] [--json]",
     example: "sekhemet accept TS-101 --ack 1,2",
     options: { ack: { type: "string", multiple: true }, ...JSON_OPTION },

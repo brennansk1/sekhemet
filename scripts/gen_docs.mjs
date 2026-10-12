@@ -147,8 +147,9 @@ export async function generatedBlocks(root = ROOT) {
     root,
     "packages/sandbox/dist/host_catalogue.js",
   );
-  // Every name with a help row: the registry's and `main`'s table, by name.
-  const rows = devHelpRows(new Set());
+  // Every name with a help row: the registry's and `main`'s table, by name,
+  // the aliases included (each says whose alias it is).
+  const rows = devHelpRows(new Set(), { aliases: true });
   return [
     {
       file: "docs/guide/cli-reference.md",

@@ -32,7 +32,9 @@ Sekhemet uses the words professional teams already use. If you have worked with 
 | **Done** | Accepted and merged | Done | Done |
 | **On hold** | Put on hold by a person, with a reason | A blocked flag or custom status | — |
 
-An issue a person rejects is marked **Won't do** (Jira's resolution of the same name; Linear's *Canceled*).
+An issue a person rejects is marked **Won't do** (Jira's resolution of the same name; Linear's *Canceled*). An issue can be rejected from Backlog, To do, In review or On hold; one being built is stopped first (`sekhemet abort <issue>`).
+
+An epic sits in the column its issues have reached: Backlog or To do while none has started, In progress once one has, as in Jira.
 
 ## People and AI teammates
 

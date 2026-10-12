@@ -174,6 +174,10 @@ const PERSON_FACING_REFUSALS: ReadonlySet<string> = new Set([
   // "this session has no systemd --user manager…", the "Nothing was changed: …" line of
   // `sekhemet daemon start --at-login` to the person who ran it (RUN-74); no model reaches it.
   "serviceManagerRefusal",
+  // apps/harness/src/commands/cli_result.ts: "no issue <id>. Did you mean <id>?", the
+  // `sekhemet: …` refusal of accept, review, run, approve-plan and the triage verbs to the
+  // person who typed an unknown issue ID (surface item 18b); no model's tool reaches it.
+  "noIssueRefusal",
 ]);
 
 function nameOf(node: ts.Node | undefined): string | undefined {

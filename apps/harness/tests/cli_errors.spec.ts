@@ -243,15 +243,31 @@ describe("CLI-04: one rule for argument errors", () => {
     );
   });
 
-  it("an issue that does not exist is said one way, exit 1, by run, accept and review", async () => {
+  it("an issue that does not exist is said one way, exit 1, by run, accept, review, the triage verbs, abort and approve (item 18b, S1B-B19)", async () => {
     const where = sandboxDirs();
     await cardInReview(where, "c1");
-    for (const cmd of ["run", "accept", "review"]) {
-      const r = sekhemet([cmd, "nope"], where);
+    for (const argv of [
+      ["run", "nope"],
+      ["accept", "nope"],
+      ["review", "nope"],
+      ["park", "nope"],
+      ["reject", "nope", "why"],
+      ["abort", "nope"],
+      ["approve", "nope"],
+    ]) {
+      const r = sekhemet(argv, where);
+      const cmd = argv[0];
       expect(r.status, `${cmd}: ${r.stdout}${r.stderr}`).toBe(1);
-      expect(oneLine(r.stderr)).toBe("sekhemet: no issue nope");
-      expect(r.stdout).toBe("");
+      // The refusal and its hint: where every issue's ID is listed.
+      expect(
+        r.stderr.split("\n").filter((l) => l.trim() !== ""),
+        `${cmd}`,
+      ).toEqual(["sekhemet: no issue nope", "  Do: sekhemet status lists every issue with its ID"]);
+      expect(r.stdout, `${cmd}`).toBe("");
     }
+    // A typo of an ID that exists is answered with that ID.
+    const typo = sekhemet(["accept", "c2"], where);
+    expect(typo.stderr).toMatch(/^sekhemet: no issue c2\. Did you mean c1\?$/m);
   });
 });
 
@@ -303,12 +319,15 @@ describe("CLI-07: the plan in the board's words (SUR-97)", () => {
     expect(issues.length).toBeGreaterThan(0);
     for (const issue of issues)
       expect(out).toMatch(
-        new RegExp(`^  ${issue.id}\\s+${issue.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "m"),
+        new RegExp(
+          `^  ${issue.id}\\s+"${issue.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`,
+          "m",
+        ),
       );
     // Two issues with one title are said to share it.
     const titles = issues.map((i) => i.title);
     const repeated = titles.find((t, i) => titles.indexOf(t) !== i);
-    if (repeated) expect(out).toMatch(/\(the same title as \S+\)/);
+    if (repeated) expect(out).toMatch(/" {2}· same title as \S+/);
     const lines = out.split("\n").filter((l) => /^ {2}\S+ {2}/.test(l));
     expect(new Set(lines).size).toBe(lines.length);
     // The details, when asked.
@@ -338,6 +357,32 @@ describe("S1B-B04: after `sekhemet init` the folder is a project for every comma
       ok: true,
       exitCode: 0,
     });
+  });
+
+  it("S1B-B25: init and `models list` say the same model for each role, where it comes from, in NAMING's role names", () => {
+    const where = sandboxDirs();
+    execFileSync("git", ["init", "-q"], { cwd: where.cwd });
+    const init = sekhemet(["init"], where);
+    expect(init.stdout, init.stderr).toMatch(/Wrote .*config\.toml/);
+    const list = sekhemet(["models", "list"], where);
+    expect(list.status, list.stdout + list.stderr).toBe(0);
+    const roleLines = (text: string) =>
+      text
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => /^(Coding|Planning|Review|Research) model: /.test(l));
+    const listed = roleLines(list.stdout);
+    expect(listed.map((l) => l.split(":")[0])).toEqual([
+      "Coding model",
+      "Planning model",
+      "Review model",
+      "Research model",
+    ]);
+    expect(roleLines(init.stdout)).toEqual(listed);
+    // init wrote the Coding and Planning models into config.toml: that is where they come from.
+    expect(listed[0]).toMatch(/\(config\.toml \[models\] executor\)$/);
+    expect(listed[1]).toMatch(/\(config\.toml \[models\] planner\)$/);
+    expect(list.stdout).not.toMatch(/unassigned|^worker:/m);
   });
 
   it("init where the history carries a Ledger-Head trailer starts no second workspace (SUR-79): refused, nothing written; --new-workspace starts one", () => {

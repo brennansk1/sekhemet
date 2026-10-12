@@ -8,6 +8,7 @@ import {
 } from "../accept.js";
 import { nextForReview } from "../triage.js";
 import { numberedFindings } from "./accept.js";
+import { noIssueRefusal, printRefusal } from "./cli_result.js";
 import type { CommandHandler } from "./registry.js";
 
 /**
@@ -38,7 +39,11 @@ export const reviewCommand: CommandHandler = async (args, env) => {
     const card = named ? ((await cardStore.getCard(named)) ?? undefined) : await nextForReview(ctx);
     if (!card) {
       if (named) {
-        console.error(`sekhemet: no issue ${named}`);
+        const { what, next } = noIssueRefusal(
+          named,
+          (await cardStore.listCards()).map((c) => c.id),
+        );
+        printRefusal(what, next);
         return 1;
       }
       console.log("Nothing is waiting on you.");
