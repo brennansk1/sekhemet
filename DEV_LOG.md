@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 89 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 90 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,36 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 90 — 2026-10-11 (Loop waves 3 and 4: the dashboard's standards — targets, keyboard, clipping, glyphs — and its words)
+
+- **Why:** the dashboard sweep's standards and copy findings (`lead-work/loop/waves/W2_dashboard.md`, Waves 3–4), plus the target-size items from the integrations and teams sweep.
+- **Wave 3, standards** (builder X, Chromium specs with measured boxes and axe):
+  - targets ≥ 24 px on desktop and ≥ 44 px on a phone, across the shell, tables, links, Seshat's panel, toasts, the skip link and the model banner's "Set up models";
+  - Insights and the board's scroll regions reachable by keyboard at 400 px;
+  - nothing clipped in the sidebar footer or the topbar's subtitle;
+  - Configuration › Models' check marks drawn as stroke icons; a guard now fails any stylesheet that draws a text glyph as an icon;
+  - a huge review capacity keeps the In review header in its column, and capacity is bounded at 1,440 minutes a day (the review's major);
+  - a non-number capacity is named as such;
+  - the first-run welcome is a compact bar on a phone.
+- **Wave 4, words** (builder Y):
+  - one plural helper;
+  - an In review tile no longer repeats its time;
+  - shorter labels where a label will do (explanations in Tips);
+  - the empty filter says what is filtered, in words;
+  - the cheat sheet lists only shortcuts that exist;
+  - Benchmark without developer paths or roadmap ids;
+  - "Take off hold" named one way;
+  - Configuration › Project's words.
+- **Parked:**
+  - the In review explanatory copy;
+  - A60, which went to wave 5.
+- **Minors for the next dashboard pass:** in the wave file. They include the gates strip's "✕" glyph, rendered in JS where the CSS guard cannot see it.
+- **Gate fix:** orphans fell from 377 to 376, so the ceiling was lowered and ENTRY_POINTS.md regenerated. The builder template now regenerates the entry points and docs before reporting.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` 0, `biome check .` 0, vitest 962 files passed, 2 skipped; 7,437 tests passed, 74 skipped (3 workers, 38 min).
+- **Where the cards stop:**
+  - W3+W4 are committed.
+  - Next: W5+W6 (built), then waves 7–8 from the models and measurement sweep.
 
 ### Entry 89 — 2026-10-11 (Loop wave 2: the dashboard's truth — one source for what the Agent is doing; the review and issue flow)
 

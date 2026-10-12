@@ -170,7 +170,7 @@ describe("Projects (DB-N9-9, DB-N9-21)", () => {
           project: "Storefront",
           text: "Payments is on hold.",
           wait: "Waiting 45m",
-          action: "Open",
+          action: "Take off hold",
           href: "#/card/card_pay",
         },
       ],

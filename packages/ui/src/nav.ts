@@ -337,10 +337,27 @@ export const KEY_GROUPS: readonly KeyGroup[] = [
  * so the note never announces a view that is not there.
  */
 export function chordChangeNote(visible: readonly NavItem[]): string {
-  const status = visible.some((i) => i.name === "status");
-  return status
-    ? "Changed: g s is Status, g p the Project manager and g i Insights. Integrations is g n, Playbook g k and Inbox g x."
-    : "Changed: g p is the Project manager and g i Insights. Integrations is g n (g s opens nothing until Status is built), Playbook g k and Inbox g x.";
+  const shown = (name: string) => visible.some((i) => i.name === name);
+  // The moved views, each only while it is shown (Playbook waits for its first entry).
+  const moved = (
+    [
+      ["integrations", "Integrations is g n"],
+      ["playbook", "Playbook g k"],
+      ["inbox", "Inbox g x"],
+    ] as const
+  )
+    .filter(([name]) => shown(name))
+    .map(([name, words], i) =>
+      i === 0 && !shown("status") && name === "integrations"
+        ? `${words} (g s opens nothing until Status is built)`
+        : words,
+    );
+  const list =
+    moved.length > 1 ? `${moved.slice(0, -1).join(", ")} and ${moved.at(-1)}` : (moved[0] ?? "");
+  const head = shown("status")
+    ? "Changed: g s is Status, g p the Project manager and g i Insights."
+    : "Changed: g p is the Project manager and g i Insights.";
+  return list ? `${head} ${list}.` : head;
 }
 
 /** The palette's Go to group: one entry per shown view, with its chord. */

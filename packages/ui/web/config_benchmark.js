@@ -462,7 +462,7 @@ export function mountBenchmark(root, { readOnly = "" } = {}) {
     const state = ui.tune.roles?.[role];
     const name = ROLE_NAMES[role];
     if (state && !state.tunable)
-      return `<article class="tune-role cfg-part" data-tune-role="${esc(role)}"><h5 style="margin:0;font-size:var(--text-sm)">${esc(name)}</h5><p class="why">${esc(state.reason || "Its screen is not built yet.")}</p></article>`;
+      return `<article class="tune-role cfg-part" data-tune-role="${esc(role)}"><h5 style="margin:0;font-size:var(--text-sm)">${esc(name)}</h5><p class="why">${esc(state.reason || "Not measured yet.")}</p></article>`;
     const runs = ui.tune.runs.filter((r) => r.role === role);
     const latest = runs[0];
     const model = tuneModel(role);

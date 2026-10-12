@@ -13,7 +13,7 @@
 import { estimateLabel, quickSetupMissing } from "./config_benchmark.js";
 import { mountCustomize } from "./config_customize.js";
 import { downloadLine } from "./config_engine.js";
-import { $, announce, copyText, esc, getJSON, sendJSON } from "./dom.js";
+import { $, announce, copyText, esc, getJSON, icon, sendJSON } from "./dom.js";
 
 const ROLE_NAME = {
   worker: "Coding model",
@@ -382,10 +382,11 @@ function rolesHtml(r, models) {
       const selectId = `cfg-assign-${x.role}`;
       const checks = (x.checks ?? []).length
         ? `<ul class="cfg-checks">${x.checks
-            .map(
-              (c) =>
-                `<li data-check="${esc(c.startsWith("Needs") || c.startsWith("Not") ? "no" : "yes")}">${esc(c)}</li>`,
-            )
+            .map((c) => {
+              // §2.13.6: a stroke icon from the one set, never a text glyph.
+              const ok = !(c.startsWith("Needs") || c.startsWith("Not"));
+              return `<li data-check="${ok ? "yes" : "no"}">${icon(ok ? "check" : "alert", 12, "ic s12")}${esc(c)}</li>`;
+            })
             .join("")}</ul>`
         : "";
       const custOpen = ui.customize === x.role;

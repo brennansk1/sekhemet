@@ -725,10 +725,27 @@ export function formatTokens(n: number): string {
   return `${trim(v / 1_000_000)}M`;
 }
 
+/**
+ * The one plural rule every count's words use: the word alone, singular for
+ * exactly one (`issue`, `issues`), for a caption under a numeral.
+ */
+export function pluralWord(n: number, one: string, many = `${one}s`): string {
+  return n === 1 ? one : many;
+}
+
 /** `1 file`, `2 files`. */
 export function plural(n: number, one: string, many = `${one}s`): string {
-  return `${n} ${n === 1 ? one : many}`;
+  return `${n} ${pluralWord(n, one, many)}`;
 }
+
+/**
+ * An issue with no acceptance tests, on Review's Changes (§2.13: a label; why
+ * its own checks and the existing tests decide it is the Tests tip's).
+ */
+export const ACCEPTANCE_COPY = {
+  none: "none for this issue",
+  protectedLabel: "Protected from the Agent",
+} as const;
 
 /** `card_chron_hasher` -> `hasher`. The full id stays in tooltips and mono detail. */
 export function shortId(id: string): string {

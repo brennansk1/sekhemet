@@ -259,6 +259,27 @@ describe("the web modules (dashboard P11, P12)", () => {
   });
 });
 
+describe("icons and targets in the served stylesheets (dashboard §2.13.6, §2.14.5; loop wave 3)", () => {
+  it("§2.13.6: no stylesheet draws a text glyph as an icon (✓ ✕ × ! ···)", () => {
+    const glyph = /^["'][\s]*(?:[✓✔✗✕×!·…]|\.\.\.)/u;
+    const hits = RULES.filter((r) => glyph.test(r.decls.get("content") ?? "")).map(where);
+    expect(hits).toEqual([]);
+  });
+
+  it("§2.14.5: at phone width the toast's actions, icon-only Copy, the skip link and text fields are 44 px targets", () => {
+    const phone = RULES.filter((r) => applies(r.media, 400) && r.media.includes("max-width"));
+    const sized = (sel: string) =>
+      phone.some(
+        (r) =>
+          selectors(r).includes(sel) &&
+          r.decls.get("min-height") === "44px" &&
+          r.decls.get("min-width") === "44px",
+      );
+    for (const sel of [".toast .act", "button[data-copy]:not(.btn)", "a.skip", "textarea"])
+      expect(sized(sel), sel).toBe(true);
+  });
+});
+
 describe("the professional board in the served stylesheets (dashboard P3)", () => {
   it("DB-P3-7: the status line wraps and never cuts off its cause", () => {
     const status = RULES.filter(

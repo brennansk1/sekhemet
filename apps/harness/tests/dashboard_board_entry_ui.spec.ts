@@ -367,6 +367,22 @@ describe("the board in Chromium, through the dashboard server (C2d)", () => {
     },
   );
   it(
+    "§2.4 item 10 (wave 4): an empty filtered column names the filter in the chips' words, not the query",
+    { timeout: 60_000 },
+    async () => {
+      const page = await board(1440);
+      const input = page.locator(".vbar [data-q]");
+      await input.fill("priority:urgent label:no-such-label");
+      await input.press("Enter");
+      const empty = page.locator(".board .col .empty").first();
+      await expect.poll(() => empty.innerText()).toMatch(/^No issues match/);
+      const text = await empty.innerText();
+      expect(text).toBe("No issues match “Priority: Urgent · Label: no-such-label”.");
+      expect(text).not.toMatch(/priority:|label:/);
+      await page.context().close();
+    },
+  );
+  it(
     'DB-P5-4: the palette offers Start a new project for "new project", Ask Seshat: <query> for nothing',
     { timeout: 60_000 },
     async () => {

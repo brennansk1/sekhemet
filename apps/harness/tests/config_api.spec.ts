@@ -771,6 +771,17 @@ describe("review capacity (NEW-dashboard-4, review-git §2.2.3)", () => {
     expect(r.status).toBe(400);
     expect(r.body.key).toBe("review_minutes_per_day");
   });
+
+  it("refuses more than 1,440 minutes a day, naming the key (sweep 2, loop wave 3)", async () => {
+    for (const minutesPerDay of [1441, 1e20]) {
+      const r = await call("PUT", "/api/config/review", { minutesPerDay });
+      expect(r.status).toBe(400);
+      expect(r.body.key).toBe("review_minutes_per_day");
+      expect(r.body.error).toBe(
+        "Review minutes per day must be at most 1,440, the minutes in a day.",
+      );
+    }
+  });
 });
 
 describe("a copy made by hand (MD-N14-41: prefer an internal copy with the same hash)", () => {

@@ -20,6 +20,7 @@ import { ESTIMATION_LABELS } from "./lib/pm.js";
 import { definitionOfDone } from "./lib/readiness.js";
 import {
   DENSITY_CHOICES,
+  PROJECT_CONFIG_COPY,
   autoApplyView,
   configRows,
   queueCapInput,
@@ -224,7 +225,7 @@ function projectHtml(cfg) {
   const rows = configRows(c, cfg.sources ?? {})
     .map(
       (r) =>
-        `<tr><th scope="row">${esc(r.label)}</th><td>${esc(r.value)}</td><td class="sec">${esc(r.source)} <span class="mono">${esc(r.key)}</span></td></tr>`,
+        `<tr><th scope="row">${esc(r.label)}</th><td>${esc(r.value)}</td><td class="sec">${esc(r.source)}</td></tr>`,
     )
     .join("");
   const problems = (cfg.problems ?? []).map((p) => `<li>${esc(p)}</li>`).join("");
@@ -232,7 +233,7 @@ function projectHtml(cfg) {
   const where = cfg.project?.rootPath
     ? `<p class="sec">${esc(cfg.project.name)} · <span class="mono">${esc(cfg.project.rootPath)}</span></p>`
     : "";
-  return `<section class="cfg-sec" aria-labelledby="cfg-h-project"><h3 id="cfg-h-project">Project configuration</h3>${where}${doneHtml(cfg.definitionOfDone)}${queueHtml(cfg)}${pushHtml(cfg)}<h4>Values in force</h4><p class="sec">The values in force, and the file each came from. Edit the files to change them.</p><div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">From</th></tr></thead><tbody>${rows}</tbody></table></div>${problems ? `<h4>Problems</h4><ul class="cfg-warn">${problems}</ul>` : ""}${networkHtml()}</section>`;
+  return `<section class="cfg-sec" aria-labelledby="cfg-h-project"><h3 id="cfg-h-project">Project configuration</h3>${where}${doneHtml(cfg.definitionOfDone)}${queueHtml(cfg)}${pushHtml(cfg)}<h4>Values in force</h4><p class="sec">${esc(PROJECT_CONFIG_COPY.valuesHint)}</p><div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">From</th></tr></thead><tbody>${rows}</tbody></table></div>${problems ? `<h4>Problems</h4><ul class="cfg-warn">${problems}</ul>` : ""}${networkHtml()}</section>`;
 }
 
 /**
@@ -360,7 +361,7 @@ function queueHtml(cfg) {
   const v = queueCapView(cfg.config ?? {}, cfg.sources ?? {}, note ? `Read-only. ${note}` : "");
   ui.queueCap = Number(v.value);
   const dis = v.disabled ? " disabled" : "";
-  return `<h4 id="cfg-h-queue">Agent queue</h4><form class="row" data-queue-form aria-labelledby="cfg-h-queue"><label for="cfg-queue-cap">Agent issues per person</label><input id="cfg-queue-cap" type="text" inputmode="numeric" name="cap" value="${esc(v.value)}" aria-describedby="cfg-queue-why"${dis}><button class="btn" type="submit" aria-describedby="cfg-queue-why"${dis}>Save</button></form><p class="sec" id="cfg-queue-why">${esc(v.note)} From: ${esc(v.source)} <span class="mono">queue.agent_issues_per_person</span></p><p class="why" role="status" data-queue-note></p>`;
+  return `<h4 id="cfg-h-queue">Agent queue</h4><form class="row" data-queue-form aria-labelledby="cfg-h-queue"><label for="cfg-queue-cap">Agent issues per person</label><input id="cfg-queue-cap" type="text" inputmode="numeric" name="cap" value="${esc(v.value)}" aria-describedby="cfg-queue-why"${dis}><button class="btn" type="submit" aria-describedby="cfg-queue-why"${dis}>Save</button></form><p class="sec" id="cfg-queue-why">${esc(v.note)} ${esc(v.from)}</p><p class="why" role="status" data-queue-note></p>`;
 }
 
 async function saveQueueCap(form) {
@@ -442,7 +443,8 @@ async function onSubmit(e) {
   const field = form.elements.namedItem("minutes");
   const note = ui.root.querySelector("[data-review-note]");
   const previous = ui.capacity?.minutesPerDay ?? 60;
-  // 0 or less is refused beside the field; the previous value stays (DB-N4-3).
+  // 0 or less, or more than 1,440, is refused beside the field; the previous
+  // value stays (DB-N4-3).
   const input = reviewMinutesInput(field?.value ?? "", previous);
   if (!input.ok) {
     if (field) field.value = String(input.value);

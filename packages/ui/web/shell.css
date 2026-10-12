@@ -133,13 +133,14 @@
   gap: 8px;
   min-width: 0;
 }
+/* DB-P3-7 (loop wave 3): a status line wraps, never cut off mid-word. */
 .foot .row > .lbl {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .foot a.row {
   text-decoration: none;
+  min-height: 24px;
 }
 /* The Agent status line leads the foot (§2.2.3); the Coding model under it. */
 .foot .agent-line {
@@ -553,6 +554,18 @@
   }
   .top .filter {
     display: none;
+  }
+  /* DB-P3-7 (loop wave 3): on a phone the view's subtitle wraps under a
+     taller bar rather than cutting off its counts. */
+  .top {
+    height: auto;
+    min-height: var(--topbar-h);
+    padding-block: 4px;
+  }
+  .top .crumb {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    font-size: var(--text-xs);
   }
   .cheat-grid {
     grid-template-columns: 1fr;

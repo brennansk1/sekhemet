@@ -208,5 +208,10 @@ export function tileModel(card: TileCardLike, ctx: TileContext): TileModel {
     const age = since(d.startedAt ?? d.enteredColumnAt, ctx.now);
     if (age !== undefined) model.age = formatWait(age);
   }
+  // One time per tile (§2.4 tile states; §2.13 terse): a wait that equals the
+  // work item age is said once, by the age; a different wait keeps its words.
+  if (model.status && model.age && model.status.text === `Waiting ${model.age}`) {
+    model.status = { ...model.status, text: "Waiting for you", wraps: false };
+  }
   return model;
 }

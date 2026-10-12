@@ -260,8 +260,8 @@ describe("the accessibility check (dashboard DB-P12-6)", () => {
                       return false;
                     // Off screen until focused (the skip link) is not a target yet.
                     if (r.right <= 0 || r.bottom <= 0 || r.left >= innerWidth) return false;
-                    // Links inside running text are exempt (WCAG 2.5.5, inline).
-                    if (e.tagName === "A" && s.display === "inline") return false;
+                    // No exception for a link set in a line of text: dashboard
+                    // §2.14.5 names none (loop wave 3, sweep 3's 'Set up models').
                     return r.width < 44 || r.height < 44;
                   })
                   .map((e) => {

@@ -301,10 +301,13 @@ describe("Configuration › Benchmark built out (DB-N6-19..22; NEW-measurement-7
         await page.locator(`#${await apply.getAttribute("aria-describedby")}`).innerText(),
       ).toMatch(/nothing to apply/);
       await review.getByRole("button", { name: "Settle overnight" }).waitFor();
-      // Planning has no screen: it says why instead of offering a run.
-      expect(await section.locator(".bench-tune").innerText()).toMatch(
-        /Planning model.*golden set waits on a person's labels/s,
+      // Planning has no screen: it says why instead of offering a run, in a
+      // person's words (DB-N6-18), never the set's file paths or build ids.
+      const tune = await section.locator(".bench-tune").innerText();
+      expect(tune).toMatch(
+        /Planning model.*Not measured yet: the Planning model's benchmark set is not built/s,
       );
+      expect(tune).not.toMatch(/golden set waits|fixtures\/|not_measured/);
 
       // History: inline SVG charts, each with its table, and each run against the one before.
       const history = section.locator(".bench-history");

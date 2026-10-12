@@ -166,8 +166,25 @@
   .tips-btn .lbl {
     display: none;
   }
+  /* Loop wave 3: on a phone the question stays a bar (§2.16) — each answer
+     a 44 px chip by its label, its line of detail kept for a screen reader,
+     so the view keeps the first screen. */
+  .fr-bar {
+    gap: 8px;
+  }
+  .fr-head .sec {
+    font-size: var(--text-xs);
+  }
   .fr-choices .fr-choice {
-    max-width: none;
-    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+  }
+  .fr-choices .fr-choice .sec {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 }

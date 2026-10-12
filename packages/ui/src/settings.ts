@@ -36,6 +36,17 @@ export function readDensity(storage: { getItem(key: string): string | null } | n
 
 /** What a refused value reads beside the field; the server says the same. */
 export const REVIEW_MINUTES_REFUSED = "Review minutes per day must be more than 0.";
+/** What a typed value that is not a number reads beside the field (sweep 2, loop wave 3). */
+export const REVIEW_MINUTES_NOT_A_NUMBER = "Review minutes per day must be a number, more than 0.";
+/**
+ * The most review minutes a day can hold: the minutes in a day (sweep 2, loop
+ * wave 3). Above it the In review limit and its derivation stop being numbers
+ * a person can read (a 20-digit value gave a 19-digit limit).
+ */
+export const REVIEW_MINUTES_MAX = 1440;
+/** What a value above the minutes in a day reads beside the field; the server says the same. */
+export const REVIEW_MINUTES_TOO_MANY =
+  "Review minutes per day must be at most 1,440, the minutes in a day.";
 
 /** `GET /api/config?project=`'s `reviewCapacity`. */
 export interface ReviewCapacity {
@@ -65,15 +76,24 @@ export function reviewCapacityView(cap: ReviewCapacity): {
   };
 }
 
-/** A typed value: a number above 0, or refused with the previous value kept. */
+/**
+ * A typed value: a number above 0 and at most 1,440, or refused with the
+ * previous value kept. The refusal names what is wrong: not a number (empty,
+ * words, or too large to be one), a number of 0 or less, or more minutes than
+ * a day holds.
+ */
 export function reviewMinutesInput(
   raw: string,
   previous: number,
 ): { ok: true; value: number } | { ok: false; value: number; error: string } {
   const text = String(raw ?? "").trim();
   const value = text === "" ? Number.NaN : Number(text);
-  if (!Number.isFinite(value) || value <= 0) {
-    return { ok: false, value: previous, error: REVIEW_MINUTES_REFUSED };
+  if (!Number.isFinite(value)) {
+    return { ok: false, value: previous, error: REVIEW_MINUTES_NOT_A_NUMBER };
+  }
+  if (value <= 0) return { ok: false, value: previous, error: REVIEW_MINUTES_REFUSED };
+  if (value > REVIEW_MINUTES_MAX) {
+    return { ok: false, value: previous, error: REVIEW_MINUTES_TOO_MANY };
   }
   return { ok: true, value };
 }
@@ -81,6 +101,16 @@ export function reviewMinutesInput(
 // ---------------------------------------------------------------------------
 // Project configuration: the effective values and where each came from
 // ---------------------------------------------------------------------------
+
+/**
+ * Project configuration's words (dashboard §2.16 item 5: each value, where it
+ * came from and where to change it), with no internal setting key: the Agent
+ * queue is changed on the page, the rest in the configuration file named.
+ */
+export const PROJECT_CONFIG_COPY = {
+  valuesHint:
+    "Where each value comes from. These are changed in a configuration file: yours (~/.sekhemet/config.toml) or this project's (.sekhemet/config.toml).",
+} as const;
 
 /** The configuration layers (`resolveConfig`), in words. */
 export const CONFIG_SOURCE_LABELS: Record<string, string> = {
@@ -151,11 +181,13 @@ export function queueCapView(
   config: { queue?: { agentIssuesPerPerson?: number } },
   sources: Record<string, string>,
   readOnly: string,
-): { value: string; source: string; disabled: boolean; note: string } {
+): { value: string; source: string; from: string; disabled: boolean; note: string } {
   const layer = sources["queue.agent_issues_per_person"] ?? "defaults";
+  const source = CONFIG_SOURCE_LABELS[layer] ?? humanize(layer);
   return {
     value: String(config.queue?.agentIssuesPerPerson ?? 1),
-    source: CONFIG_SOURCE_LABELS[layer] ?? humanize(layer),
+    source,
+    from: `From: ${source}`,
     disabled: readOnly !== "",
     note: [
       "How many Agent issues one person may have running at once. At the limit, their next issue waits and other people's issues go first.",

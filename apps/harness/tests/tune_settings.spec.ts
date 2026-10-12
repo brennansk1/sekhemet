@@ -322,6 +322,22 @@ describe("a Find best settings run (MS-N7-1..7)", () => {
     expect((await svc.runs())[0]).toMatchObject({ state: "done", verdict: "best" });
   });
 
+  it("tells the Benchmark page why a role cannot be tuned in a person's words, with no paths or build ids (wave 4)", () => {
+    const r = repo();
+    const s = scripted(() => ({ score: 1, seconds: 1 }));
+    const states = new TuneService(env(r, s.runner)).roleStates();
+    expect(states.worker).toEqual({ tunable: true });
+    for (const role of ["planner", "researcher"] as const) {
+      const reason = states[role].reason ?? "";
+      expect(states[role].tunable).toBe(false);
+      expect(reason).toMatch(/^Not measured yet\b/);
+      // The set's own reason is the developer's (paths, asset names, build ids).
+      expect(reason).not.toMatch(
+        /golden set waits|fixtures\/|\.json|\.md\b|not_measured|\bB\d+\.\d+/,
+      );
+    }
+  });
+
   it("refuses a role whose screen is not built, before anything loads (MS-N7-1)", async () => {
     const r = repo();
     const s = scripted(() => ({ score: 1, seconds: 1 }));

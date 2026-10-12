@@ -104,7 +104,12 @@ import {
   policyFetch,
   policyRefusal,
 } from "@sekhemet/sandbox";
-import { type DoneFacts, REVIEW_MINUTES_REFUSED } from "@sekhemet/ui";
+import {
+  type DoneFacts,
+  REVIEW_MINUTES_MAX,
+  REVIEW_MINUTES_REFUSED,
+  REVIEW_MINUTES_TOO_MANY,
+} from "@sekhemet/ui";
 import type { BenchmarkService } from "./benchmark_cmd.js";
 import { type ModelFolderSetting, resolveConfig, userConfigPath } from "./config.js";
 import { networkConfigs } from "./config_apply.js";
@@ -2517,12 +2522,20 @@ export function createConfigApi(deps: ConfigApiDeps) {
         }
         case "PUT /api/config/review": {
           // Review capacity (dashboard §2.16 item 3, review-git §2.2.3):
-          // above 0, recorded per project (`project/review_hours`) with the
-          // person's principal; the limit it gives is that project's alone.
+          // above 0 and at most the minutes in a day (DB-N4-3), recorded per
+          // project (`project/review_hours`) with the person's principal; the
+          // limit it gives is that project's alone.
           const minutes = body.minutesPerDay ?? body.reviewMinutesPerDay;
           if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes <= 0) {
             deps.json(res, 400, {
               error: REVIEW_MINUTES_REFUSED,
+              key: "review_minutes_per_day",
+            });
+            return true;
+          }
+          if (minutes > REVIEW_MINUTES_MAX) {
+            deps.json(res, 400, {
+              error: REVIEW_MINUTES_TOO_MANY,
               key: "review_minutes_per_day",
             });
             return true;

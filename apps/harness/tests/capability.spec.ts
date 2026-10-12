@@ -144,6 +144,15 @@ describe("B4.0a review M1/M2: the capability report on existing ledgers", () => 
     expect(r.sampleSize).toBe(2);
   });
 
+  it("says one first attempt in the singular (wave 4: '1 first attempts so far')", () => {
+    expect(capabilityReport("/nonexistent", [], [o("a", 1)]).note).toMatch(
+      /^1 first attempt so far\./,
+    );
+    expect(capabilityReport("/nonexistent", [], [o("a", 1), o("b", 1)]).note).toMatch(
+      /^2 first attempts so far\./,
+    );
+  });
+
   it("counts a resume after a halt as the card's first attempt, and never the halt", () => {
     const r = capabilityReport(
       "/nonexistent",

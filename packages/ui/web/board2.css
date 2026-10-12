@@ -57,7 +57,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 22px;
+  height: 24px;
   padding: 0 8px;
   border-radius: 3px;
   font-size: var(--text-xs);
@@ -1374,6 +1374,14 @@
 }
 .caprows .axis-row {
   min-height: 16px;
+}
+/* Loop wave 3: on a phone a row's figures go under its bar, so nothing
+   scrolls sideways (WCAG 1.4.10). */
+@media (max-width: 767px) {
+  .caprows li {
+    grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-areas: "l t" ". v" ". f";
+  }
 }
 .caprows .cap-trk.axis span {
   position: absolute;

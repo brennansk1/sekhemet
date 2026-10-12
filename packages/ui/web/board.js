@@ -24,7 +24,6 @@ import { QUICK_CREATE_COPY, epicFromFilter } from "./lib/create.js";
 import { TRIAGE_COPY } from "./lib/intake.js";
 import { columnLessonId } from "./lib/learn.js";
 import { draggedBy } from "./lib/live.js";
-import { formatQuery } from "./lib/pm.js";
 import { boardFit, openColumn } from "./lib/reach.js";
 import { START_ROUTE } from "./lib/start.js";
 import { loadFailedText } from "./lib/switcher.js";
@@ -46,6 +45,7 @@ import {
   cycleGroup,
   effectiveFilter,
   filterCards,
+  filterPhrase,
   focusFilter,
   onViewChange,
   paintViewBar,
@@ -465,7 +465,8 @@ function fillList(list, col, cards) {
   const empty = $(":scope > .empty", list);
   if (cards.length === 0) {
     patchList(list, []);
-    const label = formatQuery(effectiveFilter());
+    // §2.4 item 10: the filter in the chips' words, never the query syntax.
+    const label = filterPhrase();
     const text = label ? `No issues match “${label}”.` : col.empty;
     if (!empty) {
       const li = document.createElement("li");
@@ -490,8 +491,14 @@ function fillList(list, col, cards) {
 
 function syncFocusAttrs() {
   const tiles = $$(".tile", ui.root);
+  // A phone shows one column (§2.15.3): the board's tab stop is a tile in it,
+  // never one in a hidden column, so Tab reaches what is shown (loop wave 3).
+  const shown =
+    ui.fit?.mode === "one" && ui.phoneCol
+      ? tiles.filter((t) => t.closest("[data-list]")?.dataset.list === ui.phoneCol)
+      : tiles;
   let focusId = store.state.focusedId;
-  if (!tiles.some((t) => t.dataset.id === focusId)) focusId = tiles[0]?.dataset.id ?? null;
+  if (!shown.some((t) => t.dataset.id === focusId)) focusId = shown[0]?.dataset.id ?? null;
   for (const t of tiles) {
     const on = t.dataset.id === focusId;
     t.tabIndex = on ? 0 : -1;

@@ -89,7 +89,8 @@ pre {
 .skip {
   position: absolute;
   left: 8px;
-  top: -40px;
+  /* Clear of the screen at its phone height (44 px) too, until focused. */
+  top: -64px;
   z-index: 50;
   background: var(--bg-overlay);
   padding: 4px 8px;
@@ -521,17 +522,66 @@ button[data-copy]:not(.btn) {
   flex-direction: column;
 }
 
+/* §2.14.5 (loop wave 3): every target is at least 24×24 px on desktop, a
+   link set in a table or a line of text included — the rule names no
+   exception. Zero specificity: a component's own rules win, and
+   `standards_targets_ui.spec.ts` measures the result. A link stays in its
+   line as an inline block; the padding centres one line of text in the box. */
+:where(
+    .tbl a[href]:not(.btn),
+    .kv a[href]:not(.btn),
+    .ttl-link,
+    .cfg-bar a,
+    .fr-step a,
+    .bl-files a,
+    ul.plain a[href]
+  ) {
+  display: inline-block;
+  min-height: 24px;
+  min-width: 24px;
+  padding-block: 2px;
+}
+:where(input:not([type="checkbox"], [type="radio"], [type="hidden"]), select, textarea, summary) {
+  min-height: 24px;
+}
+:where(input[type="checkbox"], input[type="radio"]) {
+  width: 24px;
+  height: 24px;
+  vertical-align: middle;
+}
+
 /* Phone width: every control is at least a 44×44 px target (WCAG 2.5.5,
    dashboard DB-P12-6). From 768 px up the desktop density stays. */
 @media (max-width: 767px) {
   button,
   select,
   summary,
+  textarea,
   a.btn,
+  a.skip,
   [role="button"],
   [role="tab"],
+  .toast .act,
+  button[data-copy]:not(.btn),
   input:not([type="checkbox"], [type="radio"], [type="hidden"]) {
     min-height: 44px;
     min-width: 44px;
+  }
+  :where(
+      .tbl a[href]:not(.btn),
+      .kv a[href]:not(.btn),
+      .ttl-link,
+      .cfg-bar a,
+      .fr-step a,
+      .bl-files a,
+      ul.plain a[href]
+    ) {
+    min-height: 44px;
+    min-width: 44px;
+    padding-block: 12px;
+  }
+  :where(input[type="checkbox"], input[type="radio"]) {
+    width: 44px;
+    height: 44px;
   }
 }

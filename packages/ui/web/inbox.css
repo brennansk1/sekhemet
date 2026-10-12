@@ -340,6 +340,10 @@
   .ib-line {
     flex-wrap: wrap;
   }
+  /* §2.14.5 (loop wave 3): an item's link is a 44 px target on a phone. */
+  .ib-main {
+    min-height: 44px;
+  }
   .mi-tbl thead {
     display: none;
   }

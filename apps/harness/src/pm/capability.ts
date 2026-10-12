@@ -8,6 +8,7 @@ import {
   readAttemptOutcomes,
 } from "@sekhemet/kernel";
 import { capabilityModel } from "@sekhemet/planner";
+import { plural } from "@sekhemet/ui";
 
 /**
  * The Worker's measured competence, from this repo's own attempt records.
@@ -166,7 +167,7 @@ export function capabilityReport(
     ...(horizon80Lines !== undefined ? { horizon80Lines } : {}),
     ...(first.length < 30
       ? {
-          note: `${first.length} first attempts so far. Treat every rate as a range, not a number, until there are about 30.`,
+          note: `${plural(first.length, "first attempt")} so far. Treat every rate as a range, not a number, until there are about 30.`,
         }
       : {}),
   };

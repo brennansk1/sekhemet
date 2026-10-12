@@ -7,11 +7,13 @@ import { tip as learnTip } from "./learn.js";
 import { cycleHeaderShown } from "./lib/burnup.js";
 import { TRIAGE_COPY, triageModel } from "./lib/intake.js";
 import {
+  FILTER_FIELD_NAMES,
   PRIORITY_LABELS,
   PRIORITY_NAMES,
   PRIORITY_ORDER,
   activeCycle,
   cycleProgress,
+  filterWords,
   formatQuery,
   formatShortDate,
   isFilterEmpty,
@@ -56,17 +58,7 @@ const GROUPS = [
   { id: "cycle", label: "Sprint" },
 ];
 
-const FIELD_NAMES = {
-  priority: "Priority",
-  label: "Label",
-  epic: "Epic",
-  cycle: "Sprint",
-  owner: "Assignee",
-  delegate: "Delegate",
-  type: "Type",
-  state: "State",
-  is: "Is",
-};
+const FIELD_NAMES = FILTER_FIELD_NAMES;
 
 function load(key, fallback) {
   try {
@@ -221,6 +213,11 @@ export function viewContextLabel() {
 }
 
 /* ---------- Term values: labels and options ---------- */
+
+/** The filter in force as its chips read it, for an empty view (§2.4 item 10). */
+export function filterPhrase(filter = effectiveFilter()) {
+  return filterWords(filter, valueLabel);
+}
 
 function valueLabel(field, v) {
   const s = store.state;

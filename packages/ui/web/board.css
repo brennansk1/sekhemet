@@ -52,6 +52,19 @@
   align-items: center;
   gap: 8px;
   padding: 0 0 0 8px;
+  min-width: 0;
+}
+/* Loop wave 3: review minutes above 1,440 are refused (DB-N4-3), so the
+   In review `count / limit` fits whole; the ellipsis below is only a guard
+   that keeps the column's options on the header (§2.4 item 3). */
+.col-h > * {
+  flex: none;
+}
+.col-h > .c {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .col-h h2 {
   font-size: var(--text-sm);

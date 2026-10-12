@@ -316,12 +316,15 @@
   font-size: var(--text-sm);
   color: var(--text-secondary);
 }
-.cfg-checks li::before {
-  content: "✓ ";
+.cfg-checks li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.cfg-checks li .ic {
   color: var(--state-pass);
 }
-.cfg-checks li[data-check="no"]::before {
-  content: "! ";
+.cfg-checks li[data-check="no"] .ic {
   color: var(--state-parked);
 }
 .cfg-engine {

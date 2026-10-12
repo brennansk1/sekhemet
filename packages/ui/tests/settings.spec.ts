@@ -5,7 +5,10 @@ import {
   CONFIG_SOURCE_LABELS,
   DENSITY_CHOICES,
   QUEUE_CAP_REFUSED,
+  REVIEW_MINUTES_MAX,
+  REVIEW_MINUTES_NOT_A_NUMBER,
   REVIEW_MINUTES_REFUSED,
+  REVIEW_MINUTES_TOO_MANY,
   configRows,
   queueCapInput,
   queueCapView,
@@ -87,7 +90,7 @@ describe("Review capacity (DB-N4-2, DB-N4-3)", () => {
 
   it("refuses 0 or less beside the field and keeps the previous value", () => {
     expect(reviewMinutesInput("90", 60)).toEqual({ ok: true, value: 90 });
-    for (const bad of ["0", "-5", "", "abc", "   "]) {
+    for (const bad of ["0", "-5"]) {
       expect(reviewMinutesInput(bad, 60)).toEqual({
         ok: false,
         value: 60,
@@ -95,6 +98,33 @@ describe("Review capacity (DB-N4-2, DB-N4-3)", () => {
       });
     }
     expect(REVIEW_MINUTES_REFUSED).toBe("Review minutes per day must be more than 0.");
+  });
+
+  it("names a value that is not a number as such, never as 'not more than 0' (sweep 2, loop wave 3)", () => {
+    for (const bad of ["", "abc", "   ", "1e400", "12 minutes"]) {
+      expect(reviewMinutesInput(bad, 60)).toEqual({
+        ok: false,
+        value: 60,
+        error: REVIEW_MINUTES_NOT_A_NUMBER,
+      });
+    }
+    expect(REVIEW_MINUTES_NOT_A_NUMBER).toBe(
+      "Review minutes per day must be a number, more than 0.",
+    );
+  });
+  it("refuses more than the minutes in a day, a 20-digit number included (sweep 2, loop wave 3)", () => {
+    expect(REVIEW_MINUTES_MAX).toBe(1440);
+    expect(reviewMinutesInput("1440", 60)).toEqual({ ok: true, value: 1440 });
+    for (const bad of ["1441", "99999999999999999999", "1e20"]) {
+      expect(reviewMinutesInput(bad, 60)).toEqual({
+        ok: false,
+        value: 60,
+        error: REVIEW_MINUTES_TOO_MANY,
+      });
+    }
+    expect(REVIEW_MINUTES_TOO_MANY).toBe(
+      "Review minutes per day must be at most 1,440, the minutes in a day.",
+    );
   });
 });
 
@@ -149,6 +179,7 @@ describe("TEAM-30, dashboard §2.16: the per-person Agent cap in Configuration",
     expect(v).toEqual({
       value: "2",
       source: "Your configuration (~/.sekhemet/config.toml)",
+      from: "From: Your configuration (~/.sekhemet/config.toml)",
       disabled: false,
       note: "How many Agent issues one person may have running at once. At the limit, their next issue waits and other people's issues go first.",
     });

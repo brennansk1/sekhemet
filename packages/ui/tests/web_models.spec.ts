@@ -55,7 +55,7 @@ describe("the tile model, every stored state (DB-N2-1)", () => {
       status: quiet("Waiting for checks", "neutral", "none"),
       age: "1h",
     },
-    review: { column: "in_review", status: quiet("Waiting 1h", "pass", "wait"), age: "1h" },
+    review: { column: "in_review", status: quiet("Waiting for you", "pass", "wait"), age: "1h" },
     done: { column: "done", status: quiet("Accepted · 1h ago", "neutral", "done") },
     parked: { column: "on_hold", status: quiet("On hold", "parked", "parked") },
     rejected: { column: "wont_do", status: quiet("Rejected", "neutral", "none") },

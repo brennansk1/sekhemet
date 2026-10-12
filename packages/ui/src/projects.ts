@@ -23,7 +23,7 @@ import {
   allDone,
   forecastDates,
 } from "./status.js";
-import { formatWait, parseTitle, plural } from "./vocabulary.js";
+import { formatWait, parseTitle, plural, pluralWord } from "./vocabulary.js";
 
 // --- Inputs ------------------------------------------------------------------
 
@@ -243,7 +243,8 @@ function waitingItem(w: WaitingFacts, now: number, manages: boolean): WaitingIte
       return {
         ...base,
         text: `${title} is on hold.`,
-        action: "Open",
+        // DEC-52: Status's name for the way back; the issue page offers it (wave 2 B4).
+        action: "Take off hold",
         href: `#/card/${w.cardId}`,
       };
   }
@@ -314,7 +315,7 @@ export function projectsModel(input: ProjectsInput): ProjectsView {
       id: "shipped",
       label: "Shipped this month",
       value: String(o.shippedThisMonth),
-      detail: "issues finished",
+      detail: `${pluralWord(o.shippedThisMonth, "issue")} finished`,
     },
     { id: "agent", label: "Agent time today", value: agentTime, ai: true },
   ];

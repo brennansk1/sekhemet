@@ -28,8 +28,7 @@ export const NOTIFY_COPY = {
   notNow: "Not now",
   on: "On. A notification comes when an issue waits for you and no dashboard tab is in front.",
   off: "Off.",
-  blocked:
-    "Your browser blocks notifications from this dashboard, so none are shown. To allow them, open the browser's site settings for this address (the icon at the left of the address bar), set Notifications to Allow, then press Turn on.",
+  blocked: "This browser blocks notifications. Allow them in its site settings, then Turn on.",
   unsupported: "This browser cannot show notifications.",
   desktop: "Also notify me on this computer when no dashboard tab is open",
   desktopHint:

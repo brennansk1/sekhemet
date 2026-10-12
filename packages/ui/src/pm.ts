@@ -635,6 +635,38 @@ export function formatQuery(f: CardFilter): string {
   return parts.join(" ");
 }
 
+/** A filter field's name as its chip reads it (DEC-31, DEC-52: *Sprint*, *Assignee*). */
+export const FILTER_FIELD_NAMES: Record<FilterField, string> = {
+  priority: "Priority",
+  label: "Label",
+  epic: "Epic",
+  cycle: "Sprint",
+  owner: "Assignee",
+  delegate: "Delegate",
+  type: "Type",
+  state: "State",
+  is: "Is",
+};
+
+/**
+ * The filter in the chips' words, for an empty view (§2.4 item 10: *No issues
+ * match "Priority: Urgent, High"*), never the query syntax: each term as
+ * `Name: Value, Value` (`Name is not:` negated) and the free words last.
+ */
+export function filterWords(
+  f: CardFilter,
+  valueLabel: (field: FilterField, value: string) => string,
+): string {
+  const parts = f.terms
+    .filter((t) => t.values.length)
+    .map(
+      (t) =>
+        `${FILTER_FIELD_NAMES[t.field] ?? t.field}${t.negate ? " is not" : ""}: ${t.values.map((v) => valueLabel(t.field, v)).join(", ")}`,
+    );
+  if (f.text.trim()) parts.push(f.text.trim());
+  return parts.join(" · ");
+}
+
 /** Replace (or remove, with no values) one field's positive term. */
 export function setTerm(f: CardFilter, field: FilterField, values: string[]): CardFilter {
   const terms = f.terms.filter((t) => !(t.field === field && !t.negate));
@@ -1331,6 +1363,23 @@ export function capabilityRows(types: CapabilityType[] | undefined): CapabilityR
         text: `${t.passes} of ${t.attempts} passed · ${pct(t.rate)} (${pct(t.low).replace("%", "")}–${pct(t.high)})`,
       };
     });
+}
+
+/**
+ * Coding model capability's two captions, in number with their counts (the
+ * test-and-refine loop's wave 4: never *1 attempts* nor *1 of 1 kinds have*).
+ */
+export function capabilityWords(input: { sampleSize: number; kinds: number; few: number }): {
+  sub: string;
+  kinds: string;
+} {
+  const { sampleSize, kinds, few } = input;
+  return {
+    sub: `${plural(sampleSize, "attempt")} · bars show the pass rate and its 95% interval`,
+    kinds: few
+      ? `${few} of ${plural(kinds, "kind")} ${few === 1 ? "has" : "have"} fewer than ${MIN_TRUSTED_ATTEMPTS} attempts; treat ${few === 1 ? "that rate" : "those rates"} as rough.`
+      : `Every kind has at least ${MIN_TRUSTED_ATTEMPTS} attempts.`,
+  };
 }
 
 /** The headline sentence for the size curve. */

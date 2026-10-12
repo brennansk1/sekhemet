@@ -531,6 +531,16 @@ export class TuneService {
   public roleStates(): Record<ModelRole, { tunable: boolean; reason?: string }> {
     const out = {} as Record<ModelRole, { tunable: boolean; reason?: string }>;
     for (const role of ROLES) {
+      const set = this.env.sets().roles[role];
+      if (set.state !== "ready" || !set.hash) {
+        // The Benchmark page's words (DB-N6-18, NAMING): the set's own reason
+        // names files and build ids, for the refusal and the CLI, not the page.
+        out[role] = {
+          tunable: false,
+          reason: `Not measured yet: the ${ROLE_WORDS[role]}'s benchmark set is not built, so its settings cannot be tuned yet.`,
+        };
+        continue;
+      }
       try {
         this.setFor(role);
         out[role] = { tunable: true };

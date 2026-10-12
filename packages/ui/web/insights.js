@@ -12,6 +12,7 @@ import {
   MIN_TRUSTED_ATTEMPTS,
   agingClass,
   capabilityRows,
+  capabilityWords,
   cycleTimeStats,
   flowEmptyState,
   flowFinished,
@@ -24,7 +25,7 @@ import {
   stackCfd,
   tuningSummary,
 } from "./lib/pm.js";
-import { BOARD_COLUMNS, boardColumnOf, columnLabel } from "./lib/vocabulary.js";
+import { BOARD_COLUMNS, boardColumnOf, columnLabel, plural } from "./lib/vocabulary.js";
 import { openPeek } from "./peek.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
@@ -141,10 +142,12 @@ function agingChart(wip, stats) {
   });
   const old = wip.filter((w) => agingClass(w.hours, stats) === "old");
   const caption = old.length
-    ? `${old.length} of ${wip.length} issues in progress are older than 85% of finished issues: ${old.map((w) => `${w.shortId} (${formatHours(w.hours)})`).join(", ")}.`
+    ? `${old.length} of ${plural(wip.length, "issue")} in progress ${old.length === 1 ? "is" : "are"} older than 85% of finished issues: ${old.map((w) => `${w.shortId} (${formatHours(w.hours)})`).join(", ")}.`
     : wip.length === 0
       ? "Nothing is in progress right now."
-      : `All ${wip.length} issues in progress are younger than the 85th percentile of finished issues.`;
+      : wip.length === 1
+        ? "The 1 issue in progress is younger than the 85th percentile of finished issues."
+        : `All ${wip.length} issues in progress are younger than the 85th percentile of finished issues.`;
   const table = tableHtml(
     ["Issue", "Column", "Age"],
     wip.map((w) => [w.shortId, columnLabel(w.status), formatHours(w.hours)]),
@@ -236,7 +239,7 @@ function throughputChart(rows) {
     );
   }
   const total = vals.reduce((a, b) => a + b, 0);
-  const caption = `${total} issues finished in ${n} days, ${(total / Math.max(1, n)).toFixed(1)} a day. The 7-day average is ${lastAvg.toFixed(1)} a day.`;
+  const caption = `${plural(total, "issue")} finished in ${plural(n, "day")}, ${(total / Math.max(1, n)).toFixed(1)} a day. The 7-day average is ${lastAvg.toFixed(1)} a day.`;
   const table = tableHtml(
     ["Date", "Done", "7-day avg"],
     rows.map((r, i) => [formatShortDate(r.date), String(r.done), avg[i].toFixed(1)]),
@@ -336,7 +339,7 @@ function sizeCurve(curve, horizon) {
     const y = yOf(b.rate, 1);
     const h = yOf(0, 1) - y;
     const thin = b.attempts < MIN_TRUSTED_ATTEMPTS;
-    const tip = `Up to ${b.maxLines} lines: ${pctText(b.rate)} of ${b.attempts} attempts${thin ? " (too few to trust)" : ""}`;
+    const tip = `Up to ${b.maxLines} lines: ${pctText(b.rate)} of ${plural(b.attempts, "attempt")}${thin ? " (too few to trust)" : ""}`;
     if (h > 0) {
       parts.push(
         `<path class="bar${thin ? " thin" : ""}" d="M${x} ${y + h}V${y + Math.min(2, h)}q0 -2 2 -2h${bw - 4}q2 0 2 2V${y + h}z"><title>${esc(tip)}</title></path>`,
@@ -376,11 +379,10 @@ function capabilityHtml() {
     return `<section class="capab">${head("")}<p class="cap-empty">${icon("insights", 14, "ic s14")}<span><b>No finished attempts yet.</b> Pass rates appear once the Agent has run some issues.</span></p></section>`;
   }
   const few = rows.filter((r) => !r.trusted).length;
-  const sub = `${c.sampleSize} attempts · bars show the pass rate and its 95% interval`;
+  const words = capabilityWords({ sampleSize: c.sampleSize, kinds: rows.length, few });
+  const sub = words.sub;
   const rowsFig = `<figure class="chart"><header><h2>Which kinds of issue does it pass?</h2><span class="sec">Pass rate by kind</span></header>${typeRows(rows)}<figcaption>${esc(
-    few
-      ? `${few} of ${rows.length} kinds have fewer than ${MIN_TRUSTED_ATTEMPTS} attempts; treat those rates as rough.`
-      : `Every kind has at least ${MIN_TRUSTED_ATTEMPTS} attempts.`,
+    words.kinds,
   )} A wide bar means the rate is uncertain.</figcaption></figure>`;
   const curve = (c.sizeCurve ?? []).filter((b) => b.attempts > 0);
   const curveFig = curve.length ? sizeCurve(curve, c.horizon80Lines) : "";
@@ -605,6 +607,11 @@ async function load() {
 export function mount(view) {
   const host = document.createElement("div");
   host.className = "view-host ins-host";
+  // WCAG 2.1.1 (loop wave 3): the page scrolls in its own region, which can
+  // hold no control at all (too few issues), so the region itself takes focus.
+  host.tabIndex = 0;
+  host.setAttribute("role", "region");
+  host.setAttribute("aria-label", "Insights");
   view.append(host);
   ui.root = host;
   const onTop = (e) => {
