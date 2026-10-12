@@ -12,6 +12,7 @@ import { START_ROUTE } from "./lib/start.js";
 import { loadFailedText } from "./lib/switcher.js";
 import { setTopbar } from "./shell.js";
 import * as startPage from "./start.js";
+import { store } from "./store.js";
 import { chooseProject, setProjectList } from "./switcher.js";
 
 /** `refused`: a Resume the server refused, by project, with its sentence (DB-N26-3). */
@@ -137,7 +138,15 @@ function render() {
     const t = loadFailedText("the projects", o.error);
     html = `<p class="stp-notice" role="alert"><b>${esc(t.title)}</b> <span class="sec">${esc(t.detail)}</span> <button class="btn sm" type="button" data-reload>${icon("refresh", 14, "ic s14")}Try again</button></p>`;
   } else {
-    const v = projectsModel({ now: Date.now(), overview: o, managesWork: viewerManagesWork() });
+    const v = projectsModel({
+      now: Date.now(),
+      overview: o,
+      managesWork: viewerManagesWork(),
+      // Wave 8 B3: Configuration's fact, as the sidebar and the bar read it (SHL-04).
+      ...(store.state.modelSetup?.codingModel
+        ? { codingModel: store.state.modelSetup.codingModel }
+        : {}),
+    });
     setTopbar({ title: v.title, crumb: v.crumb });
     if (v.unavailable) {
       html = `<div class="ib-empty">${icon("layers", 24, "ic s24")}<b>${esc(v.unavailable)}</b><span>${esc(C.notOnServerDetail)}</span></div>`;
@@ -214,10 +223,14 @@ export function mount(view, parsed) {
       scopeTo(go.dataset.go, go.getAttribute("href"));
     }
   });
+  const off = store.on((_s, patch) => {
+    if ("modelSetup" in patch) render();
+  });
   render();
   load();
   return {
     unmount() {
+      off();
       root.remove();
       ui.root = null;
     },

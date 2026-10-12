@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -51,6 +51,40 @@ export function sekhemet(args: string[], where: { cwd: string; home: string }) {
       SEKHEMET_USER_CONFIG: "/nonexistent/sekhemet-test-user-config.toml",
       BROWSER: "false",
     },
+  });
+}
+
+/**
+ * `sekhemet` without blocking the test's worker: a test that runs many
+ * commands in one loop through `spawnSync` holds the worker's event loop for
+ * the whole loop, and past a minute vitest's RPC times out and the run stops
+ * before the browser group (lead-work FINDINGS GATE-COVERAGE).
+ */
+export function sekhemetAsync(
+  args: string[],
+  where: { cwd: string; home: string },
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((done) => {
+    execFile(
+      process.execPath,
+      [BIN, ...args],
+      {
+        cwd: where.cwd,
+        encoding: "utf8",
+        timeout: 20_000,
+        env: {
+          PATH: process.env.PATH ?? "",
+          HOME: where.home,
+          SEKHEMET_CONFIG_DIR: join(where.home, ".sekhemet"),
+          SEKHEMET_USER_CONFIG: "/nonexistent/sekhemet-test-user-config.toml",
+          BROWSER: "false",
+        },
+      },
+      (err, stdout, stderr) => {
+        const code = err ? (typeof err.code === "number" ? err.code : null) : 0;
+        done({ status: code, stdout, stderr });
+      },
+    );
   });
 }
 

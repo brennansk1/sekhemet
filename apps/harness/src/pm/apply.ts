@@ -378,7 +378,9 @@ async function viaPipeline<T>(
       ...(ctx.principal ? { principal: ctx.principal } : {}),
     });
   } catch (err) {
-    if (err instanceof PipelineRefusal) throw new ProposalError(err.message, 409);
+    // Wave 9 A2: the refusal's next step goes with it (a plan stopped partway).
+    if (err instanceof PipelineRefusal)
+      throw new ProposalError(err.next ? `${err.message} ${capital(err.next)}.` : err.message, 409);
     throw err;
   }
 }
@@ -407,4 +409,9 @@ export async function markDuplicate(
     actor,
     ctx.principal ? { principal: ctx.principal } : {},
   );
+}
+
+/** A step as a sentence's start. */
+function capital(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

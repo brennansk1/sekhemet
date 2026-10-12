@@ -204,4 +204,41 @@ describe("doctor checks the weights' hashes (MD-N7-2)", () => {
     expect(c.detail).toMatch(/changed since it was verified/);
     expect(c.detail).toMatch(/sekhemet doctor --verify-weights/);
   });
+
+  it("wave 7 A4: a registered file that cannot be found is named and never a pass", async () => {
+    const { reg, file, cachePath } = setup();
+    reg.recordWeights("dummy-qwen-test-7b", {
+      path: file,
+      volume: "internal",
+      sha256: sha("weights"),
+    });
+    rmSync(file);
+    for (const verify of [false, true]) {
+      const c = await weightsHashCheck({ registry: reg, cachePath, files: [], verify });
+      expect(c.status).toBe("warn");
+      expect(c.detail).toMatch(
+        /dummy-qwen-test-7b: its registered file is not found \(.*w\.gguf\)/,
+      );
+      expect(c.do).toMatch(/sekhemet models add <file> --id dummy-qwen-test-7b/);
+    }
+  });
+
+  it("wave 7 A5: a changed file of a model with no download source is told to restore or re-add it, not to fetch it", async () => {
+    const { dir, reg, file, cachePath } = setup();
+    reg.recordWeights("wq", { path: file, volume: "internal", sha256: sha("weights") });
+    writeFileSync(file, "weightsx");
+    const c = await weightsHashCheck({ registry: reg, cachePath, files: [], verify: true });
+    expect(c.status).toBe("fail");
+    expect(c.do).not.toMatch(/models fetch|download/);
+    expect(c.do).toMatch(/put wq's original file back/);
+    expect(c.do).toMatch(/sekhemet models add .*w\.gguf --id <new id>/);
+    // With a fetchable model changed too, each is told its own step.
+    const other = join(dir, "n.gguf");
+    writeFileSync(other, "n");
+    reg.recordWeights("nail-mtp", { path: other, volume: "internal", sha256: sha("weights") });
+    const both = await weightsHashCheck({ registry: reg, cachePath, files: [], verify: true });
+    expect(both.do).toMatch(/`sekhemet models fetch nail-mtp`/);
+    expect(both.do).not.toMatch(/models fetch wq/);
+    expect(both.do).toMatch(/put wq's original file back/);
+  });
 });

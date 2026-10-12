@@ -680,7 +680,7 @@ const PRACTICE: Record<PracticeLesson, Lesson> = {
   "practice:request_changes": {
     term: "Request changes",
     concept:
-      "Request changes returns the issue to To do with your note, and the note is the first thing the Agent reads next. A useful note names the file, the behaviour you expected and the check that should prove it.",
+      "Request changes returns the issue to To do with your reason, and the reason is the first thing the Agent reads next. A useful reason names the file, the behaviour you expected and the check that should prove it.",
     source: ATLASSIAN_REVIEW,
     yours: (f) => {
       const r = f.practice?.reviews;

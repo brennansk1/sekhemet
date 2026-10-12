@@ -1431,7 +1431,7 @@ export interface LearnedRuleLike {
 
 export const RULE_SOURCE_LABELS: Record<string, string> = {
   struggle: "From a fix that took the Agent several tries",
-  send_back: "From your note when you requested changes",
+  send_back: "From your reason when you requested changes",
   reflection: "From Seshat's end-of-run review",
   seed: "Seeded with the project",
 };
@@ -1499,7 +1499,7 @@ export const PROFILE_CATEGORIES: { id: ProfileEntryLike["category"]; label: stri
 ];
 
 export const PROFILE_SOURCE_LABELS: Record<string, string> = {
-  send_back: "From your notes when you requested changes",
+  send_back: "From your reasons when you requested changes",
   proposal_choices: "From which proposals you apply or discard",
   edits: "From fields you changed after Seshat set them",
   reflection: "From Seshat's end-of-run review",
@@ -1595,7 +1595,10 @@ export function tuningSummary(t: TuningReportLike): TuningSummary {
 export interface RosterRoleLike {
   role: string;
   model?: string;
-  state: "resident" | "swapped" | "unconfigured";
+  /** `not_in_use`: named for the next run, with no run in progress (wave 7 B2). */
+  state: "resident" | "swapped" | "not_in_use" | "unconfigured";
+  /** Where the model comes from, as `models list` says it (wave 7 B1). */
+  from?: string;
   note?: string;
 }
 
@@ -1629,6 +1632,7 @@ export const ROSTER_ROLES: { role: string; aliases: string[]; label: string; doe
 export const ROSTER_STATE_LABELS: Record<string, string> = {
   resident: "Resident",
   swapped: "Swapped out",
+  not_in_use: "Not in use",
   unconfigured: "Not configured",
 };
 
@@ -1647,9 +1651,45 @@ export function rosterRows(
       does: r.does,
     };
     if (hit?.model) row.model = hit.model;
+    if (hit?.from) row.from = hit.from;
     if (hit?.note) row.note = hit.note;
     return row;
   });
+}
+
+/**
+ * Where a role's model comes from, as one sentence (wave 7 B1): *From the
+ * default for this machine's memory.*; for a role with no model, why.
+ */
+export function rosterSource(row: Pick<RosterRoleLike, "model" | "from">): string {
+  const from = row.from?.trim().replace(/\.$/, "");
+  if (!from) return "";
+  return row.model ? `From ${from}.` : `${from[0]?.toUpperCase()}${from.slice(1)}.`;
+}
+
+/**
+ * The roster's heading and memory line (wave 7 B2): with no run nothing is
+ * resident or swapped out, so the heading says so; with a run, how many of
+ * the roles that have a model are resident. Neither names another machine's
+ * memory (S1A-A51: "With 128 GB" on a 24 GB machine).
+ */
+export function rosterSummary(
+  rows: readonly Pick<RosterRoleLike, "state" | "model">[],
+  opts: { running: boolean; coResident: boolean },
+): { heading: string; memory: string } {
+  if (!opts.running)
+    return {
+      heading: "No run in progress",
+      memory: "Nothing is loaded for a run until one starts.",
+    };
+  const named = rows.filter((r) => r.model).length;
+  const resident = rows.filter((r) => r.state === "resident").length;
+  return {
+    heading: `${resident} of ${named} resident`,
+    memory: opts.coResident
+      ? "This machine has room for all of them at once, so nothing swaps."
+      : "One model is resident at a time on this machine; Sekhemet swaps them as the work needs (about 40 seconds each).",
+  };
 }
 
 export interface SourceCite {

@@ -7,7 +7,7 @@ import * as boardView from "./board.js";
 import { initBulk } from "./bulk.js";
 import * as cardView from "./card.js";
 import * as configurationView from "./configuration.js";
-import { getJSON } from "./dom.js";
+import { esc, getJSON } from "./dom.js";
 import * as graphView from "./graph.js";
 import * as inboxView from "./inbox.js";
 import { refreshDecisions, refreshInbox } from "./inbox.js";
@@ -20,7 +20,7 @@ import { initLevelGates } from "./level_gate.js";
 import { authDecision, refusalMessage } from "./lib/account.js";
 import { defaultRouteFor, firstRunDue, readRole } from "./lib/learn.js";
 import { presenceFrameOf } from "./lib/live.js";
-import { navNameOf } from "./lib/nav.js";
+import { codingModelFact, codingModelWords, navNameOf } from "./lib/nav.js";
 import * as machineView from "./machine.js";
 import * as membersView from "./members.js";
 import * as myIssuesView from "./my_issues.js";
@@ -158,44 +158,50 @@ async function refreshModelSetup() {
     const assigned = (roles.data.roles ?? []).filter((r) => r.model);
     const found = models.data.models ?? [];
     const none = assigned.length === 0 && found.length === 0;
-    const worker = (roles.data.roles ?? []).find((r) => r.role === "worker");
-    const workerFits =
-      Boolean(worker?.model) || found.some((m) => m.fits?.worker && m.fits.worker !== "no");
-    // SHL-04: the sidebar's model line reads this, Configuration's roles, and nothing else.
+    // SHL-04, wave 8 B3: one fact, from Configuration's roles alone — the
+    // Coding model assigned, here and verified here — read by the sidebar,
+    // the bar, Status, Projects, the board's tiles and the issue page.
+    const codingModel = codingModelFact(roles.data.roles ?? []);
     store.set({
       modelSetup: {
         none,
-        noWorker: !workerFits,
-        workerModel: worker?.model ? String(worker.model) : null,
+        codingModel,
         // Seshat's rail reads the Planning model's state and verification (A6).
         planner: (roles.data.roles ?? []).find((r) => r.role === "planner") ?? null,
       },
     });
-    // The bar shows whenever the Worker has no model that fits, none at all included.
-    showNoWorkerBar(!workerFits);
+    // The bar shows whenever no Coding model can run issues here, none at all included.
+    showNoWorkerBar(codingModel);
   } catch {
     // The page works without it; Configuration says the same.
   }
 }
 
-function showNoWorkerBar(show) {
+function showNoWorkerBar(fact) {
   let bar = document.getElementById("sk-noworker");
-  if (!show) {
+  if (fact.ready) {
     bar?.remove();
     return;
   }
-  if (bar) return;
-  bar = document.createElement("div");
-  bar.id = "sk-noworker";
-  bar.className = "cfg-bar";
-  bar.setAttribute("role", "status");
   const session = getSession();
+  const admin = session.mode !== "team" || session.level === "admin";
   // SHL-03: who cannot change the server's models is told who can, not sent to a read-only page.
-  bar.innerHTML =
-    session.mode === "team" && session.level !== "admin"
-      ? "No Coding model yet: issues cannot run until an Admin sets one up in Configuration."
-      : 'No Coding model: issues cannot run until one fits this machine. <a href="#/configuration/models">Set up models</a>';
-  document.getElementById("view")?.before(bar);
+  const html =
+    fact.why === "none"
+      ? admin
+        ? 'No Coding model: issues cannot run until one fits this machine. <a href="#/configuration/models">Set up models</a>'
+        : "No Coding model yet: issues cannot run until an Admin sets one up in Configuration."
+      : admin
+        ? `${esc(codingModelWords(fact))}: issues cannot run until it is. <a href="#/configuration/models">Set up models</a>`
+        : `${esc(codingModelWords(fact))}: issues cannot run until an Admin sets it up in Configuration.`;
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "sk-noworker";
+    bar.className = "cfg-bar";
+    bar.setAttribute("role", "status");
+    document.getElementById("view")?.before(bar);
+  }
+  if (bar.innerHTML !== html) bar.innerHTML = html;
 }
 
 /**

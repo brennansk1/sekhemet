@@ -186,6 +186,7 @@ import {
   childSettings,
   isGreenfield,
   modelRegistry,
+  modelRegistryView,
   planCommand,
   recordBakeOff,
   runDevCommand,
@@ -380,7 +381,8 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
  * its exact combination. Nothing loads.
  */
 function queueWorkerRefusal(repoPath: string, argv: string[]): string | undefined {
-  const registry = modelRegistry();
+  // MD-N4-5b: a check only decides whether to refuse, so it reads through a view.
+  const registry = modelRegistryView();
   const flagged = argv.includes("--worker") ? argv[argv.indexOf("--worker") + 1] : undefined;
   const name =
     roleModelName("worker", flagged, { registry }) ??
@@ -686,6 +688,15 @@ export async function printTerminalBoard(boardService: BoardServiceImpl): Promis
   console.log(`\n${terminalBoardLines(await boardService.getBoardState()).join("\n")}`);
 }
 
+/**
+ * A chain that does not verify, said with its first corrupt seq and why
+ * (kernel rule 10): a deleted row is named at its own seq (wave 9 B11).
+ */
+function chainFailure(v: { corruptedSeq?: number; reason?: string }): string {
+  const at = v.corruptedSeq !== undefined ? `CORRUPTED at seq ${v.corruptedSeq}` : "CORRUPTED";
+  return v.reason ? `${at}: ${v.reason}` : at;
+}
+
 export async function printEventLog(log: EventLog): Promise<boolean> {
   // The newest 20, oldest of them first (help: "the Activity log's newest entries").
   const events = await log.getEvents(Math.max(1, log.lastSeq() - 19), 20);
@@ -698,7 +709,7 @@ export async function printEventLog(log: EventLog): Promise<boolean> {
     "                      Sekhemet Activity log: hash chain and write-ahead log              ",
   );
   console.log(
-    ` SHA-256 Chain Verification: ${verification.valid ? "VALID (100% Intact)" : `CORRUPTED at seq ${verification.corruptedSeq}`}`,
+    ` SHA-256 Chain Verification: ${verification.valid ? "VALID (100% Intact)" : chainFailure(verification)}`,
   );
   console.log(
     "=========================================================================================",
@@ -863,6 +874,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     !(config.command === "skills" && existsSync(join(config.repoPath, ".sekhemet", "skills")))
   ) {
     return refuseNoProject(config.repoPath);
+  }
+
+  // SUR-79 (loop wave 10 A5): take-over starts a first run as `init` does, so
+  // a repository whose history names a workspace starts no second one unless
+  // --new-workspace — one rule, refused before anything opens or is written.
+  if (config.command === "take-over" && workspace.firstRun && !argv.includes("--new-workspace")) {
+    const refusal = belongsElsewhere(config.repoPath);
+    if (refusal) return refuseWorkspace(refusal);
   }
 
   if (config.command === "traces") {
@@ -1146,7 +1165,12 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
 
   const { db, log, cardStore, boardService } = initLocalKernel(config.repoPath);
   // The repository is a project (K14); cards created without one join it.
-  const project = await ensureRepoProject(cardStore, config.repoPath).catch(() => undefined);
+  // `log` verifies the ledger, so it appends nothing to it (loop W9-B3: on a
+  // copied folder it registered the copy as a second project).
+  const project =
+    config.command === "log"
+      ? undefined
+      : await ensureRepoProject(cardStore, config.repoPath).catch(() => undefined);
   // ReviewWIP from this person's measured review minutes (B3).
   if (project) {
     await boardService.calibrateReviewWip(project.reviewMinutesPerDay).catch(() => undefined);
@@ -1206,7 +1230,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       { repoPath: config.repoPath, cardStore, log, boardService },
       {
         print: (l) => console.log(l),
-        model: (name) => describeModel(name, "worker", { registry: wave2Registry }),
+        model: (name, registry) =>
+          describeModel(name, "worker", { registry: registry ?? wave2Registry }),
       },
     );
     return;
@@ -1580,7 +1605,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const verdict = await cardStore.verifyProjections();
     console.log(
       verdict.identical
-        ? ` Projections: rebuilt from ${verdict.eventsApplied} events, byte-identical.`
+        ? ` Projections: rebuilt from ${verdict.eventsRead} events, byte-identical.`
         : ` Projections differ from the Activity log: ${verdict.mismatched.join(", ")}.${argv.includes("--rebuild") ? "" : " Run `sekhemet log --rebuild` to rebuild them from the Activity log."}`,
     );
     if (!verdict.identical && argv.includes("--rebuild")) {
@@ -2111,6 +2136,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         await (adapter as { unload?: () => Promise<void> }).unload?.().catch(() => undefined);
       }
     }
+    // Wave 9 B7: an ID no issue has is a refusal, never an empty replay.
+    if (!(await cardStore.getCard(cardId))) return refuseNoIssue(cardStore, cardId);
     const all = await trajectories(cardStore, cardId);
     if (all.length === 0) {
       console.log(`No attempts recorded for ${cardId}.`);
@@ -2351,7 +2378,7 @@ async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
       (err: unknown) => {
         // Item 18b: a decision the issue's state refuses is a refusal with its next step.
         if (!(err instanceof TriageRefusal)) throw err;
-        printRefusal(err.message, nextStepFor({ id: card.id, status: err.status }));
+        printRefusal(err.message, err.next ?? nextStepFor({ id: card.id, status: err.status }));
         process.exitCode = 1;
       },
     );
@@ -2404,7 +2431,7 @@ async function triageDecision(
       (err: unknown) => {
         if (err instanceof AcceptRefusedError) {
           // Item 18b: an issue not Done is refused with the step that moves it on.
-          printRefusal(err.message, err.code === "not_done" ? nextStepFor(card) : undefined);
+          printRefusal(err.message, err.code === "not_done" ? nextStepFor(card) : err.extra.next);
           process.exitCode = 1;
           return undefined;
         }

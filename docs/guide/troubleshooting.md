@@ -48,7 +48,7 @@ An issue ID that does not exist is answered with the closest ID when it looks li
 
 ### Weights' hashes
 
-**Do:** Run `sekhemet doctor --verify-weights`; download a file whose hash differs again on Configuration › Models.
+**Do:** Run `sekhemet doctor --verify-weights`; download a file whose hash differs again on Configuration › Models, or, for a file you added yourself, put the original back or add the changed one under a new id with `sekhemet models add`; put a file that is not found back, or register where it is now with `sekhemet models add <file> --id <id>`.
 
 ### Role verification
 
@@ -214,6 +214,24 @@ An issue ID that does not exist is answered with the closest ID when it looks li
 **Push or email says *Last test failed* or *Last send failed*.** The server you connected did not take the last test, or the last notice Sekhemet sent: the card names the reason (a refused connection reads *could not reach* the host). Your network settings allowed the request, and Network activity lists it as *Allowed* and *not reached*. Check the server's address and port, then send a test, or connect it again; until a send arrives the card is not counted as connected, and once one does it says *Connected* again.
 
 **An import leaves rows out.** The Import sheet names each by its line in the file — a row with no title, a priority, estimate or due date it cannot read, a repeated row (proposed once), a parent link a new issue does not get (an import does not bring hierarchy), and the rows past the first 500, which go in a second file — above the proposals. New issues are created in the project you are on. Nothing changes until you apply.
+
+**A command says the disk is full.** Every command says it the same way — *the disk is full, so nothing more could be written* — and *Do: free some space on the disk, then run the command again*. Nothing half-written is shown as finished: a plan that stopped on a full disk names the epic and issues it kept, says no plan was recorded, and tells you to free space, reject those issues with `sekhemet reject <issue> "unfinished plan"`, and plan again.
+
+**`sekhemet log` says the chain is corrupted at a seq.** It names the first row that does not verify and why. *seq 14 is missing: the row after 13 is 15* means a row was deleted from the Activity log; restore the newest backup ([Upgrade and uninstall](upgrade-and-uninstall.md)). Its *Projections: rebuilt from N events* line counts every event in the log.
+
+**An epic shows *Being planned* with no issues.** Its plan stopped before it wrote any issue, or every issue was rejected. Nothing of it is built until it has issues: plan it again, or reject it.
+
+**An issue in To do says *Waiting to start* instead of *Queued*.** The Agent does not start it until the condition named is met — a dependency done, its criteria approved (`sekhemet approve <issue>`), or the files it may change declared. The issue's *Ready to start* list shows the same condition.
+
+**`sekhemet trailers` refuses a range.** Git could not read it — a branch or commit it does not know, or more commits back than the branch has; the message gives git's words. A range with no commits says there was nothing to check.
+
+**Accept says the issue conflicts with main.** Something else landed on `main` that touches the same files since the issue was built. Nothing was written and the issue stays In review; the issue's Activity says *could not accept* with the files. `sekhemet request-changes <issue> "rebase onto main and resolve the conflict"` sends it back: the Agent's next run rebases onto `main` before its checks, then it comes back to In review. On the dashboard the failed Accept says the same step and offers **Request changes** with that reason already written.
+
+**`sekhemet revert` says there is nothing of its own to revert, or the dashboard's Revert is greyed out with that reason.** The issue was accepted through a pull request, merged on the hosting service, or it is Done with no Accept on its Activity log. Revert the merge where the pull request lives (`git revert -m 1 <merge commit>`), then plan the work again with `sekhemet plan "<what to change>"` or a New issue on the board.
+
+**Request changes is refused on an issue In review with no attempt.** There is no work to decide on yet, so only Put on hold is offered, on the board as in the terminal: `sekhemet park <issue> "<why>"`, then `sekhemet unpark <issue>` puts it in Ready to run. Taken off hold, an issue goes to Ready, or to Backlog or Planning if it was put on hold from there; the dashboard's toast names the column. An issue put on hold from In review (including through the hold's Undo) goes to To do, and the Agent runs it again.
+
+**`sekhemet take-over` says the repository belongs to a Sekhemet workspace already.** Its history carries `Ledger-Head` trailers, as a clone of a project Sekhemet built does; it is refused exactly as the first run is, and nothing is written. Open the workspace the message names, or start a new one with `--new-workspace`.
 
 **The dashboard says it cannot open the Activity log, or a newer version wrote it.** After a rollback, restore the backup the message names ([Upgrade and uninstall](upgrade-and-uninstall.md)). `sekhemet log` says whether the log's hash chain verifies.
 

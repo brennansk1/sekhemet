@@ -7,12 +7,13 @@ import {
   agentStatusLine,
   agentWork,
   bottomBar,
+  codingModelWords,
   navNameOf,
   visibleNav,
 } from "./lib/nav.js";
 import { stopReasonLabel } from "./lib/vocabulary.js";
 import { getSession } from "./session.js";
-import { ledgerAltered, store } from "./store.js";
+import { ledgerAltered, projectName, store } from "./store.js";
 import { openProjectSwitcher, projectSwitcherHtml } from "./switcher.js";
 
 // The views the page mounts, by nav name (app.js); a view not built is never linked.
@@ -109,7 +110,7 @@ export function setTopbar({ title, crumb = "", filters = "", actions = "" }) {
     top.innerHTML = html;
     top.dataset.html = html;
   }
-  document.title = `${title} · ${store.state.meta?.project ?? "Sekhemet"} · Sekhemet`;
+  document.title = `${title} · ${projectName() || "Sekhemet"} · Sekhemet`;
 }
 
 /* ---------- Derived status ---------- */
@@ -267,13 +268,10 @@ function renderSide() {
   });
   // SHL-04: one source for model status, Configuration's roles (`modelSetup`):
   // the sidebar never names a model Configuration says is not configured.
+  // Wave 8 B3: the same fact the bar, Status, Projects and the tiles read (`codingModelFact`).
   const setup = s.modelSetup;
-  const workerModel = setup?.workerModel;
-  const modelName = !setup
-    ? "Model: checking…"
-    : workerModel
-      ? `Coding model ${workerModel}`
-      : "No Coding model set up";
+  const workerModel = setup?.codingModel?.ready ? setup.codingModel.model : null;
+  const modelName = !setup ? "Model: checking…" : codingModelWords(setup.codingModel);
   const dot = agent.state === "working" ? "run" : agent.state === "paused" ? "warn" : "idle";
   // Teams item 31: in the Team setup, where the person's own issue stands in the queue.
   const queueText = agentQueueLine(s.agentQueue, (id) => {
@@ -354,7 +352,7 @@ function renderBar() {
   } else if (s.backpressureActive) {
     const limit = s.wipLimits.review;
     const n = s.cards.filter((c) => c.status === "review").length;
-    html = `<div class="bar" role="status">${icon("pause")}<span><b>Review is full (${n} of ${esc(limit)}).</b> <span class="sec">Finished issues will wait in Checking until you clear one.</span></span><a class="link-btn" href="#/review">Open review</a></div>`;
+    html = `<div class="bar" role="status">${icon("pause")}<span><b>Review is full (${n} of ${esc(limit)}).</b> <span class="sec">Finished issues wait in In progress until you clear one.</span></span><a class="link-btn" href="#/review">Open review</a></div>`;
   } else if (s.pm.status?.workerPaused && s.pm.status.phase !== "idle") {
     // PM_DESIGN §2.5: nothing is wrong, so the running rule, not amber.
     const step = s.pm.step;

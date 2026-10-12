@@ -25,7 +25,11 @@ export const boardCommand: CommandHandler = async (args, env) => {
   const { db, log, cardStore, boardService } = await env.kernel("write");
   if (args.values.terminal === true) {
     // NEW-surface-2 (SUR-27): the board's columns and state names, not internal ids.
-    console.log(`\n${terminalBoardLines(await boardService.getBoardState()).join("\n")}`);
+    // Surface item 8a (wave 8 B1): the folder's project, as `status` and the dashboard show it.
+    const state = await boardService.getBoardState(
+      env.projectId ? { projectId: env.projectId } : {},
+    );
+    console.log(`\n${terminalBoardLines(state).join("\n")}`);
     return 0;
   }
   // SUR-76: `sekhemet` where the workspace is already served names that server.

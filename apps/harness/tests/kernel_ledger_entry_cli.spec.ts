@@ -73,12 +73,19 @@ const ledgerPath = (p: Place) => join(p.repo, ".sekhemet", "events.db");
 /**
  * `repo()` made a Sekhemet project: its ledger opened as the ledger commands
  * open it (`openLocalLedger`: the schema, the workspace and the install's
- * person from git's email). `log`, `erase` and the others refuse a folder
- * that is no project yet (FINDINGS_C1 CLI-05; surface.md).
+ * person from git's email) and the folder registered as its project, as a
+ * first run does. `log`, `erase` and the others refuse a folder that is no
+ * project yet (FINDINGS_C1 CLI-05; surface.md). `log` itself appends nothing
+ * (loop W9-B3), so the project's entry is written here, not by the first `log`.
  */
-function project(prefix: string): Place {
+async function project(prefix: string): Promise<Place> {
   const p = repo(prefix);
-  openLocalLedger(p.repo).db.close();
+  const { db, log } = openLocalLedger(p.repo);
+  try {
+    await new CardStore(db, log).ensureProject({ rootPath: p.repo, name: "Timesheets" });
+  } finally {
+    db.close();
+  }
   return p;
 }
 
@@ -133,7 +140,7 @@ function filesHolding(dir: string, needle: string): string[] {
 
 describe("the hash chain through `sekhemet log` (K-N1, K-N10)", () => {
   it("prints the Activity log's newest 20 entries, not its oldest (wave 2 B6)", async () => {
-    const p = project("sek-log-newest-");
+    const p = await project("sek-log-newest-");
     const db = new DatabaseSync(ledgerPath(p));
     const store = new CardStore(db, new EventLog(db));
     for (let i = 1; i <= 25; i++)
@@ -149,7 +156,7 @@ describe("the hash chain through `sekhemet log` (K-N1, K-N10)", () => {
   });
 
   it("K-N1-1: a row's created_at edited in SQLite makes `log` report the chain corrupted at that seq and exit 1", async () => {
-    const p = project("sek-k-n1-1-");
+    const p = await project("sek-k-n1-1-");
     expect((await runCli(["log"], p)).code).toBe(0);
     tamper(ledgerPath(p), "UPDATE events SET created_at = '2001-01-01 00:00:00' WHERE seq = 2");
     const after = await runCli(["log"], p);
@@ -158,7 +165,7 @@ describe("the hash chain through `sekhemet log` (K-N1, K-N10)", () => {
   });
 
   it("K-N1-2: an UPDATE or DELETE of a row the command wrote is aborted, and `log` still verifies", async () => {
-    const p = project("sek-k-n1-2-");
+    const p = await project("sek-k-n1-2-");
     expect((await runCli(["log"], p)).code).toBe(0);
     const db = new DatabaseSync(ledgerPath(p));
     try {
@@ -193,7 +200,7 @@ describe("the hash chain through `sekhemet log` (K-N1, K-N10)", () => {
   });
 
   it("K-N1-7: an event_private row altered (not deleted) in SQLite makes `log` report the chain corrupted at that event's seq", async () => {
-    const p = project("sek-k-n1-7-");
+    const p = await project("sek-k-n1-7-");
     expect((await runCli(["log"], p)).code).toBe(0);
     // The install's person, recorded with git's email in its private part.
     const [person] = sql<{ seq: number; id: string }>(
@@ -211,7 +218,7 @@ describe("the hash chain through `sekhemet log` (K-N1, K-N10)", () => {
   });
 
   it("K-N10-2: a stored event's on_behalf_of edited in SQLite makes `log` report the chain corrupted at that seq", async () => {
-    const p = project("sek-k-n10-2-");
+    const p = await project("sek-k-n10-2-");
     expect((await runCli(["log"], p)).code).toBe(0);
     tamper(ledgerPath(p), "UPDATE events SET on_behalf_of = 'p_someone' WHERE seq = 2");
     const after = await runCli(["log"], p);
@@ -342,7 +349,7 @@ describe("the legacy assignee when the command migrates a ledger (K-N6-6)", () =
 
 describe("erasure, backup and restore through the commands (K-N7)", () => {
   it("K-N7-1, K-N7-2, K-N7-3, K-N7-7: `erase --secret-file --rotated` removes the private part holding the secret from the file, records ledger/erased and the register, and `log` names the gap", async () => {
-    const p = project("sek-k-n7-1-");
+    const p = await project("sek-k-n7-1-");
     expect((await runCli(["log"], p)).code).toBe(0);
     expect(filesHolding(join(p.repo, ".sekhemet"), EMAIL).length).toBeGreaterThan(0);
     const secret = join(p.root, "secret.txt");
@@ -396,7 +403,7 @@ describe("erasure, backup and restore through the commands (K-N7)", () => {
   });
 
   it("K-N7-8: an erasure naming a blob deletes it, lists it in ledger/erased, and `log` reads it as erased, not missing", async () => {
-    const p = project("sek-k-n7-8-");
+    const p = await project("sek-k-n7-8-");
     expect((await runCli(["log"], p)).code).toBe(0);
     // A context pack the Worker stored, holding the secret (setup, as a run leaves it).
     const SECRET = "AKIAIOSFODNN7EXAMPLE";
@@ -422,7 +429,7 @@ describe("erasure, backup and restore through the commands (K-N7)", () => {
   });
 
   it("K-N7-4: `backup <path>` taken while another writer appends is a consistent copy that verifies, and records ledger/backed_up", async () => {
-    const p = project("sek-k-n7-4-");
+    const p = await project("sek-k-n7-4-");
     expect((await runCli(["log"], p)).code).toBe(0);
     // A second writer on the same file, appending the whole time the backup runs.
     const db = new DatabaseSync(ledgerPath(p));
@@ -468,7 +475,7 @@ describe("erasure, backup and restore through the commands (K-N7)", () => {
   });
 
   it("K-N7-5: `restore --latest` re-applies an erasure made after the backup before anything reads it, and refuses when the register is missing", async () => {
-    const p = project("sek-k-n7-5-");
+    const p = await project("sek-k-n7-5-");
     expect((await runCli(["log"], p)).code).toBe(0);
     const backup = await runCli(["backup"], p);
     expect(backup.code).toBe(0);

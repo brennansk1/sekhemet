@@ -31,6 +31,18 @@ function inventories(repo: string) {
     }));
 }
 
+/**
+ * The preview's numbered steps read in order (loop wave 10 A6): a number
+ * never goes back, and none is skipped; a step may have several lines.
+ */
+function expectStepsInOrder(stdout: string): void {
+  const numbers = [...stdout.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
+  expect(numbers, stdout).toEqual([...numbers].sort((a, b) => a - b));
+  expect([...new Set(numbers)], stdout).toEqual(
+    Array.from({ length: Math.max(0, ...numbers) }, (_, i) => i + 1),
+  );
+}
+
 const at = (f: Finding) => `${f.kind}:${f.path ?? ""}:${f.line ?? ""}`;
 const gitStatus = (repo: string) =>
   execFileSync("git", ["status", "--porcelain", "--ignored"], { cwd: repo, encoding: "utf8" })
@@ -53,6 +65,7 @@ describe("sekhemet take-over, untrusted (DS-TO-1 to DS-TO-5, DS-TO-8)", () => {
     expect(existsSync(join(fx.root, "pwned"))).toBe(false);
     expect(gitStatus(fx.root)).toEqual(["?? .sekhemet/"]);
     expect(r.stdout).toMatch(/Nothing runs yet: the repository is not trusted/);
+    expectStepsInOrder(r.stdout);
     expect(r.stdout).toContain("install: npm install --ignore-scripts --offline");
     expect(r.stdout).not.toMatch(/→ exit/);
     const rows = ledgerRows(fx.root);
@@ -151,6 +164,7 @@ describe("sekhemet trust --yes, then take-over (DS-TO-6, DS-TO-7)", () => {
     expect(trust.stdout).toMatch(/Trusted this repository/);
     const r = await cli(["take-over"], { cwd: fx.root, env, timeoutMs: 120_000 });
     expect(r.status, r.stderr).toBe(0);
+    expectStepsInOrder(r.stdout);
 
     // DS-TO-6: lifecycle scripts stayed off; the build ran; each command with its exit code.
     expect(existsSync(fx.markers.preinstall)).toBe(false);

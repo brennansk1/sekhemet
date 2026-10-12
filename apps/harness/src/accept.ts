@@ -281,7 +281,8 @@ export class AcceptRefusedError extends Error {
       | "not_code_owner"
       | "pr_unavailable"
       | "open_thread"
-      | "not_done",
+      | "not_done"
+      | "nothing_to_revert",
     message: string,
     /**
      * For `unacknowledged`: the findings (dossier entry ids) and the files
@@ -289,6 +290,14 @@ export class AcceptRefusedError extends Error {
      * the findings, FINDINGS_C1 CLI-01).
      */
     public readonly remaining?: { findings: string[]; files: string[] },
+    public readonly extra: {
+      /** For `conflict`: the integration branch and the files that conflict (RG-S5-4). */
+      conflict?: { onto: string; files: string[] };
+      /** The step that moves the issue on, when the refusal knows it (surface 18b). */
+      next?: string;
+      /** For `nothing_to_revert`: what the issue was accepted through (loop wave 10 A2). */
+      nothing?: { pr?: string; merge?: string };
+    } = {},
   ) {
     super(message);
     this.name = "AcceptRefusedError";
@@ -905,14 +914,19 @@ async function acceptCardIn(
         ...(auto ? { auto: true } : {}),
       },
     });
-    const failed = (reason: "conflict" | "refused" | "error") =>
+    const failed = (reason: "conflict" | "refused" | "error", files?: string[]) =>
       ctx.cardStore
         .recordEvent({
           type: ACCEPT_FAILED,
           cardId: stored.id,
           actor,
           principal,
-          payload: { id: stored.id, reason, integration: target },
+          payload: {
+            id: stored.id,
+            reason,
+            integration: target,
+            ...(files?.length ? { files } : {}),
+          },
         })
         .catch((err) =>
           reportLostRecord(ACCEPT_FAILED, err, {
@@ -931,10 +945,13 @@ async function acceptCardIn(
         { expectedOld: old, body: execute.evidenceSummary(stored, ev, []) },
       );
     } catch (err) {
-      await failed(err instanceof MergeConflictError ? "conflict" : "error");
       if (err instanceof MergeConflictError) {
-        throw new AcceptRefusedError("conflict", err.message);
+        await failed("conflict", err.files);
+        throw new AcceptRefusedError("conflict", err.message, undefined, {
+          conflict: { onto: err.onto, files: err.files },
+        });
       }
+      await failed("error");
       throw err;
     }
     try {
@@ -1158,6 +1175,57 @@ export async function revertAccept(
   return revertAcceptIn(contextForCard(ctx, card), card, reason, principal, rule);
 }
 
+/**
+ * What a Done issue with no squash of Sekhemet's to revert was accepted
+ * through (loop wave 10 A2): `undefined` when its last Accept recorded a
+ * squash; else `{ pr, merge }` for one accepted through its pull request,
+ * merged on the hosting service, or `{}` for one with no Accept on its
+ * Activity log. The review desk shows Revert disabled from the same answer
+ * the refusal gives (`GET /api/cards/:id/review`).
+ */
+export async function nothingToRevertFacts(
+  store: CardStore,
+  id: string,
+): Promise<{ pr?: string; merge?: string } | undefined> {
+  const accepted = (await store.cardEvents(id, ["card/accepted"])).at(-1);
+  const p = accepted?.payload as { sha?: string; pr?: string } | undefined;
+  if (p?.sha) return undefined;
+  if (!p?.pr) return {};
+  const closed = (await store.cardEvents(id, ["card/pr_closed"])).at(-1)?.payload as
+    | { mergeCommit?: string }
+    | undefined;
+  return { pr: p.pr, ...(closed?.mergeCommit ? { merge: closed.mergeCommit } : {}) };
+}
+
+/**
+ * A Done issue with no squash of Sekhemet's to revert (loop wave 10 A2): one
+ * accepted through its pull request, merged on the hosting service, or one
+ * with no Accept on its Activity log. Refused with why and a step that moves
+ * on — never back to Reopen, which points at Revert. `extra.nothing` carries
+ * the facts, so the dashboard says the same step in its own words.
+ */
+function nothingToRevert(id: string, nothing: { pr?: string; merge?: string }): AcceptRefusedError {
+  const again = 'sekhemet plan "<what to change>"';
+  if (nothing.pr) {
+    const merge = nothing.merge?.slice(0, 10);
+    return new AcceptRefusedError(
+      "nothing_to_revert",
+      `${id} was accepted through its pull request ${nothing.pr}${merge ? `, merged as ${merge}` : ""}; Sekhemet has no squash of its own to revert`,
+      undefined,
+      {
+        next: `revert that merge where the pull request lives${merge ? ` (git revert -m 1 ${merge})` : ""}, then plan the work again: ${again}`,
+        nothing,
+      },
+    );
+  }
+  return new AcceptRefusedError(
+    "nothing_to_revert",
+    `${id} is Done with no Accept on its Activity log, so Sekhemet merged nothing of it to revert`,
+    undefined,
+    { next: `to do the work again, plan it: ${again}`, nothing },
+  );
+}
+
 async function revertAcceptIn(
   ctx: AcceptContext,
   card: CardRecord,
@@ -1174,8 +1242,9 @@ async function revertAcceptIn(
     );
   }
   const accepted = (await ctx.cardStore.cardEvents(card.id, ["card/accepted"])).at(-1);
-  const p = accepted?.payload as { sha?: string; integration?: string } | undefined;
-  if (!p?.sha) throw new Error(`${card.id} has no accepted squash in the Activity log to revert`);
+  const p = accepted?.payload as { sha?: string; pr?: string; integration?: string } | undefined;
+  const nothing = await nothingToRevertFacts(ctx.cardStore, card.id);
+  if (nothing || !p?.sha) throw nothingToRevert(card.id, nothing ?? {});
   const verdict = revertVerdict(ctx.cardStore, principal, rule);
   if (!verdict.may) {
     throw new AcceptRefusedError(

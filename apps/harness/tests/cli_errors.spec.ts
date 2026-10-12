@@ -415,4 +415,27 @@ describe("S1B-B04: after `sekhemet init` the folder is a project for every comma
     const status = sekhemet(["status"], where);
     expect(status.status, status.stdout + status.stderr).toBe(0);
   });
+
+  it("SUR-79 (loop wave 10 A5): take-over on a clone whose history names a workspace is refused as init is — one rule, nothing written", () => {
+    const where = sandboxDirs();
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: where.cwd });
+    git("init", "-q");
+    git(
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      `feat: merged\n\nLedger-Head: 7:${"a".repeat(64)}`,
+    );
+    const init = sekhemet(["init"], where);
+    const taken = sekhemet(["dev", "take-over"], where);
+    expect(taken.status, taken.stdout + taken.stderr).toBe(1);
+    expect(oneLine(taken.stderr)).toBe(oneLine(init.stderr));
+    expect(taken.stdout).not.toMatch(/Inventory|History|Recon/);
+    expect(readdirSync(where.cwd).sort()).toEqual([".git"]);
+  });
 });

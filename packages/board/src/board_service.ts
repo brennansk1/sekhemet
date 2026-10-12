@@ -172,6 +172,9 @@ const BEFORE_RUNNING = new Set<CardStatus>(["planning", "backlog", "parked", "re
  */
 const RECHECK_BEFORE_RUN = new Set<CardStatus>([...BEFORE_RUNNING, "ready"]);
 
+/** The *Ready to start* rows the move Ready → In progress checks (`entryConditionFailure`). */
+const START_CHECKS: ReadonlySet<string> = new Set(["dependencies", "approval", "scope"]);
+
 /**
  * What a card still needs from a person before it leaves Planning
  * (planner-pm §2.17; PM-N7-3, -4, -5), or undefined: its criteria approved
@@ -420,6 +423,18 @@ export class BoardServiceImpl implements BoardService {
   }
 
   /**
+   * Why the board would not start this Ready issue now (wave 9 A3): the
+   * reason of the first *Ready to start* row that the move Ready → In
+   * progress checks (`entryConditionFailure`: dependencies, the criteria's
+   * approval, scope) and that is not met; undefined when it would start.
+   * The Agent is shown queued only then. A read: it appends nothing.
+   */
+  public async startBlocker(card: CardRecord): Promise<string | undefined> {
+    const rows = await this.readiness(card);
+    return rows.find((r) => START_CHECKS.has(r.id) && !r.met)?.reason;
+  }
+
+  /**
    * The entry condition a move into `to` fails, or undefined (B1). Checked
    * after the edge table, before back-pressure and WIP.
    */
@@ -430,7 +445,15 @@ export class BoardServiceImpl implements BoardService {
     via: { merged?: boolean } = {},
   ): Promise<string | undefined> {
     const to = t.toStatus;
-    if (to === "ready" || to === "in_progress" || to === "planning") {
+    // A parent never runs itself (B7): its rollup's moves (a plan stores its
+    // epic in Planning, wave 9 A1) are no start, so a run's start conditions
+    // (dependencies, a revised requirement) never hold a finished parent in
+    // Planning. Only the harness, on a current rollup by the gate.
+    const rollingUp =
+      t.actor === "harness" &&
+      (to === "ready" || to === "in_progress" || to === "planning") &&
+      (await this.currentRollup(card)) !== undefined;
+    if (!rollingUp && (to === "ready" || to === "in_progress" || to === "planning")) {
       const waiting = this.cardStore.waitingOn(card.id);
       if (waiting.length > 0) {
         return `${card.id} waits on ${waiting.join(", ")}, which ${waiting.length === 1 ? "is" : "are"} not done`;
@@ -448,7 +471,7 @@ export class BoardServiceImpl implements BoardService {
     // Without this check such a card reaches Ready with a suspect link
     // untouched. A person re-plans or re-confirms it (clearing the link)
     // before it may run again.
-    if (to === "ready") {
+    if (to === "ready" && !rollingUp) {
       const suspect = this.cardStore.requirements
         .linksFrom("card", card.id)
         .filter((l) => l.suspect);
@@ -545,18 +568,27 @@ export class BoardServiceImpl implements BoardService {
   private async harnessMayAccept(card: CardRecord): Promise<boolean> {
     const marker = this.options.measurementMarker;
     if (marker && MEASUREMENT_PURPOSES.has(marker.purpose)) return true;
+    return (await this.currentRollup(card))?.passed === true;
+  }
+
+  /**
+   * A parent's current rollup verdict (rule 30): every child `done` and a
+   * `card/rollup` from the gate naming every child, recorded after the last
+   * child's last move; undefined otherwise.
+   */
+  private async currentRollup(card: CardRecord): Promise<{ passed: boolean } | undefined> {
     const children = await this.cardStore.listCards({ parentId: card.id });
-    if (children.length === 0 || children.some((c) => c.status !== "done")) return false;
+    if (children.length === 0 || children.some((c) => c.status !== "done")) return undefined;
     const rollup = (await this.cardStore.cardEvents(card.id, ["card/rollup"])).at(-1);
     const verdict = rollup?.payload as { passed?: unknown; children?: unknown } | undefined;
-    if (!rollup || rollup.actor !== "gate" || verdict?.passed !== true) return false;
-    const named = new Set(Array.isArray(verdict.children) ? verdict.children : []);
-    if (children.some((c) => !named.has(c.id))) return false;
+    if (!rollup || rollup.actor !== "gate") return undefined;
+    const named = new Set(Array.isArray(verdict?.children) ? verdict.children : []);
+    if (children.some((c) => !named.has(c.id))) return undefined;
     for (const child of children) {
       const last = (await this.cardStore.cardEvents(child.id, ["card/status_changed"])).at(-1);
-      if (last && last.seq > rollup.seq) return false;
+      if (last && last.seq > rollup.seq) return undefined;
     }
-    return true;
+    return { passed: verdict?.passed === true };
   }
 
   /**
@@ -849,12 +881,20 @@ export class BoardServiceImpl implements BoardService {
       }
     }
 
+    // A WIP limit counts work items: a parent never runs itself (B7) and
+    // takes no slot — neither its own move nor the count (wave 9 A1: a plan
+    // stores its epic in Planning, and its rollup moves it through In progress).
+    const parentIds = new Set(
+      (await this.cardStore.listCards()).map((c) => c.parentId).filter(Boolean),
+    );
     const inTarget =
       t.toStatus === "review"
         ? (await this.reviewCount(card.projectId)).length
-        : (await this.cardStore.listCards({ status: t.toStatus })).length;
+        : (await this.cardStore.listCards({ status: t.toStatus })).filter(
+            (c) => !parentIds.has(c.id),
+          ).length;
     const limit = t.toStatus === "review" ? (reviewLimit as number) : this.wipLimits[t.toStatus];
-    if (inTarget >= limit) {
+    if (!parentIds.has(card.id) && inTarget >= limit) {
       throw new TransitionRefusedError(
         "wip_limit",
         t.cardId,

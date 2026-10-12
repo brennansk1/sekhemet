@@ -12,6 +12,7 @@ import { userInfo } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
+  BackupUnverified,
   BlobStore,
   EventLog,
   MigrationRefused,
@@ -26,6 +27,7 @@ import {
 import { plural } from "@sekhemet/ui";
 import {
   type BackupSetInfo,
+  backupPolicy,
   describeSet,
   erasureRegisterFor,
   legacyErasureRegister,
@@ -37,7 +39,7 @@ import {
   workspaceErasureRegister,
   writeBackupSet,
 } from "./backup_sets.js";
-import type { CliExit } from "./commands/cli_result.js";
+import { type CliExit, printRefusal } from "./commands/cli_result.js";
 import type { CommandHandler } from "./commands/registry.js";
 import { userSetup } from "./config.js";
 import { backupCredentials, identityDir, restoreCredentials } from "./team/credential_store.js";
@@ -312,7 +314,7 @@ export async function ledgerCommand(
       }
       return 0;
     }
-    return await eraseCommand(argv, repoPath, log);
+    return await eraseCommand(argv, repoPath, db, log);
   } finally {
     db.close();
   }
@@ -414,9 +416,30 @@ export const backupCommand: CommandHandler = async (args, env): Promise<CliExit>
     );
     return 0;
   }
+  const target = args.positionals[0];
+  // Loop W9-B4: a path that already holds a file is refused before anything is copied.
+  if (target && existsSync(resolve(target))) {
+    printRefusal(
+      `${resolve(target)} already exists; nothing was written.`,
+      "name a path that does not exist yet, or run `sekhemet backup` with no path to write a whole set",
+    );
+    return 2;
+  }
   const { db, log } = (await env.kernel("read")) as { db: DatabaseSync; log: EventLog };
   try {
-    return await writeBackup(args.positionals[0], env.repoPath, env.workspaceFolder, db, log);
+    return await writeBackup(target, env.repoPath, env.workspaceFolder, db, log);
+  } catch (err) {
+    // Loop W9-B4: the copy that failed is removed; the ledger it copied is what fails.
+    if (err instanceof BackupUnverified) {
+      printRefusal(
+        target
+          ? `${err.message}. The Activity log it copies does not verify either.`
+          : `The backup set was not written: the Activity log does not verify (${err.reason}).`,
+        "run `sekhemet log` to see which entry fails, and `sekhemet restore --latest` to go back to the newest set that verifies",
+      );
+      return 1;
+    }
+    throw err;
   } finally {
     db.close();
   }
@@ -458,10 +481,13 @@ async function writeBackup(
     console.log(
       `Not in the set, because they were already missing: ${plural(m.missingBlobs.length, "blob")}, ${plural(m.missingEvidence.length, "check record")}.`,
     );
-  if (set.pruned.length > 0)
+  // RUN-60, loop W9-B5: which sets went, and the rule that removed them.
+  if (set.pruned.length > 0) {
+    const { keepDaily, keepWeekly } = backupPolicy(workspaceFolder);
     console.log(
-      `Removed ${plural(set.pruned.length, "older set")} this install wrote (7 daily and 4 weekly are kept).`,
+      `Removed ${plural(set.pruned.length, "older set")} this install wrote: ${set.pruned.join(", ")}. Only the newest set of each day is kept, for the last ${plural(keepDaily, "day")} and ${plural(keepWeekly, "week")} (\`[backup] keep_daily\`, \`keep_weekly\`).`,
     );
+  }
   return 0;
 }
 
@@ -582,27 +608,76 @@ async function restoreLedgerFile(backup: string, repoPath: string): Promise<CliE
   return 0;
 }
 
+/** Where the entry numbers `erase --events` takes are listed (surface item 18b). */
+const ENTRY_NUMBERS_STEP =
+  "`sekhemet log` lists every entry with its number (#12); erase chosen ones with `sekhemet erase --events 12,14`";
+
+/**
+ * The entries `erase --events` names (loop W9-B2): each an entry number as
+ * `sekhemet log` prints it (`12` or `#12`), or an event id as the export
+ * carries it. One that names no entry refuses the whole command.
+ */
+function resolveEntries(
+  db: DatabaseSync,
+  tokens: readonly string[],
+): { entries: { id: string; seq: number; private: boolean }[] } | { refused: string } {
+  const bySeq = db.prepare(
+    "SELECT e.id AS id, e.seq AS seq, p.event_id IS NOT NULL AS priv FROM events e LEFT JOIN event_private p ON p.event_id = e.id WHERE e.seq = ?",
+  );
+  const byId = db.prepare(
+    "SELECT e.id AS id, e.seq AS seq, p.event_id IS NOT NULL AS priv FROM events e LEFT JOIN event_private p ON p.event_id = e.id WHERE e.id = ?",
+  );
+  const entries: { id: string; seq: number; private: boolean }[] = [];
+  for (const token of tokens) {
+    const number = /^#?(\d+)$/.exec(token);
+    const row = (number ? bySeq.get(Number(number[1])) : byId.get(token)) as
+      | { id: string; seq: number; priv: number }
+      | undefined;
+    if (!row) return { refused: `No entry ${token} in the Activity log; nothing was erased.` };
+    if (!entries.some((e) => e.id === row.id))
+      entries.push({ id: row.id, seq: row.seq, private: row.priv === 1 });
+  }
+  return { entries };
+}
+
 /**
  * `sekhemet erase` (kernel rule 34; security.md item 34b, SEC-50). With
  * `--secret-file f` (or the secret on stdin): the person is told to rotate
  * it first and nothing happens until they confirm with `--rotated`; then
  * every private field and every blob holding it is erased with reason
- * `secret`, and the chain is verified. With `--events id,id`: the private
- * parts of those events, reason `erasure`. The secret is never printed.
+ * `secret`, and the chain is verified. With `--events 12,14`: the private
+ * parts of those entries — the numbers `sekhemet log` prints (`#12`), or an
+ * event's id from the export — reason `erasure`. The secret is never printed.
  */
 async function eraseCommand(
   argv: readonly string[],
   repoPath: string,
+  db: DatabaseSync,
   log: EventLog,
 ): Promise<number> {
   const principal = log.localPrincipal();
   const listed = flagValue(argv, "--events");
   if (listed) {
-    const report = await log.erase({
-      eventIds: listed
+    const chosen = resolveEntries(
+      db,
+      listed
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
+    );
+    if ("refused" in chosen) {
+      printRefusal(chosen.refused, ENTRY_NUMBERS_STEP);
+      return 1;
+    }
+    if (!chosen.entries.some((e) => e.private)) {
+      printRefusal(
+        `${chosen.entries.length === 1 ? `Entry #${chosen.entries[0]?.seq} has nothing private` : "None of those entries has anything private"} to erase (or it was erased already): an entry's structural part is covered by the hash chain and stays.`,
+        "pick entries that hold a person's text or details (`sekhemet log` lists them); for a leaked secret, rotate it and run `sekhemet erase --secret --rotated`",
+      );
+      return 1;
+    }
+    const report = await log.erase({
+      eventIds: chosen.entries.map((e) => e.id),
       reason: "erasure",
       principal,
     });
@@ -613,7 +688,9 @@ async function eraseCommand(
     return 0;
   }
   if (!argv.includes("--secret-file") && !argv.includes("--secret")) {
-    console.error("usage: sekhemet erase --secret [--secret-file f] --rotated | --events id,id");
+    console.error(
+      "usage: sekhemet erase --secret [--secret-file f] --rotated | --events <entry>,… (the numbers `sekhemet log` prints)",
+    );
     return 2;
   }
   const secret = readSecret(argv);

@@ -47,7 +47,10 @@ import { TriageError, triageIssue } from "./team/intake.js";
 import { acceptDismissal, openThreadRefusal, reviewThreads } from "./team/review_threads.js";
 import { cardTrace } from "./tracing.js";
 import {
+  AcceptRefusedError,
+  TriageRefusal,
   park,
+  parkedFrom,
   recordReviewOpened,
   reject,
   reopen,
@@ -308,6 +311,16 @@ export const CARD_ROUTES: CardRoute[] = [
         acceptance: acceptanceSources(card),
         // PM-N8-2: what the card waits on and why (declared, named, imported).
         dependencies: cardStore?.getDependencyReasons(card.id) ?? [],
+        // Wave 9 A3: why the board would not start this Ready issue now, if so.
+        ...(await (async () => {
+          if (card.status !== "ready") return {};
+          const blocker = await (
+            boardService as { startBlocker?: (c: CardRecord) => Promise<string | undefined> }
+          ).startBlocker
+            ?.call(boardService, card)
+            .catch(() => undefined);
+          return blocker ? { startBlocker: blocker } : {};
+        })()),
         // TEAM-15: the AI teammates' state on the issue, as the harness knows it.
         ai: await (async () => {
           const deps = aiDeps();
@@ -415,8 +428,12 @@ export const CARD_ROUTES: CardRoute[] = [
           return;
         }
 
-        // Status's Needs you (DB-P5-1): back where it was parked from, as `sekhemet unpark`.
+        // Status's Needs you (DB-P5-1): as `sekhemet unpark` — Backlog or
+        // Planning when parked from there, else Ready (review-git §2.4).
+        // `from` lets the page say an issue held from In review runs again
+        // (loop wave 10 A3).
         if (verb === "unpark") {
+          const from = card.status === "parked" ? await parkedFrom(store, card.id) : undefined;
           const to = await unpark(
             {
               repoPath,
@@ -427,7 +444,7 @@ export const CARD_ROUTES: CardRoute[] = [
             },
             card,
           );
-          json(res, 200, { ok: true, status: to });
+          json(res, 200, { ok: true, status: to, ...(from ? { from } : {}) });
           return;
         }
         const reason = typeof body.reason === "string" ? body.reason : "";
@@ -469,6 +486,18 @@ export const CARD_ROUTES: CardRoute[] = [
           error: err instanceof Error ? err.message : String(err),
           // DB-N21-4: a revert git cannot apply names its files.
           ...(err instanceof RevertConflictError ? { files: err.files } : {}),
+          // Loop wave 10 A1, A2: what the CLI's `Do:` line is made from, so
+          // the page says the same step in the board's words.
+          ...(err instanceof AcceptRefusedError
+            ? {
+                code: err.code,
+                ...(err.extra.conflict ? { conflict: err.extra.conflict } : {}),
+                ...(err.extra.nothing ? { nothing: err.extra.nothing } : {}),
+                ...(err.extra.next ? { next: err.extra.next } : {}),
+              }
+            : err instanceof TriageRefusal && err.next
+              ? { next: err.next }
+              : {}),
         });
       }
       return;

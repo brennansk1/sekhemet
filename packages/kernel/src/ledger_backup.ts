@@ -5,6 +5,7 @@ import {
   type ChainRow,
   type ErasureRegisterEntry,
   EventLog,
+  appendErasureRegister,
   erasureIndexOf,
   ledgerErasures,
   readChainRows,
@@ -109,26 +110,45 @@ export interface ApplyErasuresReport {
   reapplied: ErasureRegisterEntry[];
   /** Entries this ledger already carries, as the erasure or a re-application. */
   alreadyApplied: string[];
-  /** Entries with nothing on this ledger to erase (their events came after the backup). */
+  /** Entries with nothing on this ledger to erase (their events are not on it). */
   nothingToErase: string[];
+  /**
+   * Each re-application's own record on this ledger, as the register names
+   * it (rule 35: every `ledger/erased` is in the register): its id and seq
+   * here, and the erasure it re-applies.
+   */
+  records: ErasureRegisterEntry[];
 }
 
 /**
- * Re-apply every register entry newer than `afterSeq` to `log` (rule 35),
- * idempotently: an entry the ledger already carries is skipped, so a second
- * run changes nothing (K-N7-9). Each re-application is its own
- * `ledger/erased {…, reapplies}` event, so the restored chain names its gaps.
+ * Re-apply every register entry to `log` (rule 35), idempotently: an entry the
+ * ledger already carries is skipped, so a second run changes nothing (K-N7-9).
+ * Every entry is considered, never only those above the backup's last seq: a
+ * register names erasures from several ledger lineages (a restore, then an
+ * erasure there), whose seqs cannot be compared with this ledger's (loop
+ * W9-B6). Each re-application is its own `ledger/erased {…, reapplies}`
+ * event, so the restored chain names its gaps.
  */
 export async function applyErasures(
   log: EventLog,
   register: readonly ErasureRegisterEntry[],
-  afterSeq: number,
   options: { blobs?: BlobStore } = {},
 ): Promise<ApplyErasuresReport> {
-  const report: ApplyErasuresReport = { reapplied: [], alreadyApplied: [], nothingToErase: [] };
-  const pending = register.filter((e) => e.seq > afterSeq).sort((a, b) => a.seq - b.seq);
+  const report: ApplyErasuresReport = {
+    reapplied: [],
+    alreadyApplied: [],
+    nothingToErase: [],
+    records: [],
+  };
+  // A re-application an earlier restore recorded is the same decision as the
+  // erasure it names: that entry stands for both, so it is applied once.
+  const decisions = new Set(register.map((e) => e.erasureId));
+  // The register's own order (oldest first): seqs from different lineages
+  // do not order decisions.
+  const pending = register.filter((e) => !(e.reapplies && decisions.has(e.reapplies)));
   for (const entry of pending) {
-    if (log.erasureApplied(entry.erasureId)) {
+    const decision = entry.reapplies ?? entry.erasureId;
+    if (log.erasureApplied(decision)) {
       report.alreadyApplied.push(entry.erasureId);
       continue;
     }
@@ -138,14 +158,15 @@ export async function applyErasures(
       report.nothingToErase.push(entry.erasureId);
       continue;
     }
+    let made: Awaited<ReturnType<EventLog["erase"]>>;
     try {
-      await log.erase({
+      made = await log.erase({
         eventIds,
         blobIds,
         ...(options.blobs ? { blobs: options.blobs } : {}),
         reason: entry.reason,
         principal: entry.principal,
-        reapplies: entry.erasureId,
+        reapplies: decision,
       });
     } catch (err) {
       if (/Nothing to erase/.test((err as Error).message)) {
@@ -155,6 +176,19 @@ export async function applyErasures(
       throw err;
     }
     report.reapplied.push(entry);
+    const record = (await log.getEventsByTypes(["ledger/erased"])).find(
+      (e) => e.id === made.erasureId,
+    );
+    report.records.push({
+      erasureId: made.erasureId,
+      seq: made.erasedBySeq,
+      eventIds: made.eventIds,
+      blobIds: made.blobIds,
+      reason: entry.reason,
+      principal: entry.principal,
+      at: record?.createdAt ?? new Date().toISOString(),
+      reapplies: decision,
+    });
   }
   return report;
 }
@@ -219,7 +253,7 @@ export function ledgerInUse(path: string): boolean {
 /**
  * Restore `backupPath` over `targetPath` (rule 35, K-N7-5): the backup is
  * copied beside the target, migrated if older, and every register erasure
- * newer than its last seq is re-applied there — before the restored ledger is
+ * it does not already carry is re-applied there — before the restored ledger is
  * moved into place, so nothing ever reads it unerased. Refused when erasures
  * are known to exist (in the backup or the ledger being replaced) and the
  * register is missing, or when the backup's chain does not verify. The
@@ -247,6 +281,7 @@ export async function restoreBackup(options: {
   copyFileSync(backupPath, staging);
   let backupSeq: number;
   let reapplied: ErasureRegisterEntry[];
+  let records: ErasureRegisterEntry[];
   const db = new DatabaseSync(staging);
   try {
     initSchema(db);
@@ -258,10 +293,11 @@ export async function restoreBackup(options: {
       );
     }
     backupSeq = log.lastSeq();
-    const applied = await applyErasures(log, register ?? [], backupSeq, {
+    const applied = await applyErasures(log, register ?? [], {
       ...(options.blobs ? { blobs: options.blobs } : {}),
     });
     reapplied = applied.reapplied;
+    records = applied.records;
     const after = log.verifyHashChainSync({ full: true });
     if (!after.valid) {
       throw new RestoreRefused(
@@ -293,6 +329,10 @@ export async function restoreBackup(options: {
   }
   renameSync(staging, targetPath);
   for (const ext of ["-wal", "-shm"]) rmSync(`${staging}${ext}`, { force: true });
+  // Rule 35: the register is appended to by every `ledger/erased`, these
+  // re-applications too, once the ledger holding them is the one in place —
+  // so it names each erasure at the seq the restored ledger gives it.
+  for (const r of records) appendErasureRegister(registerPath, r);
   return { backupSeq, reapplied, ...(previousKeptAt ? { previousKeptAt } : {}) };
 }
 

@@ -7,6 +7,7 @@ import {
   filesShownSinceEvidence,
   implementationFiles,
   ledgerBundle,
+  nothingToRevertFacts,
   revertVerdict,
   reviewEntriesSinceEvidence,
 } from "./accept.js";
@@ -41,8 +42,13 @@ export interface ReviewDesk {
   /**
    * DB-N21-3: on a Done issue, whether the viewer may revert it, and who may
    * instead — the Accept rule, from the same function Revert refuses on.
+   * `nothing` (loop wave 10 A2): Sekhemet merged nothing of the issue to
+   * revert, from the same answer Revert's `nothing_to_revert` refuses on.
    */
-  revert?: { may: true } | { may: false; who: Person[] };
+  revert?:
+    | { may: true }
+    | { may: false; who: Person[] }
+    | { may: false; nothing: { pr?: string; merge?: string } };
   /** A person built the work under review (DB-N5-4); absent when the Worker did. */
   builtBy?: { kind: "person"; id: string; name?: string };
   /**
@@ -133,12 +139,17 @@ export async function reviewDesk(
   });
 
   const rv = card.status === "done" ? revertVerdict(store, viewer, opts.acceptHolders) : undefined;
+  const nothing = card.status === "done" ? await nothingToRevertFacts(store, card.id) : undefined;
   return {
     findings,
     implementationFiles: ev ? implementationFiles(ev) : [],
     filesShown: await filesShownSinceEvidence(store, card.id),
     accept,
-    ...(rv ? { revert: rv.may ? { may: true } : { may: false, who: rv.who.map(person) } } : {}),
+    ...(nothing
+      ? { revert: { may: false as const, nothing } }
+      : rv
+        ? { revert: rv.may ? { may: true } : { may: false, who: rv.who.map(person) } }
+        : {}),
     ...(builder ? { builtBy: builtBy(builder, opts.nameOf(builder)) } : {}),
     testApprovals,
   };

@@ -16,15 +16,13 @@
  *
  * The browser loads the compiled module as `/app/lib/issue.js`.
  */
+import { WAITS_FOR_CODING_MODEL, waitsToStart } from "./nav.js";
 import { assigneeLabel, formatFieldValue, showsPoints } from "./pm.js";
 import {
-  BOARD_COLUMNS,
   type EventLike,
   ISSUE_TYPE_LABELS,
   actorLabel,
   boardColumnLabel,
-  boardColumnOf,
-  columnLabel,
   eventSentence,
   gateLabel,
   issueTypeOf,
@@ -336,6 +334,12 @@ export function agentPanel(
     liveRun?: boolean;
   },
   events: readonly SeqEvent[],
+  opts: {
+    /** No Coding model is ready here (`codingModelFact`): a Ready issue waits for one (wave 8 B3). */
+    noCodingModel?: boolean;
+    /** Why the board would not start this Ready issue (`startBlocker`, wave 9 A3). */
+    startBlocker?: string;
+  } = {},
 ): AgentPanel {
   const moved = lastSeq(events, "card/status_changed");
   const used = card.stepsUsed ?? 0;
@@ -432,7 +436,11 @@ export function agentPanel(
     };
   }
   const idle: Record<string, [AgentLabel, string]> = {
-    ready: ["queued", "Queued: the Agent starts this issue when a slot is free."],
+    ready: opts.noCodingModel
+      ? ["", WAITS_FOR_CODING_MODEL]
+      : opts.startBlocker
+        ? ["", waitsToStart(opts.startBlocker)]
+        : ["queued", "Queued: the Agent starts this issue when a slot is free."],
     planning: ["queued", "Queued: the planning model is preparing this issue for the Agent."],
     review: ["needs you", "The Agent's work is waiting for your review."],
     parked: ["needs you", "On hold until a person takes it off hold."],
@@ -523,6 +531,8 @@ const BRIEF = new Set([
   "card/created",
   "card/status_changed",
   "card/accepted",
+  // Loop wave 10 A1: an Accept that wrote nothing is said, with why (RG-S5-4).
+  "card/accept_failed",
   "card/repair_plan",
   "card/step",
   "card/pause_requested",
@@ -594,11 +604,6 @@ interface StepPayload {
   gate?: { passed: boolean; failed?: string[]; errors?: number };
 }
 
-function boardLabel(status: string): string {
-  const id = boardColumnOf(status);
-  return BOARD_COLUMNS.find((c) => c.id === id)?.label ?? columnLabel(status);
-}
-
 /**
  * A move within one board column, in words (FINDINGS ISS-06): Activity uses
  * the board's columns (NAMING rows 25-26), so the stored stages inside a
@@ -614,7 +619,8 @@ const WITHIN_COLUMN: Record<string, string> = {
 function movedText(p: Record<string, unknown>): string {
   const from = String(p.fromStatus ?? "");
   const to = String(p.toStatus ?? "");
-  const [a, b] = [boardLabel(from), boardLabel(to)];
+  // Rejected is the *Won't do* filter, never its stored name (loop wave 10 B2).
+  const [a, b] = [boardColumnLabel(from), boardColumnLabel(to)];
   if (a !== b) return `moved from ${a} to ${b}`;
   return WITHIN_COLUMN[to] ?? `moved within ${a}`;
 }

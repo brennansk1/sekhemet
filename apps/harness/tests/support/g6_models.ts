@@ -152,7 +152,8 @@ export async function scriptedReviewProject(
  */
 export function recordQualified(
   r: G6Repo,
-  models: [name: string, role: string][],
+  /** `servedAs`: the role the weights are served for, when not `role` (the Planning model reviewing). */
+  models: [name: string, role: string, servedAs?: string][],
   env: Record<string, string> = {},
 ): void {
   mkdirSync(join(r.home, ".sekhemet"), { recursive: true });
@@ -161,8 +162,8 @@ export function recordQualified(
     const { qualificationCombination } = await import(${JSON.stringify(DIST.qualify)});
     const registry = new ModelRegistry(process.env.SEKHEMET_MODEL_REGISTRY);
     const roster = new ModelRoster({ registry });
-    for (const [name, role] of ${JSON.stringify(models)}) {
-      const adapter = roster.resolve(name, role);
+    for (const [name, role, servedAs] of ${JSON.stringify(models)}) {
+      const adapter = roster.resolve(name, servedAs ?? role);
       registry.recordCombinationQualification(adapter.modelId, qualificationCombination(adapter, { registry, role }), {
         suiteVersion: QUALIFICATION_SUITE_VERSION, passRate: 1, status: "qualified", toolCallChecks: true,
       });

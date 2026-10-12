@@ -116,7 +116,8 @@ describe("the Configuration page (NEW-dashboard-6)", () => {
       expect(text).toContain("Giant");
       expect(text).toMatch(/Needs \d+(\.\d)? GB more/);
       await page.getByRole("heading", { name: "Suggested setup" }).waitFor();
-      const roles = await page.locator(".cfg-role b:first-child").allInnerTexts();
+      // The role's name: each row's first cell (its model is in bold too, wave 7 B1).
+      const roles = await page.locator(".cfg-role > div:first-child > b").allInnerTexts();
       expect(roles.slice(0, 4)).toEqual([
         "Coding model",
         "Planning model",

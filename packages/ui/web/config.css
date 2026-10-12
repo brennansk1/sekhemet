@@ -124,6 +124,31 @@
 .cfg .tbl td {
   vertical-align: top;
 }
+/* Wave 7 B7: the Available models table in its half-width card (DB-N19-5's
+   two columns) scrolls sideways inside the card, with the scroll bar shown —
+   never an overlay that hides that columns are past the edge — and its
+   long headings wrap; the name and the fit keep a readable width instead of
+   a column one word wide. */
+.cfg .tbl th {
+  white-space: normal;
+  vertical-align: bottom;
+}
+.cfg .tbl td:first-child {
+  min-width: 9em;
+}
+.cfg .tbl td:nth-child(6) {
+  min-width: 20em;
+}
+.cfg .tbl-wrap::-webkit-scrollbar {
+  height: 8px;
+}
+.cfg .tbl-wrap::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: var(--border-strong);
+}
+.cfg .tbl-wrap::-webkit-scrollbar-track {
+  background: var(--bg-raised);
+}
 .cfg .fit-no {
   color: var(--state-fail);
 }

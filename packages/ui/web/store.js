@@ -105,6 +105,15 @@ export function triageBlocker(state) {
   return null;
 }
 
+/**
+ * The current project's name, as Status, Projects and the sidebar say it
+ * (wave 8 B6): every page header names the project, never the repository's
+ * folder, which stands in only until the projects list has loaded.
+ */
+export function projectName(state = store.state) {
+  return state.project?.name || state.meta?.project || "";
+}
+
 export function ledgerAltered(state) {
   return Boolean(state.verification && state.verification.valid === false);
 }

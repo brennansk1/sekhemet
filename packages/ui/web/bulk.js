@@ -96,8 +96,9 @@ function parkAll(list, anchor) {
 }
 
 /**
- * Undo a hold (§2.4.23): each issue goes back where it was put on hold from,
- * as a new recorded move, unless it has left On hold since.
+ * Undo a hold (§2.4.23): each issue goes to Backlog or Planning when it was
+ * put on hold from there, else To do (review-git §2.4), as a new recorded
+ * move, unless it has left On hold since.
  */
 async function unholdAll(ids) {
   let back = 0;

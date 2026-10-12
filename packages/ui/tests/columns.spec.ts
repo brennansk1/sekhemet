@@ -127,6 +127,24 @@ describe("DB-P3-1: five professional columns over the nine stored states", () =>
     expect(m.chips.map((c) => c.label)).toEqual(["Backlog", "In review", "Done"]);
   });
 
+  // Wave 9 A1: the dashboard's board places a parent where its issues are,
+  // as the terminal board does (S1B-B16), keeping its stored state on the card.
+  it("places an epic where its issues are, and an epic with none in To do", () => {
+    const m = boardModel({
+      cards: [
+        one("planning", "e1", { tier: "epic" }),
+        one("in_progress", "s1", { tier: "story", parentId: "e1" }),
+        one("in_progress", "e0", { tier: "epic" }),
+      ],
+      now: NOW,
+    });
+    const ids = Object.fromEntries(m.columns.map((c) => [c.id, c.cards.map((x) => x.id)]));
+    expect(ids).toEqual({ todo: ["e0"], in_progress: ["e1", "s1"] });
+    // The card keeps its stored state: a move names where it really is.
+    const e0 = m.columns.find((c) => c.id === "todo")?.cards[0];
+    expect(e0?.status).toBe("in_progress");
+  });
+
   it("hides rejected cards unless the filter asks for Won't do", () => {
     const cards = [one("rejected", "r"), one("ready", "a")];
     expect(boardModel({ cards, now: NOW }).columns.map((c) => c.id)).toEqual(["todo"]);
@@ -501,7 +519,7 @@ describe("DB-P3-8: no step budget in Backlog or Ready", () => {
     const back = tileModel(boardCard({ status: "ready" }, { statusReason: "returned: fix" }), {
       now: NOW,
     });
-    expect(back.status?.text).toBe("Changes requested, with a note");
+    expect(back.status?.text).toBe("Changes requested, with a reason");
   });
 });
 
@@ -729,12 +747,36 @@ describe("S1B-B16: a parent is shown where its issues are", () => {
     expect(shownStatus("in_progress", kids("planning", "rejected"))).toBe("planning");
   });
 
-  it("a closed or held parent, one with no open issues, and a leaf keep their stored state", () => {
+  it("a closed or held parent, and one whose issues are all done, keep their stored state", () => {
     expect(shownStatus("done", kids("planning"))).toBe("done");
     expect(shownStatus("parked", kids("planning"))).toBe("parked");
     expect(shownStatus("rejected", kids("ready"))).toBe("rejected");
     expect(shownStatus("in_progress", kids("done", "done"))).toBe("in_progress");
-    expect(shownStatus("in_progress", [])).toBe("in_progress");
+    expect(shownStatus("planning", [])).toBe("planning");
+    expect(shownStatus("backlog", [])).toBe("backlog");
+  });
+
+  // Wave 9 A1 (sweep 5): an epic stored In progress (every epic before wave
+  // 9) with no live issue — a plan killed after the epic, a plan whose
+  // issues were all rejected — showed *Being built* with nothing to build.
+  it("a parent with no live issue is never In progress: it is being planned", () => {
+    expect(shownStatus("in_progress", [])).toBe("planning");
+    expect(shownStatus("in_progress", kids("rejected", "rejected"))).toBe("planning");
+    expect(shownStatus("verify", [])).toBe("planning");
+    expect(shownStatus("review", kids("rejected"))).toBe("planning");
+  });
+
+  it("withShownStatus places an epic with no issues by shownStatus, and a leaf as stored", () => {
+    const cards = [
+      { id: "e0", tier: "epic", status: "in_progress" as CardStatus },
+      { id: "s0", tier: "story", status: "in_progress" as CardStatus },
+      { id: "t0", status: "in_progress" as CardStatus },
+    ];
+    expect(withShownStatus(cards).map((c) => [c.id, c.status])).toEqual([
+      ["e0", "planning"],
+      ["s0", "in_progress"],
+      ["t0", "in_progress"],
+    ]);
   });
 
   it("withShownStatus moves only parents, by their own issues", () => {

@@ -211,7 +211,7 @@ export function itemLine(item: InboxItemFacts): {
   line: string;
   ai?: AiStateLine[];
 } {
-  const ai = item.ai?.length ? { ai: item.ai.map(aiStateLine) } : {};
+  const ai = item.ai?.length ? { ai: item.ai.map((f) => aiStateLine(f)) } : {};
   const title = item.title;
   switch (item.kind) {
     case "start_request":

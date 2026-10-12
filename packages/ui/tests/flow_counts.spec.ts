@@ -57,7 +57,7 @@ describe("A3: one count of finished issues", () => {
         facts: facts(finished, hours),
         cards: [],
       }).flow.note;
-    expect(note(1, [])).toBe("Cycle time needs 3 finished issues; there is 1.");
+    expect(note(1, [])).toBe("Cycle time and throughput need 3 finished issues; there is 1.");
     expect(note(5, [2])).toBe(
       "Cycle time needs 3 issues built through In progress; 1 of the 5 finished was.",
     );

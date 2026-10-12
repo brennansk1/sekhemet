@@ -945,3 +945,76 @@ describe("note's gate enum holds only the gates this attempt runs (B2.3 confirma
     expect(gateEnum).not.toContain("unit");
   });
 });
+
+describe("every gate run that decides a card is on the ledger (wave 8 A4)", () => {
+  // kernel rule 14: gate results and evidence records are projections of the
+  // log. A verification the runner ran itself (forced at a budget stop, or
+  // again after a rebase) reached only the evidence file, so the export's
+  // gate results had none of the rung that passed, and the evidence row's
+  // gate summary stayed empty while the bundle recorded a pass.
+  const passing = () => {
+    let calls = 0;
+    const runner: GateRunner = {
+      runGates: async (): Promise<GateResult> => {
+        calls++;
+        return {
+          passed: true,
+          failures: [],
+          durationMs: 1,
+          rungResults: [
+            {
+              gate: "unit",
+              rung: "unit",
+              layer: "functional",
+              passed: true,
+              exitCode: 0,
+              durationMs: 1,
+            },
+          ],
+        };
+      },
+    };
+    return { runner, calls: () => calls };
+  };
+
+  /** The gate results the runner recorded outside a step: its own verifications. */
+  const ownRuns = async () =>
+    (await log.getEventsByTypes(["gate/result"]))
+      .filter((e) => !e.stepId)
+      .map((e) => e.payload as { gate: string; passed: boolean });
+
+  it("a forced verification's rungs are recorded, and the evidence row sums them", async () => {
+    const card = await newCard({ stepBudget: 1 });
+    const g = passing();
+    const result = await runner(card, {
+      stepBudget: 1,
+      gateRunner: g.runner,
+      modelAdapter: scripted(() => [write(1)]).adapter,
+    }).run();
+    expect(result.stopReason).toBe("gate_passed");
+    expect(await ownRuns()).toContainEqual(expect.objectContaining({ gate: "unit", passed: true }));
+    const [ev] = store.runs.listEvidence(card.id);
+    expect(ev?.passed).toBe(true);
+    expect(ev?.gateResultsSummary).toMatchObject({ unit: "pass" });
+    expect(store.runs.listGateResults(ev?.attemptId ?? "").map((r) => r.gate)).toContain("unit");
+  });
+
+  it("the re-verification after a rebase is recorded too", async () => {
+    const card = await newCard();
+    const { adapter } = scripted((t) => {
+      if (t === 1) {
+        writeFileSync(join(repo, "src", "b.ts"), "export const b = 1;\n");
+        git(repo, "add", "-A");
+        git(repo, "commit", "-qm", "main moved");
+        return [write(1), finish];
+      }
+      return [finish];
+    });
+    const g = passing();
+    const result = await runner(card, { modelAdapter: adapter, gateRunner: g.runner }).run();
+    expect(result.stopReason).toBe("gate_passed");
+    expect(g.calls()).toBeGreaterThanOrEqual(2);
+    // The pre-rebase pass is a step's; the one after the rebase is the runner's own.
+    expect(await ownRuns()).toContainEqual(expect.objectContaining({ gate: "unit", passed: true }));
+  });
+});

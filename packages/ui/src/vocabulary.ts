@@ -153,14 +153,17 @@ export function columnLabel(status: string): string {
 
 /**
  * A stored state in plain words, for Status and plain mode (dashboard §2.8.13,
- * DB-P5-2): no column jargon, no stop-reason code.
+ * DB-P5-2): no column jargon, no stop-reason code. A stored In progress or
+ * Verify card is *In progress*, its board column, as Status's headline and
+ * standup say it: *Being built* or *Being checked* would claim work no run
+ * may back (wave 2 A1), and gave one state a third label (wave 8 B4).
  */
 const PLAIN_STATUS: Record<CardStatus, string> = {
   backlog: "Not started",
   ready: "Ready to start",
   planning: "Being planned",
-  in_progress: "Being built",
-  verify: "Being checked",
+  in_progress: "In progress",
+  verify: "In progress",
   review: "Waiting for review",
   done: "Done",
   parked: "On hold",
@@ -285,15 +288,24 @@ export function boardColumnOf(status: string): BoardColumnId | "wont_do" | undef
 const STARTED: readonly CardStatus[] = ["in_progress", "verify", "review", "done"];
 
 /**
+ * The tiers that are parents even with no issues yet: they never run
+ * themselves (board B7). A feature can be built as one card, so it is a
+ * parent only when it has issues.
+ */
+const PARENT_TIERS: ReadonlySet<string> = new Set(["epic", "initiative"]);
+
+/**
  * The state a parent (an epic, an initiative) is shown in (S1B-B16). A
- * parent never runs itself — its scope is its children's (board B7) — and
- * the planner stores a new epic In progress, so its stored state says
- * nothing about work. It is shown where its issues are: In progress once any
- * of them ran (or was accepted), as Jira's epics are; before that, the most
- * advanced not-started state among them (Ready, then Planning, then Backlog).
- * A parent that is Done, On hold or Won't do, one whose open issues are all
- * Done (the rollup moves it), or a card with no issues keeps its stored
- * state. Rejected issues are no part of it.
+ * parent never runs itself — its scope is its children's (board B7) — so
+ * its stored state says nothing about work: a plan stores a new epic in
+ * Planning (wave 9 A1), and every epic planned before wave 9 is stored In
+ * progress. It is shown where its issues are: In progress once any of them
+ * ran (or was accepted), as Jira's epics are; before that, the most advanced
+ * not-started state among them (Ready, then Planning, then Backlog). A
+ * parent with no live issue — none yet, a plan stopped partway, every issue
+ * rejected — is being planned, never In progress (wave 9 A1). A parent that
+ * is Done, On hold or Won't do, or one whose open issues are all Done (the
+ * rollup moves it), keeps its stored state. Rejected issues are no part of it.
  */
 export function shownStatus(
   stored: CardStatus,
@@ -301,7 +313,8 @@ export function shownStatus(
 ): CardStatus {
   if (stored === "done" || stored === "parked" || stored === "rejected") return stored;
   const live = children.map((c) => c.status).filter((s) => s !== "rejected");
-  if (live.length === 0 || live.every((s) => s === "done")) return stored;
+  if (live.length === 0) return STARTED.includes(stored) ? "planning" : stored;
+  if (live.every((s) => s === "done")) return stored;
   if (live.some((s) => STARTED.includes(s))) return "in_progress";
   if (live.includes("ready")) return "ready";
   if (live.includes("planning")) return "planning";
@@ -309,12 +322,17 @@ export function shownStatus(
 }
 
 /**
- * Cards as the board shows them (S1B-B16): each parent in its
- * {@link shownStatus}, read from its own issues among `cards`; every other
- * card as stored.
+ * Cards as the board shows them (S1B-B16): each parent — a card with issues
+ * among `cards`, or an epic or initiative with none — in its
+ * {@link shownStatus}, read from its own issues; every other card as stored.
  */
 export function withShownStatus<
-  C extends { id: string; status: CardStatus; parentId?: string | null | undefined },
+  C extends {
+    id: string;
+    status: CardStatus;
+    parentId?: string | null | undefined;
+    tier?: string | null | undefined;
+  },
 >(cards: readonly C[]): C[] {
   const children = new Map<string, C[]>();
   for (const c of cards) {
@@ -322,7 +340,7 @@ export function withShownStatus<
     children.set(c.parentId, [...(children.get(c.parentId) ?? []), c]);
   }
   return cards.map((c) => {
-    const own = children.get(c.id);
+    const own = children.get(c.id) ?? (c.tier && PARENT_TIERS.has(c.tier) ? [] : undefined);
     if (!own) return c;
     const status = shownStatus(c.status, own);
     return status === c.status ? c : { ...c, status };
@@ -1152,7 +1170,7 @@ export function statusLine(
       return { text: `Backlog · ${budget}`, tone: "neutral", mark: "none", quiet: true };
     case "ready":
       if (/^returned:/.test(ctx.statusReason ?? "")) {
-        return { text: "Changes requested, with a note", tone: "neutral", mark: "none" };
+        return { text: "Changes requested, with a reason", tone: "neutral", mark: "none" };
       }
       if (ev && !ev.passed) return { text: `${failText} · will retry`, tone: "fail", mark: "fail" };
       return { text: `Ready · ${budget}`, tone: "neutral", mark: "none", quiet: true };
@@ -1333,7 +1351,9 @@ export function eventSentence(
       const from = columnLabel(String(p.fromStatus ?? ""));
       const to = String(p.toStatus ?? "");
       const reason = typeof p.reason === "string" ? p.reason : "";
-      const note = /^(returned|parked):\s*(.+)$/s.exec(reason)?.[2]?.trim();
+      // A Won't do's reason is shown with its move (loop wave 10 B1: the
+      // dialog promises "The reason is kept on the issue").
+      const note = /^(returned|parked|rejected):\s*(.+)$/s.exec(reason)?.[2]?.trim();
       if (to === "done") return { ...base, verb: "accepted", rest: "into Done", tone: "pass" };
       if (reason.startsWith("returned")) {
         return {
@@ -1351,6 +1371,7 @@ export function eventSentence(
         ...base,
         verb: "moved",
         rest: `from ${from} to ${columnLabel(to)}`,
+        ...(to === "rejected" && note ? { quote: note } : {}),
         tone: "neutral",
       };
     }
@@ -1389,6 +1410,18 @@ export function eventSentence(
     case "card/accepted": {
       const sha = typeof p.sha === "string" ? p.sha.slice(0, 7) : "";
       return { ...base, verb: "merged", rest: sha ? `to main as ${sha}` : "to main", tone: "pass" };
+    }
+    // Loop wave 10 A1 (RG-S5-4, RG-N8-1): an Accept that wrote nothing, and why.
+    case "card/accept_failed": {
+      const files = Array.isArray(p.files) ? p.files.map(String) : [];
+      const onto = typeof p.integration === "string" ? p.integration : "the integration branch";
+      const why =
+        p.reason === "conflict"
+          ? `it conflicts with ${onto}${files.length ? ` in ${files.join(", ")}` : ""}; nothing was written and it stays In review`
+          : p.reason === "merge_missing"
+            ? "its merge never reached the integration branch; it stays In review"
+            : "nothing was written and it stays In review";
+      return { ...base, verb: "could not accept", rest: `· ${why}`, tone: "fail" };
     }
     case "card/repair_plan":
       return {

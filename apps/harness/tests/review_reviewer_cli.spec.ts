@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ModelRegistry } from "@sekhemet/models";
 import { afterEach, describe, expect, it } from "vitest";
 import { REVIEW_REPLY_SCHEMA } from "../src/learning/review_copy.js";
 import {
@@ -8,6 +9,7 @@ import {
   REVIEWER,
   SAME_FAMILY_REVIEWER,
   WORKER,
+  recordQualified,
   scriptedReviewProject,
 } from "./support/g6_models.js";
 import { BIN, type G6Repo, eventsOf, g6Repo, statusOf, write } from "./support/g6_review.js";
@@ -41,12 +43,16 @@ interface Run {
 async function queueWithReviewer(
   opts: {
     reviewer?: string;
+    /** No `--reviewer`: the queue resolves the Review model itself (wave 7 B1). */
+    noReviewerFlag?: boolean;
     mode?: "json" | "prose" | "cut";
     flags?: string[];
     env?: Record<string, string>;
     /** The environment the models were qualified under; default `env`. */
     qualifiedUnder?: Record<string, string>;
     before?: (r: G6Repo) => void;
+    /** `sekhemet run c1` in place of `sekhemet queue`. */
+    run?: boolean;
   } = {},
 ): Promise<Run> {
   const r = g6Repo();
@@ -62,11 +68,10 @@ async function queueWithReviewer(
     [
       ...project.nodeArgs,
       BIN,
-      "queue",
+      ...(opts.run ? ["run", "c1"] : ["queue"]),
       "--worker",
       WORKER,
-      "--reviewer",
-      reviewer,
+      ...(opts.noReviewerFlag ? [] : ["--reviewer", reviewer]),
       ...(opts.flags ?? []),
     ],
     {
@@ -262,6 +267,64 @@ describe("RG-P8-10: a Reviewer of the Worker's family leaves the role unfilled",
     const desk = await reviewDesk(r, "c1");
     expect(JSON.stringify(desk)).toMatch(/outside the Coding model's family/);
   }, 150_000);
+});
+
+describe("MD-N4-9, wave 7 B1: the queue reviews on the Review model every surface names", () => {
+  it("MD-N4-9: with nothing assigned, the queue and `models list` name the same shipped Review model, a verified model of another family", async () => {
+    const run = await queueWithReviewer({
+      noReviewerFlag: true,
+      before: (x) => {
+        // The Review model's family on record, as `models add` and a scan record it.
+        new ModelRegistry(join(x.home, ".sekhemet", "models.json")).upsert(REVIEWER, {
+          family: "gemma",
+        });
+        // The Coding model `models list` reads, the one the queue is given.
+        write(x.repo, ".sekhemet/config.toml", `[models]\nexecutor = "${WORKER}"\n`);
+      },
+    });
+    expect(run.status, run.out).toBe(0);
+    const listed = spawnSync(process.execPath, [BIN, "models", "list"], {
+      cwd: run.r.repo,
+      encoding: "utf8",
+      env: run.r.env(),
+    });
+    expect(listed.stdout, listed.stderr).toContain(`Review model: ${REVIEWER}`);
+    expect(run.out).toMatch(new RegExp(`AI review of c1 \\(${REVIEWER}\\)`));
+    expect(run.requests.length).toBeGreaterThan(0);
+    for (const body of run.requests) expect(body.model).toBe(REVIEWER);
+  }, 150_000);
+});
+
+describe("MD-N10-3, wave 1 residual: `run` falls back to the effective Planning model, as the queue does", () => {
+  it("MD-N10-3: with no Review model and the Planning model only in config.toml (another family), `run` reviews on it, as `queue` does", async () => {
+    // No Review model resolves: the reviewer's family is not on record, so
+    // there is no shipped default, and nothing is assigned. The Planning
+    // model of another family comes from config.toml, not an assignment.
+    // It reviews on the Planning model's weights, so it is verified as served there.
+    const configured = (x: G6Repo) => {
+      write(x.repo, ".sekhemet/config.toml", `[models]\nplanner = "${REVIEWER}"\n`);
+      recordQualified(x, [
+        [REVIEWER, "planner"],
+        [REVIEWER, "reviewer", "planner"],
+      ]);
+    };
+    for (const viaRun of [false, true]) {
+      const done = await queueWithReviewer({
+        noReviewerFlag: true,
+        run: viaRun,
+        before: configured,
+      });
+      const what = viaRun ? "run" : "queue";
+      expect(done.out, what).toMatch(new RegExp(`AI review (of c1|on) \\(?${REVIEWER}`));
+      expect(done.requests.length, `${what}: ${done.out}`).toBeGreaterThan(0);
+      for (const body of done.requests) expect(body.model).toBe(REVIEWER);
+      const entries = await reviewEntries(done.r, "c1");
+      expect(
+        entries.map((e) => e.verdict),
+        what,
+      ).not.toContain("not_reviewed");
+    }
+  }, 300_000);
 });
 
 describe("RG-P8-17: the Reviewer's method is a recorded experiment switch", () => {

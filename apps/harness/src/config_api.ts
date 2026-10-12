@@ -121,6 +121,7 @@ import { networkHint } from "./github_transport.js";
 import { recordWorkerAdopted } from "./m0_path.js";
 import { swapHistory } from "./model_access.js";
 import { rolePromptVersion } from "./prompt_versions.js";
+import { type RoleModel, effectiveRoleModels } from "./role_models.js";
 import { headroomProbeFor } from "./smart_swap.js";
 import { REPLAY_EVENT_TYPES, replayDemand } from "./swap_replay.js";
 import type { TeamEnginesReport } from "./team_engines.js";
@@ -805,7 +806,8 @@ export function createConfigApi(deps: ConfigApiDeps) {
           : { ...f, readable: true, writable };
       }),
       suggestedFolders: suggestedModelFolders({ env, configured: folders.map((f) => f.path) }),
-      models: state.models,
+      // Wave 7 B5: the id a setup and the recommendation name it by (`modelKey`).
+      models: state.models.map((m) => ({ ...m, key: modelKey(m) })),
       skipped: state.scan?.skipped ?? [],
       truncated: state.scan?.truncated ?? false,
       scannedAt: state.scan?.scannedAt,
@@ -886,9 +888,17 @@ export function createConfigApi(deps: ConfigApiDeps) {
    * review).
    */
   const workerFamily = (recommended?: string) => {
-    const w = assignedModel("worker") ?? recommended;
+    const w = assignedModel("worker") ?? recommended ?? effectiveRoles()[0]?.model;
     return w ? familyOfModel(w) : undefined;
   };
+  /**
+   * Each role's model as `run` and the queue resolve it — the one source the
+   * CLI, doctor and Machine read (wave 7 B1, `role_models.ts`), read without
+   * a write. While no Coding model is assigned, the Review model's family
+   * rule is applied against the one the harness would use (B3, RG-P8-10).
+   */
+  const effectiveRoles = (): RoleModel[] =>
+    effectiveRoleModels(deps.repoPath, { registry, host: host(), env: deps.env ?? process.env });
 
   /**
    * Models with a source that are not in any folder (rule 4c: "up to the
@@ -1004,8 +1014,19 @@ export function createConfigApi(deps: ConfigApiDeps) {
     return out;
   };
 
+  /** Whether a model is on this machine: found in a folder, or its registered weights are there. */
+  const presentHere = (model: string): boolean | undefined => {
+    if (findModel(model)) return true;
+    const w = registry.preferredWeights(model);
+    if (w) return existsSync(w);
+    // An Ollama tag lives in Ollama's own store, which this page does not read.
+    return model.includes(":") ? undefined : false;
+  };
+
   const rolesBody = async (): Promise<{ roles: (RoleAssignment & Json)[] }> => {
     if (!state.scan) await scan();
+    const effective = effectiveRoles();
+    const codingFamily = workerFamily();
     const scores = await quick();
     const compare = await compareFn();
     const resident = new Set(deps.residency?.resident() ?? []);
@@ -1058,9 +1079,32 @@ export function createConfigApi(deps: ConfigApiDeps) {
           : undefined;
       const kept = model !== undefined && keeps.get(role) === model;
       const engine = engineFor(engines, role);
+      const eff = effective.find((e) => e.role === role);
+      const present = eff?.model ? presentHere(eff.model) : undefined;
+      // Wave 7 B4: the found models verified for this role here, so the row
+      // offers *Verify on this machine to assign* before the press.
+      const verifiedModels = [
+        ...new Set(
+          state.models
+            .map((m) => modelKey(m))
+            .filter((id) => ["qualified", "overridden"].includes(qualificationOf(id, role))),
+        ),
+      ];
       roles.push({
         role,
         ...(model ? { model } : {}),
+        ...(eff
+          ? {
+              effective: {
+                ...(eff.model ? { model: eff.model } : {}),
+                source: eff.source,
+                from: eff.from,
+                ...(present !== undefined ? { present } : {}),
+              },
+            }
+          : {}),
+        verifiedModels,
+        ...(role === "reviewer" && codingFamily ? { codingFamily } : {}),
         state: !model ? "not_configured" : resident.has(model) ? "resident" : "swapped_out",
         qualified: model ? qualified : false,
         checks: checksFor(role, shown, qualified, {
@@ -1071,7 +1115,8 @@ export function createConfigApi(deps: ConfigApiDeps) {
         ...(model ? { verification: verificationOf(model, role) } : {}),
         ...(engine ? { engine } : {}),
         ...(!model && r.unfilledReason ? { unfilledReason: r.unfilledReason } : {}),
-        ...(!model && !r.unfilledReason
+        // The headline already says *Not assigned* when a model would run (wave 7 B1).
+        ...(!model && !r.unfilledReason && !eff?.model
           ? { unfilledReason: "No model is assigned to this role yet." }
           : {}),
         ...(rec ? { recommendation: { ...rec, ...(download ? { download } : {}) } } : {}),
@@ -2748,6 +2793,18 @@ export function createConfigApi(deps: ConfigApiDeps) {
             });
             return true;
           }
+          const verified = (s: string) => ["qualified", "overridden"].includes(s);
+          const refuseUnverified = () =>
+            deps.json(res, 409, {
+              error: `${m?.name ?? id} is not verified on this machine as the ${roleWords(role)} (a check of a few minutes: tool calls, a multi-turn tool conversation, recall). Verify on this machine to assign runs it.`,
+              needs: "qualification",
+            });
+          // MD-N4-5b, MD-N12-9: a refused assignment registers nothing; the
+          // file is registered on an accepted assignment or for its check.
+          if (!key.endsWith("/qualify") && !verified(qualificationOf(id, role))) {
+            refuseUnverified();
+            return true;
+          }
           if (m) {
             if (!registry.get(id))
               registry.upsert(id, { ...(family ? { family } : {}), sizeBytes: m.sizeBytes });
@@ -2775,7 +2832,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
           }
           let status = qualificationOf(id, role);
           let qualifyReason: string | undefined;
-          if (key.endsWith("/qualify") && !["qualified", "overridden"].includes(status)) {
+          if (key.endsWith("/qualify") && !verified(status)) {
             if (!deps.qualify) {
               deps.json(res, 409, {
                 error:
@@ -2796,11 +2853,8 @@ export function createConfigApi(deps: ConfigApiDeps) {
               return true;
             }
           }
-          if (!["qualified", "overridden"].includes(status)) {
-            deps.json(res, 409, {
-              error: `${m?.name ?? id} is not verified on this machine as the ${roleWords(role)} (a check of a few minutes: tool calls, a multi-turn tool conversation, recall). Verify on this machine to assign runs it.`,
-              needs: "qualification",
-            });
+          if (!verified(status)) {
+            refuseUnverified();
             return true;
           }
           const principal = deps.principalOf(req);

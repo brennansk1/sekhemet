@@ -614,7 +614,8 @@ describe("the history and the external benchmarks (MS-N8-3, MS-N8-4)", () => {
       }),
     ]);
     expect(x.protocol.capstone).toMatch(/byte-identical.*hidden/);
-    expect(x.protocol.webbench).toMatch(/pass@1/);
+    // Wave 7 B6: the scores in words, not pass@1.
+    expect(x.protocol.webbench).toMatch(/passed on the first try, passed with the one retry/);
     expect(
       externalResults({ root: join(r.dir, "none"), runsRoot: join(r.dir, "none") }),
     ).toMatchObject({

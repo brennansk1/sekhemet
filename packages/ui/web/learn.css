@@ -179,6 +179,11 @@
     min-height: 44px;
     justify-content: center;
   }
+  /* Loop wave 10 B4: under a one-line welcome (§2.2.5) — what Sekhemet is
+     and where to change the answer stay for a screen reader, and the model
+     step is the No Coding model bar's, just above, so it is not said twice. */
+  .fr-welcome .sec,
+  .fr-head > .sec,
   .fr-choices .fr-choice .sec {
     position: absolute;
     width: 1px;
@@ -186,5 +191,8 @@
     overflow: hidden;
     clip: rect(0 0 0 0);
     white-space: nowrap;
+  }
+  :has(> #sk-noworker) > .fr-bar .fr-step {
+    display: none;
   }
 }

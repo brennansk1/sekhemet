@@ -432,3 +432,149 @@ describe("NEW-kernel-12: one ledger, several projects (K-N12-2, K-N12-4)", () =>
     expect(out.lines.join("\n")).toMatch(/truncated/i);
   });
 });
+
+describe("Loop W9-B: the ledger commands a person reaches", () => {
+  /** Change seq `seq`'s timestamp with the triggers dropped, as the sweep's tamper did. */
+  function tamper(r: string, seq: number): void {
+    const raw = new DatabaseSync(join(r, ".sekhemet", "events.db"));
+    raw.exec("DROP TRIGGER IF EXISTS events_no_update");
+    raw.prepare("UPDATE events SET created_at = '2000-01-01T00:00:00.000Z' WHERE seq = ?").run(seq);
+    raw.close();
+  }
+
+  it("W9-B2: erase --events takes the entry numbers `sekhemet log` prints, and an unknown one is refused with where the numbers are", async () => {
+    const r = repo();
+    const { db, log } = initLocalKernel(r);
+    const note = await log.append({
+      actor: "human",
+      type: "card/note",
+      payload: {},
+      private: { text: "a private note" },
+    });
+    db.close();
+    const listed = output();
+    await main(["log", "--repo", r]);
+    expect(listed.lines.join("\n")).toContain(`#${note.seq} `);
+    expect(listed.lines.join("\n")).not.toContain(note.id);
+
+    output();
+    await main(["erase", "--events", String(note.seq), "--repo", r]);
+    expect(process.exitCode ?? 0).toBe(0);
+    const after = initLocalKernel(r);
+    expect(after.log.erasureOf(note.id)).toBeGreaterThan(0);
+    after.db.close();
+
+    process.exitCode = undefined;
+    const out = output();
+    await main(["erase", "--events", "not-a-real-id", "--repo", r]);
+    expect(process.exitCode).toBe(1);
+    const text = out.lines.join("\n");
+    expect(text).toMatch(/^sekhemet: No entry not-a-real-id in the Activity log/m);
+    expect(text).toMatch(/^ {2}Do: .*sekhemet log/m);
+    expect(text).not.toMatch(/sekhemet stopped|details are in/);
+  });
+
+  it("W9-B2: an entry with nothing private to erase is refused with a next step, not a crash", async () => {
+    const r = repo();
+    const { db, log } = initLocalKernel(r);
+    const plain = await log.append({ actor: "system", type: "x", payload: { n: 1 } });
+    db.close();
+    const out = output();
+    await main(["erase", "--events", `#${plain.seq}`, "--repo", r]);
+    expect(process.exitCode).toBe(1);
+    const text = out.lines.join("\n");
+    expect(text).toMatch(/^sekhemet: Entry #\d+ has nothing private to erase/m);
+    expect(text).toMatch(/^ {2}Do: /m);
+    expect(text).not.toMatch(/sekhemet stopped/);
+  });
+
+  it("W9-B3: `sekhemet log` on a copied folder appends nothing to the ledger it verifies", async () => {
+    const r = repo();
+    const { db, cardStore } = initLocalKernel(r);
+    await cardStore.ensureProject({ rootPath: r, name: "Orig" });
+    db.close();
+    const copy = `${r}-copy`;
+    dirs.push(copy);
+    execFileSync("cp", ["-R", r, copy]);
+    const countOf = (folder: string) => {
+      const d = new DatabaseSync(join(folder, ".sekhemet", "events.db"), { readOnly: true });
+      try {
+        return (d.prepare("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n;
+      } finally {
+        d.close();
+      }
+    };
+    const before = countOf(copy);
+    output();
+    await main(["log", "--repo", copy]);
+    expect(countOf(copy)).toBe(before);
+  });
+
+  it("W9-B4: a backup of a ledger that does not verify leaves no file, and the retry gives the same refusal", async () => {
+    const r = repo();
+    const { db, log } = initLocalKernel(r);
+    await log.append({ actor: "system", type: "x", payload: { n: 1 } });
+    const last = await log.getLastEvent();
+    db.close();
+    tamper(r, last?.seq ?? 1);
+    const target = join(r, "..", `${r.split("/").at(-1)}-bad.db`);
+    dirs.push(target);
+    for (const attempt of [1, 2]) {
+      process.exitCode = undefined;
+      const out = output();
+      await main(["backup", target, "--repo", r]);
+      expect(process.exitCode, `attempt ${attempt}`).toBe(1);
+      const text = out.lines.join("\n");
+      expect(text).toMatch(/^sekhemet: The backup at .* does not verify, so it was not kept/m);
+      expect(text).toMatch(/^ {2}Do: .*sekhemet log/m);
+      expect(text).not.toMatch(/already exists|sekhemet stopped/);
+      expect(existsSync(target)).toBe(false);
+    }
+    // A whole set refuses the same way, and leaves no set behind.
+    process.exitCode = undefined;
+    const out = output();
+    await main(["backup", "--repo", r]);
+    expect(process.exitCode).toBe(1);
+    expect(out.lines.join("\n")).toMatch(
+      /^sekhemet: The backup set was not written: the Activity log does not verify/m,
+    );
+    process.exitCode = undefined;
+    const listed = output();
+    await main(["backup", "--list", "--repo", r]);
+    expect(listed.lines.join("\n")).toMatch(/No backup sets yet/);
+  });
+
+  it("W9-B4: a backup path that already holds a file is refused before anything is copied", async () => {
+    const r = repo();
+    initLocalKernel(r).db.close();
+    const target = join(r, "..", `${r.split("/").at(-1)}-taken.db`);
+    dirs.push(target);
+    writeFileSync(target, "someone's file");
+    const out = output();
+    await main(["backup", target, "--repo", r]);
+    expect(process.exitCode).toBe(2);
+    const text = out.lines.join("\n");
+    expect(text).toMatch(/^sekhemet: .* already exists/m);
+    expect(text).toMatch(/^ {2}Do: /m);
+    expect(readFileSync(target, "utf8")).toBe("someone's file");
+  });
+});
+
+describe("Loop W9-B5: a second set the same day replaces the first, and says which (RUN-60)", () => {
+  it("names the removed set and the rule that removed it", async () => {
+    const r = repo();
+    initLocalKernel(r).db.close();
+    const first = output();
+    await main(["backup", "--repo", r]);
+    expect(process.exitCode ?? 0).toBe(0);
+    const firstPath = /to (\S+) \(verified\)/.exec(first.lines.join("\n"))?.[1];
+    expect(firstPath && existsSync(firstPath)).toBe(true);
+    const second = output();
+    await main(["backup", "--repo", r]);
+    expect(process.exitCode ?? 0).toBe(0);
+    const text = second.lines.join("\n");
+    expect(existsSync(firstPath as string)).toBe(false);
+    expect(text).toContain(`this install wrote: ${firstPath}.`);
+    expect(text).toMatch(/Only the newest set of each day is kept/);
+  });
+});

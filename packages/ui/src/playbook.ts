@@ -11,7 +11,7 @@ export const PLAYBOOK_COPY = {
   headings: { candidates: "Needs your approval", active: "Active", retired: "Retired" },
   empty: {
     candidates:
-      "Nothing awaiting approval. New rules come from fixes that took the Agent several tries, your notes when you request changes, and Seshat's notes at the end of a run.",
+      "Nothing awaiting approval. New rules come from fixes that took the Agent several tries, your reasons when you request changes, and Seshat's notes at the end of a run.",
     active: "No active rules.",
     retired: "None retired.",
   },
@@ -28,7 +28,7 @@ export const PLAYBOOK_COPY = {
     heading: "Project rules Seshat follows",
     lock: "These stay on this machine, in the project's Activity log. Edit a statement to correct it; dismiss it and Seshat stops using it.",
     empty:
-      "Nothing yet. Seshat learns from your notes when you request changes, the proposals you apply or discard, and the fields you change after it sets them. Statements appear here after a run.",
+      "Nothing yet. Seshat learns from your reasons when you request changes, the proposals you apply or discard, and the fields you change after it sets them. Statements appear here after a run.",
     dismissed: (n: number) => `${n} dismissed`,
   },
   retired: (n: number) => `${n} retired`,
@@ -99,7 +99,7 @@ export function learningMissing(status: number): {
     return {
       title: "Learning isn't on this server yet.",
       detail:
-        "Update Sekhemet and restart it. Below are the seeded rules and the suggestions from your notes; approvals, counts and the project rules Seshat follows arrive with the update.",
+        "Update Sekhemet and restart it. Below are the seeded rules and the suggestions from your reasons; approvals, counts and the project rules Seshat follows arrive with the update.",
     };
   }
   return {

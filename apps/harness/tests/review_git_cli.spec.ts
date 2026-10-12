@@ -167,7 +167,26 @@ describe("RG-S5-3, RG-S5-4, RG-S5-6, RG-N8-1: nothing merges that the board refu
       integration: "main",
       branchHead: expect.stringMatching(/^[0-9a-f]{40}$/),
     });
-    expect(events[1]?.payload).toMatchObject({ reason: "conflict" });
+    expect(events[1]?.payload).toMatchObject({ reason: "conflict", files: ["src/shared.ts"] });
+  }, 60_000);
+
+  it("RG-S5-4, surface 18b (loop wave 10 A1): a conflicting Accept says it in the board's words, with the step that moves the issue on", async () => {
+    const r = g6Repo();
+    await inReview(r, "c4", { files: { "src/shared.ts": "export const shared = 2;\n" } });
+    write(r.repo, "src/shared.ts", "export const shared = 3;\n");
+    r.git("commit", "-q", "-am", "main moved");
+    const out = cliIn(r, ["accept", "c4"]);
+    expect(out.status).toBe(1);
+    const all = out.stderr.trim().split("\n");
+    const lines = all.slice(all.findIndex((l) => l.startsWith("sekhemet:")));
+    expect(lines[0]).toMatch(
+      /c4 conflicts with main in src\/shared\.ts\. Nothing was written and the issue stays In review/,
+    );
+    // Never the retired noun or the stored state's name (NAMING rows 25-26).
+    expect(out.stderr).not.toMatch(/\bcard\b|in Review/);
+    // Request changes sends it back to the Agent, which rebases before Verify (RG-N1-1).
+    expect(lines[1]).toMatch(/^ {2}Do: sekhemet request-changes c4 "/);
+    expect(lines[1]).toContain("src/shared.ts");
   }, 60_000);
 
   it("RG-N8-1: a clean accept records accept_started with the integration head, the card branch and its head and the squash's tree, before card/accepted", async () => {

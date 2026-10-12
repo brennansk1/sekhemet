@@ -147,6 +147,44 @@ describe("@sekhemet/board entry conditions, review time, overlap, projects (B1, 
     expect((await store.getCard("h"))?.status).toBe("done");
   });
 
+  it("moves a parent on its current rollup past a run's start conditions, and only then (loop W9-A1)", async () => {
+    // A plan stores its epic in Planning (wave 9 A1); a parent never runs
+    // itself, so its rollup's moves are held by no dependency or revised
+    // requirement — or a finished epic stayed "being planned".
+    const req = await store.requirements.create({ title: "Load data" }, "p_owner");
+    await store.createCard({ id: "w", tier: "story", title: "W" });
+    await store.createCard({
+      id: "q",
+      tier: "epic",
+      title: "Q",
+      status: "parked",
+      blockedReason: "waiting on W",
+      dependsOn: ["w"],
+    });
+    await store.requirements.link({ requirementId: req.id, from: "card", ref: "q" });
+    await store.requirements.revise(req.id, { title: "Load data from CSV" }, "p_owner");
+    await store.createCard({ id: "j", tier: "story", title: "J", parentId: "q" });
+    await store.updateCardStatus("j", "done", "test setup", "harness", { override: true });
+    const harness = (fromStatus: never, toStatus: never) =>
+      move("q", fromStatus, toStatus, "harness");
+
+    // No rollup yet: the start conditions hold the harness too.
+    await expect(harness("parked" as never, "ready" as never)).rejects.toThrow(/waits on w/);
+    await store.recordEvent({
+      type: "card/rollup",
+      cardId: "q",
+      actor: "gate",
+      payload: { id: "q", children: ["j"], passed: true, failures: [], evidenceId: "e1" },
+    });
+    // Anyone else's move is still a start, held by them.
+    await expect(move("q", "parked" as never, "ready" as never, "executor")).rejects.toThrow(
+      /waits on w/,
+    );
+    await harness("parked" as never, "ready" as never);
+    await harness("ready" as never, "in_progress" as never);
+    expect((await store.getCard("q"))?.status).toBe("in_progress");
+  });
+
   it("lets a person override an entry condition, recorded on the ledger", async () => {
     await store.createCard({ id: "d", tier: "story", title: "D" });
     await move(

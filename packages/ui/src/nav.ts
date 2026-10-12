@@ -381,6 +381,63 @@ export function cheatSheet(visible: readonly NavItem[]): KeyGroup[] {
  * Agent's state in one line — *Agent working on CHR-12 · step 14 of 40*,
  * *Agent idle*, or *Agent paused after step 5 while Seshat replies*.
  */
+/** One of Configuration's role rows (`GET /api/config/roles`), as far as readiness reads it. */
+export interface RoleRowLike {
+  role: string;
+  /** The assigned model; absent when the role is not configured. */
+  model?: string;
+  /** The assigned model is verified for this role on this machine (qualified or overridden). */
+  qualified?: boolean;
+  /** The model the harness would use, and whether its file is here (undefined: not known). */
+  effective?: { model?: string; present?: boolean };
+}
+
+/**
+ * Whether the Coding model can run issues here (SHL-04, wave 8 B3): one fact,
+ * read from Configuration's roles, for the sidebar, the *No Coding model*
+ * bar, Status, Projects, the board's tiles and the issue page. Ready means
+ * assigned (Configuration says it is configured), its file on this machine
+ * when Configuration can tell, and verified here for the Coding role.
+ */
+export interface CodingModelFact {
+  ready: boolean;
+  /** The assigned Coding model, or null when none is. */
+  model: string | null;
+  /** Why it is not ready; null when it is. */
+  why: "none" | "missing" | "unverified" | null;
+}
+
+export function codingModelFact(roles: readonly RoleRowLike[] | undefined): CodingModelFact {
+  const w = roles?.find((r) => r.role === "worker");
+  const model = w?.model ? String(w.model) : null;
+  if (!w || !model) return { ready: false, model: null, why: "none" };
+  if (w.effective?.model === model && w.effective.present === false)
+    return { ready: false, model, why: "missing" };
+  if (w.qualified !== true) return { ready: false, model, why: "unverified" };
+  return { ready: true, model, why: null };
+}
+
+/** The fact in words, as the sidebar's model line says it and the other surfaces repeat. */
+export function codingModelWords(f: CodingModelFact): string {
+  if (f.why === "none" || !f.model) return "No Coding model set up";
+  if (f.why === "missing") return `Coding model ${f.model} is not on this machine`;
+  if (f.why === "unverified") return `Coding model ${f.model} is not verified on this machine`;
+  return `Coding model ${f.model}`;
+}
+
+/** A Ready issue's state while no Coding model is ready: it waits for one, never *queued*. */
+export const WAITS_FOR_CODING_MODEL =
+  "Waiting for a Coding model: the Agent starts this issue once one is set up and verified on this machine.";
+
+/**
+ * A Ready issue the board would not start now (wave 9 A3): the unmet *Ready
+ * to start* condition the start checks (`startBlocker`), never *queued*.
+ */
+export function waitsToStart(reason: string): string {
+  const r = reason.trim().replace(/\.$/, "");
+  return `Waiting to start: ${r.charAt(0).toLowerCase()}${r.slice(1)}. The Agent starts it once that is met.`;
+}
+
 /**
  * Where the viewer's own Agent issue stands in the Team queue, for the line
  * under the Agent status line (teams item 31, dashboard §2.2.3): its key and

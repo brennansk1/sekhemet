@@ -155,7 +155,7 @@ export function tileHtml(card, opts = {}) {
   }
   // Teams item 19: the Agent's state on this issue, as the harness set it
   // (`GET /api/agent/states`), with the AI badge; its sentence is the description.
-  const ai = tileAiState(opts.ai);
+  const ai = tileAiState(opts.ai, { noCodingModel: Boolean(opts.noCodingModel) });
   const aiId = `ai-${card.id}`;
   const aiRow = ai
     ? `<div class="tile-ai" id="${esc(aiId)}" ${tip(ai.sentence)}><b>${esc(ai.name)}</b>${aiBadge()}<span class="tile-ai-st">${esc(ai.label)}</span></div>`

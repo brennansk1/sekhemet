@@ -79,7 +79,7 @@ export class MergeConflictError extends Error {
     public readonly files: string[],
   ) {
     super(
-      `${cardId} conflicts with ${onto} in ${files.join(", ") || "unknown files"}; nothing was written and the card stays in Review`,
+      `${cardId} conflicts with ${onto} in ${files.join(", ") || "files git did not name"}. Nothing was written and the issue stays In review.`,
     );
     this.name = "MergeConflictError";
   }

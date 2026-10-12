@@ -22,7 +22,7 @@ import {
   reviewerHtml,
 } from "./review_desk.js";
 import { paintShotDiffs, shotsHtml } from "./shots.js";
-import { store } from "./store.js";
+import { projectName, store } from "./store.js";
 import { openThreadsHtml } from "./threads.js";
 import { typeTag } from "./tile.js";
 import { toast } from "./toast.js";
@@ -87,7 +87,7 @@ export class EvidencePane {
   }
 
   headHtml(card, detail, { attempt, withTitle = true } = {}) {
-    const project = store.state.meta?.project ?? "";
+    const project = projectName();
     const attempts = detail?.attempts ?? [];
     const cur = attempt ?? attempts.length;
     let att = "";

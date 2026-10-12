@@ -41,6 +41,8 @@ export class TriageRefusal extends Error {
   constructor(
     message: string,
     public readonly status: CardStatus,
+    /** The step that moves the issue on, when the issue's state alone does not say it. */
+    public readonly next?: string,
   ) {
     super(message);
     this.name = "TriageRefusal";
@@ -126,6 +128,20 @@ export async function sendBack(
     throw new TriageRefusal(
       `${card.id} is ${boardColumnLabel(stored.status)}; request changes on an issue In review or On hold`,
       stored.status,
+    );
+  }
+  // Dashboard §2.13 item 13 (loop wave 10 A4): an issue In review with no
+  // attempt offers only Put on hold — there is no work to request changes
+  // on — one rule for the CLI and the dashboard. An attempt whose evidence a
+  // rewind set aside is still an attempt: it is sent back to run again (K-S7-8).
+  if (
+    stored.status === "review" &&
+    (await ctx.cardStore.cardEvents(card.id, ["evidence/recorded"])).length === 0
+  ) {
+    throw new TriageRefusal(
+      `${card.id} is In review with no attempt yet, so there is no work to request changes on`,
+      stored.status,
+      `sekhemet park ${card.id} "<why>", then sekhemet unpark ${card.id} puts it in Ready to run`,
     );
   }
   await decidedInReview(ctx, stored, "send_back");
@@ -216,14 +232,22 @@ export async function park(ctx: TriageContext, card: CardRecord, reason = ""): P
  * ledger's `card/status_changed` into `parked`.
  */
 export async function unparkTarget(cardStore: CardStore, cardId: string): Promise<CardStatus> {
-  const into = (await cardStore.cardEvents(cardId, ["card/status_changed"]))
-    .filter((e) => (e.payload as { toStatus?: string }).toStatus === "parked")
-    .at(-1);
-  const from = (into?.payload as { fromStatus?: CardStatus } | undefined)?.fromStatus;
+  const from = await parkedFrom(cardStore, cardId);
   return from === "backlog" || from === "planning" ? from : "ready";
 }
 
-/** Put a parked card back where it was parked from, or in Ready. */
+/** The state a card was last parked from, read from the ledger; undefined when none is recorded. */
+export async function parkedFrom(
+  cardStore: CardStore,
+  cardId: string,
+): Promise<CardStatus | undefined> {
+  const into = (await cardStore.cardEvents(cardId, ["card/status_changed"]))
+    .filter((e) => (e.payload as { toStatus?: string }).toStatus === "parked")
+    .at(-1);
+  return (into?.payload as { fromStatus?: CardStatus } | undefined)?.fromStatus;
+}
+
+/** Take a card off hold: to Backlog or Planning if it was parked from there, else Ready (review-git §2.4). */
 export async function unpark(ctx: TriageContext, card: CardRecord): Promise<CardStatus> {
   if (card.status !== "parked")
     throw new TriageRefusal(

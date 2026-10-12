@@ -105,6 +105,17 @@ export function acceptRuleFor(
   };
 }
 
+/**
+ * The step after a conflicting Accept (RG-S5-4, surface 18b; loop wave 10
+ * A1): Request changes sends the issue back to the Agent, whose next run
+ * rebases onto the integration branch before Verify and resolves the
+ * conflict inside its scope (RG-N1-1).
+ */
+export function conflictStep(id: string, c: { onto: string; files: string[] }): string {
+  const files = c.files.length ? `: ${c.files.join(", ")}` : "";
+  return `sekhemet request-changes ${id} "rebase onto ${c.onto} and resolve the conflict${files}"`;
+}
+
 export const acceptCommand: CommandHandler = async (args, env) => {
   const cardId = args.positionals[0] as string;
   const { db, log, cardStore, boardService } = await env.kernel("write");
@@ -225,7 +236,9 @@ export const acceptCommand: CommandHandler = async (args, env) => {
       },
       err instanceof AcceptRefusedError && err.code === "not_in_review"
         ? nextStepFor(stored)
-        : undefined,
+        : err instanceof AcceptRefusedError && err.extra.conflict
+          ? conflictStep(cardId, err.extra.conflict)
+          : undefined,
     );
   }
 };

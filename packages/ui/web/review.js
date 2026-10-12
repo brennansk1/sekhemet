@@ -13,7 +13,7 @@ import {
   recordShown as recordShownFor,
 } from "./review_desk.js";
 import { setTopbar } from "./shell.js";
-import { store } from "./store.js";
+import { projectName, store } from "./store.js";
 import { toast } from "./toast.js";
 import {
   READ_ONLY_DETAIL,
@@ -130,10 +130,11 @@ function renderQueue() {
     if (hadFocus) document.getElementById(`q-${ui.selected}`)?.focus({ preventScroll: true });
   }
   renderNotifyOffer(ready.length + needYou.length);
-  const project = store.state.meta?.project ?? "";
+  const project = projectName();
+  // Wave 8 B4: *ready* is the stored Ready state's word (To do); these wait for review.
   setTopbar({
     title: "Review",
-    crumb: `${project ? `${project} · ` : ""}${ready.length} ready · ${needYou.length} need${needYou.length === 1 ? "s" : ""} you`,
+    crumb: `${project ? `${project} · ` : ""}${ready.length} to review · ${needYou.length} need${needYou.length === 1 ? "s" : ""} you`,
   });
 }
 

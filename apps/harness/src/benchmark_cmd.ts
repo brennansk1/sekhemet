@@ -978,9 +978,9 @@ export interface ExternalResults {
 /** The protocols in words (CAPSTONE_SELECTION "Protocol"; Web-Bench's projects/readme). */
 export const EXTERNAL_PROTOCOL = {
   capstone:
-    "The capstone: every arm gets byte-identical frozen input (the brief, the stakeholder's answers and the change request, each hash-checked) and an empty seed repository; a hidden acceptance suite, never shown to any arm, scores release 1 and the tree after the change; each harness-and-model pair runs two to three times, and one run at non-zero temperature is not a finding.",
+    "The capstone: every arm gets byte-identical frozen input (the brief, the stakeholder's answers and the change request, each hash-checked) and an empty seed repository; a hidden acceptance suite, never shown to any arm, scores release 1 and the tree after the change; each setup runs two or three times, because one run alone can differ by chance.",
   webbench:
-    "Web-Bench: one project at a pinned commit, its tasks given in order; a failed task gets one retry with the test output, and the run stops after a task fails both; scored as Web-Bench scores it, pass@1, pass@2 and error@1 over all of the project's tasks.",
+    "Web-Bench: one project at a pinned commit, its tasks given in order; a failed task gets one retry with the test output, and the run stops after a task fails both; scored as Web-Bench scores it: the share of the project's tasks passed on the first try, passed with the one retry, and ending in an error on the first try.",
 } as const;
 
 export const emptyExternal = (): ExternalResults => ({

@@ -1052,24 +1052,47 @@ export class CardRunner {
       turn.attemptId = this.attemptId;
       turn.stepId = step.id;
       this.stepIds.set(turn.turnIndex, step.id);
-      for (const r of turn.gateResult?.rungResults ?? []) {
-        await runs.recordGateResult({
-          attemptId: this.attemptId,
-          cardId: this.options.card.id,
-          stepId: step.id,
-          gate: r.gate,
-          layer: r.layer,
-          passed: r.passed,
-          exitCode: r.exitCode,
-          durationMs: r.durationMs,
-          failures: (turn.gateResult?.failures ?? []).filter((f) => (f.gate ?? f.rung) === r.gate),
-          // K-N8-3: the Worker's gates run here, on this machine.
-          source: "local",
-        });
-      }
+      if (turn.gateResult) await this.recordRungs(turn.gateResult, step.id);
     } catch (err) {
       this.lostRecord(`step ${turn.turnIndex}`, err);
     }
+  }
+
+  /**
+   * A gate run's rungs as `gate/result` records (K18; kernel rule 14): a
+   * step's, or with no step the runner's own verification — forced at a stop,
+   * or again after a rebase — so the run that decides a card is on the
+   * ledger, not only in its evidence file (wave 8 A4).
+   */
+  private async recordRungs(result: GateResult, stepId?: string): Promise<void> {
+    const runs = this.options.store?.runs;
+    if (!runs || !this.attemptId) return;
+    for (const r of result.rungResults ?? []) {
+      await runs.recordGateResult({
+        attemptId: this.attemptId,
+        cardId: this.options.card.id,
+        ...(stepId ? { stepId } : {}),
+        gate: r.gate,
+        layer: r.layer,
+        passed: r.passed,
+        exitCode: r.exitCode,
+        durationMs: r.durationMs,
+        failures: result.failures.filter((f) => (f.gate ?? f.rung) === r.gate),
+        // K-N8-3: the Worker's gates run here, on this machine.
+        source: "local",
+      });
+    }
+  }
+
+  /** The runner's own verification, recorded (wave 8 A4); a lost record is reported. */
+  private async verifyRecorded(session: { runVerification(): Promise<GateResult> }) {
+    const result = await session.runVerification();
+    try {
+      await this.recordRungs(result);
+    } catch (err) {
+      this.lostRecord("verification gate results", err);
+    }
+    return result;
   }
 
   private emit(event: RunProgressEvent): void {
@@ -2118,7 +2141,7 @@ export class CardRunner {
         });
 
         try {
-          lastGateResult = await session.runVerification();
+          lastGateResult = await this.verifyRecorded(session);
           this.emit({
             type: "gate",
             cardId: card.id,
@@ -2296,7 +2319,7 @@ export class CardRunner {
           message: "rebased onto the integration branch; re-verifying",
         });
         try {
-          const again = await session.runVerification();
+          const again = await this.verifyRecorded(session);
           lastGateResult = again;
           if (!again.passed) {
             // Only gates that could not run is not an integration failure (rule 9).
@@ -2363,6 +2386,12 @@ export class CardRunner {
           linesRemoved: p.evidence.linesRemoved,
           // GT-T1-9: the same slice hash the bundle carries.
           ...(p.evidence.trajectoryRef ? { trajectoryRef: p.evidence.trajectoryRef } : {}),
+          // Wave 8 A4: the bundle's verdict per gate that gave one (not skipped, not unavailable).
+          gateResultsSummary: Object.fromEntries(
+            p.evidence.rungResults
+              .filter((r) => !r.skipped && !r.unavailable)
+              .map((r) => [r.gate, r.passed ? "pass" : "fail"] as const),
+          ),
         });
       }
       await runs.finishAttempt({

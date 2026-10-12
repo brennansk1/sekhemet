@@ -99,6 +99,8 @@ const ui = {
   viewRole: "worker",
   /** Roles whose picker is open (DB-N27-1); a kept role is the server's (`x.kept`). */
   change: {},
+  /** The model chosen in each role's picker, so its button follows it (wave 7 B4). */
+  picked: {},
   /** The role open in Customize, its panel's host and child (DB-N27-2). */
   customize: null,
   custHost: null,
@@ -257,6 +259,21 @@ async function loadEngine() {
 
 /* ---------- Models found ---------- */
 
+/**
+ * A model's fit for a role in words (wave 7 B7): the reason, and when the
+ * file is the smaller part of what it needs, what the rest is — so a 0.0 GB
+ * file that needs 4.3 GB says why.
+ */
+export function fitWords(m, role) {
+  const reason = m.fitReason?.[role] ?? "";
+  const b = m.fit?.[role]?.breakdown;
+  if (!b || !reason) return reason;
+  const rest = (b.kvBytes ?? 0) + (b.computeBufferBytes ?? 0) + (b.promptCacheBytes ?? 0);
+  if (rest <= (b.weightsBytes ?? 0)) return reason;
+  const ctx = b.contextTokens ? ` at ${tokens(b.contextTokens)}` : "";
+  return `${reason}: the file is ${gb(b.weightsBytes ?? 0)}; the rest is the context cache${ctx} and the engine's buffers, estimated`;
+}
+
 function modelsHtml(m) {
   const list = m.models ?? [];
   const skipped = (m.skipped ?? []).filter((s) => s.reason !== "not_a_model");
@@ -273,7 +290,7 @@ function modelsHtml(m) {
         )}</select></div><div class="tbl-wrap" tabindex="0"><table class="tbl"><thead><tr><th>Name</th><th>Size</th><th>Quantisation</th><th>Context</th><th>Family</th><th>Fits this machine (${esc(ROLE_NAME[ui.viewRole])})</th><th>Published hash</th></tr></thead><tbody>${list
         .map((x) => {
           const fit = x.fits?.[ui.viewRole] ?? "yes";
-          return `<tr><td><button class="btn ghost sm" type="button" data-open-model="${esc(x.id)}" aria-expanded="${ui.open === x.id}">${esc(x.name)}</button>${x.noEngine ? `<div class="why">${esc(x.noEngine)}</div>` : ""}</td><td>${fromFile(x.sizeBytes, gb)}</td><td class="mono">${esc(x.quantisation)}</td><td>${x.contextLength ? fromFile(x.contextLength, tokens) : '<span class="sec">Not in the header</span>'}</td><td>${esc(x.family ?? "Unknown")}</td><td><span class="fit-${esc(fit)}">${esc(FIT_WORD[fit] ?? fit)}</span><div class="why">${esc(x.fitReason?.[ui.viewRole] ?? "")}</div></td><td>${esc(HASH_WORD[x.hash] ?? x.hash)}</td></tr>${
+          return `<tr><td><button class="btn ghost sm" type="button" data-open-model="${esc(x.id)}" aria-expanded="${ui.open === x.id}">${esc(x.name)}</button>${x.noEngine ? `<div class="why">${esc(x.noEngine)}</div>` : ""}</td><td>${fromFile(x.sizeBytes, gb)}</td><td class="mono">${esc(x.quantisation)}</td><td>${x.contextLength ? fromFile(x.contextLength, tokens) : '<span class="sec">Not in the header</span>'}</td><td>${esc(x.family ?? "Unknown")}</td><td><span class="fit-${esc(fit)}">${esc(FIT_WORD[fit] ?? fit)}</span><div class="why">${esc(fitWords(x, ui.viewRole))}</div></td><td>${esc(HASH_WORD[x.hash] ?? x.hash)}</td></tr>${
             ui.open === x.id ? `<tr><td colspan="7">${detailHtml()}</td></tr>` : ""
           }`;
         })
@@ -349,6 +366,52 @@ ${(d.warnings ?? []).length ? `<h4>Warnings</h4><ul class="cfg-warn">${d.warning
 
 /* ---------- Roles ---------- */
 
+const STATE_WORD = { resident: "Resident", swapped_out: "Swapped out" };
+
+/**
+ * A role's model and state in words (wave 7 B1): the assigned model, else
+ * the one `run` and the queue would use with where it comes from — the same
+ * answer as `sekhemet models list` and Machine — and *Not configured* only
+ * when no model would run.
+ */
+export function roleHeadline(x) {
+  if (x.model) return { model: x.model, words: STATE_WORD[x.state] ?? "Not configured" };
+  const e = x.effective;
+  if (!e?.model) return { model: "", words: "Not configured" };
+  const from = `Not assigned: ${e.from}`;
+  return {
+    model: e.model,
+    words: e.present === false ? `${from}. Not in a model folder on this machine yet` : from,
+  };
+}
+
+/**
+ * The models a role's picker offers and what its button does (wave 7 B3,
+ * B4): every found model that fits, and for the Review model only one of a
+ * known family other than the Coding model's (RG-P8-10, MD-N12-4); the
+ * selected one is the recommendation, else the first. A model not verified
+ * here for the role offers *Verify on this machine to assign* before the
+ * press, never a plain Assign that is refused after it.
+ */
+export function assignChoices(x, found, picked) {
+  const options = (found ?? []).filter((m) => {
+    if (m.noEngine || m.fits?.[x.role] === "no") return false;
+    if (x.role !== "reviewer") return true;
+    return Boolean(m.family) && (!x.codingFamily || m.family !== x.codingFamily);
+  });
+  const key = (m) => m.key ?? m.registryId ?? m.id;
+  const rec = x.recommendation?.model;
+  const chosen =
+    options.find((m) => picked && (m.id === picked || key(m) === picked)) ??
+    options.find((m) => rec && (m.registryId === rec || m.id === rec || key(m) === rec)) ??
+    options[0];
+  const verified = new Set(x.verifiedModels ?? []);
+  return {
+    options: options.map((m) => ({ id: m.id, name: m.name, selected: m === chosen })),
+    action: !chosen ? "" : verified.has(key(chosen)) ? "assign" : "qualify",
+  };
+}
+
 function rolesHtml(r, models) {
   const roles = r.roles ?? [];
   const found = (models?.models ?? []).filter((m) => !m.noEngine);
@@ -361,22 +424,17 @@ function rolesHtml(r, models) {
   return `<section class="cfg-card" aria-labelledby="cfg-h-roles"><h2 id="cfg-h-roles">Suggested setup</h2>${recommendedHtml()}<div class="cfg-roles">${roles
     .map((x) => {
       const name = ROLE_NAME[x.role] ?? x.role;
-      const state =
-        x.state === "resident"
-          ? "Resident"
-          : x.state === "swapped_out"
-            ? "Swapped out"
-            : "Not configured";
+      const head = roleHeadline(x);
       const rec = x.recommendation;
       const dl = rec?.download;
       const differs = rec && rec.model !== x.model;
       const kept = x.kept && x.model;
       const picking = ui.change[x.role] || !x.model;
-      const options = found
-        .filter((m) => m.fits?.[x.role] !== "no")
+      const choice = assignChoices(x, found, ui.picked[x.role]);
+      const options = choice.options
         .map(
           (m) =>
-            `<option value="${esc(m.id)}"${rec && (m.registryId === rec.model || m.id === rec.model) ? " selected" : ""}>${esc(m.name)}</option>`,
+            `<option value="${esc(m.id)}"${m.selected ? " selected" : ""}>${esc(m.name)}</option>`,
         )
         .join("");
       const selectId = `cfg-assign-${x.role}`;
@@ -391,7 +449,7 @@ function rolesHtml(r, models) {
         : "";
       const custOpen = ui.customize === x.role;
       const custModel = x.model ?? found[0]?.registryId ?? found[0]?.id;
-      return `<div class="cfg-role" data-role="${esc(x.role)}"><div><b>${esc(name)}</b><div class="why">${esc(ROLE_JOB[x.role] ?? "")}</div>${x.role === "planner" ? '<div class="why">Seshat, the project manager, runs on this model.</div>' : ""}</div><div><div>${x.model ? `<b>${esc(x.model)}</b>` : "No model"} · ${esc(state)}</div>${
+      return `<div class="cfg-role" data-role="${esc(x.role)}"><div><b>${esc(name)}</b><div class="why">${esc(ROLE_JOB[x.role] ?? "")}</div>${x.role === "planner" ? '<div class="why">Seshat, the project manager, runs on this model.</div>' : ""}</div><div><div>${head.model ? `<b>${esc(head.model)}</b>` : "No model"} · ${esc(head.words)}</div>${
         x.unfilledReason ? `<div class="why">${esc(x.unfilledReason)}</div>` : ""
       }${x.screen === "not_measured" ? '<div class="why">Quick benchmark: Not measured yet.</div>' : ""}${
         rec && !kept ? `<p>Recommended: ${esc(rec.reason)}</p>` : ""
@@ -409,11 +467,15 @@ function rolesHtml(r, models) {
           : ""
       }${
         picking && options
-          ? `<label class="sr-only" for="${selectId}">Model for the ${esc(name)}</label><select id="${selectId}" data-assign-select="${esc(x.role)}"${disabledAttr()}>${options}</select><button class="btn sm" type="button" data-assign="${esc(x.role)}"${disabledAttr()}>Assign</button>`
+          ? `<label class="sr-only" for="${selectId}">Model for the ${esc(name)}</label><select id="${selectId}" data-assign-select="${esc(x.role)}"${disabledAttr()}>${options}</select>${
+              choice.action === "assign"
+                ? `<button class="btn sm" type="button" data-assign="${esc(x.role)}"${disabledAttr()}>Assign</button>`
+                : `<button class="btn sm" type="button" data-qualify="${esc(x.role)}"${disabledAttr()}>Verify on this machine to assign</button>`
+            }`
           : ""
       }${
-        ui.progress[`qualify-${x.role}`] || x.verification?.state === "needs_verifying"
-          ? `<button class="btn sm" type="button" data-qualify="${esc(x.role)}"${disabledAttr()}>${x.verification?.state === "needs_verifying" ? "Verify now" : "Verify on this machine to assign"}</button>`
+        x.verification?.state === "needs_verifying"
+          ? `<button class="btn sm" type="button" data-qualify="${esc(x.role)}"${disabledAttr()}>Verify now</button>`
           : ""
       }${
         custModel
@@ -764,10 +826,9 @@ async function onClick(e) {
     const sel = ui.root.querySelector(`[data-assign-select="${role}"]`);
     const path = d.qualify ? `/api/config/roles/${role}/qualify` : `/api/config/roles/${role}`;
     const r = await sendJSON(d.qualify ? "POST" : "PUT", path, { model: sel?.value });
-    if (!r.ok && r.data?.needs === "qualification") ui.progress[`qualify-${role}`] = true;
     if (!r.ok) error(r.data?.error ?? "Not assigned.");
     else {
-      delete ui.progress[`qualify-${role}`];
+      delete ui.picked[role];
       ui.error = "";
       announce(`${ROLE_NAME[role]} assigned.`);
     }
@@ -946,6 +1007,13 @@ async function onSubmit(e) {
 
 function onChange(e) {
   const t = e.target;
+  if (t instanceof HTMLSelectElement && t.dataset.assignSelect) {
+    // Wave 7 B4: Assign or Verify on this machine to assign, for the model chosen.
+    ui.picked[t.dataset.assignSelect] = t.value;
+    render();
+    ui.root?.querySelector(`[data-assign-select="${t.dataset.assignSelect}"]`)?.focus();
+    return;
+  }
   if (t instanceof HTMLSelectElement && t.hasAttribute("data-view-role")) {
     // DB-N27-6 (CFG-13): the fit, the details and Measure speed follow the chosen role.
     ui.viewRole = t.value;

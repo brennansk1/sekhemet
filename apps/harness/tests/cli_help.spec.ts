@@ -112,6 +112,20 @@ describe("the help table speaks NAMING's words (S1B-B20, S1B-B22)", () => {
     expect(row?.what.replace(/ \(alias: [^)]+\)$/, "")).not.toMatch(/\bsend\b[^.]*\bback\b/i);
   });
 
+  it("K-N5-6 (loop wave 10 A3): unpark's help says where the issue goes, as review-git §2.4 does — Ready, or Backlog or Planning — never 'back where it was'", () => {
+    const row = helpFor("unpark");
+    expect(row?.what).not.toMatch(/where it was/);
+    expect(row?.what).toMatch(/Ready/);
+    expect(row?.what).toMatch(/Backlog or Planning/);
+  });
+
+  it("loop wave 10 A2: reopen's help does not promise to reopen a Done issue, which only revert undoes", () => {
+    const row = helpFor("reopen");
+    expect(row?.what).not.toMatch(/finished/);
+    expect(row?.what).toMatch(/Won't do/);
+    expect(row?.what).toMatch(/sekhemet revert/);
+  });
+
   it("S1B-B22: `sekhemet dev --help` lists no alias on its own line; request-changes names send-back as its alias", () => {
     const names = listed().map(([n]) => n);
     expect(names).not.toContain("send-back");

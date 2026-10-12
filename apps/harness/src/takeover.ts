@@ -349,6 +349,29 @@ export async function runTakeover(root: string, options: TakeoverOptions): Promi
     `2. Recon: ${plural(recon.manifests.length, "manifest")}, ${plural(recon.commits.length, "recent commit")}, ${plural(recon.branches.length, "unmerged branch", "unmerged branches")}, ${recon.todos.length} TODO/FIXME; dependency age ${recon.dependencyAge}; vulnerabilities ${recon.vulnerabilities}.`,
   );
 
+  // The connected tracker's open issues (DS-TO-13), read once trusted: part
+  // of step 2's recon, so said under it, before step 3 (loop wave 10 A6).
+  const cardStore = cardStoreOf(options.store);
+  let issues: Awaited<ReturnType<typeof readInheritedIssues>>["items"] = [];
+  if (trusted && cardStore) {
+    let tracker: IssueTracker | undefined;
+    let why = "no tracker connected";
+    if (options.tracker === undefined) {
+      const { connectedTracker } = await import("./integrations.js");
+      const found = await connectedTracker(root, options.log);
+      tracker = found.tracker;
+      why = found.reason;
+    } else if (options.tracker) {
+      tracker = options.tracker;
+    }
+    const read = await readInheritedIssues(tracker, why);
+    issues = read.items;
+    recon.issues = read.note;
+  } else if (!trusted) {
+    recon.issues = "not read: the take-over reads the tracker once the repository is trusted";
+  }
+  say(`   Issues: ${recon.issues}.`);
+
   // Half-done work, deterministically (DS-TO-8): files only, before or after trust.
   const files = repoFiles(root);
   for (const h of scanHalfDone(root, files)) {
@@ -431,28 +454,6 @@ export async function runTakeover(root: string, options: TakeoverOptions): Promi
       release();
     }
   }
-
-  // The connected tracker's open issues (DS-TO-13), read once trusted.
-  const cardStore = cardStoreOf(options.store);
-  let issues: Awaited<ReturnType<typeof readInheritedIssues>>["items"] = [];
-  if (trusted && cardStore) {
-    let tracker: IssueTracker | undefined;
-    let why = "no tracker connected";
-    if (options.tracker === undefined) {
-      const { connectedTracker } = await import("./integrations.js");
-      const found = await connectedTracker(root, options.log);
-      tracker = found.tracker;
-      why = found.reason;
-    } else if (options.tracker) {
-      tracker = options.tracker;
-    }
-    const read = await readInheritedIssues(tracker, why);
-    issues = read.items;
-    recon.issues = read.note;
-  } else if (!trusted) {
-    recon.issues = "not read: the take-over reads the tracker once the repository is trusted";
-  }
-  say(`2. Issues: ${recon.issues}.`);
 
   // The as-built inventory (DS-TO-5, DS-TO-7, DS-TO-8).
   await options.store.recordLedgerEvent({

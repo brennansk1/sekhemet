@@ -60,7 +60,7 @@ describe("the Playbook (§2.11)", () => {
     });
     expect(PLAYBOOK_COPY.empty).toEqual({
       candidates:
-        "Nothing awaiting approval. New rules come from fixes that took the Agent several tries, your notes when you request changes, and Seshat's notes at the end of a run.",
+        "Nothing awaiting approval. New rules come from fixes that took the Agent several tries, your reasons when you request changes, and Seshat's notes at the end of a run.",
       active: "No active rules.",
       retired: "None retired.",
     });
@@ -94,7 +94,7 @@ describe("the Playbook (§2.11)", () => {
     expect(learningMissing(404)).toEqual({
       title: "Learning isn't on this server yet.",
       detail:
-        "Update Sekhemet and restart it. Below are the seeded rules and the suggestions from your notes; approvals, counts and the project rules Seshat follows arrive with the update.",
+        "Update Sekhemet and restart it. Below are the seeded rules and the suggestions from your reasons; approvals, counts and the project rules Seshat follows arrive with the update.",
     });
     expect(learningMissing(500)).toEqual({
       title: "Couldn't load what Sekhemet has learned.",
@@ -115,7 +115,7 @@ describe("Project rules Seshat follows (§2.11)", () => {
       "These stay on this machine, in the project's Activity log. Edit a statement to correct it; dismiss it and Seshat stops using it.",
     );
     expect(PLAYBOOK_COPY.profile.empty).toBe(
-      "Nothing yet. Seshat learns from your notes when you request changes, the proposals you apply or discard, and the fields you change after it sets them. Statements appear here after a run.",
+      "Nothing yet. Seshat learns from your reasons when you request changes, the proposals you apply or discard, and the fields you change after it sets them. Statements appear here after a run.",
     );
     expect(PLAYBOOK_COPY.profile.dismissed(2)).toBe("2 dismissed");
   });

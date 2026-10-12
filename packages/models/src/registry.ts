@@ -743,6 +743,21 @@ export class ModelRegistry {
   /** The file as this instance last read or wrote it (inode, mtime, size). */
   private seen: string | undefined;
 
+  /** A read's view (`ModelRegistry.readOnly`): changes stay in memory, never saved. */
+  private readOnlyView = false;
+
+  /**
+   * The registry as a read or a check sees it (wave 7, MD-N12-9): what a
+   * command that only reads, or that refuses, does through it — an adapter
+   * described, a default worked out — is kept in memory for this process
+   * and never written, so the file is byte for byte as it was.
+   */
+  public static readOnly(path: string = defaultRegistryPath(), now?: () => Date): ModelRegistry {
+    const view = new ModelRegistry(path, now);
+    view.readOnlyView = true;
+    return view;
+  }
+
   constructor(
     public readonly path: string = defaultRegistryPath(),
     private now: () => Date = () => new Date(),
@@ -1409,6 +1424,7 @@ export class ModelRegistry {
    * this instance changed the same one.
    */
   private save(): void {
+    if (this.readOnlyView) return;
     mkdirSync(dirname(this.path), { recursive: true });
     const disk = this.readFile();
     for (const e of disk.models ?? []) {

@@ -84,6 +84,7 @@ import {
   learnedFrom,
   resolveReviewerRole,
 } from "../review_flow.js";
+import { reviewerModelName } from "../role_models.js";
 import { candidateRuleFromEnv, researchRuleScope } from "../rule_scopes.js";
 import { type LiveLeaseInfo, acquireRunnerLease, leaseRefusal } from "../runner_lease.js";
 import { isReserved, parseHours } from "../scheduler.js";
@@ -250,12 +251,6 @@ export const queueCommand: CommandHandler = async (_args, env) => {
       roleModelName("researcher", researcherIdx !== -1 ? argv[researcherIdx + 1] : undefined, {
         registry: modelRegistry(),
       }) ?? process.env.SEKHEMET_RESEARCHER;
-    const reviewerIdx = argv.indexOf("--reviewer");
-    const reviewerAsked = roleModelName(
-      "reviewer",
-      reviewerIdx !== -1 ? argv[reviewerIdx + 1] : undefined,
-      { registry: modelRegistry() },
-    );
     const workerIdx = argv.indexOf("--worker");
     // MD-N10-3: the flag, else the person's assignment, else config.toml.
     const assignedFrom = modelRegistry();
@@ -263,6 +258,13 @@ export const queueCommand: CommandHandler = async (_args, env) => {
       roleModelName("worker", workerIdx !== -1 ? argv[workerIdx + 1] : undefined, {
         registry: assignedFrom,
       }) ?? configured.worker;
+    // Wave 7 B1: the flag, else the Review model every surface names (role_models.ts).
+    const reviewerIdx = argv.indexOf("--reviewer");
+    const reviewerAsked = reviewerModelName(
+      reviewerIdx !== -1 ? argv[reviewerIdx + 1] : undefined,
+      workerModel ?? defaultWorkerName(),
+      { registry: assignedFrom },
+    );
     // MD-N8-1, rule 23 (W11): every role's combination is verified before the
     // pass, as the Coding model's is below; an unverified one is left out and
     // named with its fallback (`queuePrelude`). The Planning model's weights

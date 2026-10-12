@@ -32,7 +32,7 @@ Sekhemet uses the words professional teams already use. If you have worked with 
 | **Done** | Accepted and merged | Done | Done |
 | **On hold** | Put on hold by a person, with a reason | A blocked flag or custom status | — |
 
-An issue a person rejects is marked **Won't do** (Jira's resolution of the same name; Linear's *Canceled*). An issue can be rejected from Backlog, To do, In review or On hold; one being built is stopped first (`sekhemet abort <issue>`).
+An issue a person rejects is marked **Won't do** (Jira's resolution of the same name; Linear's *Canceled*). An issue can be rejected from Backlog, To do, In review or On hold; one being built is stopped first (`sekhemet abort <issue>`). The reason you give is shown with the move in the issue's Activity.
 
 The dashboard says the Agent is working only while a run is going on an issue. An issue can sit in In progress with no run, for example after a person moved it there, or after its run was stopped by the machine (out of memory, the laptop asleep). Then the sidebar reads *Agent idle · CHR-12 is in progress with no run*, the issue's card on the board reads *In progress · no run* (or *Waiting for checks*), Status counts it as *in progress*, and the issue page says *In progress with no run* and offers Take over rather than Pause.
 
@@ -67,9 +67,11 @@ An epic sits in the column its issues have reached: Backlog or To do while none 
 | **Activity log** | Every event — plans, commands the model ran, checks, decisions — in one hash-chained log. The board, the audit view and every measure are read from it |
 | **Health** | *On track*, *At risk* or *Off track*, set by a person with their name and date |
 | **Project update** | A weekly note: status, done, next, risks and asks |
-| **Forecast** | When the release may be done, as a range (50% and 85% likely), from the work so far |
+| **Forecast** | When the release may be done, as a range (50% and 85% likely), from the work so far; it needs five days of it |
 | **Burn-up** | Work done against total scope, over time |
 | **Cycle time** | How long an issue takes from start to done (Kanban's measure, not a sprint) |
+| **Throughput** | Issues finished a week, over the last 30 days; like cycle time, shown once 3 issues are finished |
+| **Checks passed first time** | Of the issues finished in the last 30 days that the Agent built, the share whose checks passed on its first try |
 | **Insights** | The project's numbers, such as cycle time and throughput, each explained with Tips on |
 
 ## Why it works this way

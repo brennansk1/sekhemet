@@ -2,13 +2,12 @@ import {
   type AssignedRole,
   type LocalInferenceAdapter,
   MODEL_ROLES,
-  type ModelRegistry,
+  ModelRegistry,
   type ModelRole,
   ROLE_WORDS,
   type RoleAssignmentRecord,
   UNFILLED,
   currentAssignment,
-  fillReviewerDefault,
   hostFingerprintHash,
 } from "@sekhemet/models";
 import { defaultWorkerName, effectiveConfig } from "./config_apply.js";
@@ -52,10 +51,11 @@ const NO_REVIEWER =
   "no model of another family than the Coding model's is verified on this machine, so a change reaches you without an AI review";
 
 /**
- * The four roles' models (S1B-B25). The Review model's shipped default is
- * filled first, as `models list` always has (MD-N4-9, `fillReviewerDefault`):
- * a model of another family than the Coding model's verified here, or
- * recorded unfilled. The Review model shown is the one `run` and the queue
+ * The four roles' models (S1B-B25), read without a write: the CLI, doctor,
+ * Configuration and Machine all name each role's model from here (wave 7 B1).
+ * The Review model's shipped default is the one `fillReviewerDefault` would
+ * fill (MD-N4-9): a model of another family than the Coding model's verified
+ * here, else none. The Review model shown is the one `run` and the queue
  * use: `resolveReviewerRole` (the assigned or shipped Review model, else the
  * Planning model, when of another family than the Coding model's) passed
  * through `verifiedReviewerRole` (verified for Review on this machine).
@@ -95,15 +95,13 @@ export function effectiveRoleModels(
     const baseline = currentAssignment(registry, host, role, "baseline")?.model;
     const base = { role, label, ...(baseline ? { baseline } : {}) };
     if (role === "reviewer") {
-      const worker = out[0]?.model;
-      const family = (worker ? registry.get(worker)?.family : undefined) ?? "qwen";
-      fillReviewerDefault(registry, host, family);
-    }
-    const a = assigned(role);
-    if (role === "reviewer") {
+      // Wave 7 B1 (one effective-role source): read, never recorded — the
+      // dashboard's GETs and `models list` resolve it without a write.
+      const a = reviewerAssignment(registry, host, out[0]?.model);
       out.push({ ...base, ...reviewerModel(a, out, opts, host) });
       continue;
     }
+    const a = assigned(role);
     if (a) {
       out.push({ ...base, model: a.model, ...fromAssignment(a) });
       continue;
@@ -140,6 +138,66 @@ export function effectiveRoleModels(
 }
 
 /**
+ * The Review model `run` and the queue ask for (MD-N4-9, wave 7 B1): the
+ * command line's name, else the Review model recorded on this host (a
+ * person's assignment, else a recorded shipped default), else the shipped
+ * default worked out without recording it — the one `effectiveRoleModels`
+ * names, so every surface and the run agree. Undefined when none is; the
+ * family and verification checks follow (`resolveReviewerRole`,
+ * `verifiedReviewerRole`).
+ */
+export function reviewerModelName(
+  flag: string | undefined,
+  worker: string | undefined,
+  opts: { registry: ModelRegistry; host?: string },
+): string | undefined {
+  if (flag) return flag;
+  return reviewerAssignment(opts.registry, opts.host ?? hostFingerprintHash(), worker)?.model;
+}
+
+/** The Review model recorded on this host, else the shipped default worked out (not recorded). */
+function reviewerAssignment(
+  registry: ModelRegistry,
+  host: string,
+  worker: string | undefined,
+): RoleAssignmentRecord | undefined {
+  const a = currentAssignment(registry, host, "reviewer");
+  if (a && a.model !== UNFILLED) return a;
+  const family = (worker ? familyOf(worker, registry) : undefined) ?? "qwen";
+  return shippedReviewerDefault(registry, host, family);
+}
+
+/**
+ * The shipped Review model default as `fillReviewerDefault` would fill it
+ * (MD-N4-9) — a model of another family than the Coding model's whose newest
+ * qualification on this host passed — computed without recording it, so a
+ * read leaves the registry as it was (wave 7 B1).
+ */
+function shippedReviewerDefault(
+  registry: ModelRegistry,
+  host: string,
+  workerFamily: string,
+): RoleAssignmentRecord | undefined {
+  const candidate = registry.list().find((e) => {
+    if (!e.family || e.family.toLowerCase() === workerFamily.toLowerCase()) return false;
+    const newest = new Map<string, string>();
+    for (const q of e.qualifications ?? []) {
+      if (q.combination.host === host) newest.set(q.key, q.status);
+    }
+    return [...newest.values()].includes("qualified");
+  });
+  return candidate
+    ? {
+        role: "reviewer",
+        model: candidate.id,
+        scope: "default",
+        by: "harness",
+        date: new Date().toISOString(),
+      }
+    : undefined;
+}
+
+/**
  * The Review role as `run` and the queue resolve it (S1B-B25): the assigned
  * or shipped Review model, else the Planning model, of another family than
  * the Coding model's and verified for Review here; else unfilled, saying why.
@@ -162,10 +220,14 @@ function reviewerModel(
     worker,
     familyOf: (m) => familyOf(m, registry),
   });
+  // MD-N4-5b: describing and checking the model (the roster's upsert, the
+  // context version observed) happen on a read-only view, so a read that
+  // verifies the Review model leaves the registry as it was.
+  const view = ModelRegistry.readOnly(registry.path);
   const role = verifiedReviewerRole(
-    registry,
+    view,
     resolved,
-    opts.describe ?? ((name, r) => describeModel(name, r, { registry })),
+    opts.describe ?? ((name, r) => describeModel(name, r, { registry: view })),
     { host: () => host, ...opts.combinationDeps },
   );
   if (role.state === "filled") {

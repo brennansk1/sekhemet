@@ -641,3 +641,28 @@ export function acceptChecklist(
     items.push({ kind: "conversation", text: open, blocking: false });
   return items;
 }
+
+const andList = (names: readonly string[]): string =>
+  names.length <= 1
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
+/**
+ * The step after a conflicting Accept, in the board's words (review-git
+ * RG-S5-4; loop wave 10 A1): the CLI's `Do: sekhemet request-changes …`
+ * (`commands/accept.ts` `conflictStep`) as the page says it. `detail` goes
+ * in the refusal; `note` is the reason Request changes starts with — the
+ * Agent's next run rebases onto the integration branch and resolves the
+ * conflict inside its scope (RG-N1-1).
+ */
+export function conflictNextStep(c: { onto: string; files: readonly string[] }): {
+  detail: string;
+  note: string;
+} {
+  const where = c.files.length ? ` in ${andList(c.files)}` : "";
+  const what = `rebase onto ${c.onto} and resolve the conflict${where}`;
+  return {
+    detail: `Request changes and ask the Agent to ${what}.`,
+    note: `${what.charAt(0).toUpperCase()}${what.slice(1)}.`,
+  };
+}

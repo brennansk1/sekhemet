@@ -13,7 +13,7 @@
  * `web/status.js` renders this; the browser loads it as `/app/lib/status.js`.
  */
 import { reviewItHref } from "./learn.js";
-import { agentWork, isAgentsCard } from "./nav.js";
+import { type CodingModelFact, agentWork, codingModelWords, isAgentsCard } from "./nav.js";
 import {
   type CycleLike,
   FLOW_MINIMUM,
@@ -169,6 +169,11 @@ export interface StatusInput {
   standing?: { place: number; estimateSeconds: number }[] | null;
   /** The viewer manages the work: *Review it* opens the criteria view (NEW-dashboard-17). */
   managesWork?: boolean;
+  /**
+   * Whether the Coding model can run issues here (`codingModelFact`, SHL-04):
+   * when it cannot, the models line says why, with no queue estimate (wave 8 B3).
+   */
+  codingModel?: CodingModelFact;
 }
 
 // --- Output ------------------------------------------------------------------
@@ -982,20 +987,26 @@ export function statusModel(input: StatusInput): StatusView {
   const queued = input.standing?.length ?? 0;
   const longest = Math.max(0, ...(input.standing ?? []).map((s) => s.estimateSeconds));
   const busy = agentRuns.length > 0;
+  const cm = input.codingModel;
   const models =
-    !busy && queued === 0
-      ? "Coding model idle"
-      : `Coding model ${busy ? "busy" : "idle"} · ${
-          queued
-            ? `${queued} in queue, about ${plural(Math.max(1, Math.round(longest / 60)), "minute")}`
-            : "nothing queued"
-        }`;
+    cm && !cm.ready
+      ? cm.why === "none"
+        ? "No Coding model set up · issues wait until one fits this machine"
+        : `${codingModelWords(cm)} · issues wait until it is`
+      : !busy && queued === 0
+        ? "Coding model idle"
+        : `Coding model ${busy ? "busy" : "idle"} · ${
+            queued
+              ? `${queued} in queue, about ${plural(Math.max(1, Math.round(longest / 60)), "minute")}`
+              : "nothing queued"
+          }`;
 
   // 10. The flow strip (DB-N9-8), each linking to Insights.
   const hours = facts?.flow.cycleHours ?? [];
-  const enough = hours.length >= FLOW_MINIMUM;
   const days = facts?.flow.days ?? 30;
   const finished = facts?.flow.finished ?? 0;
+  // Insights' rule (flowEmptyState): enough finished issues, and enough built here.
+  const enough = finished >= FLOW_MINIMUM && hours.length >= FLOW_MINIMUM;
   const perWeek = Math.round(((finished * 7) / Math.max(1, days)) * 10) / 10;
   const ft = facts?.flow.firstTime ?? { passed: 0, total: 0 };
   const flow: StatusView["flow"] = {
@@ -1011,8 +1022,12 @@ export function statusModel(input: StatusInput): StatusView {
         href: INSIGHTS,
       },
       {
+        // Wave 8 A2: a weekly rate needs as many finished issues as cycle time.
         label: "Throughput",
-        value: `${perWeek} ${perWeek === 1 ? "issue" : "issues"} a week`,
+        value:
+          finished >= FLOW_MINIMUM
+            ? `${perWeek} ${perWeek === 1 ? "issue" : "issues"} a week`
+            : "Not enough yet",
         href: INSIGHTS,
       },
       {
@@ -1022,8 +1037,9 @@ export function statusModel(input: StatusInput): StatusView {
       },
       {
         label: "Checks passed first time",
+        // Wave 8 A3: a share of the period's finished issues the Agent built.
         value: ft.total
-          ? `${Math.round((ft.passed / ft.total) * 100)}% (${ft.passed} of ${ft.total})`
+          ? `${Math.round((ft.passed / ft.total) * 100)}% (${ft.passed} of ${plural(ft.total, "finished issue")})`
           : "None yet",
         href: INSIGHTS,
       },
@@ -1034,7 +1050,7 @@ export function statusModel(input: StatusInput): StatusView {
           // A3: finished issues are counted as Insights counts them, never the samples.
           note:
             finished < FLOW_MINIMUM
-              ? `Cycle time needs ${FLOW_MINIMUM} finished issues; there ${finished === 1 ? "is" : "are"} ${finished}.`
+              ? `Cycle time and throughput need ${FLOW_MINIMUM} finished issues; there ${finished === 1 ? "is" : "are"} ${finished}.`
               : `Cycle time needs ${FLOW_MINIMUM} issues built through In progress; ${hours.length} of the ${finished} finished ${hours.length === 1 ? "was" : "were"}.`,
         }),
   };

@@ -5,7 +5,7 @@ import { loadLearning } from "./learning.js";
 import { bindLearning, learningHtml, learningMissingHtml } from "./learning_view.js";
 import { gateLabel, parseTitle, shortId } from "./lib/vocabulary.js";
 import { setTopbar } from "./shell.js";
-import { store } from "./store.js";
+import { projectName, store } from "./store.js";
 import { toast } from "./toast.js";
 
 const ui = { root: null, open: new Set(), last: "" };
@@ -38,7 +38,7 @@ function legacyHtml() {
   const p = store.state.playbook;
   setTopbar({
     title: "Playbook",
-    crumb: `${store.state.meta?.project ?? ""}${p ? ` · ${p.rules.length} rules · ${p.candidates.length} suggested` : ""}`,
+    crumb: `${projectName()}${p ? ` · ${p.rules.length} rules · ${p.candidates.length} suggested` : ""}`,
   });
   let html;
   if (!p) html = '<div class="sk" style="height:160px"></div>';
@@ -59,7 +59,7 @@ function legacyHtml() {
           )
           .join("")}</ul>`
       : '<p class="sec">No suggestions. Every note you write when sending an issue back shows up here.</p>';
-    html = `<section><h3 class="sh">Rules <span class="sec">${p.rules.length} · given to the Agent when an issue's files match</span></h3>${rules}</section><section><h3 class="sh">Suggested rules <span class="sec">${p.candidates.length} from your notes when you requested changes</span></h3>${cands}</section>`;
+    html = `<section><h3 class="sh">Rules <span class="sec">${p.rules.length} · given to the Agent when an issue's files match</span></h3>${rules}</section><section><h3 class="sh">Suggested rules <span class="sec">${p.candidates.length} from your reasons when you requested changes</span></h3>${cands}</section>`;
   }
   return html;
 }
@@ -70,7 +70,7 @@ function render() {
   let html;
   if (l.status === 200 && l.data) html = learningHtml(l.data, ui);
   else if (l.status === 0) {
-    setTopbar({ title: "Playbook", crumb: store.state.meta?.project ?? "" });
+    setTopbar({ title: "Playbook", crumb: projectName() });
     html = '<div class="sk" style="height:160px"></div>';
   } else {
     html = `${learningMissingHtml(l.status)}${legacyHtml()}`;

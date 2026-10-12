@@ -92,6 +92,7 @@ import { gitEnvFor, planRelease, publishRelease, runActGate } from "@sekhemet/sy
 import { plural } from "@sekhemet/ui";
 import { airgapSkillApproval, approveVerifiedSkill } from "./airgap.js";
 import { afterDoneCardZero } from "./card_zero.js";
+import { refusalLines } from "./commands/cli_result.js";
 import { effectiveConfig, queueDefaults } from "./config_apply.js";
 import { pendingM0, recordM0Pending, recordWorkerAdopted } from "./m0_path.js";
 import { resolvedWorkerWindowTokens } from "./model_access.js";
@@ -113,6 +114,7 @@ import {
   setupFor,
 } from "./planner_live.js";
 import { settledSourcesFor } from "./pm/pipeline.js";
+import { beginPlanWrite, unfinishedPlan } from "./pm/plan_refusal.js";
 import type { AutoApplyRule } from "./pm/suggest.js";
 import {
   type CombinationDeps,
@@ -376,18 +378,17 @@ export async function planCommand(
   // the project of the folder the command runs in; its issues inherit it.
   const here = realPath(k.repoPath);
   const folderProject = k.cardStore.listProjects().find((p) => realPath(p.rootPath) === here)?.id;
-  await k.cardStore.createCard(
-    {
-      id: epicId,
-      tier: "epic",
-      title: design.buildSpec,
-      // The person's own words: a re-plan starts from them again (PM-P1-8).
-      spec,
-      status: "in_progress",
-      ...(folderProject ? { projectId: folderProject } : {}),
-    },
-    options.actor,
-  );
+  // Wave 9 A1: the epic is written with its plan, below, in Planning — never
+  // In progress before a plan exists, and nothing left if planning is refused.
+  const epic = {
+    id: epicId,
+    tier: "epic" as const,
+    title: design.buildSpec,
+    // The person's own words: a re-plan starts from them again (PM-P1-8).
+    spec,
+    status: "planning" as const,
+    ...(folderProject ? { projectId: folderProject } : {}),
+  };
   // With a planning model, slices and their behaviours come from it; the
   // heuristics remain the fallback when it is absent or answers badly.
   const planner = await repoPlanner(k, options.sketcher);
@@ -452,18 +453,26 @@ export async function planCommand(
       createdAt: now,
     })),
   );
-  const result = await persistPlan(ledgerOf(k), plan, {
-    epicId,
-    // PM-P2-2: a person's plan is the person's act; the planner's otherwise.
-    ...(options.actor ? { actor: options.actor } : {}),
-    ...(options.principal ? { principal: options.principal } : {}),
-    repoRoot: k.repoPath,
-    tierBudget,
-    deriveRequirements: !briefAccepted,
-    ...inputs,
-    ...(options.sketcher ? { sketcher: options.sketcher } : {}),
-    ...(options.plannerTools ? { plannerTools: options.plannerTools } : {}),
-  });
+  // Wave 9 A2: a write that stops partway (a full disk) names what it kept.
+  const write = await beginPlanWrite(k.cardStore, k.log, epicId, true);
+  let result: Awaited<ReturnType<typeof persistPlan>>;
+  try {
+    await k.cardStore.createCard(epic, options.actor);
+    result = await persistPlan(ledgerOf(k), plan, {
+      epicId,
+      // PM-P2-2: a person's plan is the person's act; the planner's otherwise.
+      ...(options.actor ? { actor: options.actor } : {}),
+      ...(options.principal ? { principal: options.principal } : {}),
+      repoRoot: k.repoPath,
+      tierBudget,
+      deriveRequirements: !briefAccepted,
+      ...inputs,
+      ...(options.sketcher ? { sketcher: options.sketcher } : {}),
+      ...(options.plannerTools ? { plannerTools: options.plannerTools } : {}),
+    });
+  } catch (err) {
+    throw await unfinishedPlan(k.cardStore, k.log, write, err);
+  }
   // CLI-07 (surface item 19c): issues by their ID and title, in the board's words.
   for (const line of planReportLines(result, { verbose: options.verbose === true })) print(line);
   if (result.created.length > 0) {
@@ -911,6 +920,19 @@ export function modelRegistry(): ModelRegistry {
   return new ModelRegistry();
 }
 
+/**
+ * What a `<role>` argument takes, in NAMING's words (wave 7 A8): the internal
+ * names are the arguments, each named as the person reads the role.
+ */
+const ROLE_ARGUMENT = `<role> is ${MODEL_ROLES.map((r) => `${r} (the ${ROLE_WORDS[r]})`)
+  .join(", ")
+  .replace(/, ([^,]*)$/, " or $1")}`;
+
+/** The registry as a read or a check sees it: nothing it does is saved (wave 7, MD-N12-9). */
+export function modelRegistryView(): ModelRegistry {
+  return ModelRegistry.readOnly();
+}
+
 // ------------------------------------------------------------------ commands
 
 export type DevCommand =
@@ -963,8 +985,14 @@ export const DEV_COMMANDS: readonly DevCommand[] = [
 
 export interface CommandIO {
   print: (line: string) => void;
-  /** Resolve a model name to an adapter (the queue's roster). */
-  model?: (name: string) => LocalInferenceAdapter;
+  /** A refusal's lines (surface item 18b, stderr); `console.error` when omitted. */
+  printError?: (line: string) => void;
+  /**
+   * Resolve a model name to an adapter (the queue's roster), against the
+   * registry given — a read's view (`ModelRegistry.readOnly`) for a check or
+   * a refusal, so describing a model records nothing (wave 7, MD-N12-9).
+   */
+  model?: (name: string, registry?: ModelRegistry) => LocalInferenceAdapter;
   /** How `qualify` reads a combination's elements; tests pass fakes (qualify.ts). */
   combinationDeps?: CombinationDeps;
 }
@@ -1081,13 +1109,31 @@ export async function runDevCommand(
     }
     case "trailers": {
       // `sekhemet trailers [<range>]` (X26): the attribution contract, for CI and people.
-      const { checkTrailers } = await import("./trailer_gate.js");
-      const bad = checkTrailers(k.repoPath, args[0] ?? "main..HEAD");
+      const { TrailerRangeError, trailerReport } = await import("./trailer_gate.js");
+      const range = args[0] ?? "main..HEAD";
+      let report: ReturnType<typeof trailerReport>;
+      try {
+        report = trailerReport(k.repoPath, range);
+      } catch (err) {
+        if (!(err instanceof TrailerRangeError)) throw err;
+        // Wave 9 B10: a range git cannot read is refused, never a pass.
+        for (const line of refusalLines(
+          err.message,
+          "name two commits git knows, as main..HEAD (git log --oneline shows them)",
+        ))
+          (io.printError ?? ((l: string) => console.error(l)))(line);
+        return 1;
+      }
+      const bad = report.violations;
       for (const v of bad)
         print(`${v.sha.slice(0, 10)} ${v.subject}: missing ${v.missing.join(", ")}`);
+      if (report.commits === 0) return done(`No commits in ${range}: nothing to check.`, 0);
       return bad.length
         ? done(`${plural(bad.length, "commit")} without the attribution trailers.`, 1)
-        : done("Every commit carries the attribution trailers.", 0);
+        : done(
+            `Every commit carries the attribution trailers (${plural(report.commits, "commit")} checked).`,
+            0,
+          );
     }
     case "fixture": {
       // `sekhemet fixture <typescript|python|rust> <dir> [--bug]` (X21): a miniature repository.
@@ -1285,14 +1331,18 @@ export async function runDevCommand(
           ? "default"
           : "personal";
       const registry = modelRegistry();
+      // Wave 7 (MD-N12-9): a listing, and a check before an assignment, read
+      // through a view; only an accepted change is saved.
+      const view = modelRegistryView();
       const host = (io.combinationDeps?.host ?? hostFingerprintHash)();
       const principal = k.cardStore.localPrincipal();
       if (sub === "list") {
         // S1B-B25: each role's model as the project runs it, where it comes
-        // from and in NAMING's words — `init` reports the same lines. The
-        // Reviewer default is filled first (MD-N4-9).
+        // from and in NAMING's words — `init` reports the same lines.
         const { effectiveRoleModels, roleModelLines } = await import("./role_models.js");
-        for (const line of roleModelLines(effectiveRoleModels(k.repoPath, { registry, host })))
+        for (const line of roleModelLines(
+          effectiveRoleModels(k.repoPath, { registry: view, host }),
+        ))
           print(line);
         return 0;
       }
@@ -1321,7 +1371,7 @@ export async function runDevCommand(
       }
       if (sub !== "assign" || !role || !modelArg || modelArg.startsWith("--") || !io.model) {
         return done(
-          "Usage: sekhemet models assign <worker|planner|reviewer|researcher> <model> [--baseline | --default --bake-off <event id>] | models restore <role> | models list",
+          `Usage: sekhemet models assign <role> <model> [--baseline | --default --bake-off <event id>] | models restore <role> | models list — ${ROLE_ARGUMENT}`,
           2,
         );
       }
@@ -1341,14 +1391,14 @@ export async function runDevCommand(
           1,
         );
       }
-      const adapter = (io.model as (n: string) => LocalInferenceAdapter)(modelArg);
+      const adapter = io.model(modelArg, view);
       // Qualified for this role, under this build's prompt version for it (CX-N6-4).
       const combination = qualificationCombination(adapter, {
         ...io.combinationDeps,
-        registry,
+        registry: view,
         role,
       });
-      const look = registry.lookupQualification(adapter.modelId, combination);
+      const look = view.lookupQualification(adapter.modelId, combination);
       // MD-N10-1: the bake-off is a recorded `measure/benchmarked` event.
       const bakeOffId = flag(args, "--bake-off");
       let bakeOff: BakeOffEvidence | undefined;
@@ -1381,7 +1431,7 @@ export async function runDevCommand(
           qualification: look.status,
           ...(bakeOff ? { bakeOff } : {}),
           // MD-N4-9: families as the registry records them.
-          families: familiesFor(registry, host, adapter.modelId),
+          families: familiesFor(view, host, adapter.modelId),
         });
         await k.log.append({
           actor: "human",
@@ -1453,7 +1503,7 @@ export async function runDevCommand(
             : MODEL_ROLES.find((r) => r === overrideRoleFlag);
         if (!overrideRole)
           return done(
-            'Usage: sekhemet qualify --override <model> [--role <worker|planner|reviewer|researcher>] --by "<person>" --reason "<text>"',
+            `Usage: sekhemet qualify --override <model> [--role <role>] --by "<person>" --reason "<text>" — ${ROLE_ARGUMENT}`,
             1,
           );
         const a = (io.model as (n: string) => LocalInferenceAdapter)(name);
@@ -1491,16 +1541,17 @@ export async function runDevCommand(
       const role = roleFlag === undefined ? "worker" : MODEL_ROLES.find((r) => r === roleFlag);
       if (names.length === 0 || !io.model || !role)
         return done(
-          "Usage: sekhemet qualify --models <a,b> [--role <worker|planner|reviewer|researcher>] [--speculative on] [--check]",
+          `Usage: sekhemet qualify --models <a,b> [--role <role>] [--speculative on] [--check] — ${ROLE_ARGUMENT}`,
           1,
         );
-      const registry = modelRegistry();
+      // Wave 7 (MD-N12-9): --check reads through a view, so naming a model records nothing.
+      const registry = args.includes("--check") ? modelRegistryView() : modelRegistry();
       const forRole = { ...io.combinationDeps, registry, role };
       const roleWords = role === "worker" ? "" : ` for the ${ROLE_WORDS[role]}`;
-      const roleFlagText = role === "worker" ? "" : ` --role ${role}`;
       const speculative = flag(args, "--speculative") === "on";
+      const model = io.model;
       const adapterFor = (n: string) => {
-        const a = (io.model as (n: string) => LocalInferenceAdapter)(n);
+        const a = model(n, registry);
         return speculative && a instanceof ManagedLlamaServerAdapter
           ? speculativeProbe(a, registry)
           : a;
@@ -1516,13 +1567,9 @@ export async function runDevCommand(
           const combination = qualificationCombination(a, forRole);
           // An override runs, and says so; the failure it overrides is still shown.
           const look = registry.lookupQualification(a.modelId, combination);
-          // A person's override is honoured per role (rule 27, MD-N4-4, MD-N8-1).
-          const why =
-            role === "worker"
-              ? qualificationRefusal(registry, a, combination, n)
-              : look.status === "qualified" || look.status === "overridden"
-                ? undefined
-                : `${a.modelId} is not verified on this machine${roleWords} (${look.status}: ${look.reason}). Verify it with: sekhemet qualify --models ${n}${roleFlagText}`;
+          // A person's override is honoured per role (rule 27, MD-N4-4, MD-N8-1);
+          // every role's refusal is one sentence (wave 7 A8).
+          const why = qualificationRefusal(registry, a, combination, n, role);
           refused ||= why !== undefined;
           const failure =
             look.status === "overridden"

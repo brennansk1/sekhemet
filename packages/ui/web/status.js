@@ -10,6 +10,7 @@ import { aiBadge } from "./issue_view.js";
 import { viewerManagesWork } from "./learn.js";
 import { noteFor } from "./level_gate.js";
 import { burnupTarget } from "./lib/burnup.js";
+import { takenOffHoldText } from "./lib/issue_actions.js";
 import { RELEASES_COPY, nextReleaseView, retroView } from "./lib/releases.js";
 import { START_COPY, START_ROUTE } from "./lib/start.js";
 import { STATUS_COPY, STATUS_SECTIONS, statusModel } from "./lib/status.js";
@@ -115,6 +116,8 @@ function model() {
     signals: ui.signals,
     standing: ui.standing,
     managesWork: viewerManagesWork(),
+    // Wave 8 B3: Configuration's fact, as the sidebar and the bar read it (SHL-04).
+    ...(s.modelSetup?.codingModel ? { codingModel: s.modelSetup.codingModel } : {}),
   });
 }
 
@@ -641,7 +644,8 @@ async function act(btn) {
   btn.disabled = true;
   if (kind === "unpark") {
     const r = await postJSON(`/api/cards/${encodeURIComponent(id)}/unpark`, {});
-    if (r.ok) toast({ tone: "pass", text: "Taken off hold. It is back where it was." });
+    if (r.ok)
+      toast({ tone: "pass", text: takenOffHoldText(r.data?.status ?? "ready", r.data?.from) });
     else fail("take it off hold", r);
   } else if (kind === "agent-start" || kind === "agent-decline") {
     // TEAM-39: a Member starts the Agent on the request, on their own behalf, or declines it.
@@ -872,7 +876,8 @@ export function mount(view) {
     }
   });
   ui.off = store.on((_s, patch) => {
-    if ("cards" in patch || "cycles" in patch || "connection" in patch) render();
+    if ("cards" in patch || "cycles" in patch || "connection" in patch || "modelSetup" in patch)
+      render();
   });
   ui.timer = window.setInterval(load, REFRESH_MS);
   render();

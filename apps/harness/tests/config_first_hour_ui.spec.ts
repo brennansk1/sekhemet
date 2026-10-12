@@ -114,7 +114,10 @@ describe("Configuration › Models on a clean machine (DB-N27-1, MD-N18-3, §2.1
       const page = await open(width);
       // DB-N27-1: nothing is assigned, and every suggested row still states its checks.
       const coding = page.locator('.cfg-role[data-role="worker"]');
-      expect(await coding.innerText()).toMatch(/No model/);
+      // Wave 7 B1: nothing is assigned; the row names the model the harness would run.
+      expect(await coding.innerText()).toMatch(
+        /Not assigned: the default for this machine's memory/,
+      );
       expect(await coding.innerText()).toMatch(/Recommended:/);
       expect(await coding.locator(".cfg-checks li").allInnerTexts()).toEqual([
         "Fits in memory",

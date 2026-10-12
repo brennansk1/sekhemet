@@ -39,7 +39,7 @@ Then assign it to a role. The command names the roles by their internal names: `
 sekhemet models assign worker <model>
 ```
 
-`sekhemet models list` shows the model each role runs and where it comes from — your assignment on this machine, the project's `config.toml`, or the default — and `sekhemet init` reports the same lines. The Review model shown is the one that reviews: a Review model of the Coding model's family, or one not verified on this machine, is not used, and with none the Planning model reviews when it is of another family and verified for Review:
+`sekhemet models list` shows the model each role runs and where it comes from — your assignment on this machine, the project's `config.toml`, or the default — and `sekhemet init` reports the same lines. The Review model shown is the one that reviews when you run an issue or the queue: with none assigned, a model of another family than the Coding model's that is verified on this machine is the default; a Review model of the Coding model's family, or one not verified on this machine, is not used; and with none the Planning model reviews when it is of another family and verified for Review:
 
 ```
 Coding model: nail-mtp (config.toml [models] executor)
@@ -47,6 +47,10 @@ Planning model: qwen3.8-27b-gsq-rco (config.toml [models] planner)
 Review model: unfilled — no model of another family than the Coding model's is verified on this machine, so a change reaches you without an AI review
 Research model: none — research runs once one is assigned: sekhemet models assign researcher <model>
 ```
+
+The dashboard gives the same answer. Configuration › Models names each role's model as `models list` does: a role nobody assigned shows the model it would run and where that comes from, and says when that model is not in a model folder on this machine yet. Machine lists the same models; with no run in progress they are *Not in use*, never *Resident* or *Swapped out*. On Configuration, a model not yet verified for a role offers **Verify on this machine to assign** before you press anything, and the Review model's list holds only models of another family than the Coding model's. Looking — `models list`, `doctor`, these pages — and an assignment that is refused change nothing on record; a model file is registered when its assignment is accepted or when you verify it.
+
+Issues run only when a Coding model is ready: assigned, its file on this machine, and verified here. Until then every page says the same thing — the sidebar and the bar above each page say *No Coding model set up*, or *Coding model <name> is not on this machine* or *… is not verified on this machine*; Status and Projects give no queue or estimate; and a Ready issue says it is waiting for a Coding model rather than *queued*.
 
 ## Verifying a model on this machine
 

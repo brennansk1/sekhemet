@@ -5,7 +5,12 @@
 // Undo for 10 s (§2.4.23); Revert is undone only by its own revert. Which
 // actions an issue offers, and every word, come from `/app/lib/issue_actions.js`.
 import { copyText, esc, getJSON, icon, kbd, postJSON } from "./dom.js";
-import { ISSUE_ACTION_COPY as C, issueActions, revertConfirmText } from "./lib/issue_actions.js";
+import {
+  ISSUE_ACTION_COPY as C,
+  issueActions,
+  nothingToRevertText,
+  revertConfirmText,
+} from "./lib/issue_actions.js";
 import { placeUnder, pushOverlay, trapFocus } from "./overlay.js";
 import { toast } from "./toast.js";
 import { blockedToast, mutationsBlocked } from "./triage.js";
@@ -251,8 +256,14 @@ function openRevert(anchor, card, { onDone } = {}) {
     const res = await postJSON(`/api/cards/${encodeURIComponent(card.id)}/revert`, {});
     if (!res.ok) {
       // DB-N21-4: the issue stays in Done; the server's reason names the files.
+      // Loop wave 10 A2: nothing merged here to revert says where, and what next.
       close();
-      toast({ text: C.revertFailed, detail: failure(res), tone: "fail" });
+      const nothing = res.status === 409 && res.data?.nothing;
+      toast({
+        text: C.revertFailed,
+        detail: nothing ? nothingToRevertText(nothing) : failure(res),
+        tone: "fail",
+      });
       return;
     }
     close();

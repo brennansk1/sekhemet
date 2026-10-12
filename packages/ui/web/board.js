@@ -13,6 +13,7 @@ import {
   boardModel,
   defaultSort,
   focusAfterFrame,
+  isIssueCard,
   onColumns,
   readColumnChoices,
   readPipeline,
@@ -37,7 +38,7 @@ import { announceDrag } from "./presence.js";
 import { bindReorder } from "./reorder.js";
 import { getSession } from "./session.js";
 import { setTopbar } from "./shell.js";
-import { store } from "./store.js";
+import { projectName, store } from "./store.js";
 import { tileHtml } from "./tile.js";
 import { toast } from "./toast.js";
 import {
@@ -215,9 +216,14 @@ function chipsHtml(chips) {
 }
 
 function renderTopbar() {
-  const total = store.state.cards.length;
-  const shown = visibleCards().length;
-  const project = store.state.meta?.project ?? "";
+  // Wave 8 B2: the header counts what the columns hold, as a lane does: a
+  // Won't do issue counts only while its filter shows it (`onColumns`).
+  // An epic is a tile where its issues are, never counted as an issue: the
+  // count is Status's *of N issues* (`isIssueCard`, wave 8 review).
+  const defs = columnDefs();
+  const total = onColumns(store.state.cards.filter(isIssueCard), defs).length;
+  const shown = onColumns(visibleCards().filter(isIssueCard), defs).length;
+  const project = projectName();
   const count =
     shown === total
       ? `${total} ${total === 1 ? "issue" : "issues"}`
@@ -360,6 +366,10 @@ function tileOpts(card) {
     draggedBy: draggedBy(store.state.presence, card.id, getSession().principal),
     // Teams item 19: the Agent's state on the issue (`GET /api/agent/states`).
     ai: store.state.agentStates?.get?.(card.id),
+    // Wave 8 B3: with no Coding model ready here, the tile promises no queue.
+    noCodingModel: Boolean(
+      store.state.modelSetup?.codingModel && !store.state.modelSetup.codingModel.ready,
+    ),
   };
 }
 

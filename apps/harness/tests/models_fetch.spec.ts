@@ -112,9 +112,26 @@ describe("sekhemet models fetch (MD-N12-6)", () => {
     expect(lines.join(" ")).toMatch(/\[network\] mode/);
     expect(lines.join(" ")).not.toMatch(/no registered source/);
     expect(hits).toBe(0);
-    expect(reg.get("cyber-tiel")?.source?.sha256).toBe(
-      "d60adb32312166b49ceffbd10aed297aee69626b45ec4e720700450ee048bd0e",
-    );
+    // Wave 7 (MD-N12-9's rule for refusals): the refused download records nothing.
+    expect(existsSync(join(dir, "models.json"))).toBe(false);
+  });
+
+  it("wave 7 A6: an unknown model is named as having no source before any folder is asked for, and a refusal records nothing", async () => {
+    const { folder: _f, ...noFolder } = opts(new ModelRegistry(join(dir, "models.json")), []);
+    for (const model of ["nosuch", "nail-mtp"]) {
+      const lines: string[] = [];
+      const code = await modelsFetch(model, { ...noFolder, print: (l) => lines.push(l) });
+      if (model === "nosuch") {
+        expect(code).toBe(1);
+        expect(lines.join(" ")).toMatch(/nosuch has no registered source and hash/);
+        expect(lines.join(" ")).not.toMatch(/model folder/);
+      } else {
+        // A model with a source: the folder is the real prerequisite.
+        expect(code).toBe(2);
+        expect(lines.join(" ")).toMatch(/Name a model folder first/);
+      }
+    }
+    expect(existsSync(join(dir, "models.json"))).toBe(false);
   });
 
   it("refuses a model with no registered source", async () => {

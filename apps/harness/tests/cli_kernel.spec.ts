@@ -31,6 +31,13 @@ describe("sekhemet log: projections derive from the ledger (K8), the repo is a p
     await main(["log", "--repo", dir]);
     expect(process.exitCode ?? 0).toBe(0);
     expect(lines.join("\n")).toContain("byte-identical");
+    // Loop W9-B3: `log` verifies and appends nothing, so it registers no project.
+    const read = new DatabaseSync(join(dir, ".sekhemet", "events.db"), { readOnly: true });
+    expect(read.prepare("SELECT COUNT(*) AS n FROM projects").get()).toEqual({ n: 0 });
+    read.close();
+    // A command that opens the board does (K14).
+    await main(["project", "list", "--repo", dir]);
+    expect(process.exitCode ?? 0).toBe(0);
 
     const db = new DatabaseSync(join(dir, ".sekhemet", "events.db"));
     initSchema(db);

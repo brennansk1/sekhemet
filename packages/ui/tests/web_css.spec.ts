@@ -457,7 +457,8 @@ describe("the gates strip on a phone (dashboard NEW-dashboard-1)", () => {
     // Its text wraps inside the row: no fixed height, no nowrap.
     expect(cascaded("review.css", ".g-seg", "white-space", 400)).toBe("normal");
     expect(cascaded("review.css", ".g-seg", "height", 400)).toBe("auto");
-    expect(cascaded("review.css", ".g-seg", "min-height", 400)).toBe("32px");
+    // Each row is a button: at least the phone's 44 px target (§2.14.5; wave 8 B7 raised it from 32).
+    expect(cascaded("review.css", ".g-seg", "min-height", 400)).toBe("44px");
   });
 
   it("DB-N1-1: a group's failed gates are cut with an ellipsis on a wide strip, never overlapping", () => {

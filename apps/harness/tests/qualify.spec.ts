@@ -285,8 +285,9 @@ describe("sekhemet qualify records the combination (MD-N8-1)", () => {
       combinationDeps: { ...deps, contextVersion: (r: string) => `${r}-v1` },
     };
     expect(await runDevCommand("qualify", ["--models", "silent", "--role", "boss"], k, io)).toBe(1);
+    // Wave 7 A8: the usage names each role as a person reads it.
     expect(out.at(-1)).toMatch(
-      /Usage: sekhemet qualify .*--role <worker\|planner\|reviewer\|researcher>/,
+      /Usage: sekhemet qualify .*--role <role>.*<role> is worker \(the Coding model\), planner \(the Planning model\), reviewer \(the Review model\) or researcher \(the Research model\)/,
     );
     expect(
       await runDevCommand(
@@ -296,8 +297,9 @@ describe("sekhemet qualify records the combination (MD-N8-1)", () => {
         io,
       ),
     ).toBe(1);
+    // Wave 7 A8: one sentence shape for every role, the Coding model's.
     expect(out.at(-1)).toMatch(
-      /silent is not verified on this machine for the Review model \(missing: .*\)\. Verify it with: sekhemet qualify --models silent --role reviewer/,
+      /^Refusing silent as the Review model: not verified on this machine for this combination on this host \(.*\)\. Verify it on this machine with: sekhemet qualify --models silent --role reviewer$/,
     );
     await runDevCommand("qualify", ["--models", "silent", "--role", "reviewer"], k, io);
     const reg = new ModelRegistry(process.env.SEKHEMET_MODEL_REGISTRY);

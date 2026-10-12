@@ -340,7 +340,12 @@ Review writes beside Accept what Accept itself would refuse (review-git
   `[review] require_code_owner_accept` is on and the viewer owns none of the
   files, `{ may: false, code: "not_code_owner", who }` (review-git RG-N5-4,
   `codeOwnerVerdict`, the check Accept runs), `who` being
-  `{ principal, name? }[]`, the people who may accept instead; `builtBy`
+  `{ principal, name? }[]`, the people who may accept instead; on a Done
+  issue `revert` — `{ may: true }`, `{ may: false, who }` (`revertVerdict`),
+  or `{ may: false, nothing: { pr?, merge? } }` when Sekhemet merged nothing
+  of the issue to revert (accepted through its pull request, merged on the
+  hosting service, or no Accept on its Activity log), the answer Revert's
+  `nothing_to_revert` refusal gives (loop wave 10 A2); `builtBy`
   `{ kind: "person", id, name? }` when a person built the work under review
   (the latest attempt's builder; a person delegate only while no attempt is
   recorded — a Worker-built attempt delegated later stays the Worker's); and
@@ -353,6 +358,13 @@ Review writes beside Accept what Accept itself would refuse (review-git
   findings the person acknowledged (`x` in Review), recorded on
   `review/decided`. On a project that requires resolved review threads,
   409 while one is open, its `error` naming it (TEAM-25, below).
+- A refused triage action (`POST /api/cards/:id/{accept,revert,return,park,unpark,reject,reopen}`)
+  answers `409 { error }`; an Accept or Revert refusal adds its `code`
+  (`AcceptRefusedError`), and `conflict { onto, files }` for a conflicting
+  Accept, `nothing { pr?, merge? }` for a Revert with nothing to revert, and
+  `next`, the CLI's `Do:` step, when the refusal knows it (a triage refusal
+  adds `next` too). The page says the same step in the board's words
+  (`conflictNextStep`, `nothingToRevertText`; loop wave 10 A1, A2).
 - The review threads and a dismissed accept (teams item 25, B4.11): the
   same reply adds `threads` (as `GET /api/cards/:id/threads` below),
   `requireResolvedThreads`, `openThread` — while the project requires
@@ -765,8 +777,11 @@ the server knows is one read:
   limit for that project (`reviewLimitFacts`, DB-P3-9), never a fixed number.
   Status turns the fired ones into its risks (DB-N9-6).
 - `POST /api/cards/:id/unpark` (the dashboard's own, `x-sekhemet-action`)
-  returns `{ ok: true, status }`: the parked issue goes back where it was
-  parked from, or to Ready (`triage.ts` `unpark`, as `sekhemet unpark`);
+  returns `{ ok: true, status, from }`: the parked issue goes to Backlog or
+  Planning when it was parked from there, else to Ready (`triage.ts`
+  `unpark`, as `sekhemet unpark`; review-git §2.4), and `from` is the state
+  it was parked from, so the page names where it went and says that an issue
+  held from In review runs again (loop wave 10 A3);
   `409 { error }` when it is not parked. In the Team setup it needs
   `review`, like park (`team/access.ts`).
 
@@ -841,14 +856,22 @@ from one read:
   "points", committed, added, removed, completed, carriedOver: {…, to} } }`,
   each bucket `{ issues: string[], points: number }`, computed from the ledger;
   409 before the sprint started (or for a sprint active before starts were recorded). Start and complete need `issue.edit`.
-- `GET /api/metrics/pm` returns Seshat's measured quality
+- `GET /api/metrics/pm[?project=<id>]` returns Seshat's measured quality
   `{ proposals: {applied, discarded, open, acceptanceRate?},
      plannedCards: {cards, passedFirstTry}, profileCorrections, forecast?,
      sprints: SprintMeasures[] }` — `sprints` each closed sprint's record,
   oldest first: `{ cycleId, forecast: {state: "held" | "missed" |
   "undecided" | "no_forecast", p85Date?}, calibration: {held, decided},
   proposals: {applied, discarded, acceptanceRate?}, planned: {issues,
-  passedFirstTry, rate?}, editedAfterSeshat }`.
+  passedFirstTry, rate?}, editedAfterSeshat }`. Scoped as `GET /api/status`
+  is (wave 8 A1, A5): the named project, or with none named, the only
+  project the person can see, else every issue they can see. `forecast` is
+  Status's own (`forecastOf`, `status_api.ts`): `remaining` the scope's open
+  issues, absent below five days of history, its resampling seeded from its
+  inputs so the same ledger gives the same days; `samples` the days of history.
+  `plannedCards` counts the scope's issues, `sprints` the scope's sprints (and
+  a sprint from before many projects); `proposals` and `profileCorrections`
+  are Seshat's in the workspace.
 - `GET /api/metrics/flow?days=30[&project=<id>]` returns
   `{ throughput: {date, done}[], cycleTime: {cardId, hours, doneAt?}[],
      cfd: {date, backlog, ready, working, checking, review, done}[],
@@ -857,8 +880,9 @@ from one read:
   counts its `flow.finished`, by the same code (`finishedIssues`,
   `status_api.ts`; wave 2 A3): each issue once, at its last move to Done,
   never an epic or initiative, on the named project, or with none named and
-  more than one visible, every issue the person can see. `throughput` still
-  counts every move into Done, of any card, across projects.
+  more than one visible, every issue the person can see. `throughput`,
+  `cycleTime`, `cfd` and `wipAge` are of the same issues (wave 8 A5);
+  `throughput` counts their moves into Done.
 - `GET /api/metrics/burnup?cycle=<id>` (a cycle's) or `?scope=project` (the
   project's; also with no query), with `&project=<id>` to count only that
   project's cards (the board scoped to it) and `&unit=issues` to count each
@@ -1061,6 +1085,7 @@ interface FoundModel {
   fits: Partial<Record<Role, "yes" | "swaps" | "no">>;   // per role: the KV cache depends on each role's context (models 4b)
   fitReason: Partial<Record<Role, string>>;               // e.g. worker: "13 GB of 16 GB usable; swaps with the Planner"
   verified?: boolean;                  // matches the registry's published SHA-256
+  key: string;                         // the id a setup and the recommendation name it by (loop wave 7 B)
 }
 interface RoleAssignment {
   role: Role;
@@ -1074,6 +1099,12 @@ interface RoleAssignment {
     download?: { source: string; sizeBytes: number; sha256: string };  // only a registered source
   };
   previous?: string;                   // the assignment Restore previous brings back (models MD-N10-2)
+  // Loop wave 7 B: the model `run` and the queue would use — `effectiveRoleModels`,
+  // the source `sekhemet models list` and Machine read — with where it comes from;
+  // `present` is false when it is in no model folder here (absent for an Ollama tag).
+  effective?: { model?: string; source: string; from: string; present?: boolean };
+  verifiedModels: string[];            // the found models (by key) verified for this role here
+  codingFamily?: string;               // reviewer only: the family its model must differ from
 }
 interface Combination {                // one model per role; a role may be left unfilled
   worker: string; planner: string; reviewer?: string; researcher?: string;
@@ -1111,7 +1142,7 @@ interface BenchmarkRun {
 - `GET /api/config/models` returns `{ folders: ModelFolder[], suggestedFolders: string[], models: FoundModel[], scannedAt }`; each folder also carries `writable` (there and writable now; an unplugged drive's folder is not); `suggestedFolders` are the likely locations the models spec names that exist on this machine and are not yet configured.
 - `POST /api/config/models/folders` with `{ path, includeSubfolders? }` adds a folder (kept in the user configuration's `[models] folders`; subfolders off unless set) and `DELETE /api/config/models/folders` with `{ path }` removes it; each returns the `GET` shape. The scan only reads a folder, never outside what the person named; only a confirmed download writes into one.
 - `POST /api/config/models/scan` re-scans every configured folder and returns the `GET` shape; progress is streamed as `config` events on `/api/stream`: `{ kind: "scan", folder, found, done }`. The `GET` shape also carries `skipped` (each file not listed, with its reason, models MD-N13-1) and `truncated` (the file limit stopped the scan). Hashing follows the listing in the background (MD-N12-2) and is streamed as `{ kind: "hash", id, file, hash, verified? }`; the id then becomes the SHA-256, and the earlier id still opens the model.
-- `GET /api/config/roles` returns `{ roles: RoleAssignment[] }`, one per role in the order Worker, Planner, Reviewer, Researcher. Each also carries `screen: "built" | "not_measured"` (DB-N6-18), the Planner's `note` (*Seshat, the project manager, runs on this model.*), and, on a recommendation's `download`, `blockedBy` naming the `[network]` setting when the policy refuses its host (DB-N6-7).
+- `GET /api/config/roles` returns `{ roles: RoleAssignment[] }`, one per role in the order Worker, Planner, Reviewer, Researcher. `GET /api/models` (Machine's roster) returns `{ roles: { role, model?, state: "resident" | "swapped" | "not_in_use" | "unconfigured", from?, note? }[], coResident, running }`: while a run holds the runner, its lease's roster; otherwise each role's model from the same `effectiveRoleModels`, `not_in_use`, with `from` (loop wave 7 B). Each also carries `screen: "built" | "not_measured"` (DB-N6-18), the Planner's `note` (*Seshat, the project manager, runs on this model.*), and, on a recommendation's `download`, `blockedBy` naming the `[network]` setting when the policy refuses its host (DB-N6-7).
 - `PUT /api/config/roles/:role` with `{ model }` assigns a found model to a role and returns `{ role: RoleAssignment }`. It is refused with 409 `{ error, needs: "qualification" }` when the model has not passed qualification for that role on this host ([models](specs/models.md) rule 27a; any qualified model may be assigned, with or without a benchmark, rule 30a), and with 409 `{ error, needs: "other-family" }` when the Reviewer would share the Worker's family.
 - `POST /api/config/roles/:role/load` and `POST /api/config/roles/:role/unload` return `{ role: RoleAssignment }`; both go through the residency scheduler, never around the memory guard. A load that does not fit is refused with the reason; an unload of a model a running card uses takes effect at the next step boundary, and the response says so.
 - `POST /api/config/downloads` with `{ model, folder, fileName? }` starts an explicit download of a recommended model from its registered source into `folder` — the folder the confirmation showed, which must be a configured folder that is there and writable now (otherwise 409 `{ error, needs: "folder" }`; a missing folder is never created, since it is an unmounted drive) — and returns `{ downloadId, destination, sizeBytes, sha256 }`. Progress is streamed as `config` events: `{ kind: "download", downloadId, bytes, total, state: "running" | "verifying" | "done" | "failed", error? }`. The file is used only after its SHA-256 matches the published one; a mismatched file is deleted and the state is `failed`. Refused when the model has no registered source and hash, or when `[network] mode` does not allow the source host (the refusal names the setting). A file of the same name already in the folder is never replaced: 409 `{ error, needs: "fileName", fileName }`, and the person gives another name as `fileName`. `DELETE /api/config/downloads/:id` cancels.

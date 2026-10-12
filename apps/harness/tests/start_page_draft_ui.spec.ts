@@ -286,8 +286,13 @@ describe("the start page with a live draft (C2a start-server, NEW-design-stage-7
         const { ctx, page } = await open(from, width);
         const top = page.locator(button);
         await top.waitFor();
-        const box = await top.boundingBox();
-        expect(box && box.y < 260, `${from} ${width}`).toBe(true);
+        // Polled: the view renders once more when the startup's model facts
+        // arrive (wave 8 B3), and a box read across that render is null.
+        await expect
+          .poll(async () => (await top.boundingBox())?.y ?? Number.POSITIVE_INFINITY, {
+            message: `${from} ${width}`,
+          })
+          .toBeLessThan(260);
         await top.click();
         await expect.poll(() => new URL(page.url()).hash).toBe("#/projects/new");
         // The conversation, with the folder named above it before any approval.

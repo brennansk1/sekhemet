@@ -312,10 +312,25 @@ describe("roles (DB-N6-4, DB-N6-5, MD-N12-4, MD-N12-5)", () => {
     expect(f.hubRequests).toEqual([]);
   });
 
-  it("MD-N12-9: assigning a scanned GGUF registers it as the header says, so the role can run it", async () => {
+  it("MD-N12-9, MD-N4-5b: an accepted assignment of a scanned GGUF registers it as the header says; a refused one registers nothing", async () => {
     await call("POST", "/api/config/models/folders", { path: f.models });
     await waitFor(() => f.frames.some((x) => x.kind === "hash" && x.file === "tiny-Q4_K_M.gguf"));
-    await call("PUT", "/api/config/roles/worker", { model: "tiny-llama" });
+    // Not verified here: refused, and the registry is byte for byte as it was.
+    const bytes = () =>
+      existsSync(f.registry.path) ? readFileSync(f.registry.path, "utf8") : undefined;
+    const before = bytes();
+    const refused = await call("PUT", "/api/config/roles/worker", { model: "tiny-llama" });
+    expect(refused.status).toBe(409);
+    expect(refused.body.needs).toBe("qualification");
+    expect(bytes()).toBe(before);
+    expect(f.registry.get("tiny-llama")).toBeUndefined();
+    // Verified: the assignment is accepted and the file registered with it.
+    f.registry.upsert("tiny-llama", {
+      qualification: { suiteVersion: "q1", passRate: 1, date: "2026-10-11", status: "qualified" },
+    });
+    expect((await call("PUT", "/api/config/roles/worker", { model: "tiny-llama" })).status).toBe(
+      200,
+    );
     const e = f.registry.get("tiny-llama");
     expect(e?.header).toMatchObject({ architecture: "llama", contextLength: 32768 });
     expect(f.registry.preferredWeights("tiny-llama")).toBe(join(f.models, "tiny-Q4_K_M.gguf"));

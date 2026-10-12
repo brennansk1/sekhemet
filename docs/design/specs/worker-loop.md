@@ -275,6 +275,7 @@ The Worker loop is how a small local model turns one card into a verified diff: 
 | Verification controller; one "on pass" reset | not-built | the ladder reset is still repeated in four places (`session.ts:1916`, `:2137`, `:2155`, `:2221`; C1 audit, 2026-10-01); three "verify anyway" paths | T3 |
 | Automatic re-check after an edit | built | `session.ts:1436-1489` | — |
 | Forced verification on a stall with scope complete | built | `session.ts:1263-1311` | — |
+| Every gate run that decides a card on the ledger (wave 8 A4) | built | a step's gate run and the runner's own — forced at a stop, or again after a rebase — append one `gate/result` per rung (`CardRunner.recordRungs`, no `stepId` for the runner's), and the evidence row's `gateResultsSummary` holds the bundle's verdict per gate that gave one (`closeAttempt`); `runner_depth.spec.ts` ("every gate run that decides a card is on the ledger") | — |
 | Content-aware repository fingerprint | built | `git_adapter.ts:352` (468f67f); real-git tests | — |
 | Stall warning per episode, then stop | built | `loop.spec.ts:101`, `:134` | — |
 | Write contract: confinement, scope, parse, secrets, atomic | built | `tools.ts:380-402`, `write_contract.ts`; `paths.spec.ts` | — |

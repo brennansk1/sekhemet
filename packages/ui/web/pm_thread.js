@@ -27,7 +27,7 @@ import { cardChip } from "./marks.js";
 import { openPeek } from "./peek.js";
 import { PM_NAME, loadThread, pendingMessage, sendMessage } from "./pm_client.js";
 import { bindProposals, proposalGroupHtml } from "./proposals.js";
-import { store } from "./store.js";
+import { projectName, store } from "./store.js";
 
 const IDLE_STARTERS_MS = 12 * 3600_000;
 
@@ -405,7 +405,7 @@ export function mountThread(
       html =
         '<div class="pm-skel"><div class="sk sk-line"></div><div class="sk sk-line"></div><div class="sk sk-line" style="width:60%"></div></div>';
     } else {
-      const project = store.state.meta?.project ?? "this project";
+      const project = projectName() || "this project";
       const words =
         introText ??
         `I'm ${PM_NAME}, the project manager for ${project}. I read the board, the runs and the Activity log, and I propose changes you approve. I never change the board myself.`;

@@ -65,7 +65,7 @@ function railHtml() {
           .join(
             "",
           )}</ul><p class="small"><a href="#/playbook/profile">See all ${top.length} and edit them in Playbook</a></p>`
-      : '<p class="sec">Nothing yet. Seshat learns from your notes when you request changes, the proposals you apply or discard, and the fields you change.</p>';
+      : '<p class="sec">Nothing yet. Seshat learns from your reasons when you request changes, the proposals you apply or discard, and the fields you change.</p>';
     learned += '<p class="sec small">Stays on this machine. You can edit or dismiss any of it.</p>';
   } else if (l.status === 0) {
     learned = '<p class="sec">Checking…</p>';

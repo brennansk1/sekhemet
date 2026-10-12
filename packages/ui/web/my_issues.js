@@ -24,10 +24,15 @@ async function load() {
 
 function aiHtml(ai) {
   if (!ai?.length) return "";
+  // Wave 8 B3: with no Coding model ready here, no *queued* line (`aiStateLine` gives no word).
+  const fact = store.state.modelSetup?.codingModel;
+  const noCodingModel = Boolean(fact && !fact.ready);
   return ai
     .map((a) => {
-      const l = aiStateLine(a);
-      return `<span class="ib-ai-line"><b>${esc(l.name)}</b>${aiBadge()}<span class="ib-state">${esc(l.label)}</span></span>`;
+      const l = aiStateLine(a, { noCodingModel });
+      return l.label
+        ? `<span class="ib-ai-line"><b>${esc(l.name)}</b>${aiBadge()}<span class="ib-state">${esc(l.label)}</span></span>`
+        : "";
     })
     .join("");
 }

@@ -9,6 +9,7 @@ import type {
   CardStatus,
   CardStore,
   CardUpdate,
+  CreateCardInput,
   DepthProfile,
   EventLog,
 } from "@sekhemet/kernel";
@@ -63,6 +64,7 @@ import {
   createProjectFolder,
   suggestedFolder,
 } from "./new_project.js";
+import { PipelineRefusal, beginPlanWrite, unfinishedPlan } from "./plan_refusal.js";
 import { NEW_PROJECT_REFUSAL } from "./pm_copy.js";
 
 /**
@@ -147,7 +149,18 @@ const kernelOf = (d: PipelineDeps): RepoContext => ({
   ...(d.boardService ? { boardService: d.boardService } : {}),
 });
 
-/** An epic to plan under: the card's own, else one made for this plan (as `sekhemet plan` makes one). */
+/**
+ * An epic to plan under: the card's own, else one made for this plan (as
+ * `sekhemet plan` makes one). A made epic is only described here; the plan
+ * writes it once a plan exists, in Planning (wave 9 A1), so a plan refused
+ * before it writes leaves no epic behind.
+ */
+interface EpicPlan {
+  id: string;
+  /** The epic this plan makes, written just before the plan. */
+  make?: CreateCardInput;
+}
+
 async function epicFor(
   deps: PipelineDeps,
   input: {
@@ -156,24 +169,24 @@ async function epicFor(
     spec: string;
     projectId?: string | undefined;
   },
-): Promise<string> {
-  if (input.epicId && (await deps.cardStore.getCard(input.epicId))) return input.epicId;
+): Promise<EpicPlan> {
+  if (input.epicId && (await deps.cardStore.getCard(input.epicId))) return { id: input.epicId };
   const id = `epic_${createHash("sha256")
     .update(`${input.title}\n${input.spec}\n${Date.now()}`)
     .digest("hex")
     .slice(0, 10)}`;
-  await deps.cardStore.createCard(
-    {
+  return {
+    id,
+    make: {
       id,
       tier: "epic",
       title: input.title,
       spec: input.spec,
-      status: "in_progress",
+      // Wave 9 A1: being planned, never In progress before its plan exists.
+      status: "planning",
       ...(input.projectId ? { projectId: input.projectId } : {}),
     },
-    deps.actor ?? "planner",
-  );
-  return id;
+  };
 }
 
 export interface PipelineOutcome {
@@ -182,13 +195,12 @@ export interface PipelineOutcome {
   epicId: string;
 }
 
-/** Why a plan created nothing, for the person applying it. */
-export class PipelineRefusal extends Error {}
+export { PipelineRefusal };
 
 async function planSlices(
   deps: PipelineDeps,
   input: {
-    epicId: string;
+    epic: EpicPlan;
     spec: string;
     slices?: Record<string, unknown>[];
     /** The Planner's model; without slices or one, the heuristic plans and says so. */
@@ -204,8 +216,9 @@ async function planSlices(
     kernelOf(deps),
     input.slices ? sliceReplyAdapter(input.slices) : input.adapter,
   );
+  const epicId = input.epic.id;
   const plan = await planner.decomposeSpec({
-    parentId: input.epicId,
+    parentId: epicId,
     parentTier: "epic",
     spec: input.spec,
     // PM-P2-6: a question already answered is not asked again.
@@ -217,22 +230,30 @@ async function planSlices(
       `The Planning model refused it: ${plan.rejectionReason ?? "the spec leaves too many open questions"}. Say more about it and ask again.`,
     );
   }
-  const result = await persistPlan(
-    {
-      store: deps.cardStore,
-      log: deps.log,
-      ...(deps.boardService ? { board: deps.boardService } : {}),
-    },
-    plan,
-    {
-      epicId: input.epicId,
-      repoRoot: deps.repoPath,
-      ...(deps.actor ? { actor: deps.actor } : {}),
-      ...(deps.principal ? { principal: deps.principal } : {}),
-      ...(input.change ? { change: input.change } : {}),
-      ...(input.owner ? { owner: input.owner } : {}),
-    },
-  );
+  // Wave 9 A2: a write that stops partway names what it kept.
+  const write = await beginPlanWrite(deps.cardStore, deps.log, epicId, !!input.epic.make);
+  let result: PersistPlanResult;
+  try {
+    if (input.epic.make) await deps.cardStore.createCard(input.epic.make, deps.actor ?? "planner");
+    result = await persistPlan(
+      {
+        store: deps.cardStore,
+        log: deps.log,
+        ...(deps.boardService ? { board: deps.boardService } : {}),
+      },
+      plan,
+      {
+        epicId,
+        repoRoot: deps.repoPath,
+        ...(deps.actor ? { actor: deps.actor } : {}),
+        ...(deps.principal ? { principal: deps.principal } : {}),
+        ...(input.change ? { change: input.change } : {}),
+        ...(input.owner ? { owner: input.owner } : {}),
+      },
+    );
+  } catch (err) {
+    throw await unfinishedPlan(deps.cardStore, deps.log, write, err);
+  }
   const cards: CardRecord[] = [];
   for (const c of result.created) {
     const card = await deps.cardStore.getCard(c.id);
@@ -240,9 +261,15 @@ async function planSlices(
   }
   if (cards.length === 0) {
     const why = result.rejected.map((r) => `${r.title}: ${r.reason}`).join("; ");
-    throw new PipelineRefusal(`The Planning model created no issue${why ? ` (${why})` : ""}.`);
+    // Wave 9 A1: the epic made for it stays, with no issue: named, with its step.
+    throw new PipelineRefusal(
+      `The Planning model created no issue${why ? ` (${why})` : ""}.${input.epic.make ? ` The epic ${epicId} made for it has no issue.` : ""}`,
+      input.epic.make
+        ? `sekhemet reject ${epicId} "no issue planned", or say more about it and ask again`
+        : undefined,
+    );
   }
-  return { result, cards, epicId: input.epicId };
+  return { result, cards, epicId };
 }
 
 /**
@@ -262,7 +289,7 @@ export async function createThroughPipeline(
       typeof draft.spec === "string" ? draft.spec : "",
       ...strings(draft.acceptanceCriteria).map((c) => `- ${c}`),
     ].join("\n");
-    const epicId = await epicFor(deps, {
+    const epic = await epicFor(deps, {
       epicId: typeof draft.epicId === "string" ? draft.epicId : undefined,
       title,
       spec,
@@ -275,7 +302,7 @@ export async function createThroughPipeline(
     // names no filer is owned by the person who applies it.
     const owner = typeof draft.owner === "string" && draft.owner ? draft.owner : deps.principal;
     const outcome = await planSlices(deps, {
-      epicId,
+      epic,
       spec,
       slices: [sliceOf(draft, draft.type === "spike" ? "spike" : "path")],
       ...(change ? { change } : {}),
@@ -371,7 +398,7 @@ export async function splitThroughPipeline(
   }
   const own = criteriaForParts(parent, parts);
   const kind = SLICE_OF_KIND[parent.kind ?? "implement"] ?? "path";
-  const epicId = await epicFor(deps, {
+  const epic = await epicFor(deps, {
     epicId: parent.parentId ?? parent.epicId,
     title: parent.title,
     spec: parent.spec ?? parent.title,
@@ -388,7 +415,7 @@ export async function splitThroughPipeline(
     ),
   ].join("\n\n");
   const outcome = await planSlices(deps, {
-    epicId,
+    epic,
     spec,
     slices: parts.map((p, i) => sliceOf({ ...p, acceptanceCriteria: own[i] ?? [] }, kind)),
   });
@@ -1009,9 +1036,10 @@ export async function applyProjectGroup(
   // The first release through the one planner — decompose, INVEST, the
   // criterion lint, scope, a staged test, persist — the person the actor.
   const spec = first.map((c) => c.title).join(". ");
-  const epicId = await epicFor(deps, { title: group.buildSpec, spec, projectId: project.id });
+  const epic = await epicFor(deps, { title: group.buildSpec, spec, projectId: project.id });
+  const epicId = epic.id;
   const planned = await planSlices(deps, {
-    epicId,
+    epic,
     spec,
     ...(deps.adapter ? { adapter: deps.adapter } : {}),
     ...(group.brief.riskiest[0] && !/^None/.test(group.brief.riskiest[0])

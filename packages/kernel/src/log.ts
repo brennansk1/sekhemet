@@ -97,6 +97,20 @@ export interface LedgerErasedPayload {
   reapplies?: string;
 }
 
+/**
+ * A backup copy whose chain does not verify (rule 35, K-N7-4): the copy is
+ * removed before this is thrown, and the ledger it copied is what fails.
+ */
+export class BackupUnverified extends Error {
+  constructor(
+    readonly path: string,
+    readonly reason: string,
+  ) {
+    super(`The backup at ${path} does not verify, so it was not kept: ${reason}`);
+    this.name = "BackupUnverified";
+  }
+}
+
 /** One line of the erasure register: ids and reasons only, no personal data (rule 35). */
 export interface ErasureRegisterEntry {
   erasureId: string;
@@ -106,6 +120,12 @@ export interface ErasureRegisterEntry {
   reason: ErasureReason;
   principal: string;
   at: string;
+  /**
+   * Set on a re-application a restore made (rule 35): the erasure it
+   * re-applies, whose own entry keeps the seq it had in the ledger it was
+   * made in. This entry's `erasureId` and `seq` are the restored ledger's.
+   */
+  reapplies?: string;
 }
 
 export interface EraseInput {
@@ -127,6 +147,8 @@ export interface EraseInput {
 }
 
 export interface ErasureReport {
+  /** The `ledger/erased` event's id. */
+  erasureId: string;
   erasedBySeq: number;
   eventIds: string[];
   blobIds: string[];
@@ -1123,6 +1145,7 @@ export class EventLog {
     this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     this.notify(erased as EventRecord);
     return {
+      erasureId: erased.id,
       erasedBySeq: erased.seq,
       eventIds: erased.payload.eventIds,
       blobIds,
@@ -1156,20 +1179,25 @@ export class EventLog {
     copyDatabase(this.db, path);
     const { DatabaseSync } = await import("node:sqlite");
     const copy = new DatabaseSync(path, { readOnly: true });
+    let failure: string | undefined;
     try {
       const check = new EventLog(copy).verifyHashChainSync({ full: true });
-      if (!check.valid) {
-        throw new Error(
-          `The backup at ${path} does not verify: ${check.reason ?? "invalid chain"}`,
-        );
+      if (check.valid) {
+        return {
+          seq: (
+            copy.prepare("SELECT COALESCE(MAX(seq), 0) AS s FROM events").get() as { s: number }
+          ).s,
+        };
       }
-      return {
-        seq: (copy.prepare("SELECT COALESCE(MAX(seq), 0) AS s FROM events").get() as { s: number })
-          .s,
-      };
+      failure = check.reason ?? "invalid chain";
     } finally {
       copy.close();
     }
+    // A copy that does not verify is no backup: nothing is left at its path
+    // that looks like one (loop W9-B4). `VACUUM INTO` refuses an existing
+    // file, so the file there is this copy.
+    for (const f of [path, `${path}-wal`, `${path}-shm`]) rmSync(f, { force: true });
+    throw new BackupUnverified(path, failure);
   }
 
   /** `ledger/backed_up {path, seq, schemaVersion?}` (rule 35; runtime item 35a). */
@@ -1278,6 +1306,18 @@ export function verifyChainRows(
     const expectedSeq = fromSeq + i;
     seqOf.set(row.id, row.seq);
 
+    // Rule 10: a deleted row is named at its own seq (wave 9, sweep 5): the
+    // first corrupt seq is the one that is missing, not the row after it.
+    if (row.seq > expectedSeq) {
+      const missing =
+        row.seq - 1 === expectedSeq
+          ? `seq ${expectedSeq} is missing`
+          : `seqs ${expectedSeq}–${row.seq - 1} are missing`;
+      return corrupt(
+        expectedSeq,
+        `${missing}: the row after ${expectedSeq - 1} is ${row.seq} (a row was deleted)`,
+      );
+    }
     if (row.seq !== expectedSeq) {
       return corrupt(row.seq, `Non-monotonic sequence: expected ${expectedSeq}, got ${row.seq}`);
     }

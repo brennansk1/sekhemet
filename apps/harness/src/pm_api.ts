@@ -23,7 +23,6 @@ import {
   sameProject,
 } from "@sekhemet/ui";
 import { effectiveConfig } from "./config_apply.js";
-import { recommendRoster } from "./init.js";
 import { handleIntegrationsApi } from "./integrations.js";
 import { readSettings } from "./integrations.js";
 import { readIssueForms } from "./issue_forms.js";
@@ -74,8 +73,9 @@ import { draftWeeklyUpdate, postWeeklyUpdate } from "./pm/weekly.js";
 import { seshatWait } from "./pm/while_worker.js";
 import { releaseTags } from "./project_done.js";
 import { oneShotResearcher } from "./research/service.js";
+import { effectiveRoleModels } from "./role_models.js";
 import { quickAnswererFor } from "./smart_swap.js";
-import { finishedIssues, statusFacts } from "./status_api.js";
+import { finishedIssues, forecastOf, pageIssues, statusFacts } from "./status_api.js";
 import {
   isDay,
   isHealth,
@@ -1385,7 +1385,7 @@ export function createPmApi(ctx: PmApiContext) {
 
     // --- Model roster (worker, Seshat, reviewer, researcher) -------------------
     if (url === "/api/models" && req.method === "GET") {
-      ctx.json(res, 200, modelRoster(ctx.repoPath, pmModelNow()));
+      ctx.json(res, 200, modelRoster(ctx.repoPath, ctx.pmModel));
       return true;
     }
 
@@ -1398,10 +1398,25 @@ export function createPmApi(ctx: PmApiContext) {
 
     // --- Seshat's own quality (measured) -------------------------------------
     if (url === "/api/metrics/pm" && req.method === "GET") {
-      const cards = ctx.cardStore ? await ctx.cardStore.listCards() : [];
-      const remaining = cards.filter(
-        (c) => !["done", "rejected", "parked"].includes(c.status),
-      ).length;
+      // Wave 8 A1, A5: the page's project (Status's scope, `?project=`), and
+      // Status's own forecast of it, withheld below five days of history.
+      const a = audience();
+      const me = personOf(req);
+      const project = query.get("project") ?? undefined;
+      const scope = ctx.cardStore
+        ? await pageIssues({ cardStore: ctx.cardStore, me, project, audience: a })
+        : { project: undefined, cards: [] };
+      const ids = new Set(scope.cards.map((c) => c.id));
+      const { forecast: fc } = await forecastOf(scope.cards, ctx.log, Date.now());
+      const sprints = new Set(
+        (await pmStore.cycles())
+          .filter((c) =>
+            scope.project
+              ? !c.projectId || c.projectId === scope.project.id
+              : !project && (!c.projectId || a.canSee(me, c.projectId)),
+          )
+          .map((c) => c.id),
+      );
       const evDir = join(ctx.repoPath, ".sekhemet", "evidence");
       const firstTry = new Map<string, boolean>();
       if (existsSync(evDir)) {
@@ -1418,7 +1433,23 @@ export function createPmApi(ctx: PmApiContext) {
           }
         }
       }
-      ctx.json(res, 200, await pmQuality(ctx.log, remaining, (id) => firstTry.get(id)));
+      ctx.json(
+        res,
+        200,
+        await pmQuality(
+          ctx.log,
+          fc.p50Days !== undefined && fc.p85Days !== undefined
+            ? {
+                remaining: fc.remaining,
+                p50Days: fc.p50Days,
+                p85Days: fc.p85Days,
+                samples: fc.historyDays,
+              }
+            : undefined,
+          (id) => firstTry.get(id),
+          { card: (id) => ids.has(id), cycle: (id) => sprints.has(id) },
+        ),
+      );
       return true;
     }
 
@@ -1453,7 +1484,17 @@ export function createPmApi(ctx: PmApiContext) {
       const days = Math.min(365, Math.max(1, Number(query.get("days") ?? 30) || 30));
       // Measurement rule 4a: every role's token use over the same window.
       // Wave 2 A3: the period's finished issues are Status's count, on the
-      // same scope (the page's project, or every issue the person can see).
+      // same scope (the page's project, or every issue the person can see);
+      // wave 8 A5: and so are the throughput, cycle times, WIP and CFD.
+      const flowScope = ctx.cardStore
+        ? await pageIssues({
+            cardStore: ctx.cardStore,
+            me: personOf(req),
+            project: query.get("project") ?? undefined,
+            audience: audience(),
+          })
+        : undefined;
+      const inScope = flowScope ? new Set(flowScope.cards.map((c) => c.id)) : undefined;
       const finished = ctx.cardStore
         ? await finishedIssues({
             cardStore: ctx.cardStore,
@@ -1465,7 +1506,12 @@ export function createPmApi(ctx: PmApiContext) {
           })
         : undefined;
       ctx.json(res, 200, {
-        ...(await flowMetrics(ctx.log, days)),
+        ...(await flowMetrics(
+          ctx.log,
+          days,
+          new Date(),
+          inScope ? (id) => inScope.has(id) : undefined,
+        )),
         ...(finished !== undefined ? { finished } : {}),
         modelUse: await modelUse(ctx.log, days),
       });
@@ -1515,16 +1561,20 @@ export function createPmApi(ctx: PmApiContext) {
 
 /**
  * The four-model roster and what is loaded: the running queue's lease when
- * there is one, otherwise the roster the next run will use (config.toml, then
- * the recommendation for this machine). Shared by /api/models and the
- * sidebar's model line (via /api/machine).
+ * there is one, otherwise each role's model as the next run resolves it —
+ * `effectiveRoleModels`, the one source the CLI, doctor and Configuration
+ * read too (wave 7 B1), with where it comes from. With no run nothing is
+ * resident or swapped out: each named model is *not in use* (wave 7 B2).
+ * Shared by /api/models and the sidebar's model line (via /api/machine).
  */
 export function modelRoster(
   repoPath: string,
-  pmModel: string = seshatModelName(repoPath, { registry: modelRegistry() }),
+  pmModel?: string,
 ): {
-  roles: { role: string; model?: string; state: string; note?: string }[];
+  roles: { role: string; model?: string; state: string; from?: string; note?: string }[];
   coResident: boolean;
+  /** Whether a run holds the runner: without one nothing is resident or swapped out. */
+  running: boolean;
 } {
   const lease = runnerLease(repoPath) as
     | {
@@ -1534,32 +1584,35 @@ export function modelRoster(
         coResident?: boolean;
       }
     | undefined;
-  const configured = new Map<string, string | undefined>(
-    (lease?.roster ?? []).map((r) => [r.role, r.model]),
+  const configured = new Map<string, { model?: string; from?: string }>(
+    (lease?.roster ?? []).map((r) => [r.role, r.model ? { model: r.model } : {}]),
   );
   if (!lease) {
-    const cfg = effectiveConfig(repoPath).config;
-    const rec = recommendRoster();
-    configured.set("worker", cfg.models.executor !== "auto" ? cfg.models.executor : rec.worker);
-    configured.set("manager", pmModel);
-    configured.set("reviewer", rec.reviewer);
-    configured.set("researcher", process.env.SEKHEMET_RESEARCHER ?? rec.researcher);
+    for (const r of effectiveRoleModels(repoPath, { registry: modelRegistry() })) {
+      const role = r.role === "planner" ? "manager" : r.role;
+      configured.set(role, { ...(r.model ? { model: r.model } : {}), from: r.from });
+    }
+    // A server started with its own Seshat model (the `pmModel` server option, as tests use) names it.
+    if (pmModel) configured.set("manager", { model: pmModel });
   }
   const roles = ["worker", "manager", "reviewer", "researcher"].map((role) => {
-    const model = configured.get(role);
+    const { model, from } = configured.get(role) ?? {};
     const state = !model
       ? "unconfigured"
-      : lease?.coResident || lease?.resident?.includes(role) || lease?.active === role
-        ? "resident"
-        : "swapped";
+      : !lease
+        ? "not_in_use"
+        : lease.coResident || lease.resident?.includes(role) || lease.active === role
+          ? "resident"
+          : "swapped";
     return {
       role,
       ...(model ? { model } : {}),
       state,
+      ...(from ? { from } : {}),
       ...(lease ? {} : { note: "No run in progress" }),
     };
   });
-  return { roles, coResident: lease?.coResident === true };
+  return { roles, coResident: lease?.coResident === true, running: lease !== undefined };
 }
 
 /**

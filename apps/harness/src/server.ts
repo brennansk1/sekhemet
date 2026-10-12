@@ -1325,6 +1325,11 @@ export function startDashboardServer(
           standing,
           people: workspacePeople,
           localPrincipal: () => log.localPrincipal(),
+          // Wave 9 A3: a Ready issue the board would not start is not queued.
+          startBlocker: async (card) =>
+            (
+              boardService as { startBlocker?: (c: CardRecord) => Promise<string | undefined> }
+            ).startBlocker?.call(boardService, card),
         }
       : undefined;
   /** RUN-35: the configured Worker's qualified slots, as the queue reads them; one if unqualified. */

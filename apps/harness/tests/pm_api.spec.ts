@@ -286,25 +286,31 @@ describe("PM and board-practice API", () => {
 
   it("reports the model roster; without a running queue, the roster the next run will use, none loaded", async () => {
     const body = (await (await fetch(`${base}/api/models`)).json()) as {
-      roles: { role: string; model?: string; state: string }[];
+      roles: { role: string; model?: string; state: string; from?: string }[];
       coResident: boolean;
+      running: boolean;
     };
     expect(body.roles.map((r) => r.role)).toEqual(["worker", "manager", "reviewer", "researcher"]);
+    // Loop wave 7 B: idle, the roster is each role's model as the next run
+    // resolves it (`effectiveRoleModels`, the CLI's and Configuration's
+    // source), with where it comes from; nothing is loaded and no run holds
+    // the runner, so no role is resident or swapped out: each is not in use.
+    expect(body.running).toBe(false);
     expect(body.roles.find((r) => r.role === "manager")).toMatchObject({
       model: "dirk-27b:latest",
-      state: "swapped",
+      state: "not_in_use",
     });
-    // Contract change (H15/H25): idle, the roster is config.toml's, else this
-    // machine's recommendation; nothing is loaded, so every role is swapped out.
     expect(body.roles.find((r) => r.role === "worker")).toMatchObject({
       // Models rule 3 (DEC-47 O-5): the shipped Coding model.
       model: "nail-mtp",
-      state: "swapped",
+      state: "not_in_use",
+      from: "the default for this machine's memory",
       note: "No run in progress",
     });
-    expect(body.roles.find((r) => r.role === "researcher")?.model).toBe(
-      process.env.SEKHEMET_RESEARCHER ?? "apodex-1.1-mini",
-    );
+    // The Research model is the one a person named, never the shipped roster's.
+    const researcher = body.roles.find((r) => r.role === "researcher");
+    expect(researcher?.model).toBe(process.env.SEKHEMET_RESEARCHER);
+    if (!process.env.SEKHEMET_RESEARCHER) expect(researcher?.state).toBe("unconfigured");
     // The Review role is unfilled until a model is admitted for it.
     expect(body.roles.find((r) => r.role === "reviewer")).toMatchObject({ state: "unconfigured" });
   });

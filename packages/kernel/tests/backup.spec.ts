@@ -125,6 +125,76 @@ describe("K-N7-5: restore re-applies erasures newer than the backup", () => {
     restored.close();
   });
 
+  it("names each re-application in the register at its seq in the restored ledger, and a second restore re-applies the one decision once (rule 35)", async () => {
+    // Loop W9-B6 (sweep 5): after a restore the register still named the
+    // erasure at its old seq only, which the restored ledger does not hold.
+    const { backup, erasureId } = await backupThenErase();
+    disk.close();
+    const restoreOnce = () =>
+      restoreBackup({ backupPath: backup, targetPath: disk.path, registerPath: register });
+    await restoreOnce();
+    const readRecords = async () => {
+      const d = new DatabaseSync(disk.path, { readOnly: true });
+      try {
+        return await new EventLog(d).getEventsByTypes(["ledger/erased"]);
+      } finally {
+        d.close();
+      }
+    };
+    const [record] = await readRecords();
+    const entries = readErasureRegister(register) ?? [];
+    expect(entries.filter((e) => e.reapplies === erasureId)).toEqual([
+      expect.objectContaining({ erasureId: record?.id, seq: record?.seq }),
+    ]);
+
+    const again = await restoreOnce();
+    expect(again.reapplied.map((e) => e.erasureId)).toEqual([erasureId]);
+    expect(await readRecords()).toHaveLength(1);
+  });
+
+  it("re-applies an erasure made in another lineage whatever its seq, so a later restore of a newer backup never brings the secret back (rule 35)", async () => {
+    // Loop W9-B6 (wave 9 review): register seqs come from different ledger
+    // lineages and cannot be compared with a backup's last seq. Restore an
+    // old backup, erase there (a low seq), then restore a newer backup.
+    const leaked = await log.append({
+      actor: "human",
+      type: "card/note",
+      payload: {},
+      private: { text: SECRET },
+    });
+    const older = join(disk.dir, "backups", "older.db");
+    await log.backup(older, { principal: owner });
+    for (let i = 0; i < 10; i++) {
+      await log.append({ actor: "system", type: "load", payload: { i } });
+    }
+    const newer = join(disk.dir, "backups", "newer.db");
+    const { seq: newerSeq } = await log.backup(newer, { principal: owner });
+    disk.close();
+
+    await restoreBackup({ backupPath: older, targetPath: disk.path, registerPath: register });
+    const lineage = new DatabaseSync(disk.path);
+    const erasure = await new EventLog(lineage, { erasureRegister: register }).erase({
+      eventIds: [leaked.id],
+      reason: "secret",
+      principal: owner,
+    });
+    lineage.close();
+    expect(erasure.erasedBySeq).toBeLessThan(newerSeq);
+
+    const result = await restoreBackup({
+      backupPath: newer,
+      targetPath: disk.path,
+      registerPath: register,
+    });
+    expect(result.reapplied.map((e) => e.seq)).toEqual([erasure.erasedBySeq]);
+    expect(readFileSync(disk.path).toString("latin1")).not.toContain(SECRET);
+    const restored = new DatabaseSync(disk.path, { readOnly: true });
+    const v = await new EventLog(restored).verifyHashChain({ full: true });
+    restored.close();
+    expect(v.valid).toBe(true);
+    expect(v.erased?.map((e) => e.seq)).toEqual([leaked.seq]);
+  });
+
   it("refuses when erasures are known to exist and the register is missing", async () => {
     const { backup } = await backupThenErase();
     disk.close();
@@ -140,6 +210,21 @@ describe("K-N7-5: restore re-applies erasures newer than the backup", () => {
   });
 });
 
+describe("K-N7-4: a copy that does not verify is not left at its path", () => {
+  it("removes the copy when its chain fails, so the path holds nothing that looks like a backup", async () => {
+    // Loop W9-B4 (sweep 5): the refused copy stayed, and the retry said only
+    // "output file already exists".
+    await log.append({ actor: "system", type: "x", payload: { n: 1 } });
+    db.exec("DROP TRIGGER IF EXISTS events_no_update");
+    db.exec("UPDATE events SET created_at = '2000-01-01T00:00:00.000Z' WHERE seq = 2");
+    const target = join(disk.dir, "backups", "bad.db");
+    await expect(log.backup(target)).rejects.toThrow(/does not verify/);
+    expect(existsSync(target)).toBe(false);
+    expect(existsSync(`${target}-wal`)).toBe(false);
+    expect(existsSync(`${target}-shm`)).toBe(false);
+  });
+});
+
 describe("K-N7-9: applyErasures is idempotent", () => {
   it("re-applies once and leaves the ledger identical on the second run", async () => {
     const leaked = await log.append({
@@ -149,21 +234,21 @@ describe("K-N7-9: applyErasures is idempotent", () => {
       private: { text: SECRET },
     });
     const backup = join(disk.dir, "backups", "b.db");
-    const { seq } = await log.backup(backup);
+    await log.backup(backup);
     const erasure = await log.erase({ eventIds: [leaked.id], reason: "secret", principal: owner });
     const entries = readErasureRegister(register) ?? [];
     expect(entries).toHaveLength(1);
 
     const copy = new DatabaseSync(backup);
     const clog = new EventLog(copy);
-    const first = await applyErasures(clog, entries, seq);
+    const first = await applyErasures(clog, entries);
     expect(first.reapplied.map((e) => e.erasureId)).toEqual([
       (await log.getEventsByTypes(["ledger/erased"]))[0]?.id,
     ]);
     expect(first.reapplied[0]?.seq).toBe(erasure.erasedBySeq);
     const snapshot = JSON.stringify(copy.prepare("SELECT * FROM events ORDER BY seq").all());
     const privateRows = JSON.stringify(copy.prepare("SELECT * FROM event_private").all());
-    const second = await applyErasures(clog, entries, seq);
+    const second = await applyErasures(clog, entries);
     expect(second.reapplied).toEqual([]);
     expect(second.alreadyApplied).toEqual([entries[0]?.erasureId]);
     expect(JSON.stringify(copy.prepare("SELECT * FROM events ORDER BY seq").all())).toBe(snapshot);

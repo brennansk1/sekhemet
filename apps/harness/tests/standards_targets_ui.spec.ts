@@ -156,12 +156,17 @@ describe("standards and accessibility on a full board (dashboard §2.13, §2.14;
             problems.push(`Seshat panel ${width}px: ${s}`);
         }
         await ctx.close();
-        // A first visit: the welcome's own *Set up models* and its answers.
+        // A first visit: the welcome's own *Set up models* and its answers. On a
+        // phone the model step is the No Coding model bar's alone (loop wave 10),
+        // whose link the routes above already measure.
         const first = await (
           await browser.newContext({ viewport: { width, height: 900 } })
         ).newPage();
         await first.goto(`${base}/#/board`);
-        await first.locator("#sk-firstrun .fr-step a").waitFor({ timeout: 10_000 });
+        await first
+          .locator(width === 1440 ? "#sk-firstrun .fr-step a" : "#sk-firstrun [data-fr]")
+          .first()
+          .waitFor({ timeout: 10_000 });
         for (const s of new Set(await smallTargets(first, min)))
           problems.push(`first visit ${width}px: ${s}`);
         await first.context().close();

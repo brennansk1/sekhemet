@@ -37,7 +37,7 @@ import { getSession } from "./session.js";
 import { setTopbar } from "./shell.js";
 import { shotsHtml } from "./shots.js";
 import { renderSteps } from "./steps.js";
-import { store } from "./store.js";
+import { projectName, store } from "./store.js";
 import { renderSuggestions } from "./suggestions.js";
 import {
   accept,
@@ -152,13 +152,13 @@ function renderHead() {
   const card = store.card(ui.id);
   const head = $(".cv-h", ui.root);
   if (!card) {
-    setTopbar({ title: "Issue", crumb: store.state.meta?.project ?? "" });
+    setTopbar({ title: "Issue", crumb: projectName() });
     head.innerHTML = "";
     renderTabs();
     ui.issue?.draw();
     return;
   }
-  const project = store.state.meta?.project ?? "";
+  const project = projectName();
   setTopbar({
     title: "Issue",
     crumb: `${project ? `${project} › ` : ""}${boardColumnLabel(card.status)}`,
@@ -617,6 +617,8 @@ export function mount(view, route) {
     if ("decisions" in patch) ui.tabCtl?.onStore?.(patch);
     // DB-N9-20: someone opened or left this issue.
     if ("presence" in patch) renderHead();
+    // Wave 8 B3: the Agent's line reads whether a Coding model is ready here.
+    if ("modelSetup" in patch) ui.issue?.draw();
     if (!("cards" in patch || "connection" in patch || "verification" in patch)) return;
     const mine = (store.state.feed ?? []).filter((e) => e.cardId === ui.id);
     if ("cards" in patch && mine.length && ui.events) {

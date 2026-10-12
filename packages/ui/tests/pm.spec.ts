@@ -5,6 +5,8 @@ import {
   type LearnedRuleLike,
   type PmCardLike,
   type ProfileEntryLike,
+  ROSTER_STATE_LABELS,
+  type RosterRoleLike,
   activeCycle,
   agingClass,
   applyAllLabel,
@@ -32,6 +34,8 @@ import {
   renderPmMarkdown,
   retireSuggested,
   rosterRows,
+  rosterSource,
+  rosterSummary,
   scopeChips,
   setTerm,
   sortByPriority,
@@ -631,6 +635,46 @@ describe("model roster and research sources", () => {
     ]);
     expect(rows[0]?.note).toBe("Loaded 3m ago");
     expect(rows[2]?.does).toMatch(/different model family/);
+  });
+
+  it("wave 7 B2: with no run, nothing is resident or swapped out, and no other machine's memory is claimed", () => {
+    const roles = [
+      {
+        role: "worker",
+        model: "nail-mtp",
+        state: "not_in_use",
+        from: "the default for this machine's memory",
+      },
+      { role: "manager", model: "dirk-27b:latest", state: "not_in_use", from: "the default" },
+      { role: "reviewer", state: "unconfigured", from: "no model of another family is verified" },
+      { role: "researcher", state: "unconfigured", from: "research runs once one is assigned" },
+    ] as RosterRoleLike[];
+    const rows = rosterRows(roles);
+    expect(rows.map((r) => ROSTER_STATE_LABELS[r.state])).toEqual([
+      "Not in use",
+      "Not in use",
+      "Not configured",
+      "Not configured",
+    ]);
+    expect(rosterSource(rows[0] ?? { state: "unconfigured" })).toBe(
+      "From the default for this machine's memory.",
+    );
+    expect(rosterSource(rows[3] ?? { state: "unconfigured" })).toBe(
+      "Research runs once one is assigned.",
+    );
+    const idle = rosterSummary(rows, { running: false, coResident: false });
+    expect(idle.heading).toBe("No run in progress");
+    expect(`${idle.heading} ${idle.memory}`).not.toMatch(/resident|swapped|\d+ GB/i);
+    const running = rosterSummary(
+      rosterRows([
+        { role: "worker", model: "nail-mtp", state: "resident" },
+        { role: "manager", model: "dirk-27b:latest", state: "swapped" },
+      ]),
+      { running: true, coResident: false },
+    );
+    // The count is of the roles with a model, never of four when two are named.
+    expect(running.heading).toBe("1 of 2 resident");
+    expect(running.memory).not.toMatch(/\d+ GB/);
   });
 
   it("keeps only http(s) sources as links and skips card cites", () => {

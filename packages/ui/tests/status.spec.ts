@@ -273,13 +273,93 @@ describe("plainStatus (§2.8.13)", () => {
       "Not started",
       "Ready to start",
       "Being planned",
-      "Being built",
-      "Being checked",
+      "In progress",
+      "In progress",
       "Waiting for review",
       "Done",
       "On hold",
       "Won't do",
     ]);
+  });
+});
+
+// Wave 8 B4 (sweep 4): one stored Verify card read *Waiting for checks* on its
+// tile, *In progress* on Status and *Being checked* in `status --json`. The
+// plain words are the ones Status says: a stored In progress or Verify card is
+// *In progress* — its board column, never work no run backs (wave 2 A1).
+describe("plainStatus says each state as Status says it (wave 8 B4)", () => {
+  it("names every state Status's standup names with Status's own word", () => {
+    const stored = (status: string, id: string) =>
+      ({ id, title: id, status, tier: "task", updatedAt: "2026-09-27T09:00:00.000Z" }) as const;
+    const all = [
+      stored("in_progress", "ip"),
+      stored("verify", "vf"),
+      stored("review", "rv"),
+      stored("parked", "pk"),
+    ];
+    const v = statusModel({
+      now: NOW,
+      facts: null,
+      cards: all,
+      standup: {
+        byState: {
+          in_progress: [
+            { id: "ip", title: "ip" },
+            { id: "vf", title: "vf" },
+          ],
+          review: [{ id: "rv", title: "rv" }],
+          parked: [{ id: "pk", title: "pk" }],
+        },
+      },
+    } as never);
+    const said = new Map(
+      v.standup.lines.map((l) => {
+        const [word, title] = l.split(": ");
+        return [title, word];
+      }),
+    );
+    for (const c of all) expect(plainStatus(c.status), c.status).toBe(said.get(c.id));
+  });
+});
+
+// Wave 8 B3: *Coding model idle · 1 in queue, about 10 minutes* while no
+// Coding model fits this machine; the estimate had no basis.
+describe("Status's models line with no Coding model (wave 8 B3)", () => {
+  it("says no Coding model is set up, with no queue estimate", () => {
+    const input = {
+      now: NOW,
+      facts: null,
+      cards: [],
+      standing: [{ place: 1, estimateSeconds: 600 }],
+    } as never as StatusInput;
+    expect(
+      statusModel({ ...input, codingModel: { ready: false, model: null, why: "none" } }).models,
+    ).toBe("No Coding model set up · issues wait until one fits this machine");
+    expect(statusModel(input).models).toBe("Coding model idle · 1 in queue, about 10 minutes");
+    expect(
+      statusModel({ ...input, codingModel: { ready: true, model: "nail-mtp", why: null } }).models,
+    ).toBe("Coding model idle · 1 in queue, about 10 minutes");
+  });
+
+  // Review of wave 8 (case 2): a Coding model assigned but absent, or not
+  // verified here, runs nothing either: no queue estimate.
+  it("gives no queue estimate when the assigned Coding model is absent or unverified", () => {
+    const input = {
+      now: NOW,
+      facts: null,
+      cards: [],
+      standing: [{ place: 1, estimateSeconds: 600 }],
+    } as never as StatusInput;
+    expect(
+      statusModel({ ...input, codingModel: { ready: false, model: "cyber-tiel", why: "missing" } })
+        .models,
+    ).toBe("Coding model cyber-tiel is not on this machine · issues wait until it is");
+    expect(
+      statusModel({
+        ...input,
+        codingModel: { ready: false, model: "cyber-tiel", why: "unverified" },
+      }).models,
+    ).toBe("Coding model cyber-tiel is not verified on this machine · issues wait until it is");
   });
 });
 
@@ -675,14 +755,24 @@ describe("Status (DB-P5-1, DB-N9-1)", () => {
         { label: "Cycle time, 85th percentile", value: "7.3h", href: "#/insights" },
         { label: "Throughput", value: "0.7 issues a week", href: "#/insights" },
         { label: "Changes requested", value: "2 in 30 days", href: "#/insights" },
-        { label: "Checks passed first time", value: "75% (3 of 4)", href: "#/insights" },
+        {
+          label: "Checks passed first time",
+          value: "75% (3 of 4 finished issues)",
+          href: "#/insights",
+        },
       ],
     });
     const thin = statusModel(
       input({ facts: { ...solo, flow: { ...solo.flow, cycleHours: [2], finished: 1 } } }),
     );
     expect(thin.flow.items[0]?.value).toBe("Not enough yet");
-    expect(thin.flow.note).toBe("Cycle time needs 3 finished issues; there is 1.");
+    // Wave 8 A2: no weekly rate from one finished issue, as Insights withholds it.
+    expect(thin.flow.items[2]).toEqual({
+      label: "Throughput",
+      value: "Not enough yet",
+      href: "#/insights",
+    });
+    expect(thin.flow.note).toBe("Cycle time and throughput need 3 finished issues; there is 1.");
   });
 
   it("DB-P5-2: no stop-reason code, bare issue id or gate id reaches a word on the page", () => {

@@ -911,7 +911,11 @@ describe("the endpoints (teams §3) on a real server", () => {
     expect(tokens.tokens).toEqual([
       { id: made.id, name: "laptop cli", level: "member", expires: expect.any(String) },
     ]);
-    expect(JSON.stringify(tokens)).not.toContain(made.token.split("_").at(-1));
+    // The whole secret after `sekp_<id>_`: base64url may itself hold "_", so a
+    // split could test a one-character fragment that an id contains.
+    const prefix = `sekp_${made.id}_`;
+    expect(made.token.startsWith(prefix)).toBe(true);
+    expect(JSON.stringify(tokens)).not.toContain(made.token.slice(prefix.length));
 
     const listed = (await (await fetch(`${base}/api/sessions`, { headers })).json()) as {
       sessions: { ref: string; created: string; lastSeen: string; current: boolean }[];

@@ -218,10 +218,10 @@ const MAIN_HELP: Readonly<Record<string, HelpRow>> = {
     example: "sekhemet export --ledger --out ledger.ndjson",
   },
   erase: {
-    usage: "erase --secret --rotated | erase --events <id,…>",
-    what: "Erase a secret found after the fact, or chosen entries, leaving a recorded gap",
+    usage: "erase --secret --rotated | erase --events <entry,…>",
+    what: "Erase a secret found after the fact, or chosen entries (the numbers `sekhemet log` prints), leaving a recorded gap",
     synopsis:
-      "sekhemet erase --secret [--secret-file <file>] --rotated   |   sekhemet erase --events <id>,…",
+      "sekhemet erase --secret [--secret-file <file>] --rotated   |   sekhemet erase --events <entry>,…",
     example: "sekhemet erase --secret --secret-file leaked.txt --rotated",
   },
   project: {
@@ -312,7 +312,7 @@ const MAIN_HELP: Readonly<Record<string, HelpRow>> = {
     usage: "qualify --models <a,b> [--role <role>] | qualify --override <model> --by <name>",
     what: "Verify models for a role on this machine, or record an override with its reason",
     synopsis:
-      "sekhemet qualify --models <a>,<b> [--role worker|planner|reviewer|researcher] [--speculative on] [--check]   |   sekhemet qualify --override <model> [--role <role>] --by <name>",
+      "sekhemet qualify --models <a>,<b> [--role <role>] [--speculative on] [--check]   |   sekhemet qualify --override <model> [--role <role>] --by <name>   |   <role>: worker (the Coding model), planner (the Planning model), reviewer (the Review model) or researcher (the Research model)",
     example: "sekhemet qualify --models nail-mtp",
   },
   improve: {
@@ -353,7 +353,7 @@ const MAIN_HELP: Readonly<Record<string, HelpRow>> = {
     usage: "models list | assign <role> <model> | restore <role> | add <file> | fetch <model>",
     what: "The models on this machine: list, assign a role, restore the default, add a GGUF, or download",
     synopsis:
-      "sekhemet models list   |   sekhemet models assign <worker|planner|reviewer|researcher> <model> [--baseline | --default --bake-off <event>]   |   sekhemet models restore <role>   |   sekhemet models add <file.gguf> [--id <id>] [--sampling <settings>]   |   sekhemet models fetch <model> | --role <role> | --recommended [--yes] [--folder <path>]",
+      "sekhemet models list   |   sekhemet models assign <role> <model> [--baseline | --default --bake-off <event>]   |   sekhemet models restore <role>   |   sekhemet models add <file.gguf> [--id <id>] [--sampling <settings>]   |   sekhemet models fetch <model> | --role <role> | --recommended [--yes] [--folder <path>]   |   <role>: worker (the Coding model), planner (the Planning model), reviewer (the Review model) or researcher (the Research model)",
     example: "sekhemet models assign worker nail-mtp",
   },
   approve: {
@@ -397,15 +397,15 @@ const MAIN_HELP: Readonly<Record<string, HelpRow>> = {
   },
   unpark: {
     usage: "unpark <issue>",
-    what: "Take an issue off hold, back where it was",
+    what: "Take an issue off hold: back to Ready, or to Backlog or Planning if it was held from there",
     synopsis: "sekhemet unpark <issue>",
     example: "sekhemet unpark TS-101",
   },
   reopen: {
     usage: 'reopen <issue> ["<reason>"]',
-    what: "Reopen a finished or rejected issue",
+    what: "Reopen an issue marked Won't do (a Done issue is undone with sekhemet revert)",
     synopsis: 'sekhemet reopen <issue> ["<reason>"]',
-    example: 'sekhemet reopen TS-101 "The export drops Sundays"',
+    example: 'sekhemet reopen TS-101 "Back in scope for this release"',
   },
   reject: {
     usage: 'reject <issue> "<reason>"',

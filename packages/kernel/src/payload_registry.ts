@@ -692,6 +692,8 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     id: s(ID),
     reason: s(v.picklist(["merge_missing", "conflict", "refused", "error"])),
     integration: s(ID, true),
+    // Loop wave 10 A1: a conflict names its files, so the Activity log says why.
+    files: s(v.array(ID), true),
   },
   // worker-loop NEW-worker-loop-10: collaborating on a running issue (DEC-34).
   "card/message": { id: s(ID), principal: s(PRINCIPAL), message: priv("free_text", TEXT) },

@@ -41,7 +41,7 @@ Then the Coding model builds each approved issue in its own git worktree, inside
 
 Expect it to take a while: a local model is slower than a cloud one. On this project's own 30-issue suite, a full run took 3.6 to 4.5 hours on the 24 GB reference Mac. Sekhemet is built for work you queue and come back to.
 
-To follow along: the board shows each issue's column; `sekhemet ask "how is the CSV export going?"` answers from the terminal; `sekhemet status` prints the board for a script.
+To follow along: the board shows each issue's column; `sekhemet ask "how is the CSV export going?"` answers from the terminal; `sekhemet status` prints the board for a script, counting issues as the board and Status do (an epic is listed where its issues are, not counted as one).
 
 ## Review and Accept
 

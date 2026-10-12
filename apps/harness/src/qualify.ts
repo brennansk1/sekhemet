@@ -176,12 +176,14 @@ export function qualificationRefusal(
   adapter: LocalInferenceAdapter,
   combination: QualificationCombination,
   name: string,
+  /** The role checked (wave 7 A8: one sentence for every role); the Coding model's by default. */
+  role: ModelRole = "worker",
 ): string | undefined {
   const look = registry.lookupQualification(adapter.modelId, combination);
   // A person's recorded override lets the failed combination run (rule 27, MD-N4-4).
   if (look.status === "qualified" || look.status === "overridden") return undefined;
   const state = look.status === "missing" ? "not verified on this machine" : look.status;
-  return `Refusing ${adapter.modelId} as the Coding model: ${state} for this combination on this host (${look.reason}). Verify it on this machine with: sekhemet qualify --models ${name}`;
+  return `Refusing ${adapter.modelId} as the ${ROLE_WORDS[role] ?? role}: ${state} for this combination on this host (${look.reason}). Verify it on this machine with: sekhemet qualify --models ${name}${role === "worker" ? "" : ` --role ${role}`}`;
 }
 
 /** The override the Worker's exact combination runs under, if a person recorded one (MD-N4-4). */

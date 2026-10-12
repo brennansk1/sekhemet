@@ -143,7 +143,7 @@ export function combinationWords(c) {
 export function tuneVerdictText(run) {
   if (!run) return "Not run yet.";
   if (run.state === "running")
-    return `Running${run.rung ? ` · step ${run.rung} of the screen` : ""}${run.candidatesLeft ? ` · ${run.candidatesLeft} settings left` : ""}`;
+    return `Running${run.rung ? ` · round ${run.rung}` : ""}${run.candidatesLeft ? ` · ${run.candidatesLeft} settings left` : ""}`;
   if (run.state === "failed") return `Failed: ${run.error || "the run did not finish"}.`;
   if (run.partial || run.verdict === "partial")
     return "Stopped before a verdict; what it measured is kept.";
@@ -156,8 +156,8 @@ export function tuneVerdictText(run) {
   if (run.verdict === "cheaper")
     return `No clear difference in quality, and ${words} was faster (not established).`;
   if (run.verdict === "worse")
-    return `No clear difference: ${words} did well on the hardest items but worse on the whole screen, so the current settings stay.`;
-  return "No clear difference: the screen could not tell the settings apart, so the current settings stay.";
+    return `No clear difference: ${words} did well on the hardest issues but worse across all of them, so the current settings stay.`;
+  return "No clear difference: the benchmark could not tell the settings apart, so the current settings stay.";
 }
 
 /**
@@ -172,7 +172,9 @@ export function quickSetupMissing(setup, models, readError) {
     return readError
       ? `Couldn't read the models on this machine, so the quick benchmark isn't offered: ${readError}`
       : "Checking the models on this machine…";
-  const found = (id) => (models || []).some((m) => m.id === id || m.registryId === id);
+  // Wave 7 B5: by file, registry id or the key the setup names it by (`modelKey`).
+  const found = (id) =>
+    (models || []).some((m) => m.id === id || m.registryId === id || m.key === id);
   const missing = [setup.worker, setup.planner].find((id) => id && !found(id));
   return missing
     ? `The quick benchmark needs the Coding model and the Planning model on this machine: ${missing} is not in a model folder yet.`
@@ -200,6 +202,32 @@ export function overnightDisabledReason({ readOnly, pick, picks }) {
   if (pick.worker && pick.planner) return "";
   return "Choose a Coding model and a Planning model, or run quick benchmarks to compare first.";
 }
+
+/**
+ * The lines under Run quick and Schedule overnight (wave 7 B6): when both
+ * wait for the same two models, one line says so for both.
+ */
+export function runReasons(quick, overnight) {
+  const both = /^Choose a Coding model and a Planning model/;
+  if (quick && overnight && both.test(quick) && both.test(overnight))
+    return {
+      quick: "Choose a Coding model and a Planning model to run either benchmark.",
+      overnight: "",
+      shared: true,
+    };
+  return { quick, overnight, shared: false };
+}
+
+/** Find best settings in words (wave 7 B6): how it decides, with no internal terms. */
+export const TUNE_COPY =
+  "Tries other settings for one model on the issues it found hardest, keeps the better half each round, then compares the best with the current settings on every issue of the benchmark. With six issues, a setting counts as better only when it does better on all six; the overnight benchmark settles close calls. Nothing changes until you press Apply.";
+
+/** Web-Bench's and the capstone's score names in words (wave 7 B6). */
+const SCORE_WORDS = {
+  "pass@1": "passed on the first try",
+  "pass@2": "passed with one retry",
+  "error@1": "errors on the first try",
+};
 
 /* ---------- charts: inline SVG, each with a table of the same numbers ---------- */
 
@@ -286,7 +314,7 @@ export function externalHtml(x) {
   const ext = x || { capstone: [], webbench: [], protocol: {} };
   const scores = (s) =>
     Object.entries(s || {})
-      .map(([k, v]) => `${k} ${v === null || v === undefined ? "—" : pct(v)}`)
+      .map(([k, v]) => `${SCORE_WORDS[k] ?? k} ${v === null || v === undefined ? "—" : pct(v)}`)
       .join(" · ");
   const capstone = ext.capstone.length
     ? `<ul>${ext.capstone
@@ -519,7 +547,7 @@ export function mountBenchmark(root, { readOnly = "" } = {}) {
             : `<button class="btn" type="button" data-tune-open="${esc(role)}"${dis(startReason)}${describedBy(readOnly ? roId : `tune-start-why-${role}`, startReason)}>Find best settings…</button>`
         }
         <button class="btn" type="button" data-tune-apply="${esc(latest?.runId || "")}"${dis(applyReason)}${describedBy(readOnly ? roId : `tune-apply-why-${role}`, applyReason)}>Apply</button>
-        <button class="btn" type="button" data-tune-settle="${esc(role)}"${dis(settleReason)}${describedBy(readOnly ? roId : `tune-settle-why-${role}`, settleReason)}>Settle overnight</button>
+        <button class="btn" type="button" data-tune-settle="${esc(role)}"${dis(settleReason)}${describedBy(readOnly ? roId : `tune-settle-why-${role}`, settleReason)}>Compare overnight</button>
       </div>
       ${!readOnly && startReason && !running ? `<p class="why" id="tune-start-why-${esc(role)}">${esc(startReason)}</p>` : ""}
       ${!readOnly && applyReason ? `<p class="why" id="tune-apply-why-${esc(role)}">${esc(applyReason)}</p>` : ""}
@@ -531,12 +559,14 @@ export function mountBenchmark(root, { readOnly = "" } = {}) {
   function render() {
     if (ui.gone) return;
     const busy = (ui.data.runs || []).find((r) => r.state === "running");
-    const quickReason = quickDisabledReason({ readOnly, pick: ui.pick, models: ui.models, busy });
-    const overnightReason = overnightDisabledReason({
-      readOnly,
-      pick: ui.pick,
-      picks: defaultPicks(),
-    });
+    // Wave 7 B6: one line when both runs wait for the same two models.
+    const reasons = runReasons(
+      quickDisabledReason({ readOnly, pick: ui.pick, models: ui.models, busy }),
+      overnightDisabledReason({ readOnly, pick: ui.pick, picks: defaultPicks() }),
+    );
+    const quickReason = reasons.quick;
+    const overnightReason = reasons.overnight || (reasons.shared ? reasons.quick : "");
+    const overnightWhy = reasons.shared ? "bench-quick-why" : "bench-overnight-why";
     const runs = (ui.data.runs || [])
       .map(
         (r) =>
@@ -554,14 +584,14 @@ export function mountBenchmark(root, { readOnly = "" } = {}) {
           ui.confirming
             ? `<button class="btn primary" type="button" data-confirm>Start · ${esc(estimateLabel(ui.estimate).replace(/^Run quick · /, ""))}</button> <button class="btn" type="button" data-cancel>Cancel</button>`
             : `<button class="btn" type="button" data-quick${dis(quickReason)}${describedBy(readOnly ? roId : "bench-quick-why", quickReason)}>${esc(estimateLabel(ui.estimate))}</button>`
-        } <button class="btn" type="button" data-overnight${dis(overnightReason)}${describedBy(readOnly ? roId : "bench-overnight-why", overnightReason)}>Schedule overnight comparison</button></div>
+        } <button class="btn" type="button" data-overnight${dis(overnightReason)}${describedBy(readOnly ? roId : overnightWhy, overnightReason)}>Schedule overnight comparison</button></div>
         ${!readOnly && quickReason ? `<p class="why" id="bench-quick-why">${esc(quickReason)}</p>` : ""}
-        ${!readOnly && overnightReason ? `<p class="why" id="bench-overnight-why">${esc(overnightReason)}</p>` : ""}
+        ${!readOnly && reasons.overnight ? `<p class="why" id="bench-overnight-why">${esc(reasons.overnight)}</p>` : ""}
         ${ui.overnight ? `<p class="bench-overnight">${esc(ui.overnight)}</p>` : ""}
         ${ui.message ? `<p role="status">${esc(ui.message)}</p>` : ""}
       </div>
       <div class="cfg-card bench-tune"><h4>Find best settings</h4>
-        <p class="sec">Tries settings for one model on the issues it found hardest, keeps the better half each round, then compares the best with the current settings on the whole screen. On six issues only a setting better on all six counts as better; the overnight benchmark settles close calls. Nothing changes until you press Apply.</p>
+        <p class="sec">${esc(TUNE_COPY)}</p>
         ${ROLES.map(tuneCardHtml).join("")}
       </div>
       <div class="cfg-card"><h4>Runs</h4><ul class="bench-runs">${runs || "<li>No runs yet.</li>"}</ul></div>

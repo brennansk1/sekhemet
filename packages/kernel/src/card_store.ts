@@ -2547,12 +2547,12 @@ export class CardStore {
   }
 
   /** Clear every projection and replay the whole ledger into it (no transaction). */
-  private async replayAll(): Promise<number> {
+  private async replayAll(): Promise<{ read: number; applied: number }> {
     const events = await this.eventLog.getEvents(1, Number.MAX_SAFE_INTEGER);
     for (const table of CardStore.PROJECTION_TABLES) this.db.exec(`DELETE FROM ${table}`);
     let applied = 0;
     for (const event of events) if (this.applyEvent(event)) applied++;
-    return applied;
+    return { read: events.length, applied };
   }
 
   /** Canonical content hash per projection table, for byte-identical comparison. */
@@ -2605,21 +2605,29 @@ export class CardStore {
   public async verifyProjections(): Promise<{
     identical: boolean;
     mismatched: string[];
+    /** The events whose replay changed a projection row. */
     eventsApplied: number;
+    /** Every event the replay read: the ledger's count (`sekhemet log` says it). */
+    eventsRead: number;
   }> {
     const before = this.projectionDigest();
     this.db.exec("PRAGMA foreign_keys = OFF");
     this.db.exec("BEGIN IMMEDIATE");
     let after: Record<string, string>;
-    let eventsApplied = 0;
+    let replayed = { read: 0, applied: 0 };
     try {
-      eventsApplied = await this.replayAll();
+      replayed = await this.replayAll();
       after = this.projectionDigest();
     } finally {
       this.db.exec("ROLLBACK");
       this.db.exec("PRAGMA foreign_keys = ON");
     }
     const mismatched = Object.keys(before).filter((t) => before[t] !== after[t]);
-    return { identical: mismatched.length === 0, mismatched, eventsApplied };
+    return {
+      identical: mismatched.length === 0,
+      mismatched,
+      eventsApplied: replayed.applied,
+      eventsRead: replayed.read,
+    };
   }
 }

@@ -138,7 +138,7 @@ describe("Accept, send back and Undo in Chromium (DB-1, DB-2, DB-N16-1, DB-N16-3
       await form.getByRole("button", { name: /Request changes/ }).click();
       const err = form.locator("#sb-err");
       await err.waitFor();
-      expect(await err.innerText()).toBe("Add a note for the Agent. It's what it reads next.");
+      expect(await err.innerText()).toBe("Add a reason for the Agent. It's what it reads next.");
       expect(await form.locator("textarea").getAttribute("aria-invalid")).toBe("true");
       await page.waitForTimeout(300);
       expect(sent.filter((r) => r.url().includes("/return")).length).toBe(0);

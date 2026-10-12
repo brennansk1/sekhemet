@@ -109,6 +109,29 @@ describe("the /api/cards/:id routes (NAM-03: one module, one routing style)", ()
     expect(await get("/api/cards/nope")).toEqual({ status: 404, body: { error: "No issue nope" } });
   });
 
+  // Wave 9 A3 (sweep 5): the Agent was shown queued on a Ready issue the
+  // board would not start; the issue says why, and the Agent's fact does too.
+  it("GET a Ready issue the board would not start: its start blocker, and the Agent not queued", async () => {
+    await store.createCard({
+      id: "card_c",
+      tier: "task",
+      title: "No scope yet",
+      status: "ready",
+      projectId: project,
+      acceptanceCriteria: ["It is scoped."],
+      delegate: { kind: "worker" },
+    });
+    const r = await get("/api/cards/card_c");
+    expect(r.status).toBe(200);
+    expect(r.body.startBlocker).toBe("It declares no files it may change.");
+    const agent = (r.body.ai as { who: string; blockedBy?: string }[]).find(
+      (a) => a.who === "agent",
+    );
+    expect(agent?.blockedBy).toBe("It declares no files it may change.");
+    // A Ready issue the board would start carries none.
+    expect((await get("/api/cards/card_a")).body).not.toHaveProperty("startBlocker");
+  });
+
   it("GET transcript, traces, attempts and messages of an issue that has not run", async () => {
     expect(await get("/api/cards/card_a/transcript")).toEqual({
       status: 200,
@@ -170,9 +193,10 @@ describe("the /api/cards/:id routes (NAM-03: one module, one routing style)", ()
       status: 200,
       body: { ok: true, status: "parked" },
     });
+    // Loop wave 10 A3: `from`, the state it was put on hold from, so the page says where it went.
     expect(await post("/api/cards/card_b/unpark", {})).toEqual({
       status: 200,
-      body: { ok: true, status: "ready" },
+      body: { ok: true, status: "ready", from: "ready" },
     });
     expect(await post("/api/cards/card_b/opened", { filesShown: ["b.ts"] })).toEqual({
       status: 200,

@@ -1,5 +1,5 @@
 import type { CardRecord } from "@sekhemet/kernel";
-import { BOARD_COLUMNS, plainStatus, withShownStatus } from "@sekhemet/ui";
+import { BOARD_COLUMNS, isIssueCard, plainStatus, withShownStatus } from "@sekhemet/ui";
 import { setupFor } from "../planner_live.js";
 import { type Audience, audienceFromAccess, soloAudience } from "../pm/audience.js";
 import { namedDecisions } from "../pm/decisions.js";
@@ -51,7 +51,11 @@ export const statusCommand: CommandHandler = async (_args, env) => {
       setupFor(env.repoPath) === "team"
         ? audienceFromAccess(() => new Access({ db, setup: "team", localPrincipal: () => me }), db)
         : soloAudience();
-    const state = await boardService.getBoardState();
+    // Surface item 8a (wave 8 B1): the project whose root holds the folder,
+    // as the dashboard's board is scoped to it; the whole workspace otherwise.
+    const state = await boardService.getBoardState(
+      env.projectId ? { projectId: env.projectId } : {},
+    );
     const cards = state.cards.filter((c) => audience.canSee(me, c.projectId));
     const board = { ...state, cards };
     const columns = statusColumns(cards);
@@ -69,9 +73,14 @@ export const statusCommand: CommandHandler = async (_args, env) => {
         .filter((c) => c.status === "parked")
         .map((c) => ({ ...issueRef(c), why: "on_hold" as const })),
     ];
-    const decisions = await namedDecisions({ cardStore, log }, audience, me, { plain: true }).catch(
-      () => [] as string[],
-    );
+    // The folder's project's decisions only, as its issues (surface item 8a).
+    const inProject: Audience = Object.assign(Object.create(audience) as Audience, {
+      canSee: (who: string, project: string | undefined) =>
+        audience.canSee(who, project) && (!env.projectId || !project || project === env.projectId),
+    });
+    const decisions = await namedDecisions({ cardStore, log }, inProject, me, {
+      plain: true,
+    }).catch(() => [] as string[]);
 
     for (const line of terminalBoardLines(board)) console.log(line);
     console.log(
@@ -86,7 +95,15 @@ export const statusCommand: CommandHandler = async (_args, env) => {
     );
     for (const d of decisions) console.log(`Decision: ${d}`);
 
-    const message = `${cards.length} ${cards.length === 1 ? "issue" : "issues"}; ${next.length} Ready; ${waiting.length} waiting on a person.`;
+    // A column holds and counts only what it shows: a Won't do issue is a filter, not a column.
+    // A parent (an epic) is listed where its issues are but is not an issue (`isIssueCard`),
+    // so the count is Status's *of N issues* (wave 8 review).
+    const tierOf = new Map(cards.map((c) => [c.id, c]));
+    const listed = columns.reduce(
+      (n, c) => n + c.issues.filter((i) => isIssueCard(tierOf.get(i.id) ?? {})).length,
+      0,
+    );
+    const message = `${listed} ${listed === 1 ? "issue" : "issues"}; ${next.length} Ready; ${waiting.length} waiting on a person.`;
     return {
       ...baseResult("status", 0, message),
       columns,

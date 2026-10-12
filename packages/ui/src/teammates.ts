@@ -9,6 +9,8 @@
  * facts, the page renders them.
  */
 
+import { WAITS_FOR_CODING_MODEL, waitsToStart } from "./nav.js";
+
 export type AiWho = "agent" | "seshat";
 export type AiStateWord = "queued" | "working" | "needs you" | "paused" | "done" | "failed";
 
@@ -150,6 +152,12 @@ export interface AiStateFacts {
   state: AiStateWord;
   /** Queued: its place and estimate, as the queue says it ("2nd in queue, about 6 minutes"). */
   standing?: string;
+  /**
+   * Queued: a *Ready to start* condition the start checks is not met, with
+   * its reason (the board's `startBlocker`): the board would not start it,
+   * so it is not shown queued (wave 9 A3).
+   */
+  blockedBy?: string;
   /** Needs you or done: what it waits for. */
   waitingFor?: "start" | "answer" | "review";
   /** Whom it waits on, by name ("you" for the reader). */
@@ -173,7 +181,7 @@ export interface AiStateLine {
    * The state's word. The Agent's *done* reads *finished* while its work waits
    * for review: done is a person's Accept, never the Agent's (FINDINGS_C1 R-36).
    */
-  label: AiStateWord | "finished";
+  label: AiStateWord | "finished" | "";
   sentence: string;
 }
 
@@ -182,12 +190,26 @@ export interface AiStateLine {
  * sentence from the server's facts, or undefined when the Agent is not on
  * the issue. Seshat takes no issue (DEC-36), so its state is never a tile's.
  */
-export function tileAiState(ai: readonly AiStateFacts[] | undefined): AiStateLine | undefined {
+export function tileAiState(
+  ai: readonly AiStateFacts[] | undefined,
+  opts: { noCodingModel?: boolean } = {},
+): AiStateLine | undefined {
   const agent = ai?.find((f) => f.who === "agent");
-  return agent ? aiStateLine(agent) : undefined;
+  const line = agent ? aiStateLine(agent, opts) : undefined;
+  // Wave 8 B3: with no Coding model ready, a tile promises no place in a queue.
+  return line?.label ? line : undefined;
 }
 
-export function aiStateLine(f: AiStateFacts): AiStateLine {
+/**
+ * The teammate's word and sentence. With no Coding model ready here
+ * (`codingModelFact`), the Agent's *queued* is no state at all: the issue
+ * waits for a Coding model, with no place or estimate (wave 8 B3).
+ */
+export function aiStateLine(f: AiStateFacts, opts: { noCodingModel?: boolean } = {}): AiStateLine {
+  if (opts.noCodingModel && f.who === "agent" && f.state === "queued")
+    return { name: NAME.agent, label: "", sentence: WAITS_FOR_CODING_MODEL };
+  if (f.blockedBy && f.who === "agent" && f.state === "queued")
+    return { name: NAME.agent, label: "", sentence: waitsToStart(f.blockedBy) };
   const name = NAME[f.who];
   // A name at the start of the sentence may be "you": the sentence starts with a capital.
   const line = (sentence: string): AiStateLine => ({

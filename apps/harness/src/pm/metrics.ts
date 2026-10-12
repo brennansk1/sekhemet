@@ -37,12 +37,14 @@ const hoursBetween = (a: string, b: string) =>
  *
  * Cycle time runs from a card's first move into Working to its move into
  * Done: the Kanban Method's definition, and the one that makes the number
- * comparable with Jira's and Linear's.
+ * comparable with Jira's and Linear's. `only` keeps the cards of one scope
+ * (a project's issues, wave 8 A5); every card when omitted.
  */
 export async function flowMetrics(
   log: EventLog,
   days: number,
   now = new Date(),
+  only?: (cardId: string) => boolean,
 ): Promise<FlowMetrics> {
   const events = await log.getEventsByTypes(["card/created", "card/status_changed"]);
   const since = new Date(now.getTime() - days * 86_400_000).toISOString();
@@ -70,7 +72,7 @@ export async function flowMetrics(
   for (const e of events) {
     const p = e.payload as { id?: string; status?: string; toStatus?: string };
     const id = p.id ?? e.cardId;
-    if (!id) continue;
+    if (!id || (only && !only(id))) continue;
     const status = e.type === "card/created" ? p.status : p.toStatus;
     const bucket = status ? BUCKET[status] : undefined;
     const at = e.createdAt;
@@ -329,6 +331,19 @@ export function monteCarloForecast(
   return { p50Days: at(0.5), p85Days: at(0.85), samples: days.length };
 }
 
+/**
+ * A seeded generator, so a forecast replays to the same numbers from the same
+ * ledger (measurement: every figure re-derivable; wave 8 A1).
+ */
+export function seeded(seed: string): () => number {
+  let h = 2166136261;
+  for (const ch of seed) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  return () => {
+    h = (Math.imul(h, 1664525) + 1013904223) >>> 0;
+    return h / 4294967296;
+  };
+}
+
 export interface PmQuality {
   proposals: { applied: number; discarded: number; open: number; acceptanceRate?: number };
   /** First-attempt pass rate of cards Seshat's applied proposals created. */
@@ -343,19 +358,19 @@ export interface PmQuality {
 /**
  * How good Seshat is, measured, not self-reported (research report 1, PM
  * quality): proposal acceptance, how well the cards it planned go, how often
- * the user corrects what it learned, and a calibrated forecast.
+ * the user corrects what it learned, and a calibrated forecast. The forecast
+ * is the caller's — Status's own (`forecastOf`), so one project says one
+ * forecast and none below five days of history (wave 8 A1). `scope` keeps
+ * one project's planned cards and sprints (planner-pm rule 16, "recorded
+ * per project"; wave 8 A5).
  */
 export async function pmQuality(
   log: EventLog,
-  remaining: number,
+  forecast: PmQuality["forecast"],
   firstAttemptPassed: (cardId: string) => boolean | undefined,
+  scope: { card?: (cardId: string) => boolean; cycle?: (cycleId: string) => boolean } = {},
 ): Promise<PmQuality> {
-  const events = await log.getEventsByTypes([
-    "pm/proposal_state",
-    "pm/reply",
-    "learn/profile",
-    "card/status_changed",
-  ]);
+  const events = await log.getEventsByTypes(["pm/proposal_state", "pm/reply", "learn/profile"]);
   const kinds = new Map<string, string>();
   const created = new Set<string>();
   let applied = 0;
@@ -381,12 +396,10 @@ export async function pmQuality(
       corrections++;
     }
   }
-  const planned = [...created].map(firstAttemptPassed).filter((x) => x !== undefined);
-  const throughput = (await flowMetrics(log, 60)).cfd;
-  const daily = throughput.map((d, i) =>
-    i === 0 ? 0 : Math.max(0, d.done - (throughput[i - 1]?.done ?? 0)),
-  );
-  const forecast = monteCarloForecast(daily.slice(1), remaining);
+  const planned = [...created]
+    .filter((id) => !scope.card || scope.card(id))
+    .map(firstAttemptPassed)
+    .filter((x) => x !== undefined);
   return {
     proposals: {
       applied,
@@ -398,9 +411,9 @@ export async function pmQuality(
     },
     plannedCards: { cards: planned.length, passedFirstTry: planned.filter(Boolean).length },
     profileCorrections: corrections,
-    ...(forecast ? { forecast: { remaining, ...forecast } } : {}),
-    sprints: (await log.getEventsByTypes(["pm/sprint_measured"])).map(
-      (e) => e.payload as Record<string, unknown>,
-    ),
+    ...(forecast ? { forecast } : {}),
+    sprints: (await log.getEventsByTypes(["pm/sprint_measured"]))
+      .map((e) => e.payload as Record<string, unknown>)
+      .filter((m) => !scope.cycle || scope.cycle(String(m.cycleId ?? ""))),
   };
 }

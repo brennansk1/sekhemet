@@ -8,7 +8,7 @@ import {
 import { type SignalReading, computeSignals } from "@sekhemet/planner";
 import { type StatusFacts, forecastWords } from "@sekhemet/ui";
 import { type Audience, nameFor, soloAudience } from "./pm/audience.js";
-import { flowMetrics, monteCarloForecast } from "./pm/metrics.js";
+import { flowMetrics, monteCarloForecast, seeded } from "./pm/metrics.js";
 import { UPDATE_POSTED } from "./pm/weekly.js";
 import { startRequests } from "./team/ai_teammates.js";
 import { UPDATE_CLOCK_EVENTS, healthOf, releaseTargets, updateClockStart } from "./team/health.js";
@@ -48,7 +48,12 @@ const isIssue = (c: CardRecord) => c.tier !== "epic" && c.tier !== "initiative";
 async function finishMoves(
   issues: readonly CardRecord[],
   log: EventLog,
-): Promise<{ moves: Awaited<ReturnType<EventLog["getEventsByTypes"]>>; doneAt: string[] }> {
+): Promise<{
+  moves: Awaited<ReturnType<EventLog["getEventsByTypes"]>>;
+  doneAt: string[];
+  /** Each finished issue's last move to Done. */
+  lastDone: Map<string, string>;
+}> {
   const ids = new Set(issues.map((c) => c.id));
   const moves = (await log.getEventsByTypes(["card/status_changed"])).filter((e) =>
     ids.has(String((e.payload as { id?: string }).id ?? e.cardId ?? "")),
@@ -58,7 +63,7 @@ async function finishMoves(
     const p = e.payload as { id?: string; toStatus?: string };
     if (p.toStatus === "done") lastDone.set(String(p.id ?? e.cardId ?? ""), e.createdAt);
   }
-  return { moves, doneAt: [...lastDone.values()] };
+  return { moves, doneAt: [...lastDone.values()], lastDone };
 }
 
 interface PageDeps {
@@ -75,7 +80,7 @@ interface PageDeps {
  * and more than one visible, every issue the person can see; a project they
  * cannot see reads as no project, and an epic or initiative is never an issue.
  */
-async function pageIssues(deps: PageDeps) {
+export async function pageIssues(deps: PageDeps) {
   const a = deps.audience ?? soloAudience();
   const visible = deps.cardStore.listProjects().filter((p) => a.canSee(deps.me, p.id));
   const project =
@@ -106,8 +111,10 @@ export async function finishedIssues(
  * The forecast of a set of issues (planner-pm §2.6 item 3, DB-N9-3): Monte
  * Carlo over their finished issues by day, from the first issue (at most 60
  * days back), and *Not enough history yet* below five days. Status, Projects
- * and Seshat's /status and /forecast all read it, so one project says one
- * forecast everywhere (FINDINGS STA-01).
+ * and Seshat's /status and /forecast and `GET /api/metrics/pm` all read it,
+ * so one project says one forecast everywhere (FINDINGS STA-01, wave 8 A1).
+ * The resampling is seeded from its inputs unless a caller passes its own, so
+ * the same ledger gives the same days (measurement: re-derivable).
  */
 export async function forecastOf(
   cards: readonly CardRecord[],
@@ -118,9 +125,10 @@ export async function forecastOf(
   forecast: StatusFacts["forecast"];
   moves: Awaited<ReturnType<EventLog["getEventsByTypes"]>>;
   doneAt: string[];
+  lastDone: Map<string, string>;
 }> {
   const issues = cards.filter(isIssue);
-  const { moves, doneAt } = await finishMoves(issues, log);
+  const { moves, doneAt, lastDone } = await finishMoves(issues, log);
   const firstDay = issues.length
     ? Math.max(
         dayNo(isoDay(now)) - HISTORY_DAYS + 1,
@@ -135,7 +143,12 @@ export async function forecastOf(
   const remaining = issues.filter((c) => !["done", "rejected", "parked"].includes(c.status)).length;
   const fc =
     daily.length >= FORECAST_MINIMUM
-      ? monteCarloForecast(daily, remaining, 2000, random)
+      ? monteCarloForecast(
+          daily,
+          remaining,
+          2000,
+          random ?? seeded(`${remaining}:${daily.join(",")}`),
+        )
       : undefined;
   return {
     forecast: {
@@ -147,6 +160,7 @@ export async function forecastOf(
     },
     moves,
     doneAt,
+    lastDone,
   };
 }
 
@@ -273,7 +287,7 @@ export async function statusFacts(deps: {
           .sort((x, y) => x.name.localeCompare(y.name))
       : [];
 
-  const { forecast, moves, doneAt } = await forecastOf(cards, deps.log, now, deps.random);
+  const { forecast, moves, doneAt, lastDone } = await forecastOf(cards, deps.log, now, deps.random);
 
   // Done this week, with who accepted each issue (never a count per person).
   const accepted = (await deps.log.getEventsByTypes(["card/accepted"]))
@@ -298,8 +312,14 @@ export async function statusFacts(deps: {
   const sentBack = recent.filter((e) =>
     /^returned\b/.test(String((e.payload as { reason?: string }).reason ?? "")),
   ).length;
-  const first = firstModelAttempts(deps.cardStore.runs.readAttemptOutcomes()).filter(
-    (o) => ids.has(o.cardId) && Date.parse(o.completedAt) >= flowSince,
+  // Wave 8 A3: first-time passes are a share of the period's finished issues
+  // the Agent built (each one's first Worker attempt), never of a card still
+  // in review nor of an issue a person finished with no attempt.
+  const finishedIds = new Set(
+    [...lastDone].filter(([, at]) => Date.parse(at) >= flowSince).map(([id]) => id),
+  );
+  const first = firstModelAttempts(deps.cardStore.runs.readAttemptOutcomes()).filter((o) =>
+    finishedIds.has(o.cardId),
   );
 
   // TEAM-39: requests to start the Agent on this page's issues that wait on the viewer.

@@ -15,6 +15,7 @@ import { LearningStore } from "../learning/store.js";
 import { applyProfileSwitches, profileForRun } from "../measure_cmd.js";
 import { ModelAccess, describeModel, roleModelName } from "../model_access.js";
 import { setupFor } from "../planner_live.js";
+import { seshatModelName } from "../pm/seshat_model.js";
 import { gateWorker, verifiedReviewerRole } from "../qualify.js";
 import {
   REVIEW_WAIT,
@@ -25,6 +26,7 @@ import {
   resolveReviewerRole,
   reviewAndRelease,
 } from "../review_flow.js";
+import { reviewerModelName } from "../role_models.js";
 import { acquireRunnerLease, leaseRefusal } from "../runner_lease.js";
 import { describeSupervisorStart, supervisorStart } from "../supervisor.js";
 import { Access } from "../team/access.js";
@@ -168,8 +170,11 @@ export const runCommand: CommandHandler = async (args, env) => {
   const runReviewer = verifiedReviewerRole(
     registry,
     resolveReviewerRole({
-      reviewer: roleModelName("reviewer", undefined, { registry }),
-      planner: roleModelName("planner", undefined, { registry }),
+      // Wave 7 B1: the Review model every surface names (role_models.ts).
+      reviewer: reviewerModelName(undefined, model.modelId, { registry }),
+      // MD-N10-3: the effective Planning model (assignment, else config.toml,
+      // else the default), the one the queue falls back to (wave 1 residual).
+      planner: seshatModelName(cardRoot, { registry }),
       worker: model.modelId,
       familyOf: (m) => familyOf(m, registry),
     }),

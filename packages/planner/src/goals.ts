@@ -276,7 +276,8 @@ export async function approveGoal(
       id: epicId,
       tier: "epic",
       title: goal.statement,
-      status: "in_progress",
+      // Wave 9 A1: being planned until its issues run, never In progress first.
+      status: "planning",
     });
   }
   const plan = await planner.decomposeSpec({

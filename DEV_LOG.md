@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 91 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 92 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,61 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 92 — 2026-10-12 (Loop waves 7–10, one batch: models whose reads never write, measurement from the ledger and scoped per project, the kernel's plan write path and ledger commands, review, Accept, undo and take-over as one rule on both surfaces)
+
+- **Why:** two Phase 1 sweeps, each of two Haiku 5.5 explorers with verification:
+  - models and measurement: 34 candidates, `lead-work/loop/waves/W7_W8_models_measurement.md`;
+  - kernel and review-git, with fault injection on real SQLite and git: 33 candidates, `W9_W10_kernel_reviewgit.md`.
+- **Wave 7, models:**
+  - **A read or a refusal never writes the registry** (`ModelRegistry.readOnly()`): `models list`, `doctor`, a refused `models assign` and `qualify --check` leave `models.json` byte-identical. This likely explains the stray registry entries of 2026-10-09.
+  - One effective-role source for the CLI, doctor, Configuration and Machine.
+  - The Review model must be of another family than the Coding model (RG-P8-10).
+  - Doctor no longer reports a missing weights file green.
+  - Honest Machine states and memory.
+  - Person-readable `models add` refusals.
+- **Wave 8, measurement:**
+  - The forecast, throughput and first-time pass rate are re-derived from the ledger, with the history minimum.
+  - The evidence projection carries the gate result.
+  - **Burn-up, forecast, flow, `status` and the board header are scoped to the project.**
+  - One label per status.
+  - The review card's project name, step count and phone targets.
+- **Wave 9, kernel:**
+  - An epic is stored in Planning and is never "Being built" without a live issue; a plan that stops partway names what it kept.
+  - `replay` of an unknown issue refuses.
+  - One full-disk message.
+  - `trailers` refuses a bad range.
+  - A deleted row's missing seq is named.
+  - `erase --events` takes `log`'s entry numbers.
+  - `log` on a copied folder writes nothing.
+  - A backup that fails verification leaves no file.
+  - **A pre-existing bug is fixed: an erased secret came back after restoring an older backup and then a newer one** (`ledger_backup.ts` filtered the register by seq across lineages).
+- **Wave 10, review and Accept:**
+  - A conflicting Accept is recorded (`card/accept_failed`) on the Activity log, with the Request changes step on both surfaces.
+  - Undo of an issue accepted by a hosting-service merge names where to revert, and the dashboard shows Revert disabled with that reason.
+  - Unpark's words say where the issue goes.
+  - Request changes needs a recorded attempt on both surfaces.
+  - `take-over` refuses a foreign workspace's clone as `init` does (SUR-79).
+  - The take-over steps are numbered once.
+  - **`run` resolves the reviewer with the queue's effective rule** (wave 1's residual).
+  - The Won't do reason is shown; the words are Won't do and reason.
+- **Reviews:** one independent Opus review per wave; every blocker and major was fixed and re-checked.
+  - W9: 4 majors, 3 fixed (170/170), and 1 parked as WS-ERASE.
+  - W10: 3 majors, all dashboard halves of CLI fixes, fixed with Chromium tests seen failing first.
+- **Accepted test change:** in `columns.spec.ts`, `shownStatus('in_progress', [])` → planning. The old assertion encoded the defect; surface.md §4 is the oracle.
+- **The gate itself:**
+  - **Two runs had reported success while the browser group never started.** `registry_reads_cli.spec.ts` (new in W7) ran 27 CLI commands through `spawnSync` in one loop, blocking its worker past vitest's 60 s RPC limit. It now uses `sekhemetAsync`.
+  - `lead-work/loop/gate_coverage.mjs` now checks every report against the full spec list before a commit. Every earlier committed gate was checked and had full coverage.
+  - A pre-existing flake in `team_identity.spec.ts` was fixed: base64url secrets may hold "_". The assertion now checks the whole secret.
+- **Parked:**
+  - **WS-ERASE (P1, next):** free text — titles, bodies, reasons, plan story titles and assumptions — is stored in the hashed payload and cannot be erased. The plan is in `lead-work/loop/waves/WS_ERASE_plan.md`.
+  - DEC-62's `integration/changed`.
+  - The W10 minors (in the wave file), including the lead's Won't do wording decision.
+- **Gate:** `pnpm gate` on the committed tree (lead-work/w9): `tsc -b` 0, `biome check .` 0, vitest exit 0, 987 files passed and 2 skipped; 7,623 tests passed, 74 skipped; coverage 989/989 files (`gate_coverage.mjs`); 3 workers, dot and json reporters, 39 min, quiet host.
+  - Two earlier runs (r3, r4 prep) found two test flakes, `start_page_draft_ui` (a box read across the startup re-render) and `c5_model_scan_http` (a server left running into the folder removal). Both causes were fixed, not retried; details in `lead-work/overnight/FINDINGS.md`.
+- **Where the cards stop:**
+  - W7–W10 are committed.
+  - Next: WS-ERASE (spec-first, gated alone); then DEC-62; then the remaining Phase 1 sweeps: runtime, security, planner-pm and design-stage, context and the worker loop, and docs per feature.
 
 ### Entry 91 — 2026-10-11 (Loop waves 5 and 6: integrations that never claim more than happened, extensibility truth, the import flow, the Team UI following the server's rules)
 

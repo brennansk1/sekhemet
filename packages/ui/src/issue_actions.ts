@@ -6,6 +6,8 @@
  * columns (`triage.ts` `reject`, `reopen`; `accept.ts` `revertVerdict`).
  */
 
+import { boardColumnLabel } from "./vocabulary.js";
+
 /** Where Won't do is offered (review-git RG-S5-11): the server refuses it elsewhere. */
 export const WONT_DO_FROM = ["backlog", "ready", "review", "parked"] as const;
 
@@ -27,7 +29,18 @@ interface Person {
 
 /** The review desk's answer on a Done issue (`GET /api/cards/:id/review`). */
 export interface RevertDesk {
-  revert?: { may: true } | { may: false; who?: Person[] };
+  revert?:
+    | { may: true }
+    | {
+        may: false;
+        who?: Person[];
+        /**
+         * Sekhemet merged nothing of the issue to revert (loop wave 10 A2;
+         * `accept.ts` `nothing_to_revert`): `pr` when it was accepted through
+         * its pull request, `merge` the hosting service's merge commit.
+         */
+        nothing?: { pr?: string; merge?: string };
+      };
 }
 
 export const ISSUE_ACTION_COPY = {
@@ -73,6 +86,32 @@ export function revertRefusalText(who: readonly Person[]): string {
   return `Only ${list(names)} can revert it: the Accept rule names them.`;
 }
 
+/**
+ * Why Revert is disabled on a Done issue Sekhemet merged nothing of (loop
+ * wave 10 A2): the CLI's `nothing_to_revert` refusal and its `Do:` step, in
+ * the board's words — where to revert, and how to do the work again.
+ */
+export function nothingToRevertText(n: { pr?: string; merge?: string }): string {
+  if (n.pr) {
+    const merged = n.merge ? `, merged as ${n.merge.slice(0, 7)}` : "";
+    return `It was accepted through its pull request ${n.pr}${merged}, so there is no merge here to revert. Revert that merge where the pull request lives, then add a New issue to do the work again.`;
+  }
+  return "It is Done with no Accept on its Activity log, so nothing was merged here to revert. To do the work again, add a New issue.";
+}
+
+/**
+ * The toast after taking an issue off hold (review-git §2.4, kernel rule 25;
+ * loop wave 10 A3): the column the server moved it to (`to`), never "back
+ * where it was". An issue put on hold from In review goes to To do, and the
+ * Agent runs it again, so the toast says so when `from` is known.
+ */
+export function takenOffHoldText(to: string, from?: string): string {
+  const column = boardColumnLabel(to);
+  if (from === "review" && to === "ready")
+    return `Taken off hold. It is in ${column}, not In review: the Agent runs it again.`;
+  return `Taken off hold. It is in ${column}.`;
+}
+
 /** The confirmation Revert shows first, naming the commit it undoes. */
 export function revertConfirmText(sha: string, branch = "main"): string {
   const short = sha ? sha.slice(0, 7) : "the accepted change";
@@ -97,7 +136,7 @@ export function issueActions(card: { status: string }, desk?: RevertDesk | null)
           label: c.revert,
           hint: c.revertHint,
           enabled: false,
-          why: revertRefusalText(rv.who ?? []),
+          why: rv.nothing ? nothingToRevertText(rv.nothing) : revertRefusalText(rv.who ?? []),
         },
       ];
     }

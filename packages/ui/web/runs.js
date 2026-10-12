@@ -12,7 +12,7 @@ import {
   summarizeRun,
 } from "./lib/vocabulary.js";
 import { setTopbar } from "./shell.js";
-import { store } from "./store.js";
+import { projectName, store } from "./store.js";
 
 const ui = {
   root: null,
@@ -284,7 +284,7 @@ async function loadRuns(wanted) {
   }
   ui.runs = res.data.runs;
   const r0 = ui.runs[0];
-  const crumb = `${store.state.meta?.project ?? ""} · ${ui.runs.length} unattended ${ui.runs.length === 1 ? "run" : "runs"}`;
+  const crumb = `${projectName()} · ${ui.runs.length} unattended ${ui.runs.length === 1 ? "run" : "runs"}`;
   setTopbar({ title: "Runs", crumb });
   $(".runs", ui.root).innerHTML = listHtml();
   if (!r0) return scoreHtml();
@@ -300,7 +300,7 @@ export function mount(view, route) {
   ui.root = root;
   ui.runs = null;
   ui.run = null;
-  setTopbar({ title: "Runs", crumb: store.state.meta?.project ?? "" });
+  setTopbar({ title: "Runs", crumb: projectName() });
   root.addEventListener("click", (e) => {
     const t = e.target instanceof Element ? e.target : null;
     const rn = t?.closest("[data-run]");

@@ -6,6 +6,7 @@ import {
   DownloadHashMismatch,
   DownloadRefused,
   FAMILY_SAMPLING,
+  HeaderError,
   MEASUREMENT_BASELINE,
   MODEL_SOURCES,
   ModelRegistry,
@@ -16,6 +17,7 @@ import {
   downloadModel,
   formatBytes,
   lookupPublishedFile,
+  noSourceRefusal,
   recommendedSetPlan,
   refuseWithoutSpace,
   registerModelFile,
@@ -84,19 +86,23 @@ export async function modelsFetch(model: string, opts: FetchOptions): Promise<nu
   const id = MODEL_SOURCES[model] ? model : resolveWorkerModelId(model);
   let source: ModelSource | undefined = registry.get(model)?.source ?? registry.get(id)?.source;
   if (!source) source = tableSource(id, opts.hub);
-  if (source && !registry.get(model)?.source) registry.recordSource(model, source);
   const table = MODEL_SOURCES[id];
-  if (!source && table) {
-    source = await lookupPublishedFile(table.repo, table.file, {
-      fetch: policyFetch(policy, { purpose: "model lookup", research: true, record }),
-      ...(opts.hub ? { hub: opts.hub } : {}),
-    }).catch(() => undefined);
-    if (source) registry.recordSource(model, source);
+  // Wave 7 A6: a model with no source anywhere is named as such before a
+  // folder is asked for — the folder is not what is missing.
+  if (!source && !table) {
+    print(noSourceRefusal(model));
+    return 1;
   }
   const folder = fetchFolder(opts);
   if (!folder) {
     print(NO_FOLDER);
     return 2;
+  }
+  if (!source && table) {
+    source = await lookupPublishedFile(table.repo, table.file, {
+      fetch: policyFetch(policy, { purpose: "model lookup", research: true, record }),
+      ...(opts.hub ? { hub: opts.hub } : {}),
+    }).catch(() => undefined);
   }
   try {
     const done = await downloadModel({
@@ -125,6 +131,8 @@ export async function modelsFetch(model: string, opts: FetchOptions): Promise<nu
         verified: true,
       },
     });
+    // The source is recorded with the verified file, never on a refusal (wave 7, MD-N12-9).
+    if (source && !registry.get(model)?.source) registry.recordSource(model, source);
     registry.recordWeights(model, {
       path: done.path,
       volume: volumeOf(done.path),
@@ -322,11 +330,18 @@ export async function modelsFetchCommand(
 /** A model card's sampling, as `sekhemet models add --sampling` records it (live-test F16). */
 export type CardSampling = { temperature?: number; topP?: number; topK?: number; minP?: number };
 
-const SAMPLING_KEYS: Record<string, { key: keyof CardSampling; ok: (n: number) => boolean }> = {
-  temperature: { key: "temperature", ok: (n) => n >= 0 && n <= 2 },
-  top_p: { key: "topP", ok: (n) => n > 0 && n <= 1 },
-  top_k: { key: "topK", ok: (n) => Number.isInteger(n) && n >= 0 },
-  min_p: { key: "minP", ok: (n) => n >= 0 && n <= 1 },
+const SAMPLING_KEYS: Record<
+  string,
+  { key: keyof CardSampling; ok: (n: number) => boolean; range: string }
+> = {
+  temperature: { key: "temperature", ok: (n) => n >= 0 && n <= 2, range: "0 to 2" },
+  top_p: { key: "topP", ok: (n) => n > 0 && n <= 1, range: "more than 0, up to 1" },
+  top_k: {
+    key: "topK",
+    ok: (n) => Number.isInteger(n) && n >= 0,
+    range: "a whole number, 0 or more",
+  },
+  min_p: { key: "minP", ok: (n) => n >= 0 && n <= 1, range: "0 to 1" },
 };
 
 /**
@@ -342,7 +357,9 @@ export function parseSamplingFlag(text: string): CardSampling | string {
     const spec = SAMPLING_KEYS[k];
     if (!spec) return `--sampling: unknown key "${k}" (temperature, top_p, top_k, min_p)`;
     const n = v === "" ? Number.NaN : Number(v);
-    if (!Number.isFinite(n) || !spec.ok(n)) return `--sampling: ${k}=${v} is not a valid value`;
+    // Wave 7 A7: the allowed range is named with the value refused.
+    if (!Number.isFinite(n) || !spec.ok(n))
+      return `--sampling: ${k}=${v} is out of range: ${k} takes ${spec.range}`;
     out[spec.key] = n;
   }
   return out;
@@ -378,7 +395,9 @@ export async function modelsAdd(
   const registry = opts.registry ?? new ModelRegistry();
   const given = opts.sampling !== undefined ? parseSamplingFlag(opts.sampling) : undefined;
   if (typeof given === "string") {
-    print(`Not registered: ${given}.`);
+    print(
+      `Not registered: ${given}. Run it again with each value in its range, as --sampling temperature=,top_p=,top_k=,min_p= (temperature 0 to 2, top_p more than 0 up to 1, top_k a whole number, min_p 0 to 1).`,
+    );
     return 1;
   }
   try {
@@ -425,7 +444,19 @@ export async function modelsAdd(
     );
     return 0;
   } catch (err) {
-    print(`Not registered: ${err instanceof Error ? err.message : String(err)}`);
+    print(`Not registered: ${addRefusal(resolve(path), err)}`);
     return 1;
   }
+}
+
+/**
+ * Why `models add` refused a file, in words with the next step (wave 7 A7):
+ * never the system's error code or the header parser's numbers.
+ */
+function addRefusal(path: string, err: unknown): string {
+  if (!existsSync(path))
+    return `there is no file at ${path}. Pass the path of a .gguf model file: sekhemet models add <file.gguf> [--id <id>]`;
+  if (err instanceof HeaderError)
+    return `${path} is not a GGUF model file Sekhemet can read: its header is ${err.reason === "header_too_large" ? "too large or damaged" : "missing or damaged"}, as in a partial download or another kind of file. Pass a complete .gguf file.`;
+  return err instanceof Error ? err.message : String(err);
 }

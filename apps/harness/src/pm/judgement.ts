@@ -14,7 +14,7 @@ import {
 } from "@sekhemet/planner";
 import type { ProposalDraft } from "./agent.js";
 import { cardsNamed } from "./knowledge.js";
-import { burnupFromEvents, flowMetrics } from "./metrics.js";
+import { burnupFromEvents, flowMetrics, seeded } from "./metrics.js";
 import { SPLIT_BY_CRITERIA_COPY, splitNotRetrySummary, sprintBetSummary } from "./pm_copy.js";
 import {
   APPLY_BENCHMARK_ACTION,
@@ -573,16 +573,6 @@ export interface SprintMeasures {
   planned: { issues: number; passedFirstTry: number; rate?: number };
   /** Fields people edited after Seshat's applied proposal set them, during the sprint. */
   editedAfterSeshat: number;
-}
-
-/** A seeded generator, so a recorded forecast replays to the same numbers. */
-function seeded(seed: string): () => number {
-  let h = 2166136261;
-  for (const ch of seed) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
-  return () => {
-    h = (Math.imul(h, 1664525) + 1013904223) >>> 0;
-    return h / 4294967296;
-  };
 }
 
 /**

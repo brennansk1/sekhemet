@@ -200,7 +200,7 @@ export const COMMAND_REGISTRY: readonly CommandSpec[] = [
     name: "status",
     visibility: "dev",
     usage: "status [--json]",
-    what: "The board for a script: each column's issues, what the queue runs next, and what waits on a person",
+    what: "The board of this folder's project, for a script: each column's issues, what the queue runs next, and what waits on a person",
     synopsis: "sekhemet status [--json]",
     example: "sekhemet status --json",
     options: JSON_OPTION,

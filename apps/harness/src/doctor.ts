@@ -20,6 +20,7 @@ import {
   type LocalInferenceAdapter,
   MEASUREMENT_BASELINE,
   MODEL_ROLES,
+  MODEL_SOURCES,
   ManagedLlamaServerAdapter,
   ModelRegistry,
   type ModelRole,
@@ -43,6 +44,7 @@ import {
   sekhemetConfigDir,
   sha256File,
   supportedTierFor,
+  tableSource,
 } from "@sekhemet/models";
 import { ProcessSandbox, allowlistWarnings, sameProcess, socatAvailable } from "@sekhemet/sandbox";
 import { plural } from "@sekhemet/ui";
@@ -159,7 +161,7 @@ export const DOCTOR_CHECKS: readonly DoctorCheckSpec[] = [
   {
     id: "weights-hashes",
     title: "Weights' hashes",
-    do: "run `sekhemet doctor --verify-weights`; download a file whose hash differs again on Configuration › Models",
+    do: "run `sekhemet doctor --verify-weights`; download a file whose hash differs again on Configuration › Models, or, for a file you added yourself, put the original back or add the changed one under a new id with `sekhemet models add`; put a file that is not found back, or register where it is now with `sekhemet models add <file> --id <id>`",
   },
   {
     id: "role-verification",
@@ -703,10 +705,14 @@ export function memoryCheck(
   );
 }
 
-/** This host's model registry, or none when it cannot be read (doctor still reports). */
+/**
+ * This host's model registry as a read sees it, or none when it cannot be
+ * read (doctor still reports): describing each role's model records nothing,
+ * so a fresh home's registry is as it was (wave 7, MD-N12-9).
+ */
 function hostRegistry(): ModelRegistry | undefined {
   try {
-    return new ModelRegistry();
+    return ModelRegistry.readOnly();
   } catch {
     return undefined;
   }
@@ -1669,18 +1675,31 @@ export async function weightsHashCheck(
   const cachePath = opts.cachePath ?? join(sekhemetConfigDir(), "model-hashes.json");
   const hash = opts.hash ?? ((p: string) => sha256File(p));
   const todo = new Map<string, { modelId: string; expected: string }>();
+  /** Wave 7 A4: registered files none of whose recorded copies is found here, never a pass. */
+  const lost: { modelId: string; path: string }[] = [];
   for (const e of registry?.list() ?? []) {
     const path = registry?.preferredWeights(e.id, existsSync);
     const expected = e.sha256 ?? e.source?.sha256;
     if (path && expected) todo.set(path, { modelId: e.id, expected });
+    const recorded = path ? undefined : registry?.preferredWeights(e.id);
+    if (recorded) lost.push({ modelId: e.id, path: recorded });
   }
+  const lostWords = lost.map((l) => `${l.modelId}: its registered file is not found (${l.path})`);
+  const lostStep = lost.length
+    ? lost
+        .map(
+          (l) =>
+            `put ${l.modelId}'s file back at ${l.path}, or register where it is now: \`sekhemet models add <file> --id ${l.modelId}\``,
+        )
+        .join("; ")
+    : undefined;
   for (const f of files) {
     if (todo.has(f.path) || !existsSync(f.path)) continue;
     const e = registry?.get(f.modelId);
     const expected = e?.sha256 ?? e?.source?.sha256 ?? shippedHash(f.modelId);
     if (expected) todo.set(f.path, { modelId: f.modelId, expected });
   }
-  if (todo.size === 0)
+  if (todo.size === 0 && lost.length === 0)
     return check("Weights' hashes", "pass", "no registered model file on this machine to check");
   let cache: Record<string, string> = {};
   try {
@@ -1690,8 +1709,8 @@ export async function weightsHashCheck(
   }
   let wrote = false;
   const bad: string[] = [];
-  /** The models whose file differs, each downloaded again (SUR-62's one step). */
-  const refetch = new Set<string>();
+  /** The models whose file differs, by path: each downloaded again (SUR-62's one step) when it can be. */
+  const refetch = new Map<string, string>();
   const unread: { path: string; bytes: number }[] = [];
   /** Verified here before, at this size, and written since: not read again without the flag. */
   const changed: string[] = [];
@@ -1729,7 +1748,7 @@ export async function weightsHashCheck(
           bad.push(
             `${modelId}: the file is ${formatBytes(bytes)}, not ${was}, so its hash differs from the registered one (${path})`,
           );
-          refetch.add(modelId);
+          refetch.set(modelId, path);
         } else if (verified.length > 0) changed.push(path);
         else unread.push({ path, bytes });
         continue;
@@ -1748,7 +1767,7 @@ export async function weightsHashCheck(
     compared++;
     if (sha !== expected) {
       bad.push(`${modelId}: the file's hash differs from the registered one (${path})`);
-      refetch.add(modelId);
+      refetch.set(modelId, path);
     }
   }
   if (wrote)
@@ -1764,16 +1783,34 @@ export async function weightsHashCheck(
       ? `${plural(changed.length, "model file")} changed since ${changed.length === 1 ? "it was" : "they were"} verified (${changed.join(", ")}): run \`sekhemet doctor --verify-weights\` to check ${changed.length === 1 ? "it" : "them"}`
       : "",
     unreadWords(unread),
+    ...lostWords,
   ].filter(Boolean);
-  if (bad.length)
+  if (bad.length) {
+    // Wave 7 A5: a download is offered only for a model that has a source;
+    // a person's own file is restored, or the changed one added under a new id.
+    const fetchable = [...refetch.keys()].filter(
+      (m) => registry?.get(m)?.source ?? tableSource(m) ?? MODEL_SOURCES[m],
+    );
+    const own = [...refetch].filter(([m]) => !fetchable.includes(m));
+    const steps = [
+      fetchable.length
+        ? `download ${fetchable.length === 1 ? "it" : "them"} again on Configuration › Models, or run ${fetchable.map((m) => `\`sekhemet models fetch ${m}\``).join(" and ")}`
+        : "",
+      ...own.map(
+        ([m, path]) =>
+          `put ${m}'s original file back, or register the changed file under a new id: \`sekhemet models add ${path} --id <new id>\``,
+      ),
+      lostStep ?? "",
+    ].filter(Boolean);
     return check(
       "Weights' hashes",
       "fail",
       [...bad, ...unverified].join("; "),
-      refetch.size
-        ? `download ${refetch.size === 1 ? "it" : "them"} again on Configuration › Models, or run ${[...refetch].map((m) => `\`sekhemet models fetch ${m}\``).join(" and ")}`
+      steps.length
+        ? steps.join("; ")
         : "check that the models folder is readable, then run `sekhemet doctor --verify-weights` again",
     );
+  }
   const matched = compared
     ? `${plural(compared, "model file")} ${compared === 1 ? "matches its" : "match their"} registered SHA-256${opts.verify ? ` (read in ${durationWords(tookMs)})` : ""}`
     : "";
@@ -1782,6 +1819,7 @@ export async function weightsHashCheck(
     "Weights' hashes",
     unverified.length ? "warn" : "pass",
     [matched, ...unverified].filter(Boolean).join("; "),
+    lostStep,
   );
 }
 

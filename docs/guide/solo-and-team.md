@@ -38,4 +38,4 @@ A Solo install switches to Team from Configuration. The Activity log is kept, no
 
 ## Projects and workspaces
 
-A server is one **workspace**, and each project in it keeps its own git repository. People switch projects and workspaces from the sidebar. A workspace holding many projects is partly built in v1; [STATUS](../reference/STATUS.md) says where it stands.
+A server is one **workspace**, and each project in it keeps its own git repository. People switch projects and workspaces from the sidebar, and every page header names the project it shows. In a terminal, `sekhemet status` and `sekhemet board --terminal` show the project whose folder you are in, and only its issues. A workspace holding many projects is partly built in v1; [STATUS](../reference/STATUS.md) says where it stands.

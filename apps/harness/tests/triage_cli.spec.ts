@@ -207,6 +207,99 @@ describe("triage from the command line", () => {
     expect(await statusOf(repo, "card_t")).toBe("ready");
   });
 
+  it("loop wave 10 A2: Undo of a Done issue Sekhemet did not merge is no loop — revert says why and a step that moves on", async () => {
+    const repo = await withCard();
+    const { db, cardStore, boardService } = initLocalKernel(repo);
+    // Done through its pull request, merged on the hosting service (rule 24, K-N3-4).
+    await cardStore.createCard({ id: "card_pr", tier: "story", title: "PR", scopeFiles: ["p.ts"] });
+    db.prepare("UPDATE cards SET status = 'review' WHERE id = ?").run("card_pr");
+    const url = "https://github.com/o/r/pull/7";
+    const principal = cardStore.localPrincipal();
+    await boardService.acceptWithPullRequest(
+      "card_pr",
+      { pr: 7, url, headSha: "a".repeat(40) },
+      principal,
+      "harness",
+      [
+        {
+          type: "card/accepted",
+          actor: "human",
+          principal,
+          payload: { id: "card_pr", pr: url, principal },
+        },
+      ],
+    );
+    await boardService.closePullRequest("card_pr", {
+      pr: 7,
+      merged: true,
+      mergeCommit: "b".repeat(40),
+    });
+    // Done with no Accept on its Activity log (a fixture, as above).
+    await cardStore.createCard({ id: "card_n", tier: "story", title: "N", scopeFiles: ["n.ts"] });
+    db.prepare("UPDATE cards SET status = 'done' WHERE id = ?").run("card_n");
+    db.close();
+    expect(await statusOf(repo, "card_pr")).toBe("done");
+
+    // Reopen points at revert, the one undo of a Done issue (review-git §2.4).
+    const reopened = await stderrOf(["reopen", "card_pr", "--repo", repo]);
+    expect(reopened).toMatch(/^ {2}Do: to undo its accept: sekhemet revert card_pr$/m);
+    process.exitCode = undefined;
+
+    const pr = await stderrOf(["revert", "card_pr", "--repo", repo]);
+    expect(pr).toMatch(
+      /^sekhemet: card_pr was accepted through its pull request https:\/\/github\.com\/o\/r\/pull\/7, merged as bbbbbbbbbb; Sekhemet has no squash of its own to revert$/m,
+    );
+    expect(pr).toMatch(
+      /^ {2}Do: revert that merge where the pull request lives \(git revert -m 1 bbbbbbbbbb\), then plan the work again: sekhemet plan "<what to change>"$/m,
+    );
+    expect(pr).not.toMatch(/sekhemet stopped|details are in|sekhemet (revert|reopen) card_pr/);
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+
+    const none = await stderrOf(["revert", "card_n", "--repo", repo]);
+    expect(none).toMatch(
+      /^sekhemet: card_n is Done with no Accept on its Activity log, so Sekhemet merged nothing of it to revert$/m,
+    );
+    expect(none).toMatch(
+      /^ {2}Do: to do the work again, plan it: sekhemet plan "<what to change>"$/m,
+    );
+    expect(none).not.toMatch(/sekhemet stopped|details are in|sekhemet (revert|reopen) card_n/);
+    expect(process.exitCode).toBe(1);
+    expect(await statusOf(repo, "card_n")).toBe("done");
+  });
+
+  it("loop wave 10 A4, dashboard §2.13 item 13: an issue In review with no attempt offers neither Accept nor Request changes, in the CLI as on the dashboard", async () => {
+    const repo = await withCard();
+    const { db } = initLocalKernel(repo);
+    // In review with no evidence (a fixture: the transition law reaches Review only from Verify).
+    db.prepare("UPDATE cards SET status = 'review' WHERE id = ?").run("card_t");
+    db.close();
+    const changes = await stderrOf([
+      "request-changes",
+      "card_t",
+      "fix the rounding",
+      "--repo",
+      repo,
+    ]);
+    expect(changes).toMatch(
+      /^sekhemet: card_t is In review with no attempt yet, so there is no work to request changes on$/m,
+    );
+    expect(changes).toMatch(
+      /^ {2}Do: sekhemet park card_t "<why>", then sekhemet unpark card_t puts it in Ready to run$/m,
+    );
+    expect(changes).not.toMatch(/sekhemet stopped|details are in/);
+    expect(process.exitCode).toBe(1);
+    expect(await status(repo)).toBe("review");
+    process.exitCode = undefined;
+    const accept = await stderrOf(["accept", "card_t", "--repo", repo]);
+    expect(accept).toMatch(/no checks recorded/);
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+    // Put on hold is the one decision offered, and it is taken.
+    await main(["park", "card_t", "not run yet", "--repo", repo]);
+    expect(await status(repo)).toBe("parked");
+  });
+
   it("S1B-B19: Accept on an issue not In review names the step that brings it there", async () => {
     const repo = await inPlanning();
     const out = await stderrOf(["accept", "card_p", "--repo", repo]);

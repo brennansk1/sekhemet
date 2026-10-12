@@ -28,6 +28,21 @@ describe("a send-back with comments on diff lines (WL-N10-4)", () => {
 
   it("puts each comment, with its file and line, into the next attempt's instructions", async () => {
     await store.createCard({ id: "c", tier: "story", title: "C", scopeFiles: ["src/**"] });
+    // An attempt that reached Review: Request changes needs work to decide on
+    // (dashboard §2.13 item 13, loop wave 10 A4).
+    const attempt = await store.runs.startAttempt({ cardId: "c", attemptNumber: 1, modelId: "m" });
+    await store.runs.recordEvidence({
+      id: "ev_c",
+      cardId: "c",
+      attemptId: attempt.id,
+      passed: true,
+      stopReason: "gate_passed",
+      path: ".sekhemet/evidence/ev_c.json",
+      sha256: "0".repeat(64),
+      filesTouched: ["src/total.ts"],
+      linesAdded: 1,
+      linesRemoved: 0,
+    });
     await store.updateCardStatus("c", "review", "setup", "harness", { override: true });
     const board = new BoardServiceImpl(store);
     const card = await store.getCard("c");

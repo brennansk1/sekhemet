@@ -1,11 +1,17 @@
 // Triage (FRONTEND_DESIGN §2.4.1, §2.5.6): Accept with a grace window, Send back
-// with a note, Park with a reason. Every mutation carries the CSRF header.
+// with a reason, Park with a reason. Every mutation carries the CSRF header.
 import { errorCode, isAcceptanceTest, matchesAny } from "./diff_parse.js";
 import { MOD, actionHeaders, announce, copyText, esc, icon, kbd, postJSON } from "./dom.js";
 import { practiceTip } from "./learn.js";
 import { ISSUE_COPY, lineCommentLabel, sendBackBody } from "./lib/issue.js";
-import { ISSUE_ACTION_COPY } from "./lib/issue_actions.js";
-import { THREAD_COPY, acceptChecklist, acceptVerdict, dismissalNote } from "./lib/review_desk.js";
+import { ISSUE_ACTION_COPY, takenOffHoldText } from "./lib/issue_actions.js";
+import {
+  THREAD_COPY,
+  acceptChecklist,
+  acceptVerdict,
+  conflictNextStep,
+  dismissalNote,
+} from "./lib/review_desk.js";
 import { gateLabel } from "./lib/vocabulary.js";
 import { placeUnder, pushOverlay } from "./overlay.js";
 import { acknowledgedIds, deskBlocker } from "./review_desk.js";
@@ -174,8 +180,21 @@ export function accept(card, evidence, { onMerged, onChange, detail } = {}) {
       onMerged?.(card);
     } else {
       const e = explainFailure("accept", res);
+      // Loop wave 10 A1: a conflict's step, as the CLI's `Do:` line says it,
+      // with Request changes one press away carrying the note.
+      const conflict = res.status === 409 && res.data?.conflict;
+      const step = conflict ? conflictNextStep(conflict) : null;
+      if (step) e.detail = [e.detail, step.detail].filter(Boolean).join(" ");
       refusal = { cardId: card.id, text: [e.text, e.detail].filter(Boolean).join(" ") };
-      t.update({ ...e, tone: "fail", duration: 4000 });
+      const canRequest = step && document.querySelector("[data-back]:not([disabled])");
+      t.update({
+        ...e,
+        tone: "fail",
+        duration: 4000,
+        ...(canRequest
+          ? { action: { label: "Request changes", run: () => requestChangesWith(step.note) } }
+          : {}),
+      });
     }
     p?.onChange?.();
   };
@@ -188,6 +207,18 @@ export function accept(card, evidence, { onMerged, onChange, detail } = {}) {
     timer: setTimeout(run, GRACE_MS),
   };
   onChange?.();
+}
+
+/**
+ * Open this page's Request changes composer with `note` as its reason, unless
+ * a reason is already typed there (loop wave 10 A1).
+ */
+function requestChangesWith(note) {
+  document.querySelector("[data-back]:not([disabled])")?.click();
+  const area = document.querySelector("[data-composer] textarea");
+  if (!area) return;
+  if (!area.value.trim()) area.value = note;
+  area.focus();
 }
 
 /** `z` within the grace window: nothing is sent. */
@@ -253,7 +284,7 @@ export function composerHtml(notes, { comments = [] } = {}) {
   const chips = notes
     .map((n) => `<button type="button" class="chip" data-chip title="${esc(n)}">${esc(n)}</button>`)
     .join("");
-  return `<form class="composer" data-composer aria-label="Request changes"><label class="lbl" for="sb-note">What should the Agent do differently?</label>${practiceTip("practice:request_changes", "Request changes")}<textarea id="sb-note" name="note" placeholder="Your note is the first thing the Agent reads on its next attempt." aria-describedby="sb-err"></textarea><div class="err" id="sb-err" role="alert" hidden>Add a note for the Agent. It's what it reads next.</div>${chips ? `<div class="chips"><span class="sec" style="font-size:var(--text-xs)">Quick notes</span>${chips}</div>` : ""}${carriedHtml(comments)}<div class="row"><label class="pb-opt"><input type="checkbox" checked disabled> Suggest as a playbook rule <small>· your note becomes a candidate rule in Playbook</small></label><span class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("send-back")}Request changes ${kbd(`${MOD}↵`)}</button></span></div></form>`;
+  return `<form class="composer" data-composer aria-label="Request changes"><label class="lbl" for="sb-note">What should the Agent do differently?</label>${practiceTip("practice:request_changes", "Request changes")}<textarea id="sb-note" name="note" placeholder="Your reason is the first thing the Agent reads on its next attempt." aria-describedby="sb-err"></textarea><div class="err" id="sb-err" role="alert" hidden>Add a reason for the Agent. It's what it reads next.</div>${chips ? `<div class="chips"><span class="sec" style="font-size:var(--text-xs)">Suggested reasons</span>${chips}</div>` : ""}${carriedHtml(comments)}<div class="row"><label class="pb-opt"><input type="checkbox" checked disabled> Suggest as a playbook rule <small>· your reason becomes a candidate rule in Playbook</small></label><span class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("send-back")}Request changes ${kbd(`${MOD}↵`)}</button></span></div></form>`;
 }
 
 /**
@@ -322,7 +353,7 @@ export function wireComposer(form, card, { onSent, onClose, comments }) {
       document.body.classList.remove("composing");
       // The board's column (NAMING row 26): Ready is To do.
       toast({
-        text: "Changes requested. The issue is back in To do with your note.",
+        text: "Changes requested. The issue is back in To do with your reason.",
         iconName: "send-back",
         tone: "info",
       });
@@ -410,8 +441,10 @@ export function wireCommentForm(form, card, { onSent, onClose, comments }) {
 const PRESETS = ["Waiting on me", "Needs a decision", "Not now"];
 
 /**
- * Take an On hold issue off hold: back where it was (`POST /api/cards/:id/unpark`),
- * in Status's words. From the triage bar wherever it is drawn, and the palette.
+ * Take an On hold issue off hold (`POST /api/cards/:id/unpark`): to Backlog or
+ * Planning when it was put on hold from there, else To do (review-git §2.4),
+ * and the toast names the column. From the triage bar wherever it is drawn,
+ * and the palette.
  */
 export async function takeOffHold(card, { onDone } = {}) {
   if (!card || blockedToast()) return;
@@ -420,7 +453,7 @@ export async function takeOffHold(card, { onDone } = {}) {
     toast({ ...explainFailure("take it off hold", res), tone: "fail" });
     return;
   }
-  toast({ tone: "pass", text: "Taken off hold. It is back where it was." });
+  toast({ tone: "pass", text: takenOffHoldText(res.data?.status ?? "ready", res.data?.from) });
   refreshSoon();
   onDone?.(card);
 }
@@ -477,7 +510,7 @@ export function openPark(anchor, card, { onDone } = {}) {
           const back = await postJSON(`/api/cards/${encodeURIComponent(card.id)}/unpark`, {});
           refreshSoon();
           return back.ok
-            ? { text: "Taken off hold. It is back where it was." }
+            ? { text: takenOffHoldText(back.data?.status ?? "ready", back.data?.from) }
             : { ...explainFailure("take it off hold", back), tone: "fail" };
         },
       );

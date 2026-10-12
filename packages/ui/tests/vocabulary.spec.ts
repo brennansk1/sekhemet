@@ -413,7 +413,7 @@ describe("statusLine and describeCard", () => {
     ).toBe("Paused for memory at step 11");
     // ISS-03: every viewer reads the tile, so it never says "your".
     expect(line({ status: "ready" }, { statusReason: "returned: fix it" }).text).toBe(
-      "Changes requested, with a note",
+      "Changes requested, with a reason",
     );
     expect(line({ status: "ready" }, { evidence: hasherEvidence }).text).toBe(
       "Types failed · 3 errors · will retry",

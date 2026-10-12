@@ -300,12 +300,12 @@ describe("Configuration › Benchmark built out (DB-N6-19..22; NEW-measurement-7
       expect(
         await page.locator(`#${await apply.getAttribute("aria-describedby")}`).innerText(),
       ).toMatch(/nothing to apply/);
-      await review.getByRole("button", { name: "Settle overnight" }).waitFor();
+      await review.getByRole("button", { name: "Compare overnight" }).waitFor();
       // Planning has no screen: it says why instead of offering a run, in a
       // person's words (DB-N6-18), never the set's file paths or build ids.
       const tune = await section.locator(".bench-tune").innerText();
       expect(tune).toMatch(
-        /Planning model.*Not measured yet: the Planning model's benchmark set is not built/s,
+        /Planning model.*Not measured yet: Sekhemet has no benchmark for the Planning model yet/s,
       );
       expect(tune).not.toMatch(/golden set waits|fixtures\/|not_measured/);
 
@@ -320,7 +320,7 @@ describe("Configuration › Benchmark built out (DB-N6-19..22; NEW-measurement-7
       const other = section.locator(".bench-external");
       expect(await other.innerText()).toMatch(/Web-Bench/);
       expect(await other.innerText()).toMatch(/react @ abc1234/);
-      expect(await other.innerText()).toMatch(/pass@1 25%/);
+      expect(await other.innerText()).toMatch(/passed on the first try 25%/);
       expect(await other.innerText()).toMatch(/one retry with the test output/);
       expect(await other.innerText()).toMatch(/No capstone result is recorded/);
 

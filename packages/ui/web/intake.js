@@ -20,7 +20,7 @@ import { openMenu } from "./overlay.js";
 import { openPicker, openPrompt } from "./picker.js";
 import { getSession } from "./session.js";
 import { setTopbar } from "./shell.js";
-import { store } from "./store.js";
+import { projectName, store } from "./store.js";
 import { renderSuggestions } from "./suggestions.js";
 import { toast } from "./toast.js";
 import { applyView, bindViewBar, focusFilter, paintViewBar, vb } from "./viewbar.js";
@@ -52,7 +52,7 @@ function render() {
   const total = m.count;
   setTopbar({
     title: T.heading,
-    crumb: `${store.state.meta?.project ?? ""}${store.state.meta?.project ? " · " : ""}${total} waiting`,
+    crumb: `${projectName()}${projectName() ? " · " : ""}${total} waiting`,
   });
   paintViewBar(ui.barHost, null, "triage");
   ui.focus = Math.min(ui.focus, Math.max(0, m.rows.length - 1));

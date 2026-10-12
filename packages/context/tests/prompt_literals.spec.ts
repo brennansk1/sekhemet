@@ -56,6 +56,29 @@ describe("a refusal is model-facing only where the Worker meets it", () => {
     expect(texts("apps/harness/src/commands/cli_result.ts", source)).toEqual([]);
   });
 
+  it("does not inventory the model-file refusals said to a person on the CLI and Configuration › Models", () => {
+    // models_cmd.ts prints addRefusal and noSourceRefusal; config_api.ts's
+    // refuseUnverified is the assignment's 409 on the page (wave 7 A7, MD-N12-6).
+    expect(
+      texts(
+        "apps/harness/src/models_cmd.ts",
+        "function addRefusal(path: string) { return `there is no file at ${path}. Pass the path of a .gguf model file.`; }",
+      ),
+    ).toEqual([]);
+    expect(
+      texts(
+        "packages/models/src/model_download.ts",
+        "export function noSourceRefusal(model: string) { return `${model} has no registered source and hash, so Sekhemet offers no download for it.`; }",
+      ),
+    ).toEqual([]);
+    expect(
+      texts(
+        "apps/harness/src/config_api.ts",
+        "const refuseUnverified = () => json(res, 409, { error: `${name} is not verified on this machine as the Coding model.` });",
+      ),
+    ).toEqual([]);
+  });
+
   it("names the person-facing builders, so another refusal in the app is still inventoried", () => {
     expect(texts("apps/harness/src/x.ts", refusal("toolRefusal"))).toHaveLength(1);
   });

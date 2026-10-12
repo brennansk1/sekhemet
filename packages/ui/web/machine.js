@@ -3,7 +3,7 @@
 import { $, esc, getJSON, icon } from "./dom.js";
 import { hardwareTierView, memoryGuardView } from "./lib/machine_tier.js";
 import { agentWork } from "./lib/nav.js";
-import { ROSTER_STATE_LABELS, rosterRows } from "./lib/pm.js";
+import { ROSTER_STATE_LABELS, rosterRows, rosterSource, rosterSummary } from "./lib/pm.js";
 import { checkFixHint, shortId } from "./lib/vocabulary.js";
 import { setTopbar } from "./shell.js";
 import { drawSparkline, sparkSummary } from "./sparkline.js";
@@ -75,25 +75,27 @@ function rosterHtml() {
     return `<section>${head("Coding, Planning, Review and Research models")}<p class="roster-empty">${icon("machine", 14, "ic s14")}<span>${why}</span></p></section>`;
   }
   const rows = rosterRows(r.data.roles);
-  const resident = rows.filter((x) => x.state === "resident").length;
-  // A note every role shares ("No run in progress") is said once, not four times.
-  const notes = new Set(rows.map((x) => x.note ?? ""));
-  const shared = notes.size === 1 && rows[0]?.note ? rows[0].note : "";
+  // Wave 7 B2: with no run nothing is resident or swapped out (`rosterSummary`),
+  // and no other machine's memory is named.
+  const sum = rosterSummary(rows, {
+    running: r.data.running === true,
+    coResident: r.data.coResident === true,
+  });
   const items = rows
     .map((x) => {
       const dot =
         x.state === "resident"
           ? '<span class="dot" aria-hidden="true"></span>'
-          : x.state === "swapped"
+          : x.state === "swapped" || x.state === "not_in_use"
             ? '<span class="dot idle" aria-hidden="true"></span>'
             : '<span class="dot off" aria-hidden="true"></span>';
-      return `<li class="rrow ${esc(x.state)}"><div class="rl"><b>${esc(x.label)}</b><span class="mono">${x.model ? esc(x.model) : "—"}</span></div><div class="rs">${dot}<span>${esc(ROSTER_STATE_LABELS[x.state] ?? x.state)}</span></div><p class="rd">${esc(x.does)}</p>${x.note && !shared ? `<p class="rn">${esc(x.note)}</p>` : ""}</li>`;
+      // Wave 7 B1: where the model comes from, as `models list` says it.
+      const from = rosterSource(x);
+      const fromLine = from ? `<p class="rn">${esc(from)}</p>` : "";
+      return `<li class="rrow ${esc(x.state)}"><div class="rl"><b>${esc(x.label)}</b><span class="mono">${x.model ? esc(x.model) : "—"}</span></div><div class="rs">${dot}<span>${esc(ROSTER_STATE_LABELS[x.state] ?? x.state)}</span></div><p class="rd">${esc(x.does)}</p>${fromLine}${x.note && r.data.running ? `<p class="rn">${esc(x.note)}</p>` : ""}</li>`;
     })
     .join("");
-  const mem = r.data.coResident
-    ? "This machine has room for all four at once, so nothing swaps."
-    : "One model is resident at a time on this machine; Sekhemet swaps them as the work needs (about 40 seconds each). With 128 GB, all four stay loaded.";
-  return `<section>${head(`${resident} of ${rows.length} resident`)}<ul class="roster">${items}</ul><p class="sec roster-note">${icon("memory", 12, "ic s12")}<span>${esc(shared ? `${shared}. ${mem}` : mem)}</span></p></section>`;
+  return `<section>${head(sum.heading)}<ul class="roster">${items}</ul><p class="sec roster-note">${icon("memory", 12, "ic s12")}<span>${esc(sum.memory)}</span></p></section>`;
 }
 
 const ICON = { pass: ["check", "i-pass"], warn: ["alert", "i-park"], fail: ["x", "i-fail"] };

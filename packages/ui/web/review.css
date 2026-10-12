@@ -661,7 +661,8 @@ dl.kv dd {
   }
   .g-seg {
     height: auto;
-    min-height: 32px;
+    /* Each row is a button: the phone's 44 px target (§2.14.5; wave 8 B7). */
+    min-height: 44px;
     padding: 6px 12px;
     white-space: normal;
     border-right: 0;

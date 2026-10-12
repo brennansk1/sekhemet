@@ -45,7 +45,7 @@ curl -fsS https://<your server>/healthz
 
 ## Backups
 
-Sekhemet backs the workspace up outside the repository: the Activity log, its blobs and evidence, each project's configuration and the credential store, each set verified before it is kept. A set is written automatically the first time the server or a run starts on a calendar day, and Sekhemet keeps the newest set of each of the last 7 days and 4 weeks (`[backup] enabled`, `keep_daily` and `keep_weekly` in the server's config.toml). Take one now, or list the sets with their schema versions:
+Sekhemet backs the workspace up outside the repository: the Activity log, its blobs and evidence, each project's configuration and the credential store, each set verified before it is kept. A set is written automatically the first time the server or a run starts on a calendar day, and Sekhemet keeps the newest set of each of the last 7 days and 4 weeks (`[backup] enabled`, `keep_daily` and `keep_weekly` in the server's config.toml), so a second set taken on one day replaces the first; `sekhemet backup` names each set it removes. Take one now, or list the sets with their schema versions:
 
 ```bash
 docker compose -f packaging/server/compose.builtin.yaml exec sekhemet sekhemet backup
@@ -54,7 +54,7 @@ docker compose -f packaging/server/compose.builtin.yaml exec sekhemet sekhemet b
 
 The sets live in the server's user-directory volume, so copy them off the host too (for example `docker compose cp sekhemet:/home/node/.sekhemet/backups ./sekhemet-backups`). A backup set holds the credential store: keep its copies as private as the server.
 
-To restore, stop the server, restore the newest set that verifies (or name one: `restore <set folder>`), and start it again. Restoring re-applies every erasure recorded since the backup.
+To restore, stop the server, restore the newest set that verifies (or name one: `restore <set folder>`), and start it again. Restoring re-applies every erasure the backup does not already carry, including one made after an earlier restore of an older set.
 
 ```bash
 docker compose -f packaging/server/compose.builtin.yaml stop sekhemet

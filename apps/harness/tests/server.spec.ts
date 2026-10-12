@@ -313,6 +313,33 @@ describe("@sekhemet/harness Dashboard Server", () => {
       title: "Card awaiting review",
       scopeFiles: ["src/a.ts"],
     });
+    // An attempt that reached Review: Request changes needs work to decide on
+    // (dashboard §2.13 item 13, loop wave 10 A4).
+    const attempt = await cardStore.runs.startAttempt({
+      cardId: "card_triage",
+      attemptNumber: 1,
+      modelId: "m",
+    });
+    await cardStore.runs.recordEvidence({
+      id: "ev_triage",
+      cardId: "card_triage",
+      attemptId: attempt.id,
+      passed: true,
+      stopReason: "gate_passed",
+      path: ".sekhemet/evidence/ev_triage.json",
+      sha256: "0".repeat(64),
+      filesTouched: ["src/a.ts"],
+      linesAdded: 1,
+      linesRemoved: 0,
+    });
+    await cardStore.runs.finishAttempt({
+      attemptId: attempt.id,
+      status: "passed",
+      stopReason: "gate_passed",
+      tokensUsed: 0,
+      secondsUsed: 0,
+      evidenceId: "ev_triage",
+    });
     await cardStore.updateCardStatus("card_triage", "review", "test setup", "harness", {
       override: true,
     });

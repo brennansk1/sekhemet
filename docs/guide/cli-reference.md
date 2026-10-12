@@ -285,11 +285,11 @@ Flags: `--yes`.
 
 ### `erase`
 
-Erase a secret found after the fact, or chosen entries, leaving a recorded gap.
+Erase a secret found after the fact, or chosen entries (the numbers `sekhemet log` prints), leaving a recorded gap.
 
 ```
 sekhemet erase --secret [--secret-file <file>] --rotated
-sekhemet erase --events <id>,…
+sekhemet erase --events <entry>,…
 ```
 
 Example: `sekhemet erase --secret --secret-file leaked.txt --rotated`
@@ -467,10 +467,11 @@ The models on this machine: list, assign a role, restore the default, add a GGUF
 
 ```
 sekhemet models list
-sekhemet models assign <worker|planner|reviewer|researcher> <model> [--baseline | --default --bake-off <event>]
+sekhemet models assign <role> <model> [--baseline | --default --bake-off <event>]
 sekhemet models restore <role>
 sekhemet models add <file.gguf> [--id <id>] [--sampling <settings>]
 sekhemet models fetch <model> | --role <role> | --recommended [--yes] [--folder <path>]
+<role>: worker (the Coding model), planner (the Planning model), reviewer (the Review model) or researcher (the Research model)
 ```
 
 Example: `sekhemet models assign worker nail-mtp`
@@ -551,8 +552,9 @@ Example: `sekhemet prompt-screen --from ~/code/shop --limit 20`
 Verify models for a role on this machine, or record an override with its reason.
 
 ```
-sekhemet qualify --models <a>,<b> [--role worker|planner|reviewer|researcher] [--speculative on] [--check]
+sekhemet qualify --models <a>,<b> [--role <role>] [--speculative on] [--check]
 sekhemet qualify --override <model> [--role <role>] --by <name>
+<role>: worker (the Coding model), planner (the Planning model), reviewer (the Review model) or researcher (the Research model)
 ```
 
 Example: `sekhemet qualify --models nail-mtp`
@@ -615,13 +617,13 @@ Example: `sekhemet release`
 
 ### `reopen`
 
-Reopen a finished or rejected issue.
+Reopen an issue marked Won't do (a Done issue is undone with sekhemet revert).
 
 ```
 sekhemet reopen <issue> ["<reason>"]
 ```
 
-Example: `sekhemet reopen TS-101 "The export drops Sundays"`
+Example: `sekhemet reopen TS-101 "Back in scope for this release"`
 
 ### `replay`
 
@@ -781,7 +783,7 @@ Example: `sekhemet skills list`
 
 ### `status`
 
-The board for a script: each column's issues, what the queue runs next, and what waits on a person.
+The board of this folder's project, for a script: each column's issues, what the queue runs next, and what waits on a person.
 
 ```
 sekhemet status [--json]
@@ -870,7 +872,7 @@ Flags: `--dry-run`, `--include-ledgers`, `--yes`.
 
 ### `unpark`
 
-Take an issue off hold, back where it was.
+Take an issue off hold: back to Ready, or to Backlog or Planning if it was held from there.
 
 ```
 sekhemet unpark <issue>

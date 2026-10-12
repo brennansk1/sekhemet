@@ -387,3 +387,45 @@ describe("a project added while the active-project cap is reached (DB-N26-3, RUN
     expect(v.rows.find((r) => r.id === "proj_chronicle")?.paused).toBeUndefined();
   });
 });
+
+// Wave 8 B3 (sweep 4, P1): Projects said *Coding model nail-mtp · 1 in queue*
+// while Configuration and the sidebar said no Coding model fits this machine.
+// The one source for model status on screen is Configuration's (SHL-04).
+describe("no Coding model on this machine (wave 8 B3)", () => {
+  it("names no Coding model and no queue where Configuration says none fits", () => {
+    const o = overview({
+      models: {
+        roles: [{ role: "worker", model: "nail-mtp", state: "not_in_use" }],
+        slots: { inUse: 0, capacity: 1 },
+        queue: 1,
+        memory: null,
+      },
+    });
+    const row = projectsModel({
+      now: NOW,
+      overview: o,
+      codingModel: { ready: false, model: null, why: "none" },
+    }).models?.rows[0];
+    expect(row).toMatchObject({ model: "—", state: "Not configured", load: "" });
+    // Case 2 (wave 8 review): assigned, but absent or unverified here — named, no load.
+    const missing = projectsModel({
+      now: NOW,
+      overview: o,
+      codingModel: { ready: false, model: "nail-mtp", why: "missing" },
+    }).models?.rows[0];
+    expect(missing).toMatchObject({ model: "nail-mtp", state: "Not on this machine", load: "" });
+    const unverified = projectsModel({
+      now: NOW,
+      overview: o,
+      codingModel: { ready: false, model: "nail-mtp", why: "unverified" },
+    }).models?.rows[0];
+    expect(unverified).toMatchObject({
+      model: "nail-mtp",
+      state: "Not verified on this machine",
+      load: "",
+    });
+    // With a Coding model, the roster's words stand.
+    const set = projectsModel({ now: NOW, overview: o }).models?.rows[0];
+    expect(set).toMatchObject({ model: "nail-mtp", load: "0 of 1 slot in use · 1 in queue" });
+  });
+});

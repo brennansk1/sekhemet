@@ -155,6 +155,58 @@ export function fatalLine(err: unknown, reportPath: string | undefined): string 
   return `sekhemet stopped: ${describeError(err)}${where}`;
 }
 
+/** A full disk, in one wording whichever layer met it (wave 9 B8, sweep 5). */
+export const DISK_FULL_WHAT = "the disk is full, so nothing more could be written";
+/** What a full disk needs first (runtime RUN-69's *Free some space*). */
+export const DISK_FULL_FREE = "free some space on the disk";
+/** The step a full disk needs, as the `disk_low` stop says it (runtime RUN-69). */
+export const DISK_FULL_NEXT = `${DISK_FULL_FREE}, then run the command again`;
+
+/**
+ * Whether the error is a full volume: a write's `ENOSPC`, or SQLite's
+ * SQLITE_FULL (errcode 13, *database or disk is full*).
+ */
+export function isDiskFull(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const e = err as Error & { code?: unknown; errcode?: unknown };
+  return (
+    e.code === "ENOSPC" ||
+    e.errcode === 13 ||
+    /\bENOSPC\b|no space left on device|database or disk is full/i.test(e.message)
+  );
+}
+
+/**
+ * Surface item 18b at the top of the process (wave 9 B12): an error that is
+ * a refusal — a full disk, or an error named `…Refusal` / `…Refused` (the
+ * kernel's `RestoreRefused`, the planner's `PipelineRefusal`) — is said as
+ * a refusal, with its `next` step when it carries one; undefined for
+ * anything else, which stays item 18a's crash line.
+ */
+export function refusalOf(err: unknown): { what: string; next?: string } | undefined {
+  if (isDiskFull(err)) {
+    const next = (err as { next?: unknown }).next;
+    return { what: diskFullWhat(err), next: typeof next === "string" ? next : DISK_FULL_NEXT };
+  }
+  if (!(err instanceof Error) || !/Refus(al|ed)$/.test(err.name)) return undefined;
+  const next = (err as { next?: unknown }).next;
+  return { what: describeError(err), ...(typeof next === "string" && next ? { next } : {}) };
+}
+
+/** A full disk's words: one wording, or the error's own when it already names the full disk. */
+function diskFullWhat(err: unknown): string {
+  return err instanceof Error && /^the disk is full/i.test(err.message)
+    ? describeError(err)
+    : DISK_FULL_WHAT;
+}
+
+/** The lines the person reads for an error that reached the top. */
+export function topLevelLines(err: unknown, reportPath: string | undefined): string[] {
+  const refusal = refusalOf(err);
+  if (!refusal) return [fatalLine(err, reportPath)];
+  return [`sekhemet: ${refusal.what}`, ...(refusal.next ? [`  Do: ${refusal.next}`] : [])];
+}
+
 /** Write to stderr synchronously: a pipe on macOS is asynchronous, and the process is about to exit. */
 function writeStderr(text: string): void {
   try {
@@ -176,12 +228,15 @@ export function reportFatal(
   kind: FatalKind,
   ctx: ReportContext & { debug: boolean },
 ): void {
+  // A refusal is not a crash (item 18b): no report, and its own lines.
+  const refusal = refusalOf(err) !== undefined;
   // writeErrorReport never throws: a report that cannot be written is none.
-  const path = writeErrorReport(err, kind, ctx);
+  const path = refusal ? undefined : writeErrorReport(err, kind, ctx);
   if (reported) return;
   reported = true;
-  const line = fatalLine(err, path);
-  writeStderr(`${line}\n`);
+  const lines = topLevelLines(err, path);
+  const line = lines[0] as string;
+  writeStderr(`${lines.join("\n")}\n`);
   if (ctx.debug) writeStderr(`${errorDetails(err)}\n`);
   try {
     ctx.onFatalLine?.(line);

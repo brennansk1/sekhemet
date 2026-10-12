@@ -130,4 +130,27 @@ describe("Ready to start (DB-N14-2, DB-N14-3)", () => {
       }),
     ).rejects.toThrow();
   });
+  // Wave 9 A3 (sweep 5): the Agent said *Queued* on a Ready issue the kernel
+  // would not start. `startBlocker` is the first of its *Ready to start* rows
+  // that the move Ready → In progress checks, unmet, with its reason; none
+  // when the board would start it.
+  it("startBlocker names an unmet condition the start checks, and only those", async () => {
+    const noScope = await card("rs", "Ready, no scope", { status: "ready" });
+    expect(await board.startBlocker(noScope)).toBe("It declares no files it may change.");
+    const fine = await card("rf", "Ready, scoped", { status: "ready", scopeFiles: ["a.ts"] });
+    expect(await board.startBlocker(fine)).toBeUndefined();
+    // No criteria: a row Backlog → Ready checks, not the start; the board starts it.
+    expect((await board.readiness(fine)).find((r) => r.id === "criteria")?.met).toBe(false);
+    expect(
+      await board.entryConditionFailure(fine, {
+        cardId: fine.id,
+        fromStatus: "ready",
+        toStatus: "in_progress",
+        actor: "human",
+      }),
+    ).toBeUndefined();
+    const before = log.lastSeq();
+    await board.startBlocker(noScope);
+    expect(log.lastSeq()).toBe(before);
+  });
 });

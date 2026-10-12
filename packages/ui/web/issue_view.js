@@ -6,6 +6,7 @@ import { aiBadge, esc, icon, postJSON, teammateName } from "./dom.js";
 import { practiceTip } from "./learn.js";
 import { ISSUE_COPY, agentPanel, criteriaChecks } from "./lib/issue.js";
 import { aiStateLine } from "./lib/teammates.js";
+import { store } from "./store.js";
 import { toast } from "./toast.js";
 import { blockedToast } from "./triage.js";
 
@@ -35,13 +36,13 @@ function criteriaHtml(card, evidence) {
  * Agent's words replace the panel's when the harness knows more (queued with
  * its place, a start request waiting on a person); Seshat's is its own line.
  */
-function withAiState(panel, ai) {
+function withAiState(panel, ai, noCodingModel) {
   const agent = (ai ?? []).find((a) => a.who === "agent");
   // ISS-02, ISS-03: the page's own Stopped line names the person from the ledger.
   if (!agent || panel.state === "stopped") return panel;
   // Wave 2 A1: with no run behind the card, a teammate line saying "working" is not shown.
   if (panel.state === "not_running" && agent.state === "working") return panel;
-  const line = aiStateLine(agent);
+  const line = aiStateLine(agent, { noCodingModel });
   return { ...panel, label: line.label, sentence: line.sentence };
 }
 
@@ -102,7 +103,18 @@ export function mountIssue(host, ctx) {
     }
     const detail = ctx.detail();
     const full = detail?.card ?? card;
-    const panel = withAiState(agentPanel(card, ctx.events() ?? []), detail?.ai);
+    // Wave 8 B3: with no Coding model ready (`codingModelFact`), a Ready issue waits for one.
+    const fact = store.state.modelSetup?.codingModel;
+    const noCodingModel = Boolean(fact && !fact.ready);
+    const panel = withAiState(
+      agentPanel(card, ctx.events() ?? [], {
+        noCodingModel,
+        // Wave 9 A3: a Ready issue the board would not start is not queued.
+        ...(detail?.startBlocker ? { startBlocker: detail.startBlocker } : {}),
+      }),
+      detail?.ai,
+      noCodingModel,
+    );
     if (!panel.controls.includes("hand_back")) state.handBack = false;
     const crit = criteriaChecks(full, detail?.evidence ?? null);
     const spec = String(full.spec ?? "").trim();

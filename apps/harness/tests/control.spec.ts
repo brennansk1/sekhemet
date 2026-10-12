@@ -207,6 +207,48 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
     expect(rollup?.payload).toMatchObject({ passed: true, children: ["card_child"] });
   });
 
+  // Loop W9-A1 (wave 9 review): a plan stores its epic in Planning, so the
+  // rollup moves it Planning → In progress → … → Done. A parent never runs
+  // itself: the start conditions (dependencies, a revised requirement) are a
+  // run's, never its rollup's — or it stayed "being planned" when finished.
+  it.each([
+    { name: "stored in Planning", status: "planning" as const, waits: false },
+    {
+      name: "stored in Planning, waiting on another issue",
+      status: "planning" as const,
+      waits: true,
+    },
+    {
+      name: "stored In progress, waiting on another issue",
+      status: "in_progress" as const,
+      waits: true,
+    },
+  ])(
+    "rolls up a parent $name to Done when its last child is accepted (B7)",
+    async ({ status, waits }) => {
+      if (waits) await newCard("card_other");
+      await cardStore.createCard({
+        id: "epic_p",
+        tier: "epic",
+        title: "Parent",
+        status,
+        ...(waits ? { dependsOn: ["card_other"] } : {}),
+      });
+      const child = await newCard("card_child", { parentId: "epic_p" });
+      await executeCard(
+        ctx,
+        child,
+        scripted(() => [write(2), { name: "finish_card", arguments: {} }]).adapter,
+      );
+      const reviewed = await cardStore.getCard("card_child");
+      await recordReviewOpened(ctx, reviewed as NonNullable<typeof reviewed>, ["src/a.ts"]);
+      await acceptCard(ctx, reviewed as NonNullable<typeof reviewed>);
+      expect((await cardStore.getCard("epic_p"))?.status).toBe("done");
+      const [rollup] = await cardStore.cardEvents("epic_p", ["card/rollup"]);
+      expect(rollup?.payload).toMatchObject({ passed: true, children: ["card_child"] });
+    },
+  );
+
   it("explains a card in plain sentences (B12)", async () => {
     await newCard("card_dep");
     await newCard("card_x", { dependsOn: ["card_dep"] });

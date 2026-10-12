@@ -81,6 +81,13 @@ const ROLE_WORDS: Record<ModelRole, string> = {
 };
 
 /** A Find best settings refusal before anything loads (MS-N7-1, -2). */
+/**
+ * Why a role whose benchmark is not built cannot be tuned, in the Benchmark
+ * page's words (DB-N6-18, NAMING; wave 7 B6): no build status, no file path.
+ */
+export const TUNE_UNBUILT = (role: ModelRole): string =>
+  `Not measured yet: Sekhemet has no benchmark for the ${ROLE_WORDS[role]} yet, so its settings can't be tuned here.`;
+
 export class TuneRefusal extends Error {
   constructor(message: string) {
     super(message);
@@ -537,7 +544,7 @@ export class TuneService {
         // names files and build ids, for the refusal and the CLI, not the page.
         out[role] = {
           tunable: false,
-          reason: `Not measured yet: the ${ROLE_WORDS[role]}'s benchmark set is not built, so its settings cannot be tuned yet.`,
+          reason: TUNE_UNBUILT(role),
         };
         continue;
       }

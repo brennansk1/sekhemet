@@ -147,4 +147,37 @@ describe("sekhemet models add --sampling (live-test F16)", () => {
       expect(registry.get("tiel-coder")).toBeUndefined();
     }
   });
+
+  it("wave 7 A7: each refusal says what happened in words and what to pass next, never a raw error code or parser number", async () => {
+    const missing = await run(join(dir, "nope.gguf"));
+    expect(missing.code).toBe(1);
+    expect(missing.lines.join(" ")).toMatch(/Not registered: there is no file at .*nope\.gguf\./);
+    expect(missing.lines.join(" ")).toMatch(/sekhemet models add <file\.gguf>/);
+    expect(missing.lines.join(" ")).not.toMatch(/ENOENT|stat '/);
+    // A truncated download: its header declares billions of tensors.
+    const broken = join(dir, "broken.gguf");
+    const head = Buffer.alloc(64);
+    head.write("GGUF", 0, "latin1");
+    head.writeUInt32LE(3, 4);
+    head.writeBigUInt64LE(3271134372315685223n, 8);
+    writeFileSync(broken, head);
+    const bad = await run(broken);
+    expect(bad.code).toBe(1);
+    expect(bad.lines.join(" ")).toMatch(
+      /Not registered: .*broken\.gguf is not a GGUF model file Sekhemet can read/,
+    );
+    expect(bad.lines.join(" ")).not.toMatch(/Tensor count|\d{9,}|exceeds maximum/);
+    for (const [flag, range] of [
+      ["temperature=9", "temperature takes 0 to 2"],
+      ["top_p=1.5", "top_p takes more than 0, up to 1"],
+      ["top_k=2.5", "top_k takes a whole number, 0 or more"],
+      ["min_p=-1", "min_p takes 0 to 1"],
+    ] as const) {
+      const r = await run(qwen(), "tiel-coder", flag);
+      expect(r.code, flag).toBe(1);
+      expect(r.lines.join(" "), flag).toMatch(new RegExp(`${flag} is out of range: ${range}`));
+      expect(r.lines.join(" "), flag).toMatch(/Run it again with each value in its range/);
+    }
+    expect(registry.list()).toEqual([]);
+  });
 });

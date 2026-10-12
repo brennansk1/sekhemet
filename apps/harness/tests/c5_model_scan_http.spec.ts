@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BIN, type G6Repo, g6Repo } from "./support/g6_review.js";
-import { guardedImports, trackChild } from "./support/hygiene.js";
+import { guardedImports, killTree, trackChild } from "./support/hygiene.js";
 
 /**
  * The model scan's header limit, at its door (security SEC-N10-2; C2d G6
@@ -68,10 +68,18 @@ async function scanned(r: G6Repo, folder: string) {
   });
   const res = await fetch(`${address}/api/config/models`);
   expect(res.status).toBe(200);
-  return (await res.json()) as {
+  const body = (await res.json()) as {
     models: { file: string }[];
     skipped: { path: string; reason: string }[];
   };
+  // Stopped here, before the folder's removal: a server still writing its
+  // ledger while the folder is removed failed the cleanup with ENOTEMPTY.
+  if (child.exitCode === null && child.signalCode === null) {
+    const closed = new Promise((done) => child.once("close", done));
+    killTree(child);
+    await closed;
+  }
+  return body;
 }
 
 describe("SEC-N10-2: an oversized header is header_too_large however it is oversized", () => {

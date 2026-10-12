@@ -196,6 +196,11 @@ function rangeStart(res: Response): number | undefined {
  * nothing). The file is placed only when the whole file's SHA-256 matches;
  * when it does not, the `.part` is deleted.
  */
+/** Why a model with no registered source and hash is offered no download (MD-N12-6). */
+export function noSourceRefusal(model: string): string {
+  return `${model} has no registered source and hash, so Sekhemet offers no download for it.`;
+}
+
 export async function downloadVerified(
   source: VerifiedSource | undefined,
   dest: DownloadDest,
@@ -203,9 +208,7 @@ export async function downloadVerified(
 ): Promise<DownloadResult> {
   const src = source;
   if (!src || !src.url || !src.sha256 || !SHA.test(src.sha256)) {
-    throw new DownloadRefused(
-      `${options.label} has no registered source and hash, so Sekhemet offers no download for it.`,
-    );
+    throw new DownloadRefused(noSourceRefusal(options.label));
   }
   const host = new URL(src.url).hostname;
   const refused = options.refusal?.(host);

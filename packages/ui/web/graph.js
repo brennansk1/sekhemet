@@ -5,7 +5,7 @@ import { NODE_H, NODE_W, fitView, layoutDag, zoomAt } from "./dag.js";
 import { $, esc } from "./dom.js";
 import { columnLabel, parseTitle } from "./lib/vocabulary.js";
 import { setTopbar } from "./shell.js";
-import { store } from "./store.js";
+import { projectName, store } from "./store.js";
 
 const ui = { root: null, view: null, fitted: false, drag: null, last: "", layout: null };
 
@@ -85,7 +85,7 @@ function render() {
   );
   setTopbar({
     title: "Dependencies",
-    crumb: `${store.state.meta?.project ?? ""} · ${linked.length} of ${cards.length} issues linked`,
+    crumb: `${projectName()} · ${linked.length} of ${cards.length} issues linked`,
   });
   const shown = linked.length ? linked : cards;
   const { html, lay } = svgHtml(shown);

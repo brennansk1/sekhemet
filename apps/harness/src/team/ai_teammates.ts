@@ -101,6 +101,11 @@ export interface AiTeammatesDeps {
    * comment can mention. Solo has none: its one person mentions no one.
    */
   people?: () => { principal: string; name: string }[];
+  /**
+   * Why the board would not start a Ready issue now (`startBlocker`, wave 9
+   * A3): the Agent is then not shown queued.
+   */
+  startBlocker?: (card: CardRecord) => Promise<string | undefined>;
 }
 
 export class AiTeammateError extends Error {
@@ -532,7 +537,13 @@ async function agentState(
           ? `${mine.message}; ${capNote(name(mine.person), mine.capped.running, mine.capped.cap, false)}`
           : mine.message
         : undefined;
-      return { who: "agent", state: "queued", ...(standing ? { standing } : {}) };
+      const blockedBy = await deps.startBlocker?.(card).catch(() => undefined);
+      return {
+        who: "agent",
+        state: "queued",
+        ...(standing ? { standing } : {}),
+        ...(blockedBy ? { blockedBy } : {}),
+      };
     }
     case "in_progress": {
       const taken = (await deps.cardStore.cardEvents(card.id, ["card/taken_over"])).length;

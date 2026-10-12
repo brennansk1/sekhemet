@@ -5,6 +5,7 @@ import { esc, icon, tip } from "./dom.js";
 import { tip as learnTip } from "./learn.js";
 import { columnLessonId } from "./lib/learn.js";
 import { groupCards, showsPoints } from "./lib/pm.js";
+import { withShownStatus } from "./lib/vocabulary.js";
 import { openPeek, peekOpenFor } from "./peek.js";
 import { store } from "./store.js";
 import { tileHtml } from "./tile.js";
@@ -15,8 +16,8 @@ let last = "";
 let bound = null;
 
 /** The board's columns in force (dashboard §2.4.1) that hold cards, plus the Worker's and the review queue. */
-function columnsFor(cards, defs) {
-  const present = new Set(cards.map((c) => c.status));
+function columnsFor(cards, defs, placed) {
+  const present = new Set(cards.map((c) => placed.get(c.id) ?? c.status));
   return defs.filter(
     (d) =>
       d.states.some((s) => present.has(s)) ||
@@ -39,8 +40,10 @@ function progressHtml(g) {
 
 export function render(root, cards, { group, sortCards, tileOpts, columns }) {
   const groups = groupCards(cards, group, matchContext());
-  const cols = columnsFor(cards, columns);
-  const inCol = (d, list) => list.filter((c) => d.states.includes(c.status));
+  // S1B-B16 (wave 9 A1): a parent is placed where its issues are, as on the board.
+  const placed = new Map(withShownStatus(cards).map((c) => [c.id, c.status]));
+  const cols = columnsFor(cards, columns, placed);
+  const inCol = (d, list) => list.filter((c) => d.states.includes(placed.get(c.id) ?? c.status));
   const head = `<div class="lane-cols" style="--cols:${cols.length}">${cols
     .map(
       (d) =>

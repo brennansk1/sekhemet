@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -42,5 +42,31 @@ describe("registry instances over one file (live-test F17)", () => {
       family: "qwen",
       engine: "llama.cpp",
     });
+  });
+});
+
+describe("MD-N4-5b: a read's view of the registry (wave 7)", () => {
+  it("keeps what is done through it in memory and never writes the file, absent or present", () => {
+    const path = join(dir, "models.json");
+    const view = ModelRegistry.readOnly(path);
+    view.upsert("ghost-7b", { engine: "ollama" });
+    view.recordRoleAssignment("h", {
+      role: "reviewer",
+      model: "(unfilled)",
+      scope: "default",
+      by: "harness",
+      date: "2026-10-11T00:00:00.000Z",
+    });
+    expect(view.get("ghost-7b")?.engine).toBe("ollama");
+    expect(view.roleAssignments("h")).toHaveLength(1);
+    expect(existsSync(path)).toBe(false);
+
+    new ModelRegistry(path).upsert("m", { family: "qwen" });
+    const before = readFileSync(path, "utf8");
+    const seen = ModelRegistry.readOnly(path);
+    expect(seen.get("m")?.family).toBe("qwen");
+    seen.upsert("m", { family: "gemma" });
+    seen.upsert("nail-mtp", { engine: "llama.cpp", family: "qwen" });
+    expect(readFileSync(path, "utf8")).toBe(before);
   });
 });

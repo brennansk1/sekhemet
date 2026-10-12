@@ -8,6 +8,7 @@ import {
   type RungOutcome,
   announceGateStart,
   gateCopy,
+  unavailableGate,
 } from "@sekhemet/gates";
 import { missingTrailers } from "@sekhemet/sync";
 
@@ -25,21 +26,47 @@ export interface TrailerViolation {
   missing: string[];
 }
 
-export function checkTrailers(root: string, range: string): TrailerViolation[] {
+/**
+ * A range git cannot read (wave 9 B10): an unknown ref, a commit before the
+ * first. Never read as "no commit lacks a trailer" — the command refuses it
+ * and the gate is `unavailable` (gates rule 9), never a pass.
+ */
+export class TrailerRangeError extends Error {
+  constructor(
+    readonly range: string,
+    readonly gitMessage: string,
+  ) {
+    super(`git cannot read the range ${range}${gitMessage ? `: ${gitMessage}` : ""}`);
+    this.name = "TrailerRangeError";
+  }
+}
+
+/** Every commit in `range` and those that lack a trailer; throws {@link TrailerRangeError}. */
+export function trailerReport(
+  root: string,
+  range: string,
+): { commits: number; violations: TrailerViolation[] } {
   let log = "";
   try {
-    log = execFileSync("git", ["log", "--format=%H%x1f%B%x1e", range], {
+    log = execFileSync("git", ["log", "--format=%H%x1f%B%x1e", range, "--"], {
       cwd: root,
       encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
+      stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: 32 * 1024 * 1024,
     });
-  } catch {
-    return [];
+  } catch (err) {
+    const stderr = String((err as { stderr?: unknown }).stderr ?? "");
+    const first = stderr
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l !== "");
+    throw new TrailerRangeError(range, (first ?? "").replace(/^fatal:\s*/, ""));
   }
   const out: TrailerViolation[] = [];
+  let commits = 0;
   for (const entry of log.split("\x1e")) {
     if (!entry.trim()) continue;
+    commits++;
     const [sha = "", body = ""] = entry.trim().split("\x1f");
     const subject = body.split("\n")[0] ?? "";
     // Git's own merge commits are not authored work.
@@ -47,7 +74,33 @@ export function checkTrailers(root: string, range: string): TrailerViolation[] {
     const missing = missingTrailers(body, { checkpoint: /^checkpoint:/.test(subject) });
     if (missing.length) out.push({ sha, subject, missing });
   }
-  return out;
+  return { commits, violations: out };
+}
+
+export function checkTrailers(root: string, range: string): TrailerViolation[] {
+  return trailerReport(root, range).violations;
+}
+
+/** The branch's trailer failures, or why the check could not read the branch. */
+function trailerCheck(
+  root: string,
+  base: string,
+): { failures: GateFailure[]; unavailable?: RungOutcome } {
+  try {
+    return { failures: trailerGate(root, base) };
+  } catch (err) {
+    if (!(err instanceof TrailerRangeError)) throw err;
+    // Gates rule 9: not the card's work. `notRun` stops the card for a person
+    // (done_pending_gates); the Worker's repair budget is never spent on it.
+    const { outcome, failure } = unavailableGate(
+      "trailers",
+      "hygiene",
+      "hygiene",
+      err.message,
+      `git log ${err.range}`,
+    );
+    return { unavailable: outcome, failures: [failure] };
+  }
 }
 
 export function trailerGate(root: string, base = "main"): GateFailure[] {
@@ -80,15 +133,19 @@ export function withTrailerGate(inner: GateRunner, base = "main"): GateRunner {
       // DB-N2-10: the page names this check while it runs.
       announceGateStart(runOptions, { gate: "trailers", rung: "hygiene" });
       const started = Date.now();
-      const failures = trailerGate(cwd, base);
-      const outcome: RungOutcome = {
-        gate: "trailers",
-        rung: "hygiene",
-        layer: "hygiene",
-        passed: failures.length === 0,
-        exitCode: failures.length === 0 ? 0 : 1,
-        durationMs: Date.now() - started,
-      };
+      const { failures, unavailable } = trailerCheck(cwd, base);
+      const durationMs = Date.now() - started;
+      // Gates rule 9: a check that could not read the branch is no verdict.
+      const outcome: RungOutcome = unavailable
+        ? { ...unavailable, durationMs }
+        : {
+            gate: "trailers",
+            rung: "hygiene",
+            layer: "hygiene",
+            passed: failures.length === 0,
+            exitCode: failures.length === 0 ? 0 : 1,
+            durationMs,
+          };
       return {
         ...res,
         passed: res.passed && failures.length === 0,

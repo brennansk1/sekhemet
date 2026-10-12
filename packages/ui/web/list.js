@@ -24,7 +24,7 @@ import {
 import { labelChips, pointsText, prioMark } from "./marks.js";
 import { openPeek } from "./peek.js";
 import { setTopbar } from "./shell.js";
-import { store } from "./store.js";
+import { projectName, store } from "./store.js";
 import {
   bindViewBar,
   cycleGroup,
@@ -200,7 +200,7 @@ function render() {
   if (!ui.root) return;
   const s = store.state;
   const cards = filterCards(s.cards);
-  const project = s.meta?.project ?? "";
+  const project = projectName(s);
   const count =
     cards.length === s.cards.length
       ? `${s.cards.length} issues`

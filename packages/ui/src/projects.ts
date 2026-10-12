@@ -14,6 +14,7 @@
  * `web/projects.js` renders this; the browser loads it as `/app/lib/projects.js`.
  */
 import { reviewItHref } from "./learn.js";
+import type { CodingModelFact } from "./nav.js";
 import { ROSTER_STATE_LABELS, type RosterRoleLike, formatShortDate, rosterRows } from "./pm.js";
 import {
   HEALTH_LABELS,
@@ -104,6 +105,12 @@ export interface ProjectsInput {
   managesWork?: boolean;
   /** null when the server has no overview route. */
   overview: ProjectsOverview | null;
+  /**
+   * Whether the Coding model can run issues here (`codingModelFact`, the
+   * sidebar's and the *No Coding model* bar's fact; SHL-04): when it cannot,
+   * the Coding model row says why and names no load (wave 8 B3).
+   */
+  codingModel?: CodingModelFact;
 }
 
 // --- Output ------------------------------------------------------------------
@@ -365,17 +372,30 @@ export function projectsModel(input: ProjectsInput): ProjectsView {
   });
 
   const { slots, queue, memory } = o.models;
-  const modelRows: ModelRow[] = rosterRows(o.models.roles).map((r) => ({
-    label: r.label,
-    // A5: one name for one state — the roster's words, as Configuration and Machine say them.
-    model: r.model ?? "—",
-    state: ROSTER_STATE_LABELS[r.state] ?? ROSTER_STATE_LABELS.unconfigured ?? "",
-    load:
-      r.role === "worker"
-        ? `${slots.inUse} of ${plural(slots.capacity, "slot")} in use · ${queue ? `${queue} in queue` : "nothing queued"}`
-        : "",
-    seshat: r.role === "manager",
-  }));
+  const modelRows: ModelRow[] = rosterRows(o.models.roles).map((r) => {
+    const cm =
+      r.role === "worker" && input.codingModel && !input.codingModel.ready
+        ? input.codingModel
+        : undefined;
+    const none = cm !== undefined;
+    return {
+      label: r.label,
+      // A5: one name for one state — the roster's words, as Configuration and Machine say them.
+      model: cm ? (cm.model ?? "—") : (r.model ?? "—"),
+      state: cm
+        ? cm.why === "missing"
+          ? "Not on this machine"
+          : cm.why === "unverified"
+            ? "Not verified on this machine"
+            : (ROSTER_STATE_LABELS.unconfigured ?? "")
+        : (ROSTER_STATE_LABELS[r.state] ?? ROSTER_STATE_LABELS.unconfigured ?? ""),
+      load:
+        r.role === "worker" && !none
+          ? `${slots.inUse} of ${plural(slots.capacity, "slot")} in use · ${queue ? `${queue} in queue` : "nothing queued"}`
+          : "",
+      seshat: r.role === "manager",
+    };
+  });
 
   return {
     ...base,

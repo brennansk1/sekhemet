@@ -15,11 +15,15 @@ import {
   PIPELINE_COLUMNS,
   WONT_DO_COLUMN,
   plural,
+  withShownStatus,
 } from "./vocabulary.js";
 
 /** The subset of a board card the columns read. */
 export interface ColumnCardLike extends PmCardLike {
   status: string;
+  /** A parent (an epic) is placed where its issues are (S1B-B16, wave 9 A1). */
+  parentId?: string | null;
+  tier?: string | null;
   hold?: { kind: string; dismissed?: boolean };
   display?: NonNullable<PmCardLike["display"]> & { enteredColumnAt?: string };
 }
@@ -216,6 +220,16 @@ export function boardColumnDefs(opts: { pipeline?: boolean; wontDo?: boolean }):
   return [...BOARD_COLUMNS.slice(0, hold), WONT_DO_COLUMN, ...BOARD_COLUMNS.slice(hold)];
 }
 
+/**
+ * An issue, as Status counts one (*of N issues*): a story or a task (or a
+ * card with no tier). An epic, a feature or an initiative is a parent, listed
+ * where its issues are but never counted as an issue (wave 8 review,
+ * sweep 4 #19, #20).
+ */
+export function isIssueCard(c: { tier?: string | null }): boolean {
+  return !c.tier || c.tier === "story" || c.tier === "task";
+}
+
 /** The cards some column in `defs` shows: a lane counts only what its cells hold. */
 export function onColumns<C extends { status: string }>(
   cards: readonly C[],
@@ -229,8 +243,18 @@ export function boardModel<C extends ColumnCardLike>(input: BoardModelInput<C>):
   const defs = boardColumnDefs(input);
   const columns: ColumnView<C>[] = [];
   const chips: ColumnView<C>[] = [];
+  // S1B-B16 (wave 9 A1): a parent is placed where its issues are, as the
+  // terminal board lists it; the card keeps its stored state for a move.
+  const placed = new Map(
+    withShownStatus(input.cards.map((c) => ({ ...c, status: c.status as CardStatus }))).map((c) => [
+      c.id,
+      c.status,
+    ]),
+  );
   for (const def of defs) {
-    const all = input.cards.filter((c) => def.states.includes(c.status as CardStatus));
+    const all = input.cards.filter((c) =>
+      def.states.includes((placed.get(c.id) ?? c.status) as CardStatus),
+    );
     if (def.onlyWithCards && all.length === 0) continue;
     const shown = input.visible ? all.filter((c) => input.visible?.has(c.id)) : all;
     const mode = input.sort?.[def.id] ?? defaultSort(def);

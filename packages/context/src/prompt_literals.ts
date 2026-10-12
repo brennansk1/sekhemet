@@ -178,6 +178,18 @@ const PERSON_FACING_REFUSALS: ReadonlySet<string> = new Set([
   // `sekhemet: …` refusal of accept, review, run, approve-plan and the triage verbs to the
   // person who typed an unknown issue ID (surface item 18b); no model's tool reaches it.
   "noIssueRefusal",
+  // apps/harness/src/models_cmd.ts: "there is no file at <path>…" / "<path> is not a GGUF model
+  // file Sekhemet can read…", the "Not registered: …" line of `sekhemet models add` to the
+  // person who ran it (wave 7 A7); no model's tool reaches it.
+  "addRefusal",
+  // packages/models/src/model_download.ts: "<model> has no registered source and hash…",
+  // printed by `sekhemet models fetch` and thrown as DownloadRefused to the CLI and
+  // Configuration › Models (MD-N12-6); no model's tool downloads a model.
+  "noSourceRefusal",
+  // apps/harness/src/config_api.ts: "<model> is not verified on this machine as the <role>…",
+  // the 409 of an assignment on Configuration › Models to the person who pressed Assign
+  // (MD-N4-5b); no model's tool reaches it.
+  "refuseUnverified",
 ]);
 
 function nameOf(node: ts.Node | undefined): string | undefined {
