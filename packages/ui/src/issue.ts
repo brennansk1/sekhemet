@@ -258,6 +258,8 @@ export type AgentState =
   | "stopped"
   | "taken_over"
   | "checking"
+  /** Stored In progress or Verify with no run behind it (wave 2 A1): never "working". */
+  | "not_running"
   | "idle";
 export type AgentControl = "pause" | "take_over" | "hand_back" | "submit" | "resume";
 
@@ -325,7 +327,14 @@ export function oldestFirst<E extends { seq?: number }>(events: readonly E[]): E
 }
 
 export function agentPanel(
-  card: { status: string; stopReason?: string | null; stepsUsed?: number; stepBudget?: number },
+  card: {
+    status: string;
+    stopReason?: string | null;
+    stepsUsed?: number;
+    stepBudget?: number;
+    /** The board's fact that a run backs the card (`live_runs.ts`); only `true` is a run. */
+    liveRun?: boolean;
+  },
   events: readonly SeqEvent[],
 ): AgentPanel {
   const moved = lastSeq(events, "card/status_changed");
@@ -376,6 +385,17 @@ export function agentPanel(
         messageBox: false,
       };
     }
+    // Wave 2 A1: a card stored In progress is the Agent's work only while a
+    // run backs it; a pause asked of no run is not "Pausing" either.
+    if (card.liveRun !== true) {
+      return {
+        state: "not_running",
+        label: "",
+        sentence: "In progress with no run: the Agent isn't working on this issue now.",
+        controls: ["take_over"],
+        messageBox: false,
+      };
+    }
     if (lastSeq(events, "card/pause_requested") > moved) {
       return {
         state: "pausing",
@@ -394,6 +414,15 @@ export function agentPanel(
     };
   }
   if (card.status === "verify") {
+    if (card.liveRun !== true) {
+      return {
+        state: "not_running",
+        label: "",
+        sentence: "Waiting for checks: no check is running on this issue now.",
+        controls: [],
+        messageBox: false,
+      };
+    }
     return {
       state: "checking",
       label: "working",

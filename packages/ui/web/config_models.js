@@ -10,7 +10,7 @@
 // Model library card's first part (C3-2's routes); and every fit, detail and
 // speed measurement is the chosen role's, never the Coding model's by
 // default (FINDINGS CFG-13).
-import { estimateLabel } from "./config_benchmark.js";
+import { estimateLabel, quickSetupMissing } from "./config_benchmark.js";
 import { mountCustomize } from "./config_customize.js";
 import { downloadLine } from "./config_engine.js";
 import { $, announce, copyText, esc, getJSON, sendJSON } from "./dom.js";
@@ -594,6 +594,10 @@ function compareHtml() {
   const cmp = ui.compare;
   if (!c.worker || !c.planner)
     return '<p class="sec">The quick benchmark needs a Coding model and a Planning model in the suggested setup.</p>';
+  // A8: offer only a run Benchmark could set up — both models found on this machine.
+  const missing = quickSetupMissing(c, ui.models?.models, ui.models?.error);
+  if (missing)
+    return `<div class="cfg-part" role="group" aria-labelledby="cfg-h-cmp"><h3 id="cfg-h-cmp">Quick benchmark</h3><p class="sec">${esc(words)}</p><p class="sec">${esc(missing)}</p></div>`;
   const run = cmp.run;
   const state = run
     ? `<p role="status">${esc(

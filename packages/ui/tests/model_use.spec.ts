@@ -77,7 +77,13 @@ describe("modelUseView", () => {
       },
       7,
     );
-    expect(none).toEqual({ lines: [], caption: "", empty: "No model ran in the last 7 days." });
+    // Wave 2 A4: it counts recorded requests, so it never claims no model ran
+    // beside Coding model capability's attempts (one may record no tokens).
+    expect(none).toEqual({
+      lines: [],
+      caption: "",
+      empty: "No model requests were recorded in the last 7 days.",
+    });
     expect(modelUseView(undefined, 7).empty).toBe(
       "This server doesn't count the models' tokens yet. Update Sekhemet and restart it.",
     );

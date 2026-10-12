@@ -256,15 +256,30 @@ describe("TEAM-27: the audit log's entries and export", () => {
 describe("DB-N9-10: the Agent status line at the foot of the sidebar", () => {
   it("says what the Agent is doing in one line", () => {
     expect(agentStatusLine({ running: [] })).toEqual({ text: "Agent idle", state: "idle" });
-    expect(agentStatusLine({ running: [{ key: "CHR-12", step: 14, budget: 40 }] })).toEqual({
+    // The cards a run backs (`agentWork(cards).running`, wave 2 A1).
+    const run = (key: string, extra = {}) => ({
+      id: `card_${key}`,
+      key,
+      status: "in_progress",
+      liveRun: true,
+      ...extra,
+    });
+    expect(
+      agentStatusLine({
+        running: [run("CHR-12", { stepBudget: 40, display: { lastStep: { turn: 14 } } })],
+      }),
+    ).toEqual({
       text: "Agent working on CHR-12 · step 14 of 40",
       state: "working",
     });
-    expect(agentStatusLine({ running: [{ key: "CHR-12" }, { key: "CHR-13" }] }).text).toBe(
+    expect(agentStatusLine({ running: [run("CHR-12"), run("CHR-13")] }).text).toBe(
       "Agent working on 2 issues",
     );
     expect(
-      agentStatusLine({ running: [{ key: "CHR-12", step: 5 }], pausedForSeshat: { step: 5 } }),
+      agentStatusLine({
+        running: [run("CHR-12", { display: { lastStep: { turn: 5 } } })],
+        pausedForSeshat: { step: 5 },
+      }),
     ).toEqual({ text: "Agent paused after step 5 while Seshat replies", state: "paused" });
   });
 });

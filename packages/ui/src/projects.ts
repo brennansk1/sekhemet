@@ -14,7 +14,7 @@
  * `web/projects.js` renders this; the browser loads it as `/app/lib/projects.js`.
  */
 import { reviewItHref } from "./learn.js";
-import { type RosterRoleLike, formatShortDate, rosterRows } from "./pm.js";
+import { ROSTER_STATE_LABELS, type RosterRoleLike, formatShortDate, rosterRows } from "./pm.js";
 import {
   HEALTH_LABELS,
   type HealthValue,
@@ -48,8 +48,12 @@ export interface ProjectFacts {
   target: string | null;
   /** Issues and questions waiting on the viewer in this project. */
   waitingOnYou: number;
-  /** The Agent's current issues here, by title, and how many are queued. */
-  agent: { working: string[]; queued: number };
+  /**
+   * The Agent's current issues here, by title — those a run backs, the most
+   * recently moved first, as Status and the sidebar read them (wave 2 A1, A2)
+   * — its issues stored In progress with no run, and how many are queued.
+   */
+  agent: { working: string[]; notRunning?: string[]; queued: number };
   /**
    * Why a paused project is paused (dashboard DB-N26-3, runtime RUN-82): it
    * was added while the active-project cap was reached, or a person paused it.
@@ -197,13 +201,6 @@ const STATE_WORDS: Record<ProjectFacts["state"], string> = {
   archived: "Archived",
 };
 
-/** The roster's states in plain words (Configuration › Models has the detail). */
-const MODEL_STATE_WORDS: Record<string, string> = {
-  resident: "Loaded",
-  swapped: "Not loaded",
-  unconfigured: "Not set",
-};
-
 const titleOf = (raw: string) => parseTitle(raw).title;
 const GB = 1024 ** 3;
 const gb = (bytes: number) => String(Math.round((bytes / GB) * 10) / 10);
@@ -257,8 +254,9 @@ function agentWords(a: ProjectFacts["agent"]): string {
   const doing = working.length
     ? `Working on ${working[0]}${working.length > 1 ? ` and ${working.length - 1} more` : ""}`
     : "";
+  const stalled = a.notRunning?.length ? `${a.notRunning.length} in progress with no run` : "";
   const queued = a.queued ? `${a.queued} queued` : "";
-  return [doing, queued].filter(Boolean).join(" · ") || "Idle";
+  return [doing || (stalled ? "Idle" : ""), stalled, queued].filter(Boolean).join(" · ") || "Idle";
 }
 
 // --- The model ---------------------------------------------------------------
@@ -363,8 +361,9 @@ export function projectsModel(input: ProjectsInput): ProjectsView {
   const { slots, queue, memory } = o.models;
   const modelRows: ModelRow[] = rosterRows(o.models.roles).map((r) => ({
     label: r.label,
-    model: r.model ?? "Not set",
-    state: MODEL_STATE_WORDS[r.state] ?? "Not set",
+    // A5: one name for one state — the roster's words, as Configuration and Machine say them.
+    model: r.model ?? "—",
+    state: ROSTER_STATE_LABELS[r.state] ?? ROSTER_STATE_LABELS.unconfigured ?? "",
     load:
       r.role === "worker"
         ? `${slots.inUse} of ${plural(slots.capacity, "slot")} in use · ${queue ? `${queue} in queue` : "nothing queued"}`

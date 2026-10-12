@@ -230,7 +230,12 @@ describe("NEW-worker-loop-10: collaborating on a running issue", () => {
     await cardStore.updateCardStatus("card_again", "in_progress", "started again", "harness");
     const again = await cardStore.getCard("card_again");
     expect(again?.stopReason).toBe("paused");
-    expect(agentPanel(again ?? { status: "in_progress" }, await ledger())).toMatchObject({
+    // Started again means a run started: the board carries that as the card's
+    // `liveRun` (wave 2 A1, live_runs.ts), and the stale stop reason must not
+    // outrank it.
+    expect(
+      agentPanel({ ...(again ?? { status: "in_progress" }), liveRun: true }, await ledger()),
+    ).toMatchObject({
       state: "working",
       controls: ["pause", "take_over"],
       messageBox: true,

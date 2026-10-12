@@ -304,6 +304,7 @@ describe("DB-P3-4, 5: the tile's anatomy", () => {
       enteredColumnAt: at(2),
       startedAt: at(22),
       ownerName: "Jane Doe",
+      liveRun: true,
     },
   );
 
@@ -448,7 +449,7 @@ describe("DB-P3-6: the blocker flag", () => {
     const t = tileModel(
       boardCard(
         { id: "card_b", status: "in_progress", stepsUsed: 3, blockedReason: "Needs the API key" },
-        { waitsOn: [{ id: "h", title: "hasher" }] },
+        { waitsOn: [{ id: "h", title: "hasher" }], liveRun: true },
       ),
       { now: NOW },
     );

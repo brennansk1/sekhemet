@@ -41,6 +41,8 @@ const cards: StatusCardLike[] = [
     status: "in_progress",
     tier: "task",
     delegate: "worker",
+    // A run is building it (wave 2 A1): the server's fact, not the stored column.
+    liveRun: true,
     updatedAt: "2026-09-27T11:00:00.000Z",
   },
   {
@@ -354,7 +356,7 @@ describe("Status (DB-P5-1, DB-N9-1)", () => {
   const v: StatusView = statusModel(input());
 
   it("leads with a sentence of facts, never a health word", () => {
-    expect(v.headline).toBe("1 of 6 issues done. 1 being built, 1 waiting for review, 1 on hold.");
+    expect(v.headline).toBe("1 of 6 issues done. 1 in progress, 1 waiting for review, 1 on hold.");
     expect(statusModel(input({ cards: [] })).headline).toBe(
       "No issues yet. Start a new project and Seshat plans the first ones with you.",
     );
@@ -651,7 +653,7 @@ describe("Status (DB-P5-1, DB-N9-1)", () => {
     expect(v.standup).toEqual({
       lines: [
         "Done: Hasher",
-        "Being built: Search",
+        "In progress: Search",
         "Waiting for review: Ledger",
         "On hold: Export",
         "1 question waits for an answer.",

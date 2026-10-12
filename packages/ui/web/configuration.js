@@ -375,7 +375,8 @@ async function saveQueueCap(form) {
   }
   const r = await sendJSON("PUT", "/api/config/queue", { agentIssuesPerPerson: input.value });
   if (!r.ok) {
-    if (field) field.value = String(previous);
+    // A refusal restores the saved value; no answer keeps what was typed, to try again.
+    if (field && r.status !== 0) field.value = String(previous);
     if (note) note.textContent = r.data?.error ?? "Not saved.";
     return;
   }
@@ -453,7 +454,9 @@ async function onSubmit(e) {
     minutesPerDay: input.value,
   });
   if (!r.ok) {
-    if (field) field.value = String(previous);
+    // A refusal restores the saved value; no answer (status 0, the server down)
+    // keeps what was typed, so the person can try again (sweep 2, wave 2 B7).
+    if (field && r.status !== 0) field.value = String(previous);
     if (note) note.textContent = r.data?.error ?? "Not saved.";
     return;
   }

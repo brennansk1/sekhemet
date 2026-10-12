@@ -2,7 +2,14 @@
 import { MOD, brandLockup, esc, icon, kbd, tip } from "./dom.js";
 import { tipsToggleHtml } from "./learn.js";
 import { ACCOUNT_COPY, accountHeader, initials, themeChoice, themeFor } from "./lib/account.js";
-import { agentQueueLine, agentStatusLine, bottomBar, navNameOf, visibleNav } from "./lib/nav.js";
+import {
+  agentQueueLine,
+  agentStatusLine,
+  agentWork,
+  bottomBar,
+  navNameOf,
+  visibleNav,
+} from "./lib/nav.js";
 import { stopReasonLabel } from "./lib/vocabulary.js";
 import { getSession } from "./session.js";
 import { ledgerAltered, store } from "./store.js";
@@ -251,16 +258,11 @@ function renderSide() {
       : `<div class="row">${icon("memory", 14, "ic s14")}<span class="lbl">Memory: checking…</span></div>`;
   // The Agent status line (§2.2.3, DB-N9-10): the Agent's state in one line,
   // with the Coding model it uses under it in secondary text.
-  const running = s.cards
-    .filter((c) => c.status === "in_progress")
-    .map((c) => ({
-      key: c.key ?? c.display?.shortId ?? c.id,
-      step: c.display?.lastStep?.turn,
-      budget: c.stepBudget,
-    }));
+  // Wave 2 A1: working only on a card a run backs (`liveRun`); a card stored
+  // In progress with no run is named as such (`agentWork`, as Status and Projects).
   const paused = s.pm.status?.workerPaused && s.pm.status.phase !== "idle";
   const agent = agentStatusLine({
-    running,
+    ...agentWork(s.cards),
     ...(paused ? { pausedForSeshat: { step: s.pm.step } } : {}),
   });
   // SHL-04: one source for model status, Configuration's roles (`modelSetup`):

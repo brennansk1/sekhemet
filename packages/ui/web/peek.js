@@ -17,6 +17,7 @@ import {
   composerHtml,
   openPark,
   quickNotes,
+  takeOffHold,
   triageBarHtml,
   wireComposer,
 } from "./triage.js";
@@ -209,6 +210,8 @@ export function openPeek(id, { returnFocus } = {}) {
       else if (t.closest("[data-accept]")) act("a");
       else if (t.closest("[data-back]")) act("r");
       else if (t.closest("[data-park]")) act("p");
+      else if (t.closest("[data-unpark]") && current)
+        void takeOffHold(store.card(current.id), { onDone: () => closePeek() });
       // NEW-dashboard-21: Won't do, Reopen and Revert from the peek's `⋯`.
       else if (t.closest("[data-issue-more]") && current) {
         const card = store.card(current.id);

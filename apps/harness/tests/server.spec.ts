@@ -10,12 +10,13 @@ import {
 } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { UI_LIB_MODULES, UI_WEB_DIR } from "@sekhemet/ui";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from "vitest";
+import { leasePath, newLease } from "../src/runner_lease.js";
 import { resolveStaticPath, startDashboardServer } from "../src/server.js";
 import { pageWriteHeaders } from "./page_headers.js";
 
@@ -592,6 +593,14 @@ describe("@sekhemet/harness Dashboard Server", () => {
   });
 
   it("follows a running card live from card/step events, and shows the step on its tile", async () => {
+    // A run is behind the steps, as in the product: the runner's lease names the
+    // card (wave 2 A1: no lease or running attempt, no "working").
+    mkdirSync(dirname(leasePath(repo)), { recursive: true });
+    writeFileSync(
+      leasePath(repo),
+      JSON.stringify({ ...newLease(), kind: "run", cardId: "card_ui_1" }),
+    );
+    onTestFinished(() => rmSync(leasePath(repo), { force: true }));
     await cardStore.recordEvent({
       type: "card/step",
       cardId: "card_ui_1",

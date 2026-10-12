@@ -20,6 +20,7 @@ import { sprintPaletteItems } from "./sprints.js";
 import { store } from "./store.js";
 import { openProjectSwitcher, openWorkspaceSwitcher } from "./switcher.js";
 import { toast } from "./toast.js";
+import { takeOffHold } from "./triage.js";
 
 let open = null;
 
@@ -215,6 +216,13 @@ function cardActions(actions) {
       search: "Put on hold",
       keys: ["p"],
       run: run("p"),
+    });
+  // Status's Take off hold, on the issue wherever it is (wave 2 B4).
+  if (card.status === "parked")
+    out.push({
+      label: `Take “${title}” off hold`,
+      search: "Take off hold",
+      run: () => void takeOffHold(card),
     });
   // NEW-dashboard-21: the closing and reopening actions, in NAMING's words.
   for (const a of issueActions(card)) {

@@ -10,10 +10,35 @@
  * The browser loads the compiled module as `/app/lib/seshat.js`.
  */
 import type { NavItem } from "./nav.js";
+import { ROSTER_STATE_LABELS } from "./pm.js";
 import { START_ROUTE } from "./start.js";
 import { STATUS_COPY } from "./status.js";
 
 export const SESHAT_NAME = "Seshat";
+
+/**
+ * The rail's *Model* row (dashboard §2.5 item 1; wave 2 A6): the Planning
+ * model's state from Configuration's roles (`GET /api/config/roles`), in the
+ * roster's words Configuration and Machine use, and whether it is verified on
+ * this machine (models.md: an unverified role is refused) — never *Ready*
+ * because Seshat's route answered. `available` is that route's answer.
+ */
+export function seshatModelState(
+  planner: { model?: string | null; state?: string; qualified?: boolean } | null | undefined,
+  available: boolean | null | undefined,
+): string {
+  if (available === false) return "Not set up";
+  if (!planner) return "Checking…";
+  const key =
+    !planner.model || planner.state === "not_configured"
+      ? "unconfigured"
+      : planner.state === "resident"
+        ? "resident"
+        : "swapped";
+  const word = ROSTER_STATE_LABELS[key] ?? "";
+  if (key === "unconfigured" || planner.qualified) return word;
+  return `${word} · not verified on this machine yet`;
+}
 
 /**
  * What the person's first message starts with (planner-pm PM-P2-1), left for

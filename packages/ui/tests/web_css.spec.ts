@@ -281,6 +281,20 @@ describe("the professional board in the served stylesheets (dashboard P3)", () =
     expect(cascaded("board.css", ".blk", "color", 1440)).toBe("var(--text-primary)");
   });
 
+  it("§2.14.1: the diff file header is raised, so its line counts are secondary text, never a state colour", () => {
+    // Sweep 2 (wave 2, B3): `--state-pass` on the raised header failed axe's contrast in Sand.
+    expect(cascaded("diff.css", ".g-h", "background", 1440)).toBe("var(--bg-raised)");
+    for (const sel of [".g-h .add-n", ".g-h .del-n"]) {
+      const colour = RULES.filter(
+        (r) =>
+          r.file === "diff.css" && !r.media && selectors(r).includes(sel) && r.decls.has("color"),
+      )
+        .at(-1)
+        ?.decls.get("color");
+      expect(colour, sel).toBe("var(--text-secondary)");
+    }
+  });
+
   it("DB-P3-10: empty columns are chips above the board, never rotated rails", () => {
     expect(cascaded("board.css", ".col-chips", "display", 1440)).toBe("flex");
     for (const r of RULES.filter((x) => x.file === "board.css"))

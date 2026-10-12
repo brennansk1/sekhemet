@@ -167,6 +167,8 @@ async function refreshModelSetup() {
         none,
         noWorker: !workerFits,
         workerModel: worker?.model ? String(worker.model) : null,
+        // Seshat's rail reads the Planning model's state and verification (A6).
+        planner: (roles.data.roles ?? []).find((r) => r.role === "planner") ?? null,
       },
     });
     // The bar shows whenever the Worker has no model that fits, none at all included.

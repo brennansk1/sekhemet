@@ -5,8 +5,10 @@ import {
   type ProjectsOverview,
   type StatusSliceLike,
   type WaitingFacts,
+  agentWork,
   currentRelease,
 } from "@sekhemet/ui";
+import { liveRunCardIds } from "./live_runs.js";
 import { type Audience, nameFor, soloAudience } from "./pm/audience.js";
 import { projectStoryMap } from "./project_done.js";
 import { statusFacts } from "./status_api.js";
@@ -51,6 +53,10 @@ export async function projectsOverview(deps: {
     (c) => isIssue(c) && c.projectId !== undefined && shown.has(c.projectId),
   );
   const byId = new Map(cards.map((c) => [c.id, c]));
+  // A1, A2: the Agent's work is what a run backs (the board's `liveRun`), the
+  // most recently moved first, as Status and the sidebar name it.
+  const live = liveRunCardIds({ repoPath: deps.repoPath, runs: store.runs, cards });
+  const work = agentWork(cards.map((c) => ({ ...c, liveRun: live.has(c.id) })));
 
   // When each issue entered the column it is in now (its wait), from the ledger.
   const moves = await deps.log.getEventsByTypes(["card/status_changed"]);
@@ -156,7 +162,8 @@ export async function projectsOverview(deps: {
       target: facts.target?.date ?? null,
       waitingOnYou: here.length,
       agent: {
-        working: own.filter((c) => c.status === "in_progress").map((c) => c.title),
+        working: work.running.filter((c) => c.projectId === project.id).map((c) => c.title),
+        notRunning: work.notRunning.filter((c) => c.projectId === project.id).map((c) => c.title),
         queued: own.filter((c) => c.status === "ready").length,
       },
       ...(project.status === "paused" ? { paused: { reason: pausedReason(project.id) } } : {}),

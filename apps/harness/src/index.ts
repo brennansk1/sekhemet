@@ -687,7 +687,8 @@ export async function printTerminalBoard(boardService: BoardServiceImpl): Promis
 }
 
 export async function printEventLog(log: EventLog): Promise<boolean> {
-  const events = await log.getEvents(1, 20);
+  // The newest 20, oldest of them first (help: "the Activity log's newest entries").
+  const events = await log.getEvents(Math.max(1, log.lastSeq() - 19), 20);
   const verification = await log.verifyHashChain({ full: true });
 
   console.log(

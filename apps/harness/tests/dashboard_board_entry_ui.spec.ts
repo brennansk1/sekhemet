@@ -1,11 +1,12 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { type Browser, type Page, chromium } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { leasePath, newLease } from "../src/runner_lease.js";
 import { startDashboardServer } from "../src/server.js";
 import { pageWriteHeaders } from "./page_headers.js";
 import { type SeededBoard, openContext, seedBoard } from "./support/dashboard_seed.js";
@@ -613,6 +614,13 @@ describe("the board in Chromium, through the dashboard server (C2d)", () => {
     { timeout: 60_000 },
     async () => {
       // The running card's dot pulses with motion allowed; nothing moves with it reduced.
+      // A run backs card_ip1 here: its runner lease (wave 2 A1: a card stored In
+      // progress with no run is not running, and has no running dot).
+      mkdirSync(dirname(leasePath(seed.dir)), { recursive: true });
+      writeFileSync(
+        leasePath(seed.dir),
+        JSON.stringify({ ...newLease(), kind: "run", cardId: "card_ip1" }),
+      );
       const motion = async (reduce: boolean) => {
         const { ctx, page } = await openContext(browser, 1440, {
           project: seed.project,
@@ -640,6 +648,7 @@ describe("the board in Chromium, through the dashboard server (C2d)", () => {
       const allowed = await motion(false);
       expect(allowed.names).toEqual(expect.arrayContaining(["pulse"]));
       const reduced = await motion(true);
+      rmSync(leasePath(seed.dir), { force: true });
       expect(reduced.names).toEqual([]);
       expect(reduced.running).toEqual([]);
     },

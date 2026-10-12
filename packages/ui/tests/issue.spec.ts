@@ -180,7 +180,7 @@ describe("DB-N8-2: the Agent's state and the controls it offers", () => {
     type: "card/status_changed",
     payload: { toStatus },
   });
-  const base = { status: "in_progress", stepsUsed: 4, stepBudget: 12 };
+  const base = { status: "in_progress", stepsUsed: 4, stepBudget: 12, liveRun: true };
 
   it("while it runs: a message box for the Agent, Pause and Take over", () => {
     expect(agentPanel(base, [moved(1, "in_progress")])).toEqual({
@@ -295,6 +295,36 @@ describe("DB-N8-2: the Agent's state and the controls it offers", () => {
       state: "idle",
       label: "",
       sentence: "The Agent isn't working on this issue.",
+      controls: [],
+      messageBox: false,
+    });
+  });
+
+  // Wave 2 A1 review, finding 1: a stored In progress or Verify is not a run.
+  // The board's `liveRun` (a runner or slot lease, or a running attempt) is
+  // the one fact behind "working"; without it the page says so, with no Pause.
+  it("an issue stored In progress with no run behind it is not said as working, and offers no Pause", () => {
+    const stored = { status: "in_progress", stepsUsed: 0, stepBudget: 40, liveRun: false };
+    expect(agentPanel(stored, [moved(1, "in_progress")])).toEqual({
+      state: "not_running",
+      label: "",
+      sentence: "In progress with no run: the Agent isn't working on this issue now.",
+      controls: ["take_over"],
+      messageBox: false,
+    });
+    // No run is known: the same, never "working".
+    const { liveRun: _unknown, ...noFact } = stored;
+    expect(agentPanel(noFact, [moved(1, "in_progress")]).state).toBe("not_running");
+    // A pause asked of a run that is not there is not "Pausing".
+    const asked = [moved(1, "in_progress"), { seq: 2, type: "card/pause_requested", payload: {} }];
+    expect(agentPanel(stored, asked).state).toBe("not_running");
+  });
+
+  it("an issue stored in Verify with no run behind it is waiting for checks, not running them", () => {
+    expect(agentPanel({ ...base, status: "verify", liveRun: false }, [])).toEqual({
+      state: "not_running",
+      label: "",
+      sentence: "Waiting for checks: no check is running on this issue now.",
       controls: [],
       messageBox: false,
     });

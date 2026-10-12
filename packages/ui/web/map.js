@@ -31,7 +31,7 @@ const ui = {
   root: null,
   barHost: null,
   cycHost: null,
-  /** undefined until fetched; null when no brief has been accepted (404). */
+  /** undefined until fetched; null when no brief has been accepted (200 `null`; 404 from an older server). */
   map: undefined,
   mapStatus: 0,
   burn: null,

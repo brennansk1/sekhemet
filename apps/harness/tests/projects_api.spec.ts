@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
@@ -9,6 +9,7 @@ import type { ProjectsOverview } from "@sekhemet/ui";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Audience } from "../src/pm/audience.js";
 import { projectsOverview } from "../src/projects_api.js";
+import { leasePath, newLease } from "../src/runner_lease.js";
 import { startDashboardServer } from "../src/server.js";
 
 /**
@@ -86,6 +87,11 @@ async function workspace(k: ReturnType<typeof kernel>) {
       secondsUsed,
     });
   }
+  // The Agent is building Search now: its next attempt is running under the
+  // queue's live runner lease (wave 2 A1; an attempt with no live lease is not a run).
+  await k.cards.runs.startAttempt({ cardId: search.id, attemptNumber: 2, modelId: "m" });
+  mkdirSync(dirname(leasePath(repo)), { recursive: true });
+  writeFileSync(leasePath(repo), JSON.stringify({ ...newLease(), kind: "queue" }));
   return { repo, chronicle, shop, secret, hasher, ledger, search, pay };
 }
 
@@ -133,10 +139,14 @@ describe("projectsOverview (DB-N9-9)", () => {
       target: null,
       // Priya's review; the unowned decision waits on the lead (Sam), not on her.
       waitingOnYou: 1,
-      agent: { working: ["Search"], queued: 1 },
+      agent: { working: ["Search"], notRunning: [], queued: 1 },
     });
     expect(chronicle?.forecast).toMatchObject({ remaining: 4, finished: 1, minimum: 5 });
-    expect(shop).toMatchObject({ lead: null, waitingOnYou: 1, agent: { working: [], queued: 0 } });
+    expect(shop).toMatchObject({
+      lead: null,
+      waitingOnYou: 1,
+      agent: { working: [], notRunning: [], queued: 0 },
+    });
     // Team, the project began today: no update is missing yet (TEAM-29).
     expect(shop?.updateMissing).toBe(false);
     expect(o.waiting.map((x) => ({ project: x.project, title: x.title, kind: x.kind }))).toEqual([

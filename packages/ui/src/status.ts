@@ -13,8 +13,10 @@
  * `web/status.js` renders this; the browser loads it as `/app/lib/status.js`.
  */
 import { reviewItHref } from "./learn.js";
+import { agentWork, isAgentsCard } from "./nav.js";
 import {
   type CycleLike,
+  FLOW_MINIMUM,
   activeCycle,
   cycleProgress,
   formatHours,
@@ -33,10 +35,12 @@ export interface StatusCardLike {
   status: string;
   tier?: string;
   owner?: string | null;
-  delegate?: string | null;
+  delegate?: string | { kind: string; id?: string } | null;
   blockedReason?: string | null;
   stopReason?: string | null;
   updatedAt?: string;
+  /** The server's fact: a run backs the card (a lease names it, or its attempt is running). */
+  liveRun?: boolean;
   display?: { ownerName?: string; delegateName?: string };
 }
 
@@ -373,8 +377,6 @@ const WORD_ORDER: RequirementWord[] = [
 
 /** The four questions of the flow strip link where the charts answer them (§2.10). */
 const INSIGHTS = "#/insights";
-/** Insights' own minimum (§2.10.6): three finished issues before any percentile. */
-const FLOW_MINIMUM = 3;
 const DAY = 86_400_000;
 const WEEK = 7 * DAY;
 
@@ -635,9 +637,11 @@ export function statusModel(input: StatusInput): StatusView {
 
   // 1. The headline: facts only; the health word is a person's (§2.8.1).
   const done = count("done");
+  // The stored column, never "being built": a stored In progress card is not
+  // work unless a run backs it (wave 2 A1; the Agent's work is row 8's).
   const building = count("in_progress") + count("verify");
   const clauses = [
-    building ? `${building} being built` : "",
+    building ? `${building} in progress` : "",
     count("review") ? `${count("review")} waiting for review` : "",
     count("parked") ? `${count("parked")} on hold` : "",
   ].filter(Boolean);
@@ -940,7 +944,7 @@ export function statusModel(input: StatusInput): StatusView {
   const questions = (st?.decisionsWaiting ?? []).filter((x) => onPage(x.cardId)).length;
   const standupLines = [
     ...line("passed", "Done"),
-    ...line("in_progress", "Being built"),
+    ...line("in_progress", "In progress"),
     ...line("review", "Waiting for review"),
     ...line("parked", "On hold"),
     ...(questions
@@ -952,16 +956,21 @@ export function statusModel(input: StatusInput): StatusView {
     .map((a) => `${titleOf(a.title)} · accepted by ${a.by} · ${formatShortDate(a.at)}`);
 
   // 8. Who's working on what: each person's and the Agent's current item only.
+  // The Agent's item is the one its run is on (A1, A2: `agentWork`, as the
+  // sidebar and Projects read it); a card stored In progress with no run is not.
+  const agentRuns = agentWork(cards).running;
   const running = cards
     .filter((c) => (c.status === "in_progress" || c.status === "verify") && isWork(c))
     .sort((a, b) => Date.parse(b.updatedAt ?? "") - Date.parse(a.updatedAt ?? ""));
   const rows: StatusView["working"]["rows"] = [];
-  const agentCard = running.find((c) => !c.delegate || c.delegate === "worker");
+  const agentCard = agentRuns[0];
   if (agentCard) rows.push({ who: "Agent", ai: true, item: titleOf(agentCard.title) });
   const people = new Set<string>();
   for (const c of running) {
-    if (!c.delegate || c.delegate === "worker" || people.has(c.delegate)) continue;
-    people.add(c.delegate);
+    if (isAgentsCard(c)) continue;
+    const who = typeof c.delegate === "object" ? (c.delegate?.id ?? "") : (c.delegate ?? "");
+    if (people.has(who)) continue;
+    people.add(who);
     rows.push({
       who: c.display?.delegateName ?? "A teammate",
       ai: false,
@@ -972,10 +981,11 @@ export function statusModel(input: StatusInput): StatusView {
   // 9. The models line (teams item 31).
   const queued = input.standing?.length ?? 0;
   const longest = Math.max(0, ...(input.standing ?? []).map((s) => s.estimateSeconds));
+  const busy = agentRuns.length > 0;
   const models =
-    building === 0 && queued === 0
+    !busy && queued === 0
       ? "Coding model idle"
-      : `Coding model ${building ? "busy" : "idle"} · ${
+      : `Coding model ${busy ? "busy" : "idle"} · ${
           queued
             ? `${queued} in queue, about ${plural(Math.max(1, Math.round(longest / 60)), "minute")}`
             : "nothing queued"
@@ -1021,7 +1031,11 @@ export function statusModel(input: StatusInput): StatusView {
     ...(enough
       ? {}
       : {
-          note: `Cycle time needs ${FLOW_MINIMUM} finished issues; there ${hours.length === 1 ? "is" : "are"} ${hours.length}.`,
+          // A3: finished issues are counted as Insights counts them, never the samples.
+          note:
+            finished < FLOW_MINIMUM
+              ? `Cycle time needs ${FLOW_MINIMUM} finished issues; there ${finished === 1 ? "is" : "are"} ${finished}.`
+              : `Cycle time needs ${FLOW_MINIMUM} issues built through In progress; ${hours.length} of the ${finished} finished ${hours.length === 1 ? "was" : "were"}.`,
         }),
   };
 

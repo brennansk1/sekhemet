@@ -1032,6 +1032,56 @@ export function cycleTimeStats(entries: { hours: number }[]): CycleTimeStats {
   return { n: h.length, p50: percentile(h, 50), p85: percentile(h, 85), p95: percentile(h, 95) };
 }
 
+/** Flow is measured from this many finished issues and cycle-time samples (§2.10 item 6). */
+export const FLOW_MINIMUM = 3;
+
+/**
+ * Insights' flow read: the period, on the page's project when it has one
+ * (Status's scope, wave 2 A3).
+ */
+export function flowUrl(days: number, project: string | undefined): string {
+  return `/api/metrics/flow?days=${days}${project ? `&project=${encodeURIComponent(project)}` : ""}`;
+}
+
+/**
+ * The period's finished issues as Insights says them: the server's
+ * `finished`, Status's own count (each issue once, at its last move to Done,
+ * issues only, the page's scope); the throughput's sum of moves only from a
+ * server that does not send it (wave 2 A3, review finding 4).
+ */
+export function flowFinished(d: {
+  finished?: number;
+  throughput?: readonly { done?: number }[];
+}): number {
+  return typeof d.finished === "number"
+    ? d.finished
+    : (d.throughput ?? []).reduce((n, t) => n + (t.done ?? 0), 0);
+}
+
+/**
+ * Insights' empty state (dashboard §2.10 item 6; wave 2 A3), or null when
+ * there is enough to draw. `finished` is the period's finished issues
+ * (`flowFinished`: the count Status reads);
+ * `samples` the cycle times, which only an issue built through In progress
+ * here has, so an imported or seeded Done issue is finished but has none.
+ */
+export function flowEmptyState(
+  finished: number,
+  samples: number,
+): { heading: string; detail: string } | null {
+  if (finished < FLOW_MINIMUM)
+    return {
+      heading: "Not enough finished issues to measure flow yet.",
+      detail: `Insights need at least ${FLOW_MINIMUM} finished issues; this period has ${finished}.`,
+    };
+  if (samples < FLOW_MINIMUM)
+    return {
+      heading: "Not enough cycle times to measure flow yet.",
+      detail: `${finished} issues finished in this period, but only ${samples} went through In progress here; cycle time needs at least ${FLOW_MINIMUM}.`,
+    };
+  return null;
+}
+
 /** Trailing moving average; the first points average what exists so far. */
 export function movingAverage(values: number[], window: number): number[] {
   const out: number[] = [];
@@ -1658,7 +1708,9 @@ export function modelUseView(
   }
   const period = `the last ${plural(days, "day")}`;
   if (use.total.requests === 0)
-    return { lines: [], caption: "", empty: `No model ran in ${period}.` };
+    // A4: the figure counts recorded requests; an attempt can record none (a
+    // stand-in, a run stopped before its first step), so it never says no model ran.
+    return { lines: [], caption: "", empty: `No model requests were recorded in ${period}.` };
   const all = use.total.promptTokens + use.total.completionTokens;
   const lines = use.rows.map((r) => ({
     role: r.role,

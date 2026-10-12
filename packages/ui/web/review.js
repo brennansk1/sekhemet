@@ -24,6 +24,7 @@ import {
   mutationsBlocked,
   openPark,
   quickNotes,
+  takeOffHold,
   triageBarHtml,
   wireCommentForm,
   wireComposer,
@@ -90,9 +91,10 @@ function rowMeta(card) {
   return `${icon("x", 12, "ic s12 i-fail")}<span>${esc(text || d.statusLine)}</span>${w}`;
 }
 
-function rowHtml(card) {
+/** A queue row; `stop` makes it its listbox's one tab stop (§2.14.3: a roving tabindex). */
+function rowHtml(card, stop) {
   const sel = card.id === ui.selected;
-  return `<button class="q-row" type="button" role="option" id="q-${esc(card.id)}" data-id="${esc(card.id)}" aria-selected="${sel}" tabindex="${sel ? "0" : "-1"}"><div class="q-t">${esc(card.display?.title ?? card.title)}</div><div class="q-m">${rowMeta(card)}</div></button>`;
+  return `<button class="q-row" type="button" role="option" id="q-${esc(card.id)}" data-id="${esc(card.id)}" aria-selected="${sel}" tabindex="${stop ? "0" : "-1"}"><div class="q-t">${esc(card.display?.title ?? card.title)}</div><div class="q-m">${rowMeta(card)}</div></button>`;
 }
 
 /** DB-N22-1: the offer shows once the queue holds work, until a choice is made here. */
@@ -107,8 +109,17 @@ function renderNotifyOffer(queueSize) {
 
 function renderQueue() {
   const { ready, needYou } = queueGroups();
+  // A listbox holds only its options (axe aria-required-children): each group's
+  // heading, empty line and the separator sit outside it, one listbox a group.
+  // Each listbox keeps one tab stop: its chosen row, else its first (review
+  // finding 5: below 768 px nothing is chosen, and Tab must still reach the queue).
+  const rows = (label, cards) => {
+    const chosen = cards.some((c) => c.id === ui.selected);
+    const html = cards.map((c, i) => rowHtml(c, chosen ? c.id === ui.selected : i === 0)).join("");
+    return `<div role="listbox" aria-label="${label}">${html}</div>`;
+  };
   // §2.9.5 (NEW-dashboard-13): reviewing a change, taught where the queue is.
-  const html = `<div class="q-h" id="q-ready">Ready for review <span class="c tnum">${ready.length}</span>${ready.length ? practiceTip("practice:review", "Reviewing a change") : ""}</div>${ready.length ? ready.map(rowHtml).join("") : '<div class="q-empty">Nothing waiting for you.</div>'}<div class="q-sep" role="separator"></div><div class="q-h" id="q-need">Needs you <span class="c tnum">${needYou.length}</span></div>${needYou.length ? needYou.map(rowHtml).join("") : '<div class="q-empty">Nothing is stuck.</div>'}`;
+  const html = `<div class="q-h" id="q-ready">Ready for review <span class="c tnum">${ready.length}</span>${ready.length ? practiceTip("practice:review", "Reviewing a change") : ""}</div>${ready.length ? rows("Ready for review", ready) : '<div class="q-empty">Nothing waiting for you.</div>'}<div class="q-sep" role="separator"></div><div class="q-h" id="q-need">Needs you <span class="c tnum">${needYou.length}</span></div>${needYou.length ? rows("Needs you", needYou) : '<div class="q-empty">Nothing is stuck.</div>'}`;
   const q = $(".queue", ui.root);
   if (q && html !== ui.queueHtml) {
     const hadFocus = q.contains(document.activeElement);
@@ -139,7 +150,9 @@ function renderTriage() {
   const html = card ? triageBarHtml(card, ui.detail?.evidence, { detail: ui.detail }) : "";
   if (html !== ui.triageHtml) {
     const btn = slot.contains(document.activeElement) ? document.activeElement : null;
-    const which = ["data-accept", "data-back", "data-park"].find((a) => btn?.hasAttribute(a));
+    const which = ["data-accept", "data-back", "data-park", "data-unpark"].find((a) =>
+      btn?.hasAttribute(a),
+    );
     slot.innerHTML = html;
     ui.triageHtml = html;
     if (which) slot.querySelector(`[${which}]`)?.focus();
@@ -204,9 +217,14 @@ async function load(id, { keepScroll = false } = {}) {
   renderEvidence({ keepScroll });
 }
 
+/** §2.5.1: below 768 px (a phone, or 1440 px at 200% zoom) the queue is a full screen. */
+const queueScreen = () => window.matchMedia?.("(max-width: 767px)").matches ?? false;
+
 function select(id, { focus = false, fromHash = false } = {}) {
   if (!id) {
     ui.selected = null;
+    closeComposer();
+    $(".wrap", ui.root)?.classList.remove("has-sel");
     renderQueue();
     renderEmpty();
     return;
@@ -390,7 +408,9 @@ export function mount(view, route) {
   const root = document.createElement("div");
   root.className = "view-host";
   // NEW-dashboard-22: the one-time offer of a browser notification, above the queue.
-  root.innerHTML = `<div data-notify-offer></div><div class="wrap"><div class="queue" role="listbox" aria-label="Review queue"></div><section class="ev" aria-label="Evidence"><div class="ev-scroll" tabindex="-1"></div><div data-triage></div></section><div data-facts style="display:contents"></div></div>`;
+  // §2.5.1: on a phone (and at 200% zoom) the queue is the screen and a row
+  // opens the evidence; *Review queue* goes back (shown only there, review.css).
+  root.innerHTML = `<div data-notify-offer></div><div class="wrap"><section class="queue" aria-label="Review queue"></section><section class="ev" aria-label="Evidence"><a class="q-back" href="#/review">${icon("back", 14, "ic s14")}Review queue</a><div class="ev-scroll" tabindex="-1"></div><div data-triage></div></section><div data-facts style="display:contents"></div></div>`;
   view.append(root);
   ui.root = root;
   wireNotifyOffer($("[data-notify-offer]", root), () => {
@@ -428,7 +448,10 @@ export function mount(view, route) {
     } else if (t.closest("[data-accept]")) runAction("a");
     else if (t.closest("[data-back]")) runAction("r");
     else if (t.closest("[data-park]")) runAction("p");
-    else if (t.closest("[data-comment]")) openComment();
+    else if (t.closest("[data-unpark]")) {
+      const card = selectedCard();
+      void takeOffHold(card, { onDone: () => advance(card.id) });
+    } else if (t.closest("[data-comment]")) openComment();
   });
 
   ui.unsub = store.on((_s, patch) => {
@@ -446,7 +469,7 @@ export function mount(view, route) {
           load(card.id, { keepScroll: true });
       }
     }
-    if (!ui.selected) {
+    if (!ui.selected && !queueScreen()) {
       const first = queueGroups().order[0];
       if (first && "cards" in patch) select(first.id);
     }
@@ -475,7 +498,8 @@ function setParams(params) {
     if (want !== ui.selected) select(want, { fromHash: true });
     return;
   }
-  const first = queueGroups().order[0];
+  // On the queue's own screen nothing is chosen for the person: a row opens it.
+  const first = queueScreen() ? undefined : queueGroups().order[0];
   if (first) select(first.id);
   else select(null);
 }

@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 88 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 89 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,35 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 89 — 2026-10-11 (Loop wave 2: the dashboard's truth — one source for what the Agent is doing; the review and issue flow)
+
+- **Why:** the Phase 1 dashboard sweep (two Haiku 5.5 explorers on a fully seeded board) produced 47 candidates, giving 26 app faults after verification and 13 lead decisions (`lead-work/loop/waves/W2_dashboard.md`, `loop/sweep2_dashboard.json`).
+- **Fixed** (two Opus builders, tests first):
+  - **One source of truth:** `live_runs.ts` `liveRunCardIds`. A card has a live run only with a live runner or slot lease, or a running attempt the sweep has not yet reconciled. Every surface that names the Agent's work reads it: the sidebar, Status, Projects, Seshat's rail, Machine, the issue page and the board tiles. A card merely stored In progress is labelled honestly.
+  - **Status and Projects** name the same task. **Insights' finished count** is Status's and Projects'.
+  - **One name per model state:** Resident, Swapped out, Not configured.
+  - **Seshat's rail** shows the Planning model's real state and verification, never a bare "Ready".
+  - **Machine's memory-guard words** match the guard's sources.
+  - **Benchmark's quick setup** names a missing model.
+  - **The review flow:**
+    - the Review queue's ARIA (a listbox with options only);
+    - the queue at 720 and 400 px, with a keyboard route;
+    - the diff annotation's contrast;
+    - "Take off hold" on the issue page;
+    - the Request changes form clear of the triage bar;
+    - `sekhemet log` shows the newest entries;
+    - a failed save keeps the person's input;
+    - the story map's 404.
+- **Review:** 1 blocker (the issue page still said "working" without a run) and 6 majors (the board tiles; the guide's claim; Insights' count aligned by words, not by source; the keyboard route on a phone; a stale "running" attempt counted as live; benchmark's load race). All were fixed and re-checked, 222/222.
+- **Left:**
+  - `packages/models/src/watchdog.ts` classify() ignores the used-memory ratio, though models.md rule 19 says it pauses at 94% (the owner's call: the code or the spec);
+  - a stale "running" attempt stays live while any other lease is alive, until the sweep.
+- **Gate fix:** two fixtures (server.spec, collaborate.spec) built a running card from a stored status and steps with no run record. They now declare the run (a runner lease; `liveRun`), as the product does, with their assertions unchanged.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` 0, `biome check .` 0, vitest 960 files passed, 2 skipped; 7,412 tests passed, 74 skipped (3 workers, 37 min, quiet host).
+- **Where the cards stop:**
+  - W2 is committed.
+  - Next: W3+W4 (built), then W5+W6 to build, then the Phase 1 sweeps of models and measurement, kernel, review-git, runtime and security.
 
 ### Entry 88 — 2026-10-11 (Loop wave 1: the CLI, Phase 1)
 

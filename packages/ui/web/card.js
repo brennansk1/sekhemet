@@ -47,6 +47,7 @@ import {
   composerHtml,
   openPark,
   quickNotes,
+  takeOffHold,
   triageBarHtml,
   undoAccept,
   wireCommentForm,
@@ -204,9 +205,14 @@ function renderHead() {
     )}</div>${presenceHtml(card.id)}<div class="acts">${triage}${issueMoreHtml(card)}</div></div>${checklist}`;
   if (head.dataset.html !== next) {
     const active = document.activeElement;
-    const which = ["data-accept", "data-back", "data-comment", "data-park", "data-issue-more"].find(
-      (a) => active?.hasAttribute?.(a) && head.contains(active),
-    );
+    const which = [
+      "data-accept",
+      "data-back",
+      "data-comment",
+      "data-park",
+      "data-unpark",
+      "data-issue-more",
+    ].find((a) => active?.hasAttribute?.(a) && head.contains(active));
     head.innerHTML = next;
     head.dataset.html = next;
     if (which) head.querySelector(`[${which}]`)?.focus();
@@ -590,6 +596,7 @@ export function mount(view, route) {
     else if (t.closest("[data-accept]")) runAction("a");
     else if (t.closest("[data-back]")) runAction("r");
     else if (t.closest("[data-park]")) runAction("p");
+    else if (t.closest("[data-unpark]")) void takeOffHold(store.card(ui.id));
     else if (t.closest("[data-comment]")) runAction("comment");
     // NEW-dashboard-21: Won't do, Reopen and Revert from the issue's `⋯` menu.
     else if (t.closest("[data-issue-more]")) {

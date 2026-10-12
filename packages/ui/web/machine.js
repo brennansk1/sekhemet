@@ -1,7 +1,8 @@
 // Machine (FRONTEND_DESIGN §2.4.6): memory against its thresholds, the model
 // server, health checks with fixes, the sandbox and the worktrees on disk.
 import { $, esc, getJSON, icon } from "./dom.js";
-import { hardwareTierView } from "./lib/machine_tier.js";
+import { hardwareTierView, memoryGuardView } from "./lib/machine_tier.js";
+import { agentWork } from "./lib/nav.js";
 import { ROSTER_STATE_LABELS, rosterRows } from "./lib/pm.js";
 import { checkFixHint, shortId } from "./lib/vocabulary.js";
 import { setTopbar } from "./shell.js";
@@ -19,39 +20,23 @@ const ui = {
 
 const gb = (b) => `${(b / 1024 ** 3).toFixed(1)} GB`;
 
-const LEVEL = {
-  normal: {
-    label: "Normal",
-    tone: "pass",
-    text: "Issues run normally. Sekhemet stops adding worktrees at 90% and pauses the Agent at 94%.",
-  },
-  warning: {
-    label: "Warning",
-    tone: "parked",
-    text: "Above 85%: multi-token prediction is off, and above 90% no new worktree is created. Running issues continue.",
-  },
-  critical: {
-    label: "Critical",
-    tone: "fail",
-    text: "Above 94%: the Agent is paused safely before the system would swap. Work resumes below 85%.",
-  },
-};
-
 function memoryHtml(m) {
   if (!m) return '<div class="sk" style="height:96px"></div>';
   const pct = Math.round(m.usedRatio * 100);
   const guard = m.guardLevel ?? m.level;
-  const lv = LEVEL[guard] ?? LEVEL.normal;
+  // A7: the level, words and legend follow the guard that runs (`memoryGuardView`).
+  const lv = memoryGuardView(m);
   const source =
     m.guardSource === "kernel" && guard !== m.level
-      ? `<p class="sec mem-why">The system reports ${esc(guard)} pressure, and that is what the run guard acts on. The ${pct}% includes file cache the system can reclaim.</p>`
+      ? // The guard's own words are `lv.text`; this adds why the percentage reads higher.
+        `<p class="sec mem-why">The ${pct}% includes file cache the system can reclaim.</p>`
       : "";
   const t = m.thresholds ?? { warning: 0.85, throttle: 0.9, critical: 0.94 };
   // The ticks carry only their percentage; what each one means is the visible
   // legend under the gauge, never a hover title (DB-P12-6).
   const tick = (r, up = false) =>
     `<span class="tick${up ? " up" : ""}" style="left:${r * 100}%"><i></i><em class="tnum">${Math.round(r * 100)}%</em></span>`;
-  const legend = `<p class="sec mem-ticks tnum">${Math.round(t.warning * 100)}% warning · ${Math.round(t.throttle * 100)}% no new worktrees · ${Math.round(t.critical * 100)}% pause the Agent</p>`;
+  const legend = `<p class="sec mem-ticks tnum">${esc(lv.legend)}</p>`;
   const kernel = m.kernelLevel
     ? ({ 1: "normal", 2: "warning", 4: "critical" }[m.kernelLevel] ?? String(m.kernelLevel))
     : null;
@@ -71,7 +56,8 @@ function modelHtml(d) {
   const list = models.served.length
     ? `<ul class="plain">${models.served.map((m) => `<li><span class="mono">${esc(m)}</span></li>`).join("")}</ul>`
     : '<p class="sec">No model is being served.</p>';
-  const working = store.state.cards.some((c) => c.status === "in_progress");
+  // Wave 2 A1: the Agent runs only when a run backs a card, not a stored column.
+  const working = agentWork(store.state.cards).running.length > 0;
   return `<section class="mc-card"><h3 class="sh">Model <span class="sec">${models.reachable ? (working ? "Agent running" : "idle") : "server unreachable"}</span></h3><dl class="kv"><dt>Endpoint</dt><dd class="mono">${esc(models.endpoint ?? "—")}</dd><dt>Status</dt><dd>${models.reachable ? `${icon("check", 14, "ic s14 i-pass")} reachable` : `${icon("x", 14, "ic s14 i-fail")} not reachable`}</dd></dl><h4 class="sub">Models on the server</h4>${list}</section>`;
 }
 
@@ -145,7 +131,7 @@ function render() {
   if (!ui.root) return;
   const d = ui.data;
   const mem = store.state.machine ?? d?.memory;
-  const lv = mem ? (LEVEL[mem.guardLevel ?? mem.level] ?? LEVEL.normal).label : "";
+  const lv = mem ? memoryGuardView(mem).label : "";
   setTopbar({
     title: "Machine",
     crumb: `${store.state.meta?.project ?? ""}${mem ? ` · memory ${Math.round(mem.usedRatio * 100)}%, ${lv.toLowerCase()}` : ""}`,

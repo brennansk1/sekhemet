@@ -182,25 +182,26 @@ describe("Projects (DB-N9-9, DB-N9-21)", () => {
         {
           label: "Coding model",
           model: "cyber-tiel-coder",
-          state: "Loaded",
+          // Wave 2 A5: the roster's own words, as Configuration and Machine say them.
+          state: "Resident",
           load: "2 of 2 slots in use · 3 in queue",
           seshat: false,
         },
         {
           label: "Planning model · Seshat",
           model: "hermes-planner",
-          state: "Not loaded",
+          state: "Swapped out",
           load: "",
           seshat: true,
         },
         {
           label: "Review model",
           model: "qwen-review",
-          state: "Not loaded",
+          state: "Swapped out",
           load: "",
           seshat: false,
         },
-        { label: "Research model", model: "Not set", state: "Not set", load: "", seshat: false },
+        { label: "Research model", model: "—", state: "Not configured", load: "", seshat: false },
       ],
       memory: "Memory in use: 14.2 of 24 GB",
     });

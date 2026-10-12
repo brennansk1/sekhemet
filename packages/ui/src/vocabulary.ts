@@ -1051,6 +1051,11 @@ export interface DisplayContext {
    * announced it (dashboard DB-N2-10): named in the In progress badge.
    */
   runningGate?: { gate: string; rung?: string };
+  /**
+   * A run backs the card now (the server's `liveRun`, `live_runs.ts`; wave 2
+   * A1). Only `true` lets a card In progress or Verify say it is working.
+   */
+  liveRun?: boolean;
 }
 
 /** A tool call as the ledger and transcript record it. */
@@ -1142,6 +1147,9 @@ export function statusLine(
         return { text: `Needs a new plan · ${failText}`, tone: "blocked", mark: "planning" };
       return { text: "Being planned", tone: "neutral", mark: "planning" };
     case "in_progress": {
+      // Wave 2 A1: stored In progress with no run behind it is not work.
+      if (ctx.liveRun !== true)
+        return { text: "In progress · no run", tone: "neutral", mark: "none" };
       // What the Agent is doing now. Its step count is the issue's, never the
       // board's (DEC-31, DB-N7-3): `budgetText` carries it to the issue.
       const step = ctx.lastStep;
@@ -1162,6 +1170,9 @@ export function statusLine(
       if (ctx.runningGate) {
         return { text: runningCheckText(ctx.runningGate), tone: "running", mark: "running" };
       }
+      // Wave 2 A1: the live gate file names a live process; else only a run is checking.
+      if (!ev && ctx.liveRun !== true)
+        return { text: "Waiting for checks", tone: "neutral", mark: "none" };
       if (!ev) return { text: "Running checks…", tone: "running", mark: "running" };
       // FINDINGS ISS-02: a run a person stopped waits, it did not fail.
       if (!ev.passed && !firstFail && ev.stopReason === "human_abort") {

@@ -17,6 +17,7 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { liveGatePath, readLiveGate, withLiveGate } from "../src/live_gate.js";
+import { leasePath, newLease } from "../src/runner_lease.js";
 import { startDashboardServer } from "../src/server.js";
 
 /**
@@ -128,6 +129,10 @@ describe("DB-N2-10 on the dashboard: the badge and the stream frame", () => {
     store = new CardStore(db, log);
     await store.createCard({ id: "c1", tier: "task", title: "Login" });
     await store.updateCardStatus("c1", "verify", "checks running", "harness", { override: true });
+    // The card's own process holds the runner lease while its checks run (wave 2
+    // A1: a stored Verify with no run behind it says Waiting for checks instead).
+    mkdirSync(dirname(leasePath(root)), { recursive: true });
+    writeFileSync(leasePath(root), JSON.stringify({ ...newLease(), kind: "run", cardId: "c1" }));
     server = await startDashboardServer({
       db,
       log,

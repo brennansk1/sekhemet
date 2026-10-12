@@ -474,7 +474,9 @@ describe("DB-N7-3: the tile has no step counter and no model name", () => {
       stepsUsed: 8,
       delegate: { kind: "worker" },
     } as Partial<CardRecord>);
+    // A run backs it (wave 2 A1: `liveRun`).
     const display = describeCard(c, {
+      liveRun: true,
       lastStep: { turn: 9, calls: [{ name: "edit_file", target: "src/hasher.ts" }] },
     });
     const t = tileModel({ ...c, display }, { now: Date.now() });

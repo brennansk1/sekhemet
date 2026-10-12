@@ -160,6 +160,25 @@ export function tuneVerdictText(run) {
   return "No clear difference: the screen could not tell the settings apart, so the current settings stay.";
 }
 
+/**
+ * Why Configuration › Models cannot run the quick benchmark of its setup, or ""
+ * (wave 2 A8): its Coding and Planning models must be among the models found on
+ * this machine — the ones this page's pickers list — by file or registry id.
+ * A model is said missing only from a list that was read: while it loads, or
+ * when its read failed (`readError`), the words say so (review finding 7).
+ */
+export function quickSetupMissing(setup, models, readError) {
+  if (!Array.isArray(models))
+    return readError
+      ? `Couldn't read the models on this machine, so the quick benchmark isn't offered: ${readError}`
+      : "Checking the models on this machine…";
+  const found = (id) => (models || []).some((m) => m.id === id || m.registryId === id);
+  const missing = [setup.worker, setup.planner].find((id) => id && !found(id));
+  return missing
+    ? `The quick benchmark needs the Coding model and the Planning model on this machine: ${missing} is not in a model folder yet.`
+    : "";
+}
+
 /** Why *Run quick* cannot start, or "" (FINDINGS CFG-10). */
 export function quickDisabledReason({ readOnly, pick, models, busy }) {
   if (readOnly) return readOnly;

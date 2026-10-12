@@ -2,7 +2,9 @@
 // reading column, and a rail with open proposals, the Worker and what Seshat sees.
 import { esc, icon } from "./dom.js";
 import { loadLearning } from "./learning.js";
+import { agentWork } from "./lib/nav.js";
 import { proposalKind, strengthLabel } from "./lib/pm.js";
+import { seshatModelState } from "./lib/seshat.js";
 import { cardChip } from "./marks.js";
 import { PM_NAME } from "./pm_client.js";
 import { setFullThread } from "./pm_panel.js";
@@ -24,7 +26,8 @@ function railHtml() {
         .join("")}</ul>`
     : '<p class="sec">Nothing waiting. Proposals Seshat makes appear here until you apply or discard them.</p>';
 
-  const running = s.cards.find((c) => c.status === "in_progress");
+  // Wave 2 A1, A2: the card a run backs, the one the sidebar and Status name.
+  const running = agentWork(s.cards).running[0];
   const paused = s.pm.status?.workerPaused;
   const worker = running
     ? `<p class="wk">${paused ? icon("pause", 12, "ic s12 i-run") : '<span class="dot run" aria-hidden="true"></span>'}<span>${paused ? `Paused for ${PM_NAME}` : "Working"}${running.stepsUsed ? ` · step ${running.stepsUsed} of ${running.stepBudget}` : ""}</span></p><p>${cardChip(running.id, { max: 40 }) ?? ""}</p>`
@@ -44,7 +47,7 @@ function railHtml() {
     ? `${s.verification.totalEvents} entries${s.verification.valid === false ? " · altered" : " · intact"}`
     : "Checking…";
   // The model is named in Configuration, not beside the chat (DB-N6-14).
-  const sees = `<dl class="kv"><div><dt>Board</dt><dd>${s.cards.length} issues · live</dd></div><div><dt>Last run</dt><dd>${esc(runText)}</dd></div><div><dt>Activity log</dt><dd>${esc(ledger)}</dd></div><div><dt>Model</dt><dd>${s.pm.available === false ? "Not set up" : "Ready"} · <a href="#/configuration/models">Configuration</a></dd></div></dl>`;
+  const sees = `<dl class="kv"><div><dt>Board</dt><dd>${s.cards.length} issues · live</dd></div><div><dt>Last run</dt><dd>${esc(runText)}</dd></div><div><dt>Activity log</dt><dd>${esc(ledger)}</dd></div><div><dt>Model</dt><dd>${esc(seshatModelState(s.modelSetup?.planner, s.pm.available))} · <a href="#/configuration/models">Configuration</a></dd></div></dl>`;
 
   const l = s.learning;
   let learned;

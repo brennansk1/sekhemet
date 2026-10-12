@@ -91,6 +91,10 @@
   font-size: var(--text-xs);
   color: var(--text-secondary);
 }
+/* §2.5.1: the way back to the queue, only where the queue is its own screen. */
+.q-back {
+  display: none;
+}
 
 .ev {
   flex: 1;
@@ -759,14 +763,15 @@ dl.kv dd {
   gap: 8px;
   align-items: center;
 }
-.cbx {
+/* The composer's playbook option: never `.cbx`, the list's 14 px box (board2.css). */
+.pb-opt {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: var(--text-xs);
   color: var(--text-secondary);
 }
-.cbx small {
+.pb-opt small {
   color: var(--text-secondary);
 }
 .park-pop {
@@ -879,6 +884,17 @@ dl.kv dd {
   }
   .wrap:not(.has-sel) .ev {
     display: none;
+  }
+  .q-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 44px;
+    padding: 0 16px;
+    flex: none;
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+    border-bottom: 1px solid var(--border-subtle);
   }
   .triage .btn {
     height: 48px;
@@ -1095,7 +1111,7 @@ body.composing .triage [data-back],
 body.composing .cv-h [data-back] {
   display: none;
 }
-.composer .cbx {
+.composer .pb-opt {
   flex: 1 1 280px;
   min-width: 0;
   flex-wrap: wrap;

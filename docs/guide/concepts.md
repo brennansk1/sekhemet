@@ -34,6 +34,8 @@ Sekhemet uses the words professional teams already use. If you have worked with 
 
 An issue a person rejects is marked **Won't do** (Jira's resolution of the same name; Linear's *Canceled*). An issue can be rejected from Backlog, To do, In review or On hold; one being built is stopped first (`sekhemet abort <issue>`).
 
+The dashboard says the Agent is working only while a run is going on an issue. An issue can sit in In progress with no run, for example after a person moved it there, or after its run was stopped by the machine (out of memory, the laptop asleep). Then the sidebar reads *Agent idle · CHR-12 is in progress with no run*, the issue's card on the board reads *In progress · no run* (or *Waiting for checks*), Status counts it as *in progress*, and the issue page says *In progress with no run* and offers Take over rather than Pause.
+
 An epic sits in the column its issues have reached: Backlog or To do while none has started, In progress once one has, as in Jira.
 
 ## People and AI teammates

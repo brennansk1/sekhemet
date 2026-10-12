@@ -13,6 +13,9 @@ import {
   agingClass,
   capabilityRows,
   cycleTimeStats,
+  flowEmptyState,
+  flowFinished,
+  flowUrl,
   formatHours,
   formatShortDate,
   horizonSentence,
@@ -532,9 +535,13 @@ function render() {
   const d = ui.data;
   const cycle = (d.cycleTime ?? []).filter((e) => Number.isFinite(e.hours));
   const stats = cycleTimeStats(cycle);
-  if (cycle.length < 3) {
+  // A3: the period's finished issues are Status's count, served with the
+  // metrics (`finished`), not the cycle-time samples nor the moves to Done.
+  const finished = flowFinished(d);
+  const empty = flowEmptyState(finished, cycle.length);
+  if (empty) {
     return paint(
-      `<div class="later ins-later">${icon("insights", 24, "ic s24")}<b>Not enough finished issues to measure flow yet.</b><span>Insights need at least 3 finished issues; this period has ${cycle.length}.</span></div>`,
+      `<div class="later ins-later">${icon("insights", 24, "ic s24")}<b>${esc(empty.heading)}</b><span>${esc(empty.detail)}</span></div>`,
     );
   }
   const perRow = ui.perRow;
@@ -586,7 +593,7 @@ async function load() {
   loadBurn();
   render();
   try {
-    const r = await getJSON(`/api/metrics/flow?days=${ui.days}`);
+    const r = await getJSON(flowUrl(ui.days, store.state.project?.id));
     ui.status = r.status;
     ui.data = r.ok ? r.data : null;
   } catch {

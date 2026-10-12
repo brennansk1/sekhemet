@@ -81,6 +81,12 @@
 .del-n {
   color: var(--state-fail);
 }
+/* §2.14.1: the file header is raised, where state colours are marks, never
+   text (Sand's --state-pass failed 4.5:1 there); the sign carries the meaning. */
+.g-h .add-n,
+.g-h .del-n {
+  color: var(--text-secondary);
+}
 .group.collapsed .diff,
 .group.collapsed .note-row {
   display: none;

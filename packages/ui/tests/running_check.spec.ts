@@ -31,7 +31,8 @@ describe("DB-N2-10: the In progress badge names the running check", () => {
   });
 
   it("says Running checks… when none has started, and names the check over an earlier attempt's evidence", () => {
-    expect(statusLine(verifying, {}).text).toBe("Running checks…");
+    // A run backs it (wave 2 A1: `liveRun`); with none it waits for checks.
+    expect(statusLine(verifying, { liveRun: true }).text).toBe("Running checks…");
     const failed = { passed: false, rungResults: [], failures: [] } as never;
     expect(
       statusLine(verifying, { evidence: failed, runningGate: { gate: "lint", rung: "lint" } }).text,

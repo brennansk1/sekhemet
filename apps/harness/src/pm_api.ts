@@ -74,7 +74,7 @@ import { seshatWait } from "./pm/while_worker.js";
 import { releaseTags } from "./project_done.js";
 import { oneShotResearcher } from "./research/service.js";
 import { quickAnswererFor } from "./smart_swap.js";
-import { statusFacts } from "./status_api.js";
+import { finishedIssues, statusFacts } from "./status_api.js";
 import {
   isDay,
   isHealth,
@@ -1431,8 +1431,21 @@ export function createPmApi(ctx: PmApiContext) {
     if (url === "/api/metrics/flow" && req.method === "GET") {
       const days = Math.min(365, Math.max(1, Number(query.get("days") ?? 30) || 30));
       // Measurement rule 4a: every role's token use over the same window.
+      // Wave 2 A3: the period's finished issues are Status's count, on the
+      // same scope (the page's project, or every issue the person can see).
+      const finished = ctx.cardStore
+        ? await finishedIssues({
+            cardStore: ctx.cardStore,
+            log: ctx.log,
+            me: personOf(req),
+            project: query.get("project") ?? undefined,
+            audience: audience(),
+            days,
+          })
+        : undefined;
       ctx.json(res, 200, {
         ...(await flowMetrics(ctx.log, days)),
+        ...(finished !== undefined ? { finished } : {}),
         modelUse: await modelUse(ctx.log, days),
       });
       return true;

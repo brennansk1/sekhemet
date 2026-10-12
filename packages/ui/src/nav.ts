@@ -385,8 +385,51 @@ export function agentQueueLine(
   return `${keyOf(queue.cardId)} · ${queue.message}`;
 }
 
+/** A card as the Agent's work reads it: the board's card, or a view model's. */
+export interface AgentCardLike {
+  id: string;
+  key?: string;
+  status: string;
+  tier?: string;
+  /** A person's name or principal (a view model's), or the board's `{ kind, id }`. */
+  delegate?: string | { kind: string; id?: string } | null;
+  /** The server's fact: a runner or slot lease names the card, or its attempt is running. */
+  liveRun?: boolean;
+  updatedAt?: string;
+  stepBudget?: number;
+  display?: { shortId?: string; lastStep?: { turn?: number }; [field: string]: unknown };
+}
+
+/** The card is the Agent's to build, not a person's (no delegate, or the Worker). */
+export const isAgentsCard = (c: Pick<AgentCardLike, "delegate">): boolean =>
+  !c.delegate ||
+  c.delegate === "worker" ||
+  (typeof c.delegate === "object" && c.delegate.kind === "worker");
+
+/**
+ * What the Agent is doing, from one source (dashboard §2.1.6, §2.2.3; wave 2
+ * A1, A2): `running` is every card a run backs (`liveRun`), whatever column
+ * it is in, the most recently moved first, so every view that names one item
+ * names the same one; `notRunning` is the Agent's cards stored In progress
+ * with no run behind them, which no view may call working.
+ */
+export function agentWork<C extends AgentCardLike>(
+  cards: readonly C[],
+): { running: C[]; notRunning: C[] } {
+  const isWork = (c: C) => !c.tier || c.tier === "story" || c.tier === "task";
+  const recent = (a: C, b: C) => Date.parse(b.updatedAt ?? "") - Date.parse(a.updatedAt ?? "");
+  const mine = cards.filter((c) => isWork(c) && isAgentsCard(c));
+  return {
+    running: mine.filter((c) => c.liveRun === true).sort(recent),
+    notRunning: mine.filter((c) => c.status === "in_progress" && c.liveRun !== true).sort(recent),
+  };
+}
+
+const keyOf = (c: AgentCardLike) => c.key ?? c.display?.shortId ?? c.id;
+
 export function agentStatusLine(input: {
-  running: readonly { key: string; step?: number | undefined; budget?: number | undefined }[];
+  running: readonly AgentCardLike[];
+  notRunning?: readonly AgentCardLike[];
   pausedForSeshat?: { step?: number | undefined } | undefined;
 }): { text: string; state: "working" | "idle" | "paused" } {
   if (input.pausedForSeshat) {
@@ -397,12 +440,25 @@ export function agentStatusLine(input: {
     };
   }
   const [only, ...rest] = input.running;
-  if (!only) return { text: "Agent idle", state: "idle" };
+  if (!only) {
+    // A card stored In progress with no run is named as such, never as work (A1).
+    const stalled = input.notRunning ?? [];
+    const [one] = stalled;
+    if (!one) return { text: "Agent idle", state: "idle" };
+    return {
+      text:
+        stalled.length === 1
+          ? `Agent idle · ${keyOf(one)} is in progress with no run`
+          : `Agent idle · ${stalled.length} issues are in progress with no run`,
+      state: "idle",
+    };
+  }
   if (rest.length)
     return { text: `Agent working on ${input.running.length} issues`, state: "working" };
+  const turn = only.display?.lastStep?.turn;
   const step =
-    only.step !== undefined
-      ? ` · step ${only.step}${only.budget !== undefined ? ` of ${only.budget}` : ""}`
+    turn !== undefined
+      ? ` · step ${turn}${only.stepBudget !== undefined ? ` of ${only.stepBudget}` : ""}`
       : "";
-  return { text: `Agent working on ${only.key}${step}`, state: "working" };
+  return { text: `Agent working on ${keyOf(only)}${step}`, state: "working" };
 }

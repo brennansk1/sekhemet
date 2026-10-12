@@ -39,6 +39,8 @@ function withAiState(panel, ai) {
   const agent = (ai ?? []).find((a) => a.who === "agent");
   // ISS-02, ISS-03: the page's own Stopped line names the person from the ledger.
   if (!agent || panel.state === "stopped") return panel;
+  // Wave 2 A1: with no run behind the card, a teammate line saying "working" is not shown.
+  if (panel.state === "not_running" && agent.state === "working") return panel;
   const line = aiStateLine(agent);
   return { ...panel, label: line.label, sentence: line.sentence };
 }

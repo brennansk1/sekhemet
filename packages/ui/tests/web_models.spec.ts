@@ -44,14 +44,15 @@ describe("the tile model, every stored state (DB-N2-1)", () => {
     backlog: { column: "backlog" },
     ready: { column: "todo" },
     planning: { column: "todo", status: quiet("Being planned", "neutral", "planning") },
+    // A stored state with no run behind it is not work (wave 2 A1: `liveRun`).
     in_progress: {
       column: "in_progress",
-      status: quiet("Starting", "running", "running"),
+      status: quiet("In progress · no run", "neutral", "none"),
       age: "1h",
     },
     verify: {
       column: "in_progress",
-      status: quiet("Running checks…", "running", "running"),
+      status: quiet("Waiting for checks", "neutral", "none"),
       age: "1h",
     },
     review: { column: "in_review", status: quiet("Waiting 1h", "pass", "wait"), age: "1h" },

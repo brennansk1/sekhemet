@@ -253,7 +253,7 @@ export function composerHtml(notes, { comments = [] } = {}) {
   const chips = notes
     .map((n) => `<button type="button" class="chip" data-chip title="${esc(n)}">${esc(n)}</button>`)
     .join("");
-  return `<form class="composer" data-composer aria-label="Request changes"><label class="lbl" for="sb-note">What should the Agent do differently?</label>${practiceTip("practice:request_changes", "Request changes")}<textarea id="sb-note" name="note" placeholder="Your note is the first thing the Agent reads on its next attempt." aria-describedby="sb-err"></textarea><div class="err" id="sb-err" role="alert" hidden>Add a note for the Agent. It's what it reads next.</div>${chips ? `<div class="chips"><span class="sec" style="font-size:var(--text-xs)">Quick notes</span>${chips}</div>` : ""}${carriedHtml(comments)}<div class="row"><label class="cbx"><input type="checkbox" checked disabled> Suggest as a playbook rule <small>· your note becomes a candidate rule in Playbook</small></label><span class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("send-back")}Request changes ${kbd(`${MOD}↵`)}</button></span></div></form>`;
+  return `<form class="composer" data-composer aria-label="Request changes"><label class="lbl" for="sb-note">What should the Agent do differently?</label>${practiceTip("practice:request_changes", "Request changes")}<textarea id="sb-note" name="note" placeholder="Your note is the first thing the Agent reads on its next attempt." aria-describedby="sb-err"></textarea><div class="err" id="sb-err" role="alert" hidden>Add a note for the Agent. It's what it reads next.</div>${chips ? `<div class="chips"><span class="sec" style="font-size:var(--text-xs)">Quick notes</span>${chips}</div>` : ""}${carriedHtml(comments)}<div class="row"><label class="pb-opt"><input type="checkbox" checked disabled> Suggest as a playbook rule <small>· your note becomes a candidate rule in Playbook</small></label><span class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("send-back")}Request changes ${kbd(`${MOD}↵`)}</button></span></div></form>`;
 }
 
 /**
@@ -409,6 +409,22 @@ export function wireCommentForm(form, card, { onSent, onClose, comments }) {
 
 const PRESETS = ["Waiting on me", "Needs a decision", "Not now"];
 
+/**
+ * Take an On hold issue off hold: back where it was (`POST /api/cards/:id/unpark`),
+ * in Status's words. From the triage bar wherever it is drawn, and the palette.
+ */
+export async function takeOffHold(card, { onDone } = {}) {
+  if (!card || blockedToast()) return;
+  const res = await postJSON(`/api/cards/${encodeURIComponent(card.id)}/unpark`, {});
+  if (!res.ok) {
+    toast({ ...explainFailure("take it off hold", res), tone: "fail" });
+    return;
+  }
+  toast({ tone: "pass", text: "Taken off hold. It is back where it was." });
+  refreshSoon();
+  onDone?.(card);
+}
+
 export function openPark(anchor, card, { onDone } = {}) {
   if (blockedToast()) return;
   const pop = document.createElement("form");
@@ -541,9 +557,10 @@ export function triageBarHtml(card, evidence, { hint = true, detail, checklist =
   const back = evidence
     ? `<button class="btn" type="button" data-back ${needs}${dis}>${icon("send-back")}Request changes ${kbd("R")}</button>`
     : "";
+  // On hold: its way back sits where Put on hold was (Status's *Take off hold*, DEC-52).
   const park =
     card?.status === "parked"
-      ? ""
+      ? `<button class="btn" type="button" data-unpark ${needs}${dis}>${icon("undo")}Take off hold</button>`
       : `<button class="btn ghost" type="button" data-park ${needs}${dis}>${icon("park")}Put on hold ${kbd("P")}</button>`;
   // Teams item 25: in the Team setup, Comment — a review with no verdict — beside Accept and Send back.
   const comment =

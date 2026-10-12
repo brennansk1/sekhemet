@@ -132,6 +132,22 @@ function filesHolding(dir: string, needle: string): string[] {
 }
 
 describe("the hash chain through `sekhemet log` (K-N1, K-N10)", () => {
+  it("prints the Activity log's newest 20 entries, not its oldest (wave 2 B6)", async () => {
+    const p = project("sek-log-newest-");
+    const db = new DatabaseSync(ledgerPath(p));
+    const store = new CardStore(db, new EventLog(db));
+    for (let i = 1; i <= 25; i++)
+      await store.createCard({ id: `card_n${i}`, tier: "task", title: `Issue ${i}` });
+    db.close();
+    const run = await runCli(["log"], p);
+    expect(run.code).toBe(0);
+    // The newest as the command printed them: opening the project may add an entry first.
+    const last = sql<{ s: number }>(ledgerPath(p), "SELECT MAX(seq) AS s FROM events")[0]?.s ?? 0;
+    expect(last).toBeGreaterThan(25);
+    const seqs = [...run.out.matchAll(/^ {2}#(\d+) \[/gm)].map((m) => Number(m[1]));
+    expect(seqs).toEqual(Array.from({ length: 20 }, (_, i) => last - 19 + i));
+  });
+
   it("K-N1-1: a row's created_at edited in SQLite makes `log` report the chain corrupted at that seq and exit 1", async () => {
     const p = project("sek-k-n1-1-");
     expect((await runCli(["log"], p)).code).toBe(0);

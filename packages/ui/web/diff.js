@@ -213,8 +213,8 @@ export function changesHtml(
     const body = f.binary
       ? '<div class="note-row">Binary file.</div>'
       : excerpt
-        ? `<div class="diff" role="table" aria-label="Excerpt of ${esc(f.path)} around the failures">${excerptHtml(f.path, newContent(f), fileFails, "Staged by Sekhemet")}<button class="more-lines" type="button" data-full="${esc(f.path)}">Show all ${total} lines</button></div>`
-        : `<div class="diff" role="table" aria-label="Diff of ${esc(f.path)}">${mode === "split" ? splitHtml(f, anns, limit) : unifiedHtml(f, anns, limit)}${total > limit ? `<button class="more-lines" type="button" data-full="${esc(f.path)}">Show ${total - MAX_LINES} more lines</button>` : ""}</div>`;
+        ? `<div class="diff" role="group" aria-label="Excerpt of ${esc(f.path)} around the failures">${excerptHtml(f.path, newContent(f), fileFails, "Staged by Sekhemet")}<button class="more-lines" type="button" data-full="${esc(f.path)}">Show all ${total} lines</button></div>`
+        : `<div class="diff" role="group" aria-label="Diff of ${esc(f.path)}">${mode === "split" ? splitHtml(f, anns, limit) : unifiedHtml(f, anns, limit)}${total > limit ? `<button class="more-lines" type="button" data-full="${esc(f.path)}">Show ${total - MAX_LINES} more lines</button>` : ""}</div>`;
     const note =
       role === "outside"
         ? '<div class="note-row">The Agent edited a file this issue may not touch.</div>'
@@ -238,7 +238,7 @@ export function changesHtml(
       .split("\n")
       .filter((_, i, a) => i < a.length - 1 || a[i] !== "").length;
     const body = fails.length
-      ? `<div class="diff" role="table" aria-label="Excerpt of ${esc(src.path)} around the failures">${excerptHtml(src.path, src.content, fails)}</div>`
+      ? `<div class="diff" role="group" aria-label="Excerpt of ${esc(src.path)} around the failures">${excerptHtml(src.path, src.content, fails)}</div>`
       : `<div class="note-row">Unchanged by the Agent. ${plural(lines, "line")}.</div>`;
     groups.push(
       `<div class="group acceptance${collapsed ? " collapsed" : ""}" data-file="${esc(src.path)}">${header({ path: src.path, role: "acceptance", added: null, removed: null, collapsed, extra })}${body}</div>`,

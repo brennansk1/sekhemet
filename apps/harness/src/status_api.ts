@@ -40,6 +40,69 @@ const dayNo = (iso: string) => Math.floor(Date.parse(`${iso.slice(0, 10)}T00:00:
 const isIssue = (c: CardRecord) => c.tier !== "epic" && c.tier !== "initiative";
 
 /**
+ * The issues' status moves, and when each finished: an issue reverted and
+ * accepted again counts once, at its last move to Done (Projects' *Shipped
+ * this month* counts issues, not moves). Status's forecast and flow strip
+ * and Insights' finished count all read it (wave 2 A3).
+ */
+async function finishMoves(
+  issues: readonly CardRecord[],
+  log: EventLog,
+): Promise<{ moves: Awaited<ReturnType<EventLog["getEventsByTypes"]>>; doneAt: string[] }> {
+  const ids = new Set(issues.map((c) => c.id));
+  const moves = (await log.getEventsByTypes(["card/status_changed"])).filter((e) =>
+    ids.has(String((e.payload as { id?: string }).id ?? e.cardId ?? "")),
+  );
+  const lastDone = new Map<string, string>();
+  for (const e of moves) {
+    const p = e.payload as { id?: string; toStatus?: string };
+    if (p.toStatus === "done") lastDone.set(String(p.id ?? e.cardId ?? ""), e.createdAt);
+  }
+  return { moves, doneAt: [...lastDone.values()] };
+}
+
+interface PageDeps {
+  cardStore: CardStore;
+  /** The person asking. */
+  me: string;
+  /** The project the page is scoped to; the only one the person can see when omitted. */
+  project?: string | undefined;
+  audience?: Audience;
+}
+
+/**
+ * A Status page's issues (PM-N9-8): the page's project's, or with none named
+ * and more than one visible, every issue the person can see; a project they
+ * cannot see reads as no project, and an epic or initiative is never an issue.
+ */
+async function pageIssues(deps: PageDeps) {
+  const a = deps.audience ?? soloAudience();
+  const visible = deps.cardStore.listProjects().filter((p) => a.canSee(deps.me, p.id));
+  const project =
+    (deps.project ? visible.find((p) => p.id === deps.project) : undefined) ??
+    (!deps.project && visible.length === 1 ? visible[0] : undefined);
+  const cards = (await deps.cardStore.listCards()).filter(
+    (c) =>
+      isIssue(c) &&
+      (project ? c.projectId === project.id : !deps.project && a.canSee(deps.me, c.projectId)),
+  );
+  return { project, cards };
+}
+
+/**
+ * The issues finished in the last `days` on a Status page's scope: Status's
+ * flow strip (`flow.finished`) and Insights' (`GET /api/metrics/flow`'s
+ * `finished`) are this one count (wave 2 A3, dashboard §2.10 item 6).
+ */
+export async function finishedIssues(
+  deps: PageDeps & { log: EventLog; days: number; now?: Date },
+): Promise<number> {
+  const since = (deps.now ?? new Date()).getTime() - deps.days * DAY;
+  const { doneAt } = await finishMoves((await pageIssues(deps)).cards, deps.log);
+  return doneAt.filter((at) => Date.parse(at) >= since).length;
+}
+
+/**
  * The forecast of a set of issues (planner-pm §2.6 item 3, DB-N9-3): Monte
  * Carlo over their finished issues by day, from the first issue (at most 60
  * days back), and *Not enough history yet* below five days. Status, Projects
@@ -57,18 +120,7 @@ export async function forecastOf(
   doneAt: string[];
 }> {
   const issues = cards.filter(isIssue);
-  const ids = new Set(issues.map((c) => c.id));
-  const moves = (await log.getEventsByTypes(["card/status_changed"])).filter((e) =>
-    ids.has(String((e.payload as { id?: string }).id ?? e.cardId ?? "")),
-  );
-  // Each issue finished once: an issue reverted and accepted again counts at its last
-  // move to Done (Projects' *Shipped this month* counts issues, not moves).
-  const lastDone = new Map<string, string>();
-  for (const e of moves) {
-    const p = e.payload as { id?: string; toStatus?: string };
-    if (p.toStatus === "done") lastDone.set(String(p.id ?? e.cardId ?? ""), e.createdAt);
-  }
-  const doneAt = [...lastDone.values()];
+  const { moves, doneAt } = await finishMoves(issues, log);
   const firstDay = issues.length
     ? Math.max(
         dayNo(isoDay(now)) - HISTORY_DAYS + 1,
@@ -131,15 +183,7 @@ export async function statusFacts(deps: {
   const team = a.setup === "team";
   const now = (deps.now ?? new Date()).getTime();
   const me = deps.me;
-  const visible = deps.cardStore.listProjects().filter((p) => a.canSee(me, p.id));
-  const project =
-    (deps.project ? visible.find((p) => p.id === deps.project) : undefined) ??
-    (!deps.project && visible.length === 1 ? visible[0] : undefined);
-  const cards = (await deps.cardStore.listCards()).filter(
-    (c) =>
-      isIssue(c) &&
-      (project ? c.projectId === project.id : !deps.project && a.canSee(me, c.projectId)),
-  );
+  const { project, cards } = await pageIssues(deps);
   const ids = new Set(cards.map((c) => c.id));
   const title = new Map(cards.map((c) => [c.id, c.title]));
 

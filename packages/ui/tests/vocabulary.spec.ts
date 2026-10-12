@@ -344,6 +344,33 @@ describe("statusLine and describeCard", () => {
     expect(d.evidence?.gates.map((g) => g.label)).toEqual(["Types", "Tests", "Size"]);
   });
 
+  // Wave 2 A1 review, finding 2: a stored In progress or Verify with no run
+  // behind it (the server's `liveRun`) is never "Starting", "Working" or
+  // "Running checks…", and never in the running tone or with its mark.
+  it("says In progress or Waiting for checks, neutral, when no run backs the card", () => {
+    const stored = { now, lastStep: { turn: 3, calls: [{ name: "write_file", target: "a.ts" }] } };
+    for (const ctx of [{}, stored, { liveRun: false }]) {
+      expect(statusLine(card({ status: "in_progress", stepsUsed: 0 }), ctx)).toEqual({
+        text: "In progress · no run",
+        tone: "neutral",
+        mark: "none",
+      });
+      expect(statusLine(card({ status: "in_progress", stepsUsed: 5 }), ctx).tone).toBe("neutral");
+      expect(statusLine(card({ status: "verify" }), ctx)).toEqual({
+        text: "Waiting for checks",
+        tone: "neutral",
+        mark: "none",
+      });
+    }
+    // A run backs it: what it is doing, in the running tone.
+    expect(statusLine(card({ status: "in_progress", stepsUsed: 0 }), { liveRun: true })).toEqual({
+      text: "Starting",
+      tone: "running",
+      mark: "running",
+    });
+    expect(statusLine(card({ status: "verify" }), { liveRun: true }).text).toBe("Running checks…");
+  });
+
   it("covers every column in words", () => {
     const at = "2026-09-18T14:00:00.000Z";
     const line = (patch: Partial<CardRecord>, ctx = {}) =>
@@ -363,12 +390,14 @@ describe("statusLine and describeCard", () => {
       mark: "planning",
     });
     // DB-N7-3: no step count on the board; the issue carries it (`budgetText`).
-    expect(line({ status: "in_progress", stepsUsed: 5 })).toMatchObject({
+    // A run backs these cards (wave 2 A1: `liveRun`).
+    const run = { liveRun: true };
+    expect(line({ status: "in_progress", stepsUsed: 5 }, run)).toMatchObject({
       text: "Working",
       tone: "running",
     });
-    expect(line({ status: "in_progress", stepsUsed: 0 }).text).toBe("Starting");
-    expect(line({ status: "verify" }).text).toBe("Running checks…");
+    expect(line({ status: "in_progress", stepsUsed: 0 }, run).text).toBe("Starting");
+    expect(line({ status: "verify" }, run).text).toBe("Running checks…");
     expect(line({ status: "review" }).text).toBe("Waiting 12m");
     expect(line({ status: "done" }).text).toBe("Accepted · 12m ago");
     expect(line({ status: "rejected" }).text).toBe("Rejected");
@@ -405,6 +434,7 @@ describe("Phase 3 and 4 language", () => {
     const now = Date.parse("2026-09-18T14:12:00.000Z");
     const line = statusLine(card({ status: "in_progress", stepsUsed: 0 }), {
       now,
+      liveRun: true,
       lastStep: {
         turn: 5,
         calls: [

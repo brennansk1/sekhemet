@@ -845,10 +845,16 @@ from one read:
   "undecided" | "no_forecast", p85Date?}, calibration: {held, decided},
   proposals: {applied, discarded, acceptanceRate?}, planned: {issues,
   passedFirstTry, rate?}, editedAfterSeshat }`.
-- `GET /api/metrics/flow?days=30` returns
+- `GET /api/metrics/flow?days=30[&project=<id>]` returns
   `{ throughput: {date, done}[], cycleTime: {cardId, hours, doneAt?}[],
      cfd: {date, backlog, ready, working, checking, review, done}[],
-     wipAge: {cardId, hours}[] }`.
+     wipAge: {cardId, hours}[], finished?, modelUse }`. `finished` (absent on
+  a read-only server) is the period's finished issues as `GET /api/status`
+  counts its `flow.finished`, by the same code (`finishedIssues`,
+  `status_api.ts`; wave 2 A3): each issue once, at its last move to Done,
+  never an epic or initiative, on the named project, or with none named and
+  more than one visible, every issue the person can see. `throughput` still
+  counts every move into Done, of any card, across projects.
 - `GET /api/metrics/burnup?cycle=<id>` (a cycle's) or `?scope=project` (the
   project's; also with no query), with `&project=<id>` to count only that
   project's cards (the board scoped to it) and `&unit=issues` to count each
@@ -871,7 +877,8 @@ Every `POST` is the dashboard's own (`x-sekhemet-action`), recorded under the
 request's principal; a refusal is `409 { error }` naming what is unproven.
 
 - `GET /api/story-map[/:projectId]` (the latest accepted brief's project when
-  omitted; `404` without one) returns
+  omitted; `200 null` without one; `404` for a named project that is missing
+  or hidden) returns
   `{ projectId, baseline?, main?: { sha, branch, gatesPassed, at, stale },
      slices: { id, projectId, title?, appetite: { cards?, hours? },
        appetiteReached, extensions, accepted,

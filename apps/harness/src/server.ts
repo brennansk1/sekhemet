@@ -70,6 +70,7 @@ import { runDoctor } from "./doctor.js";
 import { releaseHeldCards } from "./execute.js";
 import { handleGithubRoute, startGithubSync, startRecurringTicker } from "./github_routes.js";
 import { readLiveGate } from "./live_gate.js";
+import { liveRunCardIds } from "./live_runs.js";
 import {
   type ModelAccess,
   describeModel,
@@ -769,6 +770,12 @@ export function startDashboardServer(
     facts: ReturnType<typeof latestByCard> = latestByCard(options.db, FACT_TYPES),
     starts: ReadonlyMap<string, string> = firstStarts(),
     nameOf: (principal: string | undefined) => string | undefined = namesOf(),
+    // A1: the one fact behind every "the Agent is working": a run backs the card.
+    live: ReadonlySet<string> = liveRunCardIds({
+      repoPath,
+      runs: options.cardStore?.runs,
+      cards: [card],
+    }),
   ) => {
     const config = gatesConfig();
     const entry = entries.get(card.id);
@@ -804,10 +811,11 @@ export function startDashboardServer(
       ...(ownerName ? { ownerName } : {}),
       ...(delegateName ? { delegateName } : {}),
       ...(runningGate ? { runningGate } : {}),
+      liveRun: live.has(card.id),
       configuredGates: config.gates.map((g) => ({ id: g.id, rung: g.rung })),
       limits: { maxFiles: config.project.maxFiles, maxDiffLines: config.project.maxDiffLines },
     });
-    return { ...card, display };
+    return { ...card, display, liveRun: live.has(card.id) };
   };
 
   /** Board state with every card's `display` filled in. */
@@ -865,10 +873,12 @@ export function startDashboardServer(
             { cards: state.cards, now, nameOf: (p) => nameOf(p) },
           )
         : undefined;
+    // A1: the one fact behind every "the Agent is working" — a run backs the card.
+    const live = liveRunCardIds({ repoPath, runs: options.cardStore?.runs, cards: state.cards });
     return {
       ...state,
       cards: state.cards.map((card) => {
-        const shown = withDisplay(card, state.cards, entries, now, facts, starts, nameOf);
+        const shown = withDisplay(card, state.cards, entries, now, facts, starts, nameOf, live);
         const waits = intake?.get(card.id);
         return waits
           ? {
@@ -1919,8 +1929,9 @@ export function startDashboardServer(
         models: {
           roles: modelRoster(repoPath).roles as RosterRoleLike[],
           slots: {
-            // The Coding model's slots (RUN-35) and the issues being built in them.
-            inUse: (await store.listCards({ status: "in_progress" })).length,
+            // The Coding model's slots (RUN-35) and the issues a run builds in them (A1).
+            inUse: liveRunCardIds({ repoPath, runs: store.runs, cards: await store.listCards() })
+              .size,
             capacity: qualifiedSlotCapacity({
               mode: setup,
               parallelSlots: (options.parallelSlots ?? workerParallelSlots)(),

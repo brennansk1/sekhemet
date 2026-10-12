@@ -976,7 +976,11 @@ export async function handleProjectDoneRoute(
   if (map && req.method === "GET") {
     const m = await projectStoryMap(k, map[1]);
     const shown = m && visible(m.projectId) ? m : undefined;
-    json(res, shown ? 200 : 404, shown ?? { error: "No accepted brief for that project" });
+    // No accepted brief yet is an answer (`null`), not a missing resource, so the
+    // story map's read logs no failed request; a named project missing or hidden
+    // is 404 (PM-N9-8). Wave 2 B8, S1A-A28.
+    if (!shown && map[1] === undefined) json(res, 200, null);
+    else json(res, shown ? 200 : 404, shown ?? { error: "No accepted brief for that project" });
     return true;
   }
   const report = /^\/api\/slices\/([\w.-]+)\/report$/.exec(url);

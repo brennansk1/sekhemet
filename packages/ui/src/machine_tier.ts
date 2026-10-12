@@ -94,3 +94,72 @@ export function machineLine(h: MachineHostFacts | undefined): string {
       : "memory bandwidth not measured yet";
   return [h.name, ...(h.chip?.trim() ? [h.chip.trim()] : []), memory, bandwidth].join(" · ");
 }
+
+/** `/api/machine`'s memory, as the Memory card reads it. */
+export interface MachineMemoryFacts {
+  /** The used-ratio level (models rule 19's marks). */
+  level?: string;
+  /** The level the run guard acts on. */
+  guardLevel?: string;
+  /** `kernel` where the system reports a pressure level, else `ratio`. */
+  guardSource?: string;
+  usedRatio: number;
+  thresholds?: { warning: number; throttle: number; critical: number };
+}
+
+const RATIO_LEVEL: Record<string, { label: string; tone: string; text: string }> = {
+  normal: {
+    label: "Normal",
+    tone: "pass",
+    text: "Issues run normally. Sekhemet stops adding worktrees at 90% and pauses the Agent at 94%.",
+  },
+  warning: {
+    label: "Warning",
+    tone: "parked",
+    text: "Above 85%: multi-token prediction is off, and above 90% no new worktree is created. Running issues continue.",
+  },
+  critical: {
+    label: "Critical",
+    tone: "fail",
+    text: "Above 94%: the Agent is paused safely before the system would swap. Work resumes below 85%.",
+  },
+};
+
+const KERNEL_TEXT: Record<string, string> = {
+  normal: "The system reports normal pressure. Issues run normally.",
+  warning:
+    "The system reports warning pressure. Running issues continue; the Agent is paused if pressure reaches critical.",
+  critical:
+    "The system reports critical pressure. The Agent is paused safely before the system would swap, until pressure falls.",
+};
+
+/**
+ * The Memory card's level, words and gauge legend (dashboard §2.4 Machine;
+ * wave 2 A7): they follow the guard that runs. Where the system reports a
+ * pressure level the run guard acts on it and on swap, not on the used-memory
+ * marks, so the legend and text never say a percentage pauses the Agent.
+ */
+export function memoryGuardView(m: MachineMemoryFacts): {
+  label: string;
+  tone: string;
+  text: string;
+  legend: string;
+} {
+  const guard = m.guardLevel ?? m.level ?? "normal";
+  const lv =
+    RATIO_LEVEL[guard] ?? (RATIO_LEVEL.normal as { label: string; tone: string; text: string });
+  const t = m.thresholds ?? { warning: 0.85, throttle: 0.9, critical: 0.94 };
+  const p = (r: number) => `${Math.round(r * 100)}%`;
+  if (m.guardSource === "kernel") {
+    return {
+      label: lv.label,
+      tone: lv.tone,
+      text: KERNEL_TEXT[guard] ?? (KERNEL_TEXT.normal as string),
+      legend: `${p(t.warning)} · ${p(t.throttle)} · ${p(t.critical)}: used-memory marks. On this machine the run guard follows the system's pressure level and swap instead, and pauses the Agent only at critical pressure.`,
+    };
+  }
+  return {
+    ...lv,
+    legend: `${p(t.warning)} warning · ${p(t.throttle)} no new worktrees · ${p(t.critical)} pause the Agent`,
+  };
+}
